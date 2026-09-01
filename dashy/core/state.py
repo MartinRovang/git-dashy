@@ -2,7 +2,8 @@
 import threading
 import time
 
-from . import config, github, log, review as review_mod, update
+from .. import config
+from . import github, log, review as review_mod, update
 
 
 class State:

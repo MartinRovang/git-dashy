@@ -41,6 +41,7 @@ gitdashy                  # 300s refresh
 gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
+gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
 gitdashy --version        # 1.4.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
@@ -69,6 +70,11 @@ appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in th
 where `Enter` opens the summary and full review. A PR that gets a new review request after a verdict
 is flagged `↻ re-review · was <verdict>` and can be reviewed again.
 
+`--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
+rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
+while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
+without it.
+
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
 *after* you turn it on — what's already on screen is the baseline and is left alone.
 
@@ -88,6 +94,7 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 |-----|---------|------|
 | `PRS_MODEL` | `opus` | model used for reviews |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
+| `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 
 ## Layout
 
@@ -95,21 +102,23 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 prs.py            entry point — a shim onto the package
 dashy/
   cli.py          argv, --help, curses.wrapper
-  ui.py           colours, draw(), the key loop
-  art.py          splash: name, spinner, logo
-  rows.py         sections -> flat draw rows, age()
-  state.py        background refresh loop, shared state
-  github.py       everything that shells out to gh
-  review.py       runs Claude headless, posts the verdict
-  log.py          ~/.prs_reviewed.jsonl store + detail view
-  update.py       release check and self-update
   config.py       tunables and env overrides
   demo.py         canned PRs and a fake reviewer
-tests/            one test file per module
+  ui/             what draws
+    screen.py     colours, draw(), the key loop
+    art.py        splash: name, spinner, logo
+    rows.py       sections -> flat draw rows, age()
+  core/           what talks to the outside world
+    state.py      background refresh loop, shared state
+    github.py     everything that shells out to gh
+    review.py     runs Claude headless, posts the verdict
+    log.py        ~/.prs_reviewed.jsonl store + detail view
+    update.py     release check and self-update
+tests/            mirrors dashy/: one test file per module
 ```
 
-Swappable seams, for adding things: `github.fetch`, `review.review` and
-`update.update_available` are looked up as module attributes at call time — that is how `--demo`
+Swappable seams, for adding things: `core.github.fetch`, `core.review.review` and
+`core.update.update_available` are looked up as module attributes at call time — that is how `--demo`
 replaces all three, and how the tests stay off the network.
 
 ## Tests

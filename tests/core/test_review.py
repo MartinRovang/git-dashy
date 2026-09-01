@@ -3,8 +3,9 @@ import subprocess
 
 import pytest
 
-from dashy import github, log, review as review_mod
-from dashy.review import review
+from dashy import config
+from dashy.core import github, log, review as review_mod
+from dashy.core.review import review
 
 from conftest import PR, Result, claude_out
 
@@ -67,6 +68,26 @@ def test_review_timeout_is_error(monkeypatch):
 		raise subprocess.TimeoutExpired(cmd, 1)
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus").startswith("error:")
+
+
+def test_review_appends_instructions_file(monkeypatch, tmp_path):
+	f = tmp_path / "rules.md"
+	f.write_text("Always check the changelog.")
+	monkeypatch.setattr(config, "INSTRUCTIONS", str(f))
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "opus") == "✓ approved"
+	assert calls[0][2].endswith("Additional instructions from the reviewer:\nAlways check the changelog.")
+
+
+def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "INSTRUCTIONS", str(tmp_path / "nope.md"))
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(verdict="approve", body="b"))
+	assert review(dict(PR), "opus").startswith("error:")
+	assert not __import__("os").path.exists(log.LOG)
 
 
 # ---- reviewed log / detail ----

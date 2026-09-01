@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 
-from . import config
+from .. import config
 
 LOG = config.LOG  # module attr so --demo and tests can point it elsewhere
 

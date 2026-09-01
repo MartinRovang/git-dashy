@@ -2,8 +2,8 @@ import subprocess
 
 import pytest
 
-from dashy import update
-from dashy.update import update_available
+from dashy.core import update
+from dashy.core.update import update_available
 
 from conftest import Result
 

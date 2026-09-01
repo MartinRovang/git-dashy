@@ -1,7 +1,7 @@
 import pytest
 
-from dashy import github, log, review as review_mod, state, update
-from dashy.state import State
+from dashy.core import github, log, review as review_mod, state, update
+from dashy.core.state import State
 
 from conftest import PR
 

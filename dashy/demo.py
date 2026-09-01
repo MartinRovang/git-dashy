@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from itertools import cycle
 
-from . import github, log, review, update
+from .core import github, log, review, update
 
 
 def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None):

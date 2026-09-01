@@ -2,15 +2,17 @@
 import curses
 import sys
 
-from . import VERSION, config, demo, ui
+from . import VERSION, config, demo
+from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--demo] [--version] [--help]
+Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--instructions FILE] [--demo] [--version] [--help]
 
   --interval N   seconds between refreshes (default {config.INTERVAL})
   --auto         Claude reviews every review-requested PR that appears from now on
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m cycles at runtime
+  --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
@@ -30,5 +32,6 @@ def run(argv=None):
 		return print(f"gitdashy {VERSION}")
 	if "--demo" in argv:
 		demo.install()
-	curses.wrapper(ui.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
+	config.INSTRUCTIONS = arg("--instructions", config.INSTRUCTIONS, str, argv)
+	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
 	               arg("--model", config.DEFAULT_MODEL, str, argv))

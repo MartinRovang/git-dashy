@@ -2,7 +2,9 @@
 import json
 import pytest
 
-from dashy import config, github, log, review, state, ui, update
+from dashy import config
+from dashy.core import github, log, review, state, update
+from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
       "isDraft": False, "author": {"login": "me"}, "updatedAt": "2020-01-01T00:00:00Z"}

@@ -3,8 +3,10 @@ import time
 
 import pytest
 
-from dashy import demo, github, log, review as review_mod, ui
-from dashy.state import State
+from dashy import demo
+from dashy.core import github, log, review as review_mod
+from dashy.ui import screen as ui
+from dashy.core.state import State
 
 from conftest import FakeScr
 

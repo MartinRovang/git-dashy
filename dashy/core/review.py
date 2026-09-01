@@ -2,6 +2,7 @@
 import json
 import subprocess
 
+from .. import config
 from . import github, log
 
 PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
@@ -18,8 +19,12 @@ def review(pr, model):
 	"""Review the PR, post the verdict, log it. Returns a status string for the row."""
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
 	try:
+		prompt = PROMPT.format(repo=repo, number=n)
+		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
+			with open(config.INSTRUCTIONS) as f:
+				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
 		out = subprocess.run(
-			["claude", "-p", PROMPT.format(repo=repo, number=n), "--output-format", "json",
+			["claude", "-p", prompt, "--output-format", "json",
 			 "--allowedTools", TOOLS, "--model", model],
 			capture_output=True, text=True, check=True, timeout=TIMEOUT,
 		).stdout
@@ -27,5 +32,5 @@ def review(pr, model):
 		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		return log.log_review(pr, model, verdict)
-	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]

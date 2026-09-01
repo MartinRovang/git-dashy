@@ -3,6 +3,7 @@ import os
 
 MODELS = ["opus", "sonnet", "fable"]  # cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")
+INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # jsonl, one review per line
 INTERVAL = 300  # seconds between refreshes
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast

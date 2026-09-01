@@ -1,6 +1,6 @@
 import pytest
 
-from dashy.rows import age, rows
+from dashy.ui.rows import age, rows
 
 from conftest import PR
 

@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from dashy import github, log
+from dashy.core import github, log
 
 from conftest import PR, Result
 

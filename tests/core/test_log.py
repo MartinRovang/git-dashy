@@ -3,9 +3,9 @@ import subprocess
 
 import pytest
 
-from dashy import log
-from dashy.review import review
-from dashy.log import detail, log_review, mark_rereviews, reviewed
+from dashy.core import log
+from dashy.core.review import review
+from dashy.core.log import detail, log_review, mark_rereviews, reviewed
 
 from conftest import PR, Result, claude_out
 

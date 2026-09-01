@@ -5,9 +5,11 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import HERE, VERSION, art, config, github, log, update
+from .. import HERE, VERSION, config
+from ..core import github, log, update
+from ..core.state import State
+from . import art
 from .rows import age, rows
-from .state import State
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
 FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  t window  s summaries  u update  r refresh  q quit"

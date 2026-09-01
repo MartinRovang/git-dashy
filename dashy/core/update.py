@@ -4,7 +4,7 @@ import re
 import subprocess
 import sys
 
-from . import HERE, VERSION
+from .. import HERE, VERSION
 
 
 def vkey(v):

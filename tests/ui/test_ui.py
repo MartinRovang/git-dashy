@@ -2,9 +2,10 @@ import time
 
 import pytest
 
-from dashy import log, ui
-from dashy.review import review
-from dashy.state import State
+from dashy.core import log
+from dashy.ui import screen as ui
+from dashy.core.review import review
+from dashy.core.state import State
 
 from conftest import PR, FakeScr, claude_out
 
