@@ -161,6 +161,25 @@ def test_reviewed_tolerates_sparse_entries():
 	assert p["title"] == "?" and p["isDraft"] is False and "author" not in p
 
 
+def test_mark_rereviews_flags_updated_logged_prs_only():
+	prs.log_review(dict(PR, url="old"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")
+	prs.log_review(dict(PR, url="same"), "opus", {"verdict": "comment", "body": "hm"}, at="2020-01-01T00:00:00+00:00")
+	old, same, fresh = dict(PR, url="old", updatedAt="2021-01-01T00:00:00Z"), dict(PR, url="same"), dict(PR, url="fresh")
+	secs = [("REVIEW REQUESTED", [old, same, fresh], None), ("REVIEWED", prs.reviewed(), None)]
+	assert prs.mark_rereviews(secs) == ["old"]
+	assert old["prev"] == "↻ re-review · was ✓ approved" and "prev" not in same and "prev" not in fresh
+
+
+def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
+	prs.log_review(dict(PR, url="a"), "opus", {"verdict": "approve", "body": ""}, at="2020-01-01T00:00:00+00:00")
+	prs.log_review(dict(PR, url="b"), "opus", {"verdict": "approve", "body": ""}, at="2020-01-01T00:00:00+00:00")
+	st = prs.State(0)
+	st.reviews = {"a": "✓ approved", "b": "reviewing..."}
+	rr = [dict(PR, url="a", updatedAt="2021-01-01T00:00:00Z"), dict(PR, url="b", updatedAt="2021-01-01T00:00:00Z")]
+	one_loop(st, monkeypatch, [("REVIEW REQUESTED", rr, None), ("REVIEWED", prs.reviewed(), None)])
+	assert st.reviews == {"b": "reviewing..."}
+
+
 # ---- State ----
 
 def test_start_review_marks_in_flight_then_result(monkeypatch):
@@ -333,7 +352,8 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	secs = prs.fetch()
 	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
 	assert len(secs[3][1]) == 2  # seeded history
-	assert len(prs.fetch()[1][1]) == 3 and len(prs.fetch()[1][1]) == 4  # a new PR shows up on the 3rd refresh
+	assert len(prs.fetch()[1][1]) == 4 and len(prs.fetch()[1][1]) == 5  # a new PR shows up on the 3rd refresh (+1 re-requested)
+	assert prs.mark_rereviews(prs.fetch()) == ["https://github.com/acme/infra/pull/44"]
 	p = secs[1][1][0]
 	statuses = [prs.review(p, "opus") for _ in range(4)]
 	assert statuses[:3] == ["✓ approved", "✗ changes requested", "~ commented"] and statuses[3].startswith("error:")

@@ -86,6 +86,20 @@ def reviewed():
 	return out
 
 
+def mark_rereviews(sections):
+	"""Tag REVIEW REQUESTED rows already in the log and updated since as p['prev']. Returns their urls."""
+	last = {}
+	for p in [p for n, prs, _ in sections if n == "REVIEWED" for p in prs or []]:
+		last.setdefault(p["url"], p["review"])  # newest first
+	out = []
+	for p in [p for n, prs, _ in sections if n == "REVIEW REQUESTED" for p in prs or []]:
+		e = last.get(p["url"])
+		if e and datetime.fromisoformat(p["updatedAt"]) > datetime.fromisoformat(e["at"]):
+			p["prev"] = f"↻ re-review · was {STATUS[e['verdict']]}"
+			out.append(p["url"])
+	return out
+
+
 def detail(e):
 	p, at = e["pr"], datetime.fromisoformat(e["at"]).astimezone().strftime("%Y-%m-%d %H:%M")
 	ref = f"{p['repository']['nameWithOwner']}#{p['number']}"
@@ -154,7 +168,7 @@ def demo():
 	def fake_fetch():
 		fetches[0] += 1
 		time.sleep(1)
-		rr_now = rr + ([late] if fetches[0] >= 3 else [])
+		rr_now = rr + ([late] if fetches[0] >= 3 else []) + [dict(seed[1][0], updatedAt=now.isoformat())]  # re-requested
 		return [("MINE", mine, None), ("REVIEW REQUESTED", rr_now, None), ("ASSIGNED", assigned, None),
 		        ("REVIEWED", reviewed(), None)]
 	verdicts = cycle([
@@ -202,8 +216,12 @@ class State:
 	def loop(self):
 		while True:
 			data = fetch()
+			stale = mark_rereviews(data)
 			with self.lock:
 				self.sections, self.fetched_at = data, time.time()
+				for u in stale:  # forget the old verdict so Enter / auto can review the new push
+					if self.reviews.get(u) != "reviewing...":
+						self.reviews.pop(u, None)
 				new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
 			for p in new:
@@ -314,7 +332,7 @@ def draw(scr, state, sel, prompt=None):
 			is_cur = i == cur
 			base = curses.A_REVERSE if is_cur else 0  # ponytail: reverse video works on any theme
 			ref = refof(p)
-			st = p.get("status") or reviews.get(p["url"], "")
+			st = p.get("status") or reviews.get(p["url"]) or p.get("prev", "")
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
 			x = 1
 			def put(text, attr=0, pad=0):
