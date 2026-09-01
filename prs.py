@@ -77,7 +77,7 @@ def reviewed():
 	out = []
 	for line in reversed(lines):
 		e = json.loads(line)
-		out.append(dict(e["pr"], review=e, status=STATUS[e["verdict"]], updatedAt=e["at"]))
+		out.append(dict({"title": "?", "isDraft": False}, **e["pr"], review=e, status=STATUS[e["verdict"]], updatedAt=e["at"]))
 	return out
 
 
@@ -187,7 +187,7 @@ def draw(scr, state, sel, prompt=None):
 	def refof(p):  # ponytail: hide the org when every PR shares it
 		return f"{p['repository']['name'] if one_owner else p['repository']['nameWithOwner']}#{p['number']}"
 	ref_w = max([len(refof(p)) for p in all_prs] + [10])
-	auth_w = max([len(p["author"]["login"]) for p in all_prs] + [4])
+	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
 	# header bar
 	total = sum(len(p) for _, p, _ in sections if p)
@@ -255,7 +255,7 @@ def draw(scr, state, sel, prompt=None):
 			t = p["title"]
 			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
-			put(p["author"]["login"], C(1), auth_w)
+			put(p.get("author", {}).get("login", ""), C(1), auth_w)
 			if st:
 				put("  ")
 				put(st, st_attr | curses.A_BOLD)

@@ -15,7 +15,8 @@ def test_fetch_dedups():
 	assert len(urls) == len(set(urls))
 	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
 
-def test_review_parses_and_posts(monkeypatch):
+def test_review_parses_and_posts(monkeypatch, tmp_path):
+	monkeypatch.setattr(prs, "LOG", str(tmp_path / "log.jsonl"))
 	calls = []
 	def fake_run(cmd, **kw):
 		calls.append(cmd)
