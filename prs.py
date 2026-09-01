@@ -4,7 +4,8 @@
 Keys: j/k or arrows move, o open in browser, Enter on a REVIEW REQUESTED row = Claude reviews it and
 posts the verdict (approve / request changes / comment) and logs it to ~/.prs_reviewed.jsonl (shown in the
 REVIEWED section, Enter there opens summary + review in less), a toggle auto mode (Claude reviews every
-review-requested PR that appears after you turn it on), r refresh, q quit.
+review-requested PR that appears after you turn it on), t cycle the REVIEWED window (1h / 4h / 6h / all, default 4h),
+s cycle summary lines (all / open PRs only / off), r refresh, q quit.
 Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo]
 --demo: canned PRs and a fake reviewer, nothing touches gh, claude or your real log.
 Default model: opus, or PRS_MODEL env var. Key m cycles opus / sonnet / fable at runtime.
@@ -60,13 +61,15 @@ def age(iso):
 REVIEW_PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
 `gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
 Respond with ONLY a JSON object, no prose, no code fences:
-{{"verdict": "approve" | "request_changes" | "comment", "summary": "<2-3 sentences: what the PR changes and why>",
+{{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 REVIEW_TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
+SUBS = ["all", "open", "off"]  # which rows get a summary line under them
+WINDOWS = [1, 4, 6, None]  # hours of REVIEWED history to show, None = all
 STATUS = {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}
 
 
@@ -139,11 +142,11 @@ def demo():
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48)]
 	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0)  # appears on 3rd refresh, exercises auto
 	assigned = [pr(300, "Flaky integration test in CI", "acme/api", "erin", 72)]
-	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 96),
-	         {"verdict": "approve", "summary": "Splits the auth middleware into token parsing and policy checks; behaviour unchanged.",
+	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 3),
+	         {"verdict": "approve", "summary": "Splits auth middleware into token parsing and policy checks.",
 	          "body": "LGTM. Clean split, existing tests still cover both paths."}),
-	        (pr(44, "Add S3 lifecycle rules", "acme/infra", "grace", 120),
-	         {"verdict": "request_changes", "summary": "Adds lifecycle rules that expire logs after 30 days and transition backups to Glacier.",
+	        (pr(44, "Add S3 lifecycle rules", "acme/infra", "grace", 5),
+	         {"verdict": "request_changes", "summary": "Expires logs after 30 days, moves backups to Glacier.",
 	          "body": "- `infra/s3.tf:31` rule also matches the `backups/` prefix, would delete backups after 30d\n- no plan output attached"})]
 	for p, v in seed:
 		log_review(p, "opus", v, at=p["updatedAt"])
@@ -175,6 +178,7 @@ class State:
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
+		self.window, self.subs = 4, "all"
 
 	def set_auto(self, on):
 		with self.lock:
@@ -208,11 +212,18 @@ class State:
 			self.wake.clear()
 
 
-def rows(sections):
-	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr)."""
+def rows(sections, window=None, subs="all"):
+	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
+	window: hours of REVIEWED to show. subs: 'all' / 'open' (no summaries under REVIEWED) / 'off'."""
 	out = []
+	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
+	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
 	for name, prs, err in sections:
-		out.append(("head", f"{name} ({len(prs) if prs is not None else '!'})"))
+		label = name
+		if name == "REVIEWED" and cutoff:
+			prs = [p for p in prs or [] if datetime.fromisoformat(p["review"]["at"]) >= cutoff]
+			label = f"{name} · last {window}h"
+		out.append(("head", f"{label} ({len(prs) if prs is not None else '!'})"))
 		for p in prs or []:
 			p["section"] = name
 		if err:
@@ -221,6 +232,8 @@ def rows(sections):
 			out.append(("empty", "  none"))
 		for p in prs or []:
 			out.append(("pr", p))
+			if summaries.get(p["url"]) and (subs == "all" or (subs == "open" and name != "REVIEWED")):
+				out.append(("sub", summaries[p["url"]]))  # ponytail: one line, truncated in draw
 		out.append(("blank", ""))
 	return out
 
@@ -234,7 +247,7 @@ def draw(scr, state, sel, prompt=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
-	rs = rows(sections)
+	rs = rows(sections, state.window, state.subs)
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
@@ -265,6 +278,7 @@ def draw(scr, state, sel, prompt=None):
 	for label, n, attr in (
 		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),
 		("model: " + state.model, "", C(6)),
+		("summaries: " + state.subs, "", C(6)),
 		("approved", sum(v.startswith("✓") for v in vals), C(4)),
 		("changes", sum(v.startswith("✗") for v in vals), C(3)),
 		("commented", sum(v.startswith("~") for v in vals), C(1)),
@@ -288,6 +302,13 @@ def draw(scr, state, sel, prompt=None):
 			scr.addnstr(y, 3, payload, w - 4, C(3))
 		elif kind == "empty":
 			scr.addnstr(y, 3, "none", w - 4, C(1))
+		elif kind == "sub":
+			x = 11 + ref_w
+			t = " ".join(payload.split())
+			room = min(70, w - 1 - x - 2)  # ponytail: hard cap so a wordy model can't clog the list
+			if room > 4:
+				scr.addnstr(y, x, "↳ ", 2, C(5))
+				scr.addnstr(y, x + 2, t if len(t) <= room else t[:room - 1] + "…", room, C(1) | curses.A_ITALIC)
 		elif kind == "pr":
 			p = payload
 			is_cur = i == cur
@@ -318,7 +339,7 @@ def draw(scr, state, sel, prompt=None):
 				put("  ")
 				put(st, st_attr | curses.A_BOLD)
 	# footer
-	foot = prompt or " j/k move   o open   ⏎ review (review-requested) / details (reviewed)   a auto   m model   r refresh   q quit"
+	foot = prompt or " j/k move  o open  ⏎ review / details  a auto  m model  t window  s summaries  r refresh  q quit"
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
 	scr.refresh()
@@ -359,6 +380,10 @@ def main(scr, interval, auto, model):
 			state.wake.set()
 		elif k == ord("a"):
 			state.set_auto(not state.auto)
+		elif k == ord("s"):
+			state.subs = SUBS[(SUBS.index(state.subs) + 1) % len(SUBS)]
+		elif k == ord("t"):
+			state.window = WINDOWS[(WINDOWS.index(state.window) + 1) % len(WINDOWS)]
 		elif k == ord("m"):
 			state.model = MODELS[(MODELS.index(state.model) + 1) % len(MODELS)] if state.model in MODELS else MODELS[0]
 		elif k == ord("o") and current:

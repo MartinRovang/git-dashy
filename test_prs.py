@@ -257,6 +257,7 @@ class FakeScr:
 def screen(monkeypatch):
 	monkeypatch.setattr(prs, "C", lambda n: 0)
 	monkeypatch.setattr(prs.curses, "A_REVERSE", 1 << 18, raising=False)
+	monkeypatch.setattr(prs.curses, "A_ITALIC", 1 << 23, raising=False)
 	return FakeScr()
 
 
@@ -311,6 +312,16 @@ def test_draw_reviewed_rows_use_logged_status(screen, monkeypatch):
 	assert "~ commented" in screen.text()
 
 
+def test_draw_summary_under_reviewed_open_pr(screen, monkeypatch):
+	monkeypatch.setattr(prs.subprocess, "run", lambda cmd, **kw: claude_out(verdict="approve", summary="Adds a retry loop " * 20, body="b"))
+	prs.review(dict(PR), "opus")
+	st = prs.State(60)
+	st.sections = [("REVIEW REQUESTED", [dict(PR)], None), ("REVIEWED", prs.reviewed(), None)]
+	prs.draw(screen, st, 0)
+	lines = [l for l in screen.text().splitlines() if "↳" in l]
+	assert len(lines) == 2 and all(l.endswith("…") and len(l.split("↳ ")[1]) <= 70 for l in lines)
+
+
 # ---- demo ----
 
 def test_demo_is_self_contained(monkeypatch, tmp_path):
@@ -331,3 +342,27 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	st.sections = prs.fetch()
 	prs.C = lambda n: 0
 	prs.draw(FakeScr(), st, 0)  # renders without raising
+
+
+def test_rows_reviewed_window_filters_but_keeps_summaries():
+	from datetime import datetime, timezone, timedelta
+	now = datetime.now(timezone.utc)
+	def ent(url, hours):
+		e = {"at": (now - timedelta(hours=hours)).isoformat(), "model": "opus", "verdict": "approve",
+		     "summary": "sum " + url, "body": "", "pr": dict(PR, url=url)}
+		return {**e["pr"], "review": e, "status": "✓ approved", "updatedAt": e["at"]}
+	secs = [("REVIEW REQUESTED", [dict(PR, url="old")], None), ("REVIEWED", [ent("new", 0.5), ent("old", 5)], None)]
+	rs = prs.rows(secs, window=4)
+	assert rs[0][1] == "REVIEW REQUESTED (1)" and rs[2] == ("sub", "sum old")  # summary survives the window
+	assert ("head", "REVIEWED · last 4h (1)") in rs and [p["url"] for k, p in rs if k == "pr"] == ["old", "new"]
+	assert ("head", "REVIEWED (2)") in prs.rows(secs, window=None)
+	assert ("head", "REVIEWED · last 1h (0)") not in prs.rows(secs, window=1) and ("head", "REVIEWED · last 1h (1)") in prs.rows(secs, window=1)
+
+
+def test_rows_subs_modes():
+	from datetime import datetime, timezone
+	e = {"at": datetime.now(timezone.utc).isoformat(), "model": "opus", "verdict": "approve", "summary": "s", "body": "", "pr": dict(PR)}
+	rv = {**e["pr"], "review": e, "status": "✓ approved", "updatedAt": e["at"]}
+	secs = [("REVIEW REQUESTED", [dict(PR)], None), ("REVIEWED", [rv], None)]
+	count = lambda mode: [k for k, _ in prs.rows(secs, subs=mode)].count("sub")
+	assert count("all") == 2 and count("open") == 1 and count("off") == 0
