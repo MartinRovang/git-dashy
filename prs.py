@@ -76,11 +76,33 @@ BANNER = [
 	"╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝╚═╝  ╚═══╝",
 ]
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
+LOGO = [  # ponytail: background dots blanked so the bat reads on any terminal theme
+	"        *",
+	"       *@                  *-",
+	"      -@@=                @@",
+	"      @@@=              =@@@",
+	"     #@@@*             *@@@*",
+	"    =@@@@@@@@@@@@@@@@@@@@@@=",
+	"    #@@@@@@@@@@@@@@@@@@@@@@-",
+	"    @@@@@@@@@@@@@@@@@@@@@@@",
+	"   *@@@@@@@@@@@@@@@@@@@@@@@",
+	"   %@@@@@@@@@@@@@@@@@@@@@@@",
+	"   @@@#*@@@@@@@@=-=%@@@@@@@-",
+	"   @%    -@@@@+    -@@@@@@@+",
+	"   @@@@@@@@@@@@@@@@@@@@@@@@@",
+	"  =@@@@@#     -%@@@*  #@@@@@-",
+	"  +@@     -+    +@     *@@@@*",
+	"  -@@-   @@@@@@=@      @@@@@@-",
+	"   @@@=     -==-*    -@@@@@@@@",
+	"    @@@@%=        *@@@@@@@@@@@@",
+	"     =@@@@@@@@@@@@@@@@@@@@@@@@@@@-",
+	"          #@@@@@@@@###*+=-  #%%%@@",
+]
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 HERE = os.path.dirname(os.path.realpath(__file__))  # realpath: installed as a symlink on PATH
 
 
@@ -372,12 +394,16 @@ def draw(scr, state, sel, prompt=None):
 			if 2 <= y < h - 1:
 				scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
 		art = w >= len(BANNER[0]) + 2 and h >= 16
-		y0 = h // 2 - (5 if art else 0)
+		logo = art and h >= 9 + len(BANNER) + len(LOGO)
+		block = 3 + len(BANNER) + (1 + len(LOGO) if logo else 0)
+		y0 = h // 2 - (block // 2 if art else 0)
 		mid(y0, f"{spin}  fetching pull requests…", C(5) | curses.A_BOLD)
 		if art:
 			mid(y0 + 2, "C R E A T E D   B Y", C(1))
 			for i, line in enumerate(BANNER):
 				mid(y0 + 3 + i, line, C(6) | curses.A_BOLD)
+			for i, line in enumerate(LOGO if logo else []):
+				mid(y0 + 4 + len(BANNER) + i, line, C(5) | curses.A_BOLD)
 		else:
 			mid(y0 + 2, "created by MARTIN", C(6) | curses.A_BOLD)
 

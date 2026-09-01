@@ -1,4 +1,10 @@
-# github-dashy
+<p align="center">
+  <img src="logo.png" alt="PR Helper — smarter reviews, better code" width="620">
+</p>
+
+<h1 align="center">github-dashy</h1>
+
+<p align="center">Smarter reviews. Better code. — a terminal PR dashboard with a one-key Claude review.</p>
 
 A terminal dashboard for the PRs you actually care about — yours, the ones waiting on your
 review, the ones assigned to you — with a one-key Claude review that posts the verdict back to
@@ -44,7 +50,7 @@ prs                       # 300s refresh
 prs --interval 60
 prs --auto                # review every review-requested PR that shows up from now on
 prs --model sonnet
-prs --version             # 1.1.0
+prs --version             # 1.2.0
 prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 ```
 
