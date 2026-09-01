@@ -7,7 +7,7 @@ REVIEWED section, Enter there opens summary + review in less), a toggle auto mod
 review-requested PR that appears after you turn it on), t cycle the REVIEWED window (1h / 4h / 6h / all, default 4h),
 s cycle summary lines (all / open PRs only / off), u pull the update git says is waiting and restart,
 r refresh, q quit.
-Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo]
+Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo] [--version]
 --demo: canned PRs and a fake reviewer, nothing touches gh, claude or your real log.
 Default model: opus, or PRS_MODEL env var. Key m cycles opus / sonnet / fable at runtime.
 Usage: prs.py [--interval SECONDS]  (default 300)
@@ -15,6 +15,7 @@ Usage: prs.py [--interval SECONDS]  (default 300)
 import curses
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -79,18 +80,26 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
+VERSION = "1.0.0"
 HERE = os.path.dirname(os.path.realpath(__file__))  # realpath: installed as a symlink on PATH
 
 
+def version_of(text):
+	"""Pull VERSION out of a copy of this script. ponytail: one regex beats importing the remote file."""
+	m = re.search(r'^VERSION = "([^"]+)"', text, re.M)
+	return m.group(1) if m else ""
+
+
 def update_available():
-	"""Commits this checkout is behind its upstream branch. ponytail: git is the package manager, no version file."""
+	"""(commits behind upstream, upstream version) — (0, "") when git can't tell us. ponytail: git is the package manager."""
 	try:
 		def g(*a):
 			return subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True, timeout=60).stdout.strip()
 		g("fetch", "-q")
-		return int(g("rev-list", "--count", "HEAD..@{u}"))
+		behind = int(g("rev-list", "--count", "HEAD..@{u}"))
+		return (behind, version_of(g("show", "@{u}:prs.py")) if behind else "")
 	except Exception:
-		return 0  # not a clone, no upstream, offline — nothing to offer
+		return (0, "")  # not a clone, no upstream, offline — nothing to offer
 
 
 def apply_update():
@@ -219,7 +228,7 @@ def demo():
 		v = next(verdicts)
 		return log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
 	globals()["fetch"], globals()["review"] = fake_fetch, fake_review
-	globals()["update_available"] = lambda: 0
+	globals()["update_available"] = lambda: (0, "")
 
 
 class State:
@@ -229,7 +238,7 @@ class State:
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs = 4, "all"
-		self.update = 0  # commits behind upstream, refreshed with each fetch
+		self.update, self.update_version = 0, ""  # commits behind upstream + its VERSION, refreshed with each fetch
 
 	def set_auto(self, on):
 		with self.lock:
@@ -255,11 +264,12 @@ class State:
 			t0 = time.time()
 			data = fetch()
 			stale = mark_rereviews(data)
-			behind = update_available()
+			behind, upver = update_available()
 			if self.fetched_at is None:
 				time.sleep(max(0, SPLASH_MIN - (time.time() - t0)))  # ponytail: let the splash breathe on the first load
 			with self.lock:
-				self.sections, self.fetched_at, self.update = data, time.time(), behind
+				self.sections, self.fetched_at = data, time.time()
+				self.update, self.update_version = behind, upver
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
 					if self.reviews.get(u) != "reviewing...":
 						self.reviews.pop(u, None)
@@ -330,7 +340,7 @@ def draw(scr, state, sel, prompt=None):
 	if state.auto:
 		scr.addnstr(0, max(0, w - 8), " AUTO ", 7, C(5) | curses.A_REVERSE | curses.A_BOLD)
 	if state.update:
-		badge = f" ↑ update ({state.update}) u "
+		badge = f" ↑ {state.update_version or state.update} · u "
 		scr.addnstr(0, max(0, w - 9 - len(badge)), badge, len(badge), C(4) | curses.A_REVERSE | curses.A_BOLD)
 
 	# stats strip
@@ -340,6 +350,7 @@ def draw(scr, state, sel, prompt=None):
 	x = 1
 	for label, n, attr in (
 		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),
+		("v" + VERSION, "", C(1)),
 		("model: " + state.model, "", C(6)),
 		("summaries: " + state.subs, "", C(6)),
 		("approved", sum(v.startswith("✓") for v in vals), C(4)),
@@ -467,7 +478,8 @@ def main(scr, interval, auto, model):
 		elif k == ord("o") and current:
 			subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		elif k == ord("u") and state.update:
-			draw(scr, state, sel, prompt=f" pull {state.update} new commit(s) and restart? [y/n]")
+			target = f"v{state.update_version}" if state.update_version else f"{state.update} new commit(s)"
+			draw(scr, state, sel, prompt=f" update to {target} and restart? [y/n]")
 			scr.timeout(-1)
 			yes = scr.getch() == ord("y")
 			scr.timeout(500)
@@ -497,6 +509,8 @@ def main(scr, interval, auto, model):
 if __name__ == "__main__":
 	interval = int(sys.argv[sys.argv.index("--interval") + 1]) if "--interval" in sys.argv else 300
 	model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else DEFAULT_MODEL
+	if "--version" in sys.argv:
+		sys.exit(print(f"prs {VERSION}"))
 	if "--demo" in sys.argv:
 		demo()
 	curses.wrapper(main, interval, "--auto" in sys.argv, model)

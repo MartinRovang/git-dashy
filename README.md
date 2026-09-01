@@ -44,6 +44,7 @@ prs                       # 300s refresh
 prs --interval 60
 prs --auto                # review every review-requested PR that shows up from now on
 prs --model sonnet
+prs --version             # 1.0.0
 prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 ```
 
@@ -73,11 +74,15 @@ is flagged `↻ re-review · was <verdict>` and can be reviewed again.
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
 *after* you turn it on — what's already on screen is the baseline and is left alone.
 
-## Self-update
+## Versioning & self-update
 
-Each refresh also runs `git fetch` in the checkout. If `origin` is ahead, the header shows
-`↑ update (n) u`; pressing `u` runs `git pull --ff-only` and re-execs the script with the same
-arguments. Non-git installs, no upstream, or no network: the badge just never appears.
+The version lives in one place — `VERSION` in `prs.py` — and shows in the stats strip and via
+`prs --version`. Releases are tagged `vX.Y.Z`.
+
+Each refresh also runs `git fetch` in the checkout. If `origin` is ahead, the header shows the
+version waiting for you (`↑ 1.1.0 · u`); pressing `u` confirms, runs `git pull --ff-only`, and
+re-execs the script with the same arguments. Non-git installs, no upstream, or no network: the
+badge just never appears, and `install.sh` re-run does the same job.
 
 ## Environment
 
