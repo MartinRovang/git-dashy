@@ -5,7 +5,8 @@ Keys: j/k or arrows move, o open in browser, Enter on a REVIEW REQUESTED row = C
 posts the verdict (approve / request changes / comment) and logs it to ~/.prs_reviewed.jsonl (shown in the
 REVIEWED section, Enter there opens summary + review in less), a toggle auto mode (Claude reviews every
 review-requested PR that appears after you turn it on), r refresh, q quit.
-Usage: prs.py [--interval SECONDS] [--auto] [--model NAME]
+Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo]
+--demo: canned PRs and a fake reviewer, nothing touches gh, claude or your real log.
 Default model: opus, or PRS_MODEL env var. Key m cycles opus / sonnet / fable at runtime.
 Usage: prs.py [--interval SECONDS]  (default 300)
 """
@@ -16,7 +17,8 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from itertools import cycle
 
 FIELDS = "number,title,repository,url,updatedAt,isDraft,author"
 SECTIONS = [
@@ -77,7 +79,7 @@ def reviewed():
 	out = []
 	for line in reversed(lines):
 		e = json.loads(line)
-		out.append(dict({"title": "?", "isDraft": False}, **e["pr"], review=e, status=STATUS[e["verdict"]], updatedAt=e["at"]))
+		out.append({"title": "?", "isDraft": False, **e["pr"], "review": e, "status": STATUS[e["verdict"]], "updatedAt": e["at"]})
 	return out
 
 
@@ -86,6 +88,14 @@ def detail(e):
 	return (f"{p['repository']['nameWithOwner']}#{p['number']}  {p['title']}\n{p['url']}\n"
 	        f"reviewed {e['at']} by {e['model']}: {STATUS[e['verdict']]}\n\n"
 	        f"## PR summary\n{e['summary']}\n\n## Review\n{e['body']}\n")
+
+
+def log_review(pr, model, verdict, at=None):
+	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
+	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}
+	with open(LOG, "a") as f:
+		f.write(json.dumps(entry) + "\n")
+	return STATUS[verdict["verdict"]]
 
 
 def review(pr, model):
@@ -102,13 +112,54 @@ def review(pr, model):
 		flag = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}[verdict["verdict"]]
 		subprocess.run(["gh", "pr", "review", str(n), "--repo", repo, flag, "--body", verdict["body"]],
 		               capture_output=True, text=True, check=True, timeout=60)
-		entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
-		         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}
-		with open(LOG, "a") as f:
-			f.write(json.dumps(entry) + "\n")
-		return STATUS[verdict["verdict"]]
+		return log_review(pr, model, verdict)
 	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]
+
+
+def demo():
+	"""ponytail: swap fetch/review for canned data so the UI can be eyeballed without gh or claude."""
+	global LOG
+	LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
+	now = datetime.now(timezone.utc)
+	def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False):
+		return {"number": n, "title": title, "url": f"https://github.com/{repo}/pull/{n}", "isDraft": draft,
+		        "repository": {"nameWithOwner": repo, "name": repo.split("/")[1]}, "author": {"login": author},
+		        "updatedAt": (now - timedelta(hours=hours)).isoformat()}
+	mine = [pr(101, "Add retry to webhook client", hours=2), pr(98, "WIP: migrate to pydantic v2", hours=30, draft=True)]
+	rr = [pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1),
+	      pr(207, "Cache user lookups in session middleware", "acme/web", "carol", 5),
+	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48)]
+	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0)  # appears on 3rd refresh, exercises auto
+	assigned = [pr(300, "Flaky integration test in CI", "acme/api", "erin", 72)]
+	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 96),
+	         {"verdict": "approve", "summary": "Splits the auth middleware into token parsing and policy checks; behaviour unchanged.",
+	          "body": "LGTM. Clean split, existing tests still cover both paths."}),
+	        (pr(44, "Add S3 lifecycle rules", "acme/infra", "grace", 120),
+	         {"verdict": "request_changes", "summary": "Adds lifecycle rules that expire logs after 30 days and transition backups to Glacier.",
+	          "body": "- `infra/s3.tf:31` rule also matches the `backups/` prefix, would delete backups after 30d\n- no plan output attached"})]
+	for p, v in seed:
+		log_review(p, "opus", v, at=p["updatedAt"])
+	fetches = [0]
+	def fake_fetch():
+		fetches[0] += 1
+		time.sleep(1)
+		rr_now = rr + ([late] if fetches[0] >= 3 else [])
+		return [("MINE", mine, None), ("REVIEW REQUESTED", rr_now, None), ("ASSIGNED", assigned, None),
+		        ("REVIEWED", reviewed(), None)]
+	verdicts = cycle([
+		{"verdict": "approve", "summary": "Fixes pagination when the page index is zero.", "body": "LGTM, regression test added."},
+		{"verdict": "request_changes", "summary": "Caches user lookups for the lifetime of a session.",
+		 "body": "- `web/session.py:88` cache never invalidated on logout\n- missing test for cache miss path"},
+		{"verdict": "comment", "summary": "Rotates the signing keys and points the KMS alias at the new key.",
+		 "body": "Unsure whether old tokens must stay valid during rollover; please confirm."},
+		None,
+	])
+	def fake_review(p, model):
+		time.sleep(5)
+		v = next(verdicts)
+		return log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
+	globals()["fetch"], globals()["review"] = fake_fetch, fake_review
 
 
 class State:
@@ -225,7 +276,7 @@ def draw(scr, state, sel, prompt=None):
 		if kind == "head":
 			name, count = payload.rsplit(" (", 1)
 			scr.addnstr(y, 1, name, w - 2, C(2) | curses.A_BOLD)
-			scr.addnstr(y, min(w - 2, 2 + len(name)), f" ({count}", w - 3 - len(name), C(1))
+			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", w - 2 - len(name), C(1))
 		elif kind == "err":
 			scr.addnstr(y, 3, payload, w - 4, C(3))
 		elif kind == "empty":
@@ -326,4 +377,6 @@ def main(scr, interval, auto, model):
 if __name__ == "__main__":
 	interval = int(sys.argv[sys.argv.index("--interval") + 1]) if "--interval" in sys.argv else 300
 	model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else DEFAULT_MODEL
+	if "--demo" in sys.argv:
+		demo()
 	curses.wrapper(main, interval, "--auto" in sys.argv, model)
