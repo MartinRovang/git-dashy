@@ -50,7 +50,7 @@ prs                       # 300s refresh
 prs --interval 60
 prs --auto                # review every review-requested PR that shows up from now on
 prs --model sonnet
-prs --version             # 1.2.0
+prs --version             # 1.2.1
 prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 ```
 
@@ -103,4 +103,4 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 python3 -m pytest -q
 ```
 
-Created by Martin.
+Created by Martin Soria Røvang.

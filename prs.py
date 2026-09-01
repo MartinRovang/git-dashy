@@ -67,15 +67,8 @@ Respond with ONLY a JSON object, no prose, no code fences:
  "body": "<markdown review, concise, list concrete findings with file:line>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 REVIEW_TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
-BANNER = [
-	"███╗   ███╗ █████╗ ██████╗ ████████╗██╗███╗   ██╗",
-	"████╗ ████║██╔══██╗██╔══██╗╚══██╔══╝██║████╗  ██║",
-	"██╔████╔██║███████║██████╔╝   ██║   ██║██╔██╗ ██║",
-	"██║╚██╔╝██║██╔══██║██╔══██╗   ██║   ██║██║╚██╗██║",
-	"██║ ╚═╝ ██║██║  ██║██║  ██║   ██║   ██║██║ ╚████║",
-	"╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝╚═╝  ╚═══╝",
-]
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
+NAME = "M a r t i n   S o r i a   R ø v a n g"
 LOGO = [  # ponytail: background dots blanked so the bat reads on any terminal theme
 	"        *",
 	"       *@                  *-",
@@ -102,7 +95,7 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 HERE = os.path.dirname(os.path.realpath(__file__))  # realpath: installed as a symlink on PATH
 
 
@@ -393,19 +386,14 @@ def draw(scr, state, sel, prompt=None):
 		def mid(y, t, attr):  # ponytail: centred one-liner, clipped by addnstr
 			if 2 <= y < h - 1:
 				scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
-		art = w >= len(BANNER[0]) + 2 and h >= 16
-		logo = art and h >= 9 + len(BANNER) + len(LOGO)
-		block = 3 + len(BANNER) + (1 + len(LOGO) if logo else 0)
-		y0 = h // 2 - (block // 2 if art else 0)
+		logo = w >= max(map(len, LOGO)) + 2 and h >= 8 + len(LOGO)
+		block = 4 + (len(LOGO) + 1 if logo else 0)
+		y0 = h // 2 - block // 2
 		mid(y0, f"{spin}  fetching pull requests…", C(5) | curses.A_BOLD)
-		if art:
-			mid(y0 + 2, "C R E A T E D   B Y", C(1))
-			for i, line in enumerate(BANNER):
-				mid(y0 + 3 + i, line, C(6) | curses.A_BOLD)
-			for i, line in enumerate(LOGO if logo else []):
-				mid(y0 + 4 + len(BANNER) + i, line, C(5) | curses.A_BOLD)
-		else:
-			mid(y0 + 2, "created by MARTIN", C(6) | curses.A_BOLD)
+		mid(y0 + 2, "created by", C(1))
+		mid(y0 + 3, NAME, C(6) | curses.A_BOLD)
+		for i, line in enumerate(LOGO if logo else []):
+			mid(y0 + 5 + i, line, C(5) | curses.A_BOLD)
 
 	for y, (kind, payload) in enumerate(rs[top:top + h - 3], start=2):
 		i = top + y - 2
