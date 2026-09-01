@@ -1,0 +1,81 @@
+# github-dashy
+
+A terminal dashboard for the PRs you actually care about — yours, the ones waiting on your
+review, the ones assigned to you — with a one-key Claude review that posts the verdict back to
+GitHub.
+
+```
+ PRs 7    updated 12s ago                                                    AUTO
+ 1 agents running   model: opus   summaries: all   2 approved      next refresh 248s
+
+ MINE (3)
+   ▸ dashy#41    Add spinner to startup            martin      2h
+     ↳ Shows a braille spinner and splash while the first fetch runs.
+ REVIEW REQUESTED (2)
+     infra#44    Add S3 lifecycle rules            grace       5h   reviewing...
+ REVIEWED (2)
+     api#39      Fix token refresh race            sam         1h   ✓ approved
+```
+
+## Requirements
+
+- Python 3.9+ (stdlib only — `curses`, no pip install)
+- [`gh`](https://cli.github.com) authenticated (`gh auth login`)
+- [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
+
+## Run
+
+```sh
+./prs.py                  # 300s refresh
+./prs.py --interval 60
+./prs.py --auto           # review every review-requested PR that shows up from now on
+./prs.py --model sonnet
+./prs.py --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
+```
+
+## Keys
+
+| key | what |
+|-----|------|
+| `j` / `k`, `↑` / `↓` | move |
+| `o` | open the PR in your browser |
+| `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
+| `a` | toggle auto mode |
+| `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
+| `s` | cycle summary lines: all / open PRs only / off |
+| `m` | cycle model: opus / sonnet / fable |
+| `u` | shown when the checkout is behind `origin` — pulls and restarts |
+| `r` | refresh now |
+| `q` | quit |
+
+## The review
+
+`Enter` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
+result with `gh pr review` as an **approve**, **request changes**, or **comment**. Reviews are
+appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in the REVIEWED section,
+where `Enter` opens the summary and full review. A PR that gets a new review request after a verdict
+is flagged `↻ re-review · was <verdict>` and can be reviewed again.
+
+Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
+*after* you turn it on — what's already on screen is the baseline and is left alone.
+
+## Self-update
+
+Each refresh also runs `git fetch` in the checkout. If `origin` is ahead, the header shows
+`↑ update (n) u`; pressing `u` runs `git pull --ff-only` and re-execs the script with the same
+arguments. Non-git installs, no upstream, or no network: the badge just never appears.
+
+## Environment
+
+| var | default | what |
+|-----|---------|------|
+| `PRS_MODEL` | `opus` | model used for reviews |
+| `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
+
+## Tests
+
+```sh
+python3 -m pytest -q
+```
+
+Created by Martin.

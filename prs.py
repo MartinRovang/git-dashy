@@ -5,7 +5,8 @@ Keys: j/k or arrows move, o open in browser, Enter on a REVIEW REQUESTED row = C
 posts the verdict (approve / request changes / comment) and logs it to ~/.prs_reviewed.jsonl (shown in the
 REVIEWED section, Enter there opens summary + review in less), a toggle auto mode (Claude reviews every
 review-requested PR that appears after you turn it on), t cycle the REVIEWED window (1h / 4h / 6h / all, default 4h),
-s cycle summary lines (all / open PRs only / off), r refresh, q quit.
+s cycle summary lines (all / open PRs only / off), u pull the update git says is waiting and restart,
+r refresh, q quit.
 Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo]
 --demo: canned PRs and a fake reviewer, nothing touches gh, claude or your real log.
 Default model: opus, or PRS_MODEL env var. Key m cycles opus / sonnet / fable at runtime.
@@ -65,9 +66,43 @@ Respond with ONLY a JSON object, no prose, no code fences:
  "body": "<markdown review, concise, list concrete findings with file:line>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 REVIEW_TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+BANNER = [
+	"███╗   ███╗ █████╗ ██████╗ ████████╗██╗███╗   ██╗",
+	"████╗ ████║██╔══██╗██╔══██╗╚══██╔══╝██║████╗  ██║",
+	"██╔████╔██║███████║██████╔╝   ██║   ██║██╔██╗ ██║",
+	"██║╚██╔╝██║██╔══██║██╔══██╗   ██║   ██║██║╚██╗██║",
+	"██║ ╚═╝ ██║██║  ██║██║  ██║   ██║   ██║██║ ╚████║",
+	"╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝╚═╝  ╚═══╝",
+]
+SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def update_available():
+	"""Commits this checkout is behind its upstream branch. ponytail: git is the package manager, no version file."""
+	try:
+		def g(*a):
+			return subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True, timeout=60).stdout.strip()
+		g("fetch", "-q")
+		return int(g("rev-list", "--count", "HEAD..@{u}"))
+	except Exception:
+		return 0  # not a clone, no upstream, offline — nothing to offer
+
+
+def apply_update():
+	"""git pull, then re-exec so the new code is what keeps running. Returns an error string, or never returns."""
+	try:
+		subprocess.run(["git", "-C", HERE, "pull", "--ff-only", "-q"],
+		               capture_output=True, text=True, check=True, timeout=120)
+	except subprocess.CalledProcessError as e:
+		return (e.stderr or "pull failed").strip().splitlines()[-1][:60]
+	except Exception as e:
+		return str(e)[:60]
+	os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
 SUBS = ["all", "open", "off"]  # which rows get a summary line under them
 WINDOWS = [1, 4, 6, None]  # hours of REVIEWED history to show, None = all
 STATUS = {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}
@@ -184,6 +219,7 @@ def demo():
 		v = next(verdicts)
 		return log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
 	globals()["fetch"], globals()["review"] = fake_fetch, fake_review
+	globals()["update_available"] = lambda: 0
 
 
 class State:
@@ -193,6 +229,7 @@ class State:
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs = 4, "all"
+		self.update = 0  # commits behind upstream, refreshed with each fetch
 
 	def set_auto(self, on):
 		with self.lock:
@@ -215,10 +252,14 @@ class State:
 
 	def loop(self):
 		while True:
+			t0 = time.time()
 			data = fetch()
 			stale = mark_rereviews(data)
+			behind = update_available()
+			if self.fetched_at is None:
+				time.sleep(max(0, SPLASH_MIN - (time.time() - t0)))  # ponytail: let the splash breathe on the first load
 			with self.lock:
-				self.sections, self.fetched_at = data, time.time()
+				self.sections, self.fetched_at, self.update = data, time.time(), behind
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
 					if self.reviews.get(u) != "reviewing...":
 						self.reviews.pop(u, None)
@@ -280,13 +321,17 @@ def draw(scr, state, sel, prompt=None):
 
 	# header bar
 	total = sum(len(p) for _, p, _ in sections if p)
-	status = "fetching…" if fetched_at is None else f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
+	spin = SPINNER[int(time.time() * 8) % len(SPINNER)]  # ponytail: frame from the clock, no animation state
+	status = f"{spin} fetching…" if fetched_at is None else f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
 	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(0, 1, f" PRs {total} ", w - 2, C(8) | curses.A_BOLD)
 	x0 = min(w - 2, 10 + len(str(total)))
 	scr.addnstr(0, x0, f"  {status}", max(1, w - 2 - x0), C(7))
 	if state.auto:
 		scr.addnstr(0, max(0, w - 8), " AUTO ", 7, C(5) | curses.A_REVERSE | curses.A_BOLD)
+	if state.update:
+		badge = f" ↑ update ({state.update}) u "
+		scr.addnstr(0, max(0, w - 9 - len(badge)), badge, len(badge), C(4) | curses.A_REVERSE | curses.A_BOLD)
 
 	# stats strip
 	vals = list(reviews.values())
@@ -309,6 +354,20 @@ def draw(scr, state, sel, prompt=None):
 		x += len(txt) + 3
 	if nxt and x + len(nxt) < w - 1:
 		scr.addnstr(1, w - 1 - len(nxt), nxt, len(nxt), C(1))
+
+	if not rs and fetched_at is None:
+		def mid(y, t, attr):  # ponytail: centred one-liner, clipped by addnstr
+			if 2 <= y < h - 1:
+				scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
+		art = w >= len(BANNER[0]) + 2 and h >= 16
+		y0 = h // 2 - (5 if art else 0)
+		mid(y0, f"{spin}  fetching pull requests…", C(5) | curses.A_BOLD)
+		if art:
+			mid(y0 + 2, "C R E A T E D   B Y", C(1))
+			for i, line in enumerate(BANNER):
+				mid(y0 + 3 + i, line, C(6) | curses.A_BOLD)
+		else:
+			mid(y0 + 2, "created by MARTIN", C(6) | curses.A_BOLD)
 
 	for y, (kind, payload) in enumerate(rs[top:top + h - 3], start=2):
 		i = top + y - 2
@@ -357,7 +416,7 @@ def draw(scr, state, sel, prompt=None):
 				put("  ")
 				put(st, st_attr | curses.A_BOLD)
 	# footer
-	foot = prompt or " j/k move  o open  ⏎ review / details  a auto  m model  t window  s summaries  r refresh  q quit"
+	foot = prompt or " j/k move  o open  ⏎ review / details  a auto  m model  t window  s summaries  u update  r refresh  q quit"
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
 	scr.refresh()
@@ -386,6 +445,7 @@ def main(scr, interval, auto, model):
 	threading.Thread(target=state.loop, daemon=True).start()
 	sel, current = 0, None
 	while True:
+		scr.timeout(80 if state.fetched_at is None else 500)  # spin smoothly until the first fetch lands
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		k = scr.getch()
 		if k in (ord("q"), 27):
@@ -406,6 +466,15 @@ def main(scr, interval, auto, model):
 			state.model = MODELS[(MODELS.index(state.model) + 1) % len(MODELS)] if state.model in MODELS else MODELS[0]
 		elif k == ord("o") and current:
 			subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+		elif k == ord("u") and state.update:
+			draw(scr, state, sel, prompt=f" pull {state.update} new commit(s) and restart? [y/n]")
+			scr.timeout(-1)
+			yes = scr.getch() == ord("y")
+			scr.timeout(500)
+			if yes:
+				err = apply_update()  # re-execs on success
+				draw(scr, state, sel, prompt=f" update failed: {err} ")
+				scr.timeout(-1); scr.getch(); scr.timeout(500)
 		elif k in (10, 13, curses.KEY_ENTER) and current:
 			if current["section"] == "REVIEWED":
 				curses.endwin()

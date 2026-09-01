@@ -10,6 +10,11 @@ PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "
 @pytest.fixture(autouse=True)
 def isolated_log(monkeypatch, tmp_path):
 	monkeypatch.setattr(prs, "LOG", str(tmp_path / "log.jsonl"))
+	monkeypatch.setattr(prs, "SPLASH_MIN", 0)
+	monkeypatch.setattr(prs, "update_available", lambda: 0)  # no git chatter in tests
+
+
+REAL_UPDATE_AVAILABLE = prs.update_available  # the fixture stubs the module attr
 
 
 class Result:
@@ -386,3 +391,27 @@ def test_rows_subs_modes():
 	secs = [("REVIEW REQUESTED", [dict(PR)], None), ("REVIEWED", [rv], None)]
 	count = lambda mode: [k for k, _ in prs.rows(secs, subs=mode)].count("sub")
 	assert count("all") == 2 and count("open") == 1 and count("off") == 0
+
+
+def test_update_available_counts_commits_behind(monkeypatch):
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return Result("3" if "rev-list" in cmd else "")
+	monkeypatch.setattr(prs.subprocess, "run", fake_run)
+	assert REAL_UPDATE_AVAILABLE() == 3
+	assert ["git", "-C", prs.HERE, "fetch", "-q"] == calls[0]
+
+
+def test_update_available_is_zero_when_git_fails(monkeypatch):
+	def boom(cmd, **kw):
+		raise prs.subprocess.CalledProcessError(1, cmd, stderr="no upstream")
+	monkeypatch.setattr(prs.subprocess, "run", boom)
+	assert REAL_UPDATE_AVAILABLE() == 0
+
+
+def test_loop_records_update_count(monkeypatch):
+	monkeypatch.setattr(prs, "update_available", lambda: 2)
+	st = prs.State(0)
+	one_loop(st, monkeypatch, [("MINE", [], None)])
+	assert st.update == 2
