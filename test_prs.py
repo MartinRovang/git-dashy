@@ -150,6 +150,7 @@ def test_reviewed_newest_first_and_detail(monkeypatch):
 	assert got[0]["status"] == "✓ approved" and got[0]["updatedAt"] == got[0]["review"]["at"]
 	d = prs.detail(got[0]["review"])
 	assert "a/b#7  T" in d and "adds x" in d and "lgtm" in d and "opus" in d
+	assert "q close" in d and "author   me" in d and "+00:00" not in d
 
 
 def test_reviewed_tolerates_sparse_entries():

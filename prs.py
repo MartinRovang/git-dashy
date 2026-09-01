@@ -84,10 +84,17 @@ def reviewed():
 
 
 def detail(e):
-	p = e["pr"]
-	return (f"{p['repository']['nameWithOwner']}#{p['number']}  {p['title']}\n{p['url']}\n"
-	        f"reviewed {e['at']} by {e['model']}: {STATUS[e['verdict']]}\n\n"
-	        f"## PR summary\n{e['summary']}\n\n## Review\n{e['body']}\n")
+	p, at = e["pr"], datetime.fromisoformat(e["at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+	ref = f"{p['repository']['nameWithOwner']}#{p['number']}"
+	bar = "─" * min(78, max(len(ref) + len(p["title"]) + 2, 40))
+	return (f"{bar}\n{ref}  {p['title']}\n{bar}\n"
+	        f"  author   {p.get('author', {}).get('login', '?')}\n  url      {p['url']}\n"
+	        f"  reviewed {at} by {e['model']}  →  {STATUS[e['verdict']]}\n\n"
+	        f"WHAT THE PR DOES\n\n{e['summary'] or '(no summary)'}\n\n"
+	        f"REVIEW\n\n{e['body']}\n\n{bar}\nq close   j/k or ↑/↓ scroll   o open in browser (from the list)\n")
+
+
+LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
 
 
 def log_review(pr, model, verdict, at=None):
@@ -359,7 +366,8 @@ def main(scr, interval, auto, model):
 		elif k in (10, 13, curses.KEY_ENTER) and current:
 			if current["section"] == "REVIEWED":
 				curses.endwin()
-				subprocess.run(["less", "-R"], input=detail(current["review"]), text=True)
+				subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
+				               input=detail(current["review"]), text=True)
 				scr.refresh()
 			elif current["section"] != "REVIEW REQUESTED":
 				subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
