@@ -11,7 +11,7 @@ PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "
 def isolated_log(monkeypatch, tmp_path):
 	monkeypatch.setattr(prs, "LOG", str(tmp_path / "log.jsonl"))
 	monkeypatch.setattr(prs, "SPLASH_MIN", 0)
-	monkeypatch.setattr(prs, "update_available", lambda: (0, ""))  # no git chatter in tests
+	monkeypatch.setattr(prs, "update_available", lambda: "")  # no git chatter in tests
 
 
 REAL_UPDATE_AVAILABLE = prs.update_available  # the fixture stubs the module attr
@@ -393,27 +393,30 @@ def test_rows_subs_modes():
 	assert count("all") == 2 and count("open") == 1 and count("off") == 0
 
 
-def test_update_available_counts_commits_behind(monkeypatch):
-	calls = []
-	def fake_run(cmd, **kw):
-		calls.append(cmd)
-		if "rev-list" in cmd:
-			return Result("3")
-		return Result('VERSION = "9.9.9"\n' if "show" in cmd else "")
-	monkeypatch.setattr(prs.subprocess, "run", fake_run)
-	assert REAL_UPDATE_AVAILABLE() == (3, "9.9.9")
-	assert ["git", "-C", prs.HERE, "fetch", "-q"] == calls[0]
+LS_REMOTE = ("abc\trefs/tags/v0.9.0\n" "def\trefs/tags/v1.10.0\n" "fed\trefs/tags/v1.2.0\n")
 
 
-def test_update_available_is_zero_when_git_fails(monkeypatch):
+def test_update_available_offers_newer_release(monkeypatch):
+	monkeypatch.setattr(prs.subprocess, "run", lambda cmd, **kw: Result(LS_REMOTE))
+	monkeypatch.setattr(prs, "VERSION", "1.2.0")
+	assert REAL_UPDATE_AVAILABLE() == "1.10.0"  # numeric compare, not lexical
+
+
+def test_update_available_silent_when_current(monkeypatch):
+	monkeypatch.setattr(prs.subprocess, "run", lambda cmd, **kw: Result(LS_REMOTE))
+	monkeypatch.setattr(prs, "VERSION", "1.10.0")
+	assert REAL_UPDATE_AVAILABLE() == ""
+
+
+def test_update_available_is_empty_when_git_fails(monkeypatch):
 	def boom(cmd, **kw):
-		raise prs.subprocess.CalledProcessError(1, cmd, stderr="no upstream")
+		raise prs.subprocess.CalledProcessError(1, cmd, stderr="no origin")
 	monkeypatch.setattr(prs.subprocess, "run", boom)
-	assert REAL_UPDATE_AVAILABLE() == (0, "")
+	assert REAL_UPDATE_AVAILABLE() == ""
 
 
-def test_loop_records_update_count(monkeypatch):
-	monkeypatch.setattr(prs, "update_available", lambda: (2, "1.2.3"))
+def test_loop_records_available_release(monkeypatch):
+	monkeypatch.setattr(prs, "update_available", lambda: "1.2.3")
 	st = prs.State(0)
 	one_loop(st, monkeypatch, [("MINE", [], None)])
-	assert (st.update, st.update_version) == (2, "1.2.3")
+	assert st.update == "1.2.3"

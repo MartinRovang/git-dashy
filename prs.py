@@ -5,7 +5,7 @@ Keys: j/k or arrows move, o open in browser, Enter on a REVIEW REQUESTED row = C
 posts the verdict (approve / request changes / comment) and logs it to ~/.prs_reviewed.jsonl (shown in the
 REVIEWED section, Enter there opens summary + review in less), a toggle auto mode (Claude reviews every
 review-requested PR that appears after you turn it on), t cycle the REVIEWED window (1h / 4h / 6h / all, default 4h),
-s cycle summary lines (all / open PRs only / off), u pull the update git says is waiting and restart,
+s cycle summary lines (all / open PRs only / off), u install the newest release and restart,
 r refresh, q quit.
 Usage: prs.py [--interval SECONDS] [--auto] [--model NAME] [--demo] [--version]
 --demo: canned PRs and a fake reviewer, nothing touches gh, claude or your real log.
@@ -80,33 +80,35 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HERE = os.path.dirname(os.path.realpath(__file__))  # realpath: installed as a symlink on PATH
 
 
-def version_of(text):
-	"""Pull VERSION out of a copy of this script. ponytail: one regex beats importing the remote file."""
-	m = re.search(r'^VERSION = "([^"]+)"', text, re.M)
-	return m.group(1) if m else ""
+def vkey(v):
+	return tuple(int(x) for x in v.split("."))  # ponytail: plain numeric tags, no pre-release parsing
+
+
+def latest_release():
+	"""Highest vX.Y.Z tag on origin, or "". ponytail: ls-remote, so no gh auth and no API rate limit."""
+	try:
+		out = subprocess.run(["git", "-C", HERE, "ls-remote", "--tags", "--refs", "origin"],
+		                     capture_output=True, text=True, check=True, timeout=60).stdout
+		return max(re.findall(r"refs/tags/v(\d+(?:\.\d+)*)$", out, re.M), key=vkey, default="")
+	except Exception:
+		return ""  # not a clone, no origin, offline
 
 
 def update_available():
-	"""(commits behind upstream, upstream version) — (0, "") when git can't tell us. ponytail: git is the package manager."""
-	try:
-		def g(*a):
-			return subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True, timeout=60).stdout.strip()
-		g("fetch", "-q")
-		behind = int(g("rev-list", "--count", "HEAD..@{u}"))
-		return (behind, version_of(g("show", "@{u}:prs.py")) if behind else "")
-	except Exception:
-		return (0, "")  # not a clone, no upstream, offline — nothing to offer
+	"""The released version newer than ours, or ""."""
+	tag = latest_release()
+	return tag if tag and vkey(tag) > vkey(VERSION) else ""
 
 
-def apply_update():
-	"""git pull, then re-exec so the new code is what keeps running. Returns an error string, or never returns."""
+def apply_update(version):
+	"""Check out the release tag, then re-exec so the new code keeps running. Returns an error string, or never returns."""
 	try:
-		subprocess.run(["git", "-C", HERE, "pull", "--ff-only", "-q"],
-		               capture_output=True, text=True, check=True, timeout=120)
+		for a in (["fetch", "--tags", "-q"], ["checkout", "-q", f"v{version}"]):
+			subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True, timeout=120)
 	except subprocess.CalledProcessError as e:
 		return (e.stderr or "pull failed").strip().splitlines()[-1][:60]
 	except Exception as e:
@@ -228,7 +230,7 @@ def demo():
 		v = next(verdicts)
 		return log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
 	globals()["fetch"], globals()["review"] = fake_fetch, fake_review
-	globals()["update_available"] = lambda: (0, "")
+	globals()["update_available"] = lambda: ""
 
 
 class State:
@@ -238,7 +240,7 @@ class State:
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs = 4, "all"
-		self.update, self.update_version = 0, ""  # commits behind upstream + its VERSION, refreshed with each fetch
+		self.update = ""  # newer released version, refreshed with each fetch
 
 	def set_auto(self, on):
 		with self.lock:
@@ -264,12 +266,11 @@ class State:
 			t0 = time.time()
 			data = fetch()
 			stale = mark_rereviews(data)
-			behind, upver = update_available()
+			newer = update_available()
 			if self.fetched_at is None:
 				time.sleep(max(0, SPLASH_MIN - (time.time() - t0)))  # ponytail: let the splash breathe on the first load
 			with self.lock:
-				self.sections, self.fetched_at = data, time.time()
-				self.update, self.update_version = behind, upver
+				self.sections, self.fetched_at, self.update = data, time.time(), newer
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
 					if self.reviews.get(u) != "reviewing...":
 						self.reviews.pop(u, None)
@@ -340,7 +341,7 @@ def draw(scr, state, sel, prompt=None):
 	if state.auto:
 		scr.addnstr(0, max(0, w - 8), " AUTO ", 7, C(5) | curses.A_REVERSE | curses.A_BOLD)
 	if state.update:
-		badge = f" ↑ {state.update_version or state.update} · u "
+		badge = f" ↑ v{state.update} · u "
 		scr.addnstr(0, max(0, w - 9 - len(badge)), badge, len(badge), C(4) | curses.A_REVERSE | curses.A_BOLD)
 
 	# stats strip
@@ -478,13 +479,12 @@ def main(scr, interval, auto, model):
 		elif k == ord("o") and current:
 			subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		elif k == ord("u") and state.update:
-			target = f"v{state.update_version}" if state.update_version else f"{state.update} new commit(s)"
-			draw(scr, state, sel, prompt=f" update to {target} and restart? [y/n]")
+			draw(scr, state, sel, prompt=f" update v{VERSION} → v{state.update} and restart? [y/n]")
 			scr.timeout(-1)
 			yes = scr.getch() == ord("y")
 			scr.timeout(500)
 			if yes:
-				err = apply_update()  # re-execs on success
+				err = apply_update(state.update)  # re-execs on success
 				draw(scr, state, sel, prompt=f" update failed: {err} ")
 				scr.timeout(-1); scr.getch(); scr.timeout(500)
 		elif k in (10, 13, curses.KEY_ENTER) and current:

@@ -29,8 +29,8 @@ GitHub.
 curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh
 ```
 
-Clones to `~/.github-dashy` and links it as `prs` in `~/.local/bin` (override with `DIR=` / `BIN=`).
-Re-running it updates in place. Or do it by hand:
+Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `prs` in
+`~/.local/bin` (override with `DIR=` / `BIN=`). Re-running it updates in place. Or do it by hand:
 
 ```sh
 git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
@@ -44,7 +44,7 @@ prs                       # 300s refresh
 prs --interval 60
 prs --auto                # review every review-requested PR that shows up from now on
 prs --model sonnet
-prs --version             # 1.0.0
+prs --version             # 1.1.0
 prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 ```
 
@@ -59,7 +59,7 @@ prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real l
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
 | `s` | cycle summary lines: all / open PRs only / off |
 | `m` | cycle model: opus / sonnet / fable |
-| `u` | shown when the checkout is behind `origin` — pulls and restarts |
+| `u` | shown when a newer release exists — installs it and restarts |
 | `r` | refresh now |
 | `q` | quit |
 
@@ -79,10 +79,10 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 The version lives in one place — `VERSION` in `prs.py` — and shows in the stats strip and via
 `prs --version`. Releases are tagged `vX.Y.Z`.
 
-Each refresh also runs `git fetch` in the checkout. If `origin` is ahead, the header shows the
-version waiting for you (`↑ 1.1.0 · u`); pressing `u` confirms, runs `git pull --ff-only`, and
-re-execs the script with the same arguments. Non-git installs, no upstream, or no network: the
-badge just never appears, and `install.sh` re-run does the same job.
+Each refresh also lists the release tags on `origin` (`git ls-remote`, so no `gh` auth and no API
+rate limit). If a tag is numerically newer than `VERSION`, the header shows `↑ v1.1.0 · u`; pressing
+`u` confirms, checks that tag out, and re-execs the script with the same arguments. You track
+releases, not `main`. Non-git installs, no origin, or no network: the badge just never appears.
 
 ## Environment
 
