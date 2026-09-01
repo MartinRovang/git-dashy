@@ -7,6 +7,17 @@ DIR=${DIR:-$HOME/.github-dashy}
 BIN=${BIN:-$HOME/.local/bin}
 NAME=${NAME:-gitdashy}
 
+# ponytail: colours only when stdout is a terminal, empty strings otherwise
+if [ -t 1 ]; then
+	B=$(printf '\033[1m'); DIM=$(printf '\033[2m'); R=$(printf '\033[0m')
+	PINK=$(printf '\033[38;5;213m'); CYAN=$(printf '\033[38;5;75m')
+	GREEN=$(printf '\033[38;5;78m'); YELLOW=$(printf '\033[38;5;221m')
+else
+	B= DIM= R= PINK= CYAN= GREEN= YELLOW=
+fi
+
+printf '\n  %s%sgithub-dashy%s %s— smarter reviews, better code%s\n\n' "$B" "$PINK" "$R" "$DIM" "$R"
+
 [ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
 git -C "$DIR" fetch --tags -q
 TAG=$(git -C "$DIR" tag -l 'v*' --sort=-v:refname | head -1)   # newest release, or main if untagged
@@ -16,21 +27,19 @@ ln -sf "$DIR/prs.py" "$BIN/$NAME"
 ln -sf "$DIR/prs.py" "$BIN/prs"   # ponytail: keep the old name working for existing installs
 chmod +x "$DIR/prs.py"
 
-cat <<BANNER
+row() { printf '    %s%-22s%s %s%s%s\n' "$CYAN" "$1" "$R" "$DIM" "$2" "$R"; }
+warn() { printf '\n    %s⚠%s  %s\n' "$YELLOW" "$R" "$1"; }
 
-  ✓ github-dashy ${TAG:-main} installed
+printf '  %s✓%s installed %s%s%s  %s→ %s%s\n\n' "$GREEN" "$R" "$B" "${TAG:-main}" "$R" "$DIM" "$DIR" "$R"
+printf '  Run it with %s%s%s%s in your terminal:\n\n' "$B" "$PINK" "$NAME" "$R"
+row "$NAME"          "your PRs, review-requested, assigned"
+row "$NAME --demo"   "try it with canned data (no gh, no claude)"
+row "$NAME --help"   "all flags and keys"
 
-    You can access it with  gitdashy  in your terminal.
-
-      gitdashy          your PRs, review-requested, assigned
-      gitdashy --demo   try it with canned data (no gh, no claude)
-      gitdashy --help   all flags and keys
-
-BANNER
 case ":$PATH:" in
 	*":$BIN:"*) ;;
-	*) echo "    ⚠  $BIN is not on your PATH — add this to your shell rc:"
-	   echo "         export PATH=\"$BIN:\$PATH\""
-	   echo "" ;;
+	*) warn "$BIN is not on your PATH — add to your shell rc:"
+	   printf '       %sexport PATH="%s:$PATH"%s\n' "$CYAN" "$BIN" "$R" ;;
 esac
-command -v gh >/dev/null || { echo "    ⚠  gh is required: https://cli.github.com"; echo ""; }
+command -v gh >/dev/null || warn "gh is required — https://cli.github.com"
+printf '\n'
