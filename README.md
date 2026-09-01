@@ -23,14 +23,28 @@ GitHub.
 - [`gh`](https://cli.github.com) authenticated (`gh auth login`)
 - [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh
+```
+
+Clones to `~/.github-dashy` and links it as `prs` in `~/.local/bin` (override with `DIR=` / `BIN=`).
+Re-running it updates in place. Or do it by hand:
+
+```sh
+git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
+ln -s ~/.github-dashy/prs.py ~/.local/bin/prs
+```
+
 ## Run
 
 ```sh
-./prs.py                  # 300s refresh
-./prs.py --interval 60
-./prs.py --auto           # review every review-requested PR that shows up from now on
-./prs.py --model sonnet
-./prs.py --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
+prs                       # 300s refresh
+prs --interval 60
+prs --auto                # review every review-requested PR that shows up from now on
+prs --model sonnet
+prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 ```
 
 ## Keys

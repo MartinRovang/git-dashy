@@ -79,7 +79,7 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))  # realpath: installed as a symlink on PATH
 
 
 def update_available():
@@ -102,7 +102,7 @@ def apply_update():
 		return (e.stderr or "pull failed").strip().splitlines()[-1][:60]
 	except Exception as e:
 		return str(e)[:60]
-	os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+	os.execv(sys.executable, [sys.executable, os.path.realpath(__file__), *sys.argv[1:]])
 SUBS = ["all", "open", "off"]  # which rows get a summary line under them
 WINDOWS = [1, 4, 6, None]  # hours of REVIEWED history to show, None = all
 STATUS = {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}
