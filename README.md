@@ -42,7 +42,7 @@ gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
-gitdashy --version        # 1.4.0
+gitdashy --version        # 1.5.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
 ```
