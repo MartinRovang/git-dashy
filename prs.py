@@ -2,7 +2,8 @@
 """Terminal dashboard of open PRs: mine, review-requested, assigned. Refreshes on a timer.
 
 Keys: j/k or arrows move, o open in browser, Enter on a REVIEW REQUESTED row = Claude reviews it and
-posts the verdict (approve / request changes / comment), a toggle auto mode (Claude reviews every
+posts the verdict (approve / request changes / comment) and logs it to ~/.prs_reviewed.jsonl (shown in the
+REVIEWED section, Enter there opens summary + review in less), a toggle auto mode (Claude reviews every
 review-requested PR that appears after you turn it on), r refresh, q quit.
 Usage: prs.py [--interval SECONDS] [--auto] [--model NAME]
 Default model: opus, or PRS_MODEL env var. Key m cycles opus / sonnet / fable at runtime.
@@ -42,6 +43,7 @@ def fetch():
 		seen.update(p["url"] for p in prs)
 		prs.sort(key=lambda p: p["updatedAt"], reverse=True)
 		out.append((name, prs, None))
+	out.append(("REVIEWED", reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
 	return out
 
 
@@ -56,11 +58,34 @@ def age(iso):
 REVIEW_PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
 `gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
 Respond with ONLY a JSON object, no prose, no code fences:
-{{"verdict": "approve" | "request_changes" | "comment", "body": "<markdown review, concise, list concrete findings with file:line>"}}
+{{"verdict": "approve" | "request_changes" | "comment", "summary": "<2-3 sentences: what the PR changes and why>",
+ "body": "<markdown review, concise, list concrete findings with file:line>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 REVIEW_TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 MODELS = ["opus", "sonnet", "fable"]  # ponytail: cycle list, pass any name via --model
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")  # override: PRS_MODEL=opus ./prs.py
+LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # ponytail: jsonl, one review per line
+STATUS = {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}
+
+
+def reviewed():
+	"""PR dicts from the log, newest first, each with a 'review' entry and a 'status' string."""
+	try:
+		lines = open(LOG).read().splitlines()
+	except FileNotFoundError:
+		return []
+	out = []
+	for line in reversed(lines):
+		e = json.loads(line)
+		out.append(dict(e["pr"], review=e, status=STATUS[e["verdict"]], updatedAt=e["at"]))
+	return out
+
+
+def detail(e):
+	p = e["pr"]
+	return (f"{p['repository']['nameWithOwner']}#{p['number']}  {p['title']}\n{p['url']}\n"
+	        f"reviewed {e['at']} by {e['model']}: {STATUS[e['verdict']]}\n\n"
+	        f"## PR summary\n{e['summary']}\n\n## Review\n{e['body']}\n")
 
 
 def review(pr, model):
@@ -77,7 +102,11 @@ def review(pr, model):
 		flag = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}[verdict["verdict"]]
 		subprocess.run(["gh", "pr", "review", str(n), "--repo", repo, flag, "--body", verdict["body"]],
 		               capture_output=True, text=True, check=True, timeout=60)
-		return {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}[verdict["verdict"]]
+		entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
+		         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}
+		with open(LOG, "a") as f:
+			f.write(json.dumps(entry) + "\n")
+		return STATUS[verdict["verdict"]]
 	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]
 
@@ -206,7 +235,7 @@ def draw(scr, state, sel, prompt=None):
 			is_cur = i == cur
 			base = curses.A_REVERSE if is_cur else 0  # ponytail: reverse video works on any theme
 			ref = refof(p)
-			st = reviews.get(p["url"], "")
+			st = p.get("status") or reviews.get(p["url"], "")
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
 			x = 1
 			def put(text, attr=0, pad=0):
@@ -231,7 +260,7 @@ def draw(scr, state, sel, prompt=None):
 				put("  ")
 				put(st, st_attr | curses.A_BOLD)
 	# footer
-	foot = prompt or " j/k move   o open   ⏎ claude review (on review-requested)   a auto   m model   r refresh   q quit"
+	foot = prompt or " j/k move   o open   ⏎ review (review-requested) / details (reviewed)   a auto   m model   r refresh   q quit"
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
 	scr.refresh()
@@ -277,7 +306,11 @@ def main(scr, interval, auto, model):
 		elif k == ord("o") and current:
 			subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		elif k in (10, 13, curses.KEY_ENTER) and current:
-			if current["section"] != "REVIEW REQUESTED":
+			if current["section"] == "REVIEWED":
+				curses.endwin()
+				subprocess.run(["less", "-R"], input=detail(current["review"]), text=True)
+				scr.refresh()
+			elif current["section"] != "REVIEW REQUESTED":
 				subprocess.Popen(["xdg-open", current["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 			elif current["url"] in state.reviews:
 				pass  # already reviewed or in flight

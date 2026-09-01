@@ -13,7 +13,7 @@ def test_fetch_dedups():
 	secs = prs.fetch()
 	urls = [p["url"] for _, ps, _ in secs for p in ps or []]
 	assert len(urls) == len(set(urls))
-	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED"]
+	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
 
 def test_review_parses_and_posts(monkeypatch):
 	calls = []
@@ -41,3 +41,18 @@ def test_auto_reviews_only_new(monkeypatch):
 	try: st.loop()
 	except SystemExit: pass
 	assert started == ["new"]
+
+def test_review_logs_and_reviewed_reads(monkeypatch, tmp_path):
+	monkeypatch.setattr(prs, "LOG", str(tmp_path / "log.jsonl"))
+	def fake_run(cmd, **kw):
+		class R: stdout = '{"result": "{\\"verdict\\": \\"approve\\", \\"summary\\": \\"adds x\\", \\"body\\": \\"lgtm\\"}"}'
+		return R()
+	monkeypatch.setattr(prs.subprocess, "run", fake_run)
+	pr = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
+	      "isDraft": False, "author": {"login": "me"}, "updatedAt": "2020-01-01T00:00:00Z"}
+	assert prs.review(pr, "opus") == "✓ approved"
+	got = prs.reviewed()
+	assert len(got) == 1 and got[0]["status"] == "✓ approved" and got[0]["url"] == "u"
+	d = prs.detail(got[0]["review"])
+	assert "a/b#7  T" in d and "adds x" in d and "lgtm" in d
+	assert prs.rows([("REVIEWED", got, None)])[1][1]["section"] == "REVIEWED"
