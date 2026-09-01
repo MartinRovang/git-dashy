@@ -41,7 +41,7 @@ gitdashy                  # 300s refresh
 gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
-gitdashy --version        # 1.3.0
+gitdashy --version        # 1.3.1
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
 ```

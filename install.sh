@@ -16,6 +16,21 @@ ln -sf "$DIR/prs.py" "$BIN/$NAME"
 ln -sf "$DIR/prs.py" "$BIN/prs"   # ponytail: keep the old name working for existing installs
 chmod +x "$DIR/prs.py"
 
-echo "installed ${TAG:-main}: $BIN/$NAME -> $DIR/prs.py"
-case ":$PATH:" in *":$BIN:"*) ;; *) echo "add to your shell rc:  export PATH=\"$BIN:\$PATH\"" ;; esac
-command -v gh >/dev/null || echo "note: gh is required — https://cli.github.com"
+cat <<BANNER
+
+  ✓ github-dashy ${TAG:-main} installed
+
+    You can access it with  gitdashy  in your terminal.
+
+      gitdashy          your PRs, review-requested, assigned
+      gitdashy --demo   try it with canned data (no gh, no claude)
+      gitdashy --help   all flags and keys
+
+BANNER
+case ":$PATH:" in
+	*":$BIN:"*) ;;
+	*) echo "    ⚠  $BIN is not on your PATH — add this to your shell rc:"
+	   echo "         export PATH=\"$BIN:\$PATH\""
+	   echo "" ;;
+esac
+command -v gh >/dev/null || { echo "    ⚠  gh is required: https://cli.github.com"; echo ""; }
