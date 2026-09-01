@@ -10,18 +10,9 @@ A terminal dashboard for the PRs you actually care about — yours, the ones wai
 review, the ones assigned to you — with a one-key Claude review that posts the verdict back to
 GitHub.
 
-```
- PRs 7    updated 12s ago                                                    AUTO
- 1 agents running   model: opus   summaries: all   2 approved      next refresh 248s
-
- MINE (3)
-   ▸ dashy#41    Add spinner to startup            martin      2h
-     ↳ Shows a braille spinner and splash while the first fetch runs.
- REVIEW REQUESTED (2)
-     infra#44    Add S3 lifecycle rules            grace       5h   reviewing...
- REVIEWED (2)
-     api#39      Fix token refresh race            sam         1h   ✓ approved
-```
+<p align="center">
+  <img src="screenshot.png" alt="github-dashy running in a terminal" width="900">
+</p>
 
 ## Requirements
 
@@ -35,23 +26,24 @@ GitHub.
 curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh
 ```
 
-Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `prs` in
-`~/.local/bin` (override with `DIR=` / `BIN=`). Re-running it updates in place. Or do it by hand:
+Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `gitdashy` in
+`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in place. Or do it by hand:
 
 ```sh
 git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
-ln -s ~/.github-dashy/prs.py ~/.local/bin/prs
+ln -s ~/.github-dashy/prs.py ~/.local/bin/gitdashy
 ```
 
 ## Run
 
 ```sh
-prs                       # 300s refresh
-prs --interval 60
-prs --auto                # review every review-requested PR that shows up from now on
-prs --model sonnet
-prs --version             # 1.2.1
-prs --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
+gitdashy                  # 300s refresh
+gitdashy --interval 60
+gitdashy --auto           # review every review-requested PR that shows up from now on
+gitdashy --model sonnet
+gitdashy --version        # 1.3.0
+gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
+gitdashy --help
 ```
 
 ## Keys
@@ -83,7 +75,7 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 ## Versioning & self-update
 
 The version lives in one place — `VERSION` in `prs.py` — and shows in the stats strip and via
-`prs --version`. Releases are tagged `vX.Y.Z`.
+`gitdashy --version`. Releases are tagged `vX.Y.Z`.
 
 Each refresh also lists the release tags on `origin` (`git ls-remote`, so no `gh` auth and no API
 rate limit). If a tag is numerically newer than `VERSION`, the header shows `↑ v1.1.0 · u`; pressing
@@ -96,6 +88,29 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 |-----|---------|------|
 | `PRS_MODEL` | `opus` | model used for reviews |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
+
+## Layout
+
+```
+prs.py            entry point — a shim onto the package
+dashy/
+  cli.py          argv, --help, curses.wrapper
+  ui.py           colours, draw(), the key loop
+  art.py          splash: name, spinner, logo
+  rows.py         sections -> flat draw rows, age()
+  state.py        background refresh loop, shared state
+  github.py       everything that shells out to gh
+  review.py       runs Claude headless, posts the verdict
+  log.py          ~/.prs_reviewed.jsonl store + detail view
+  update.py       release check and self-update
+  config.py       tunables and env overrides
+  demo.py         canned PRs and a fake reviewer
+tests/            one test file per module
+```
+
+Swappable seams, for adding things: `github.fetch`, `review.review` and
+`update.update_available` are looked up as module attributes at call time — that is how `--demo`
+replaces all three, and how the tests stay off the network.
 
 ## Tests
 

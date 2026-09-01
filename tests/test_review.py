@@ -1,0 +1,72 @@
+import json
+import subprocess
+
+import pytest
+
+from dashy import github, log, review as review_mod
+from dashy.review import review
+
+from conftest import PR, Result, claude_out
+
+
+def test_review_posts_verdict_and_logs(monkeypatch):
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return claude_out(verdict="request_changes", summary="adds x", body="nope")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "sonnet") == "✗ changes requested"
+	assert calls[0][0] == "claude" and calls[0][calls[0].index("--model") + 1] == "sonnet"
+	assert calls[1][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
+	assert "--request-changes" in calls[1] and calls[1][-1] == "nope"
+	entry = json.loads(open(log.LOG).read())
+	assert entry["verdict"] == "request_changes" and entry["summary"] == "adds x"
+	assert entry["model"] == "sonnet" and entry["pr"]["url"] == "u"
+
+
+@pytest.mark.parametrize("verdict,flag,status", [
+	("approve", "--approve", "✓ approved"),
+	("comment", "--comment", "~ commented"),
+])
+def test_review_verdict_flags(monkeypatch, verdict, flag, status):
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return claude_out(verdict=verdict, body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "opus") == status
+	assert flag in calls[1]
+
+
+def test_review_unparseable_output_is_error_and_not_posted(monkeypatch):
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return Result(json.dumps({"result": "I could not review this"}))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "opus").startswith("error:")
+	assert len(calls) == 1 and not __import__("os").path.exists(log.LOG)
+
+
+def test_review_unknown_verdict_is_error(monkeypatch):
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(verdict="lgtm", body="b"))
+	assert review(dict(PR), "opus").startswith("error:")
+
+
+def test_review_gh_failure_surfaces_stderr(monkeypatch):
+	def fake_run(cmd, **kw):
+		if cmd[0] == "gh":
+			raise subprocess.CalledProcessError(1, cmd, stderr="line1\nfatal: nope\n")
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "opus") == "error: fatal: nope"
+
+
+def test_review_timeout_is_error(monkeypatch):
+	def fake_run(cmd, **kw):
+		raise subprocess.TimeoutExpired(cmd, 1)
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "opus").startswith("error:")
+
+
+# ---- reviewed log / detail ----
