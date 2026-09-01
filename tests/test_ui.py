@@ -71,3 +71,25 @@ def test_draw_summary_under_reviewed_open_pr(screen, monkeypatch):
 
 
 # ---- demo ----
+
+
+def _keys(*ks):
+	it = iter(ks)
+	return lambda: next(it)
+
+
+def test_update_screen_declined(screen, monkeypatch, st):
+	st.update = "9.9.9"
+	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
+	monkeypatch.setattr(ui.update, "apply_update", lambda v: pytest.fail("must not update on n"))
+	assert ui.update_screen(screen, st, 0) is False
+	out = screen.text()
+	assert "update available" in out and "9.9.9" in out and "[y] update now" in out
+
+
+def test_update_screen_accepts_and_reports_failure(screen, monkeypatch, st):
+	st.update = "9.9.9"
+	screen.getch, screen.timeout = _keys(ord("y"), ord(" ")), lambda t: None
+	monkeypatch.setattr(ui.update, "apply_update", lambda v: "no such tag v9.9.9")
+	assert ui.update_screen(screen, st, 0) is False
+	assert "failed: no such tag v9.9.9" in screen.text()

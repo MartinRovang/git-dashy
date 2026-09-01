@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import VERSION, art, config, github, log, update
+from . import HERE, VERSION, art, config, github, log, update
 from .rows import age, rows
 from .state import State
 
@@ -162,6 +162,56 @@ def draw(scr, state, sel, prompt=None):
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
 
+def panel(scr, title, lines, footer, accent=4):
+	"""Centred bordered box. ponytail: addnstr and box-drawing chars, no curses windows or panels."""
+	h, w = scr.getmaxyx()
+	inner = max([len(l) for l in [title, footer] + [t for t, _ in lines]] + [34]) + 6
+	inner = min(inner, w - 4)
+	top = max(1, h // 2 - (len(lines) + 6) // 2)
+	x = max(0, (w - inner) // 2)
+	def row(y, left, right="", attr=0, attr2=None):
+		scr.addnstr(y, x, "│" + " " * (inner - 2) + "│", inner, C(accent))
+		scr.addnstr(y, x + 3, left, inner - 6, attr)
+		if right:
+			scr.addnstr(y, x + inner - 3 - len(right), right, len(right), attr if attr2 is None else attr2)
+	scr.addnstr(top, x, "╭" + "─" * (inner - 2) + "╮", inner, C(accent))
+	scr.addnstr(top, x + 3, f" {title} ", inner - 6, C(accent) | curses.A_BOLD)
+	row(top + 1, "")
+	for i, (left, right) in enumerate(lines):
+		row(top + 2 + i, left, right, C(1) if i else curses.A_BOLD, C(4) | curses.A_BOLD if i == 0 else C(1))
+	row(top + 2 + len(lines), "")
+	row(top + 3 + len(lines), footer, "", C(5) | curses.A_BOLD)
+	scr.addnstr(top + 4 + len(lines), x, "╰" + "─" * (inner - 2) + "╯", inner, C(accent))
+	scr.refresh()
+
+
+def update_screen(scr, state, sel):
+	"""Full-screen update prompt. Returns True if the user said yes."""
+	def show(footer, extra=()):
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, "update available", [
+			(f"v{VERSION}  →  v{state.update}", "new release"),
+			("", ""),
+			("Installs the release tag into", ""),
+			(HERE, ""),
+			("and restarts gitdashy.", ""),
+			*extra,
+		], footer)
+	show("[y] update now     [n] later")
+	scr.timeout(-1)
+	try:
+		k = scr.getch()
+		if k not in (ord("y"), 10, 13, curses.KEY_ENTER):
+			return False
+		show("installing… this takes a second")
+		err = update.apply_update(state.update)  # re-execs on success
+		show("[any key] back", extra=[("", ""), (f"failed: {err}", "")])
+		scr.getch()
+		return False
+	finally:
+		scr.timeout(500)
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
@@ -206,10 +256,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
 		elif k == ord("u") and state.update:
-			if confirm(scr, state, sel, f" update v{VERSION} → v{state.update} and restart? [y/n]"):
-				err = update.apply_update(state.update)  # re-execs on success
-				draw(scr, state, sel, prompt=f" update failed: {err} ")
-				scr.timeout(-1); scr.getch(); scr.timeout(500)
+			update_screen(scr, state, sel)
 		elif k in (10, 13, curses.KEY_ENTER) and current:
 			if current["section"] == "REVIEWED":
 				curses.endwin()

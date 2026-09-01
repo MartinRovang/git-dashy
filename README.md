@@ -41,7 +41,7 @@ gitdashy                  # 300s refresh
 gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
-gitdashy --version        # 1.3.2
+gitdashy --version        # 1.4.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
 ```
@@ -57,7 +57,7 @@ gitdashy --help
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
 | `s` | cycle summary lines: all / open PRs only / off |
 | `m` | cycle model: opus / sonnet / fable |
-| `u` | shown when a newer release exists — installs it and restarts |
+| `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
 
