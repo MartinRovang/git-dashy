@@ -107,7 +107,7 @@ def draw(scr, state, sel, prompt=None):
 		("model: " + state.model, "", C(13)),
 		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(13)),  # depth[/effort]
 		("summaries: " + state.subs, "", C(13)),
-		*([("drafts: hidden", "", C(10))] if not state.drafts else []),
+		*([("drafts: shown", "", C(10))] if state.drafts else []),
 		*([(team.ERROR or "team: " + team.NAME, "", C(12) if team.ERROR else C(13))] if team.on() else []),
 		("this session →", "", C(9)),  # the four counters below are agent verdicts since launch, not the whole log
 		("approved", sum(v.startswith("✓") for v in vals), C(11)),

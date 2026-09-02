@@ -12,7 +12,7 @@ class State:
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
-		self.window, self.subs, self.drafts = 4, "all", True  # drafts: show draft PRs
+		self.window, self.subs, self.drafts = 4, "all", False  # drafts: show draft PRs (hidden by default)
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False

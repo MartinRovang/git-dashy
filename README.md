@@ -63,7 +63,7 @@ again but the reviewer has not looked yet.
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | cycle summary lines: all / open PRs only / off |
-| `D` | hide / show draft PRs |
+| `D` | show / hide draft PRs (hidden by default) |
 | `m` | cycle model: opus / sonnet / fable |
 | `d` | cycle review depth: adaptive / low / medium / high |
 | `e` | cycle claude effort: default / low / medium / high / xhigh / max |
