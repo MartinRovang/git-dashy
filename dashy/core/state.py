@@ -15,10 +15,18 @@ class State:
 		self.window, self.subs = 4, "all"
 		self.update = ""  # newer released version, refreshed with each fetch
 
-	def set_auto(self, on):
+	def set_auto(self, on, include_existing=False):
+		"""include_existing: review what is already listed too, not just what shows up later."""
 		with self.lock:
 			self.auto = on
-			self.auto_baseline = set(self._rr_urls()) if on else None
+			self.auto_baseline = None if not on else set() if include_existing else set(self._rr_urls())
+		if on and include_existing:
+			self.wake.set()  # refetch now so the listed PRs start without waiting for the next tick
+
+	def pending_rr(self):
+		"""Review-requested PRs with no verdict or review in flight."""
+		with self.lock:
+			return [u for u in self._rr_urls() if u not in self.reviews]
 
 	def _rr_urls(self):
 		return [p["url"] for name, prs, _ in self.sections if name == "REVIEW REQUESTED" for p in prs or []]

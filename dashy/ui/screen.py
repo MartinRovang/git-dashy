@@ -263,7 +263,9 @@ def main(scr, interval, auto, model):
 		elif k == ord("r"):
 			state.wake.set()
 		elif k == ord("a"):
-			state.set_auto(not state.auto)
+			n = 0 if state.auto else len(state.pending_rr())
+			state.set_auto(not state.auto, include_existing=n > 0 and confirm(
+				scr, state, sel, f" Auto on. Also review the {n} already listed? [y/n]"))
 		elif k == ord("s"):
 			state.subs = cycle_through(config.SUBS, state.subs)
 		elif k == ord("i"):

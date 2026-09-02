@@ -109,3 +109,17 @@ def test_loop_wait_reads_interval_each_slice(monkeypatch):
 	with pytest.raises(SystemExit):
 		st.loop()
 	assert waits == [1, 1]
+
+
+def test_set_auto_include_existing_reviews_listed_prs(monkeypatch):
+	started = []
+	monkeypatch.setattr(State, "start_review", lambda self, p: started.append(p["url"]))
+	st = State(0)
+	st.sections = [("REVIEW REQUESTED", [{"url": "old"}, {"url": "done"}], None)]
+	st.reviews["done"] = "✓ approved"
+	assert st.pending_rr() == ["old"]
+	st.set_auto(True, include_existing=True)
+	assert st.auto_baseline == set() and st.wake.is_set()
+	st.wake.clear()
+	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [{"url": "old"}, {"url": "done"}], None)])
+	assert started == ["old"]

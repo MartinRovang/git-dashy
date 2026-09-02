@@ -98,7 +98,8 @@ into every review regardless of repo. Both are plain markdown bullet lists — `
 PR's repo memory and `g` the general one in `$EDITOR`, so you can add, prune or correct freely.
 
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
-*after* you turn it on — what's already on screen is the baseline and is left alone.
+*after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
+the ones on screen or leave them as the baseline.
 
 ## Versioning & self-update
 
