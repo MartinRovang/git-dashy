@@ -108,7 +108,7 @@ def draw(scr, state, sel, prompt=None):
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
-	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # h - 7 = list rows minus one; never negative
+	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 2)
 	all_prs = [p for k, p in rs if k == "pr"]
 	one_owner = len({p["repository"]["nameWithOwner"].split("/")[0] for p in all_prs}) == 1
 	def refof(p):  # ponytail: hide the org when every PR shares it
@@ -149,17 +149,29 @@ def draw(scr, state, sel, prompt=None):
 
 	def hint(key, attr=C(17)):  # ? toggles: the key that changes a setting, shown right before it
 		return [(key + " ", attr | curses.A_BOLD)] if state.hints and key else []
-	right = hint("r", C(10)) + [(status, C(9))] + ([("  ·  ", C(9))] + hint("i", C(10)) + [(nxt, C(9), "i")] if nxt else [])
-	if state.auto:
-		right += [("   ", C(7)), (" AUTO ", C(5) | curses.A_REVERSE | curses.A_BOLD)]
-	if state.update:
-		right += [("   ", C(7)), (f" ↑ update to v{state.update} · u ", C(4) | curses.A_REVERSE | curses.A_BOLD)]
-	right_w = sum(len(p[0]) for p in right) + 1
 	badge = f" ▌ gitdashy v{VERSION} "
-	x = bar(0, 2, [(badge, C(8) | curses.A_BOLD), (f"    {total} PRs", C(7) | curses.A_BOLD),
-	               (f"  ·  {running} agents running", C(10) | curses.A_BOLD if running else C(9))], stop=w - 2 - right_w - 2)
-	if right_w < w - 2:
-		bar(0, w - 1 - right_w, right)
+	# row 0 in pieces, each droppable on its own so content wins over air on a narrow screen: the refresh
+	# countdown goes first, then the status, agents, the PR count, AUTO; the badge and the update prompt are
+	# never dropped, only clipped
+	left = {"badge": [(badge, C(8) | curses.A_BOLD)], "prs": [(f"    {total} PRs", C(7) | curses.A_BOLD)],
+	        "agents": [(f"  ·  {running} agents running", C(10) | curses.A_BOLD if running else C(9))]}
+	right = {"status": hint("r", C(10)) + [(status, C(9))],
+	         "nxt": [("  ·  ", C(9))] + hint("i", C(10)) + [(nxt, C(9), "i")] if nxt else [],
+	         "auto": [("   ", C(7)), (" AUTO ", C(5) | curses.A_REVERSE | curses.A_BOLD)] if state.auto else [],
+	         "update": [("   ", C(7)), (f" ↑ update to v{state.update} · u ", C(4) | curses.A_REVERSE | curses.A_BOLD)] if state.update else []}
+	def width(parts):
+		return sum(len(p[0]) for p in parts)
+	def flat(d):
+		return [piece for parts in d.values() for piece in parts]
+	drop = ["nxt", "status", "agents", "prs", "auto"]
+	while drop and 2 + width(flat(left)) + 3 + width(flat(right)) > w - 1:
+		key = drop.pop(0)
+		(left if key in left else right)[key] = []
+	rparts = flat(right)
+	if rparts and rparts[0][0].strip() == "":
+		rparts = rparts[1:]  # no leading gap once the status is gone
+	bar(0, 2, flat(left), stop=max(2, w - 1 - width(rparts) - 1))
+	bar(0, max(2, w - 1 - width(rparts)), rparts)  # clipped by bar's stop when even this is too much
 
 	spacings = [("   │   ", "        "), ("  │  ", "     "), (" │ ", "   ")]  # (between pairs, between groups), loosest first
 	sep, gap = [(t, C(16)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
@@ -178,8 +190,6 @@ def draw(scr, state, sel, prompt=None):
 		for i, (k, name, value, tone) in enumerate(rows):
 			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
 		return parts
-	def width(parts):
-		return sum(len(p[0]) for p in parts)
 	session = [("Session", C(22) | curses.A_BOLD), ("  ", C(15))] \
 		+ kv("✓", str(sum(v.startswith('✓') for v in vals)), C(18) | curses.A_BOLD) + [("   ", C(15))] \
 		+ kv("✗", str(sum(v.startswith('✗') for v in vals)), C(19) | curses.A_BOLD) + [("   ", C(15))] \
@@ -218,7 +228,7 @@ def draw(scr, state, sel, prompt=None):
 		if kind == "head":
 			name, count = payload.rsplit(" (", 1)
 			scr.addnstr(y, 1, name, w - 2, C(2) | curses.A_BOLD)
-			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", w - 2 - len(name), C(1))
+			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", max(1, w - 2 - len(name)), C(1))
 		elif kind == "err":
 			scr.addnstr(y, 3, payload, w - 4, C(3))
 		elif kind == "empty":

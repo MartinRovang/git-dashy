@@ -44,13 +44,14 @@ def test_draw_clamps_selection_and_handles_empty(screen):
 def test_draw_survives_tiny_terminals(screen):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [dict(PR)], None), ("REVIEWED", [], None)], time.time()
-	for h in (1, 2, 3, 4, 5, 6):
-		screen.h, screen.w = h, 120
-		sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
-		assert sel == 0 and cur["url"] == "u"
-	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
-	screen.h, screen.w = 30, 5
+	for h in range(1, 12):
+		for w in range(1, 40):
+			screen.h, screen.w = h, w
+			sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
+			assert sel == 0 and cur["url"] == "u"
+	screen.h, screen.w = 6, 120
 	ui.draw(screen, st, 0)
+	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
 
 
 def test_draw_prompt_replaces_footer(screen):
@@ -260,6 +261,19 @@ def test_strip_shows_update_and_auto_badges(screen):
 	out = screen.line(0)
 	assert "update to v9.9.9 · u" in out and "AUTO" in out and "0 agents running" in out
 	assert out.index("PRs") < out.index("agents running") < out.index("updated") < out.index("next refresh") < out.index("AUTO")
+	# narrower: the countdown, status, agents, PR count and AUTO go one by one; the badge and the update prompt stay
+	def row0(w):
+		screen.w = w
+		ui.draw(screen, st, 0)
+		return screen.line(0)
+	out = row0(120)
+	assert "gitdashy" in out and "update to v9.9.9 · u" in out and "AUTO" in out and "next refresh" not in out and "updated" in out
+	out = row0(80)
+	assert "gitdashy v" in out and "update to v9.9.9 · u" in out and out.rstrip().endswith("· u")
+	out = row0(60)
+	assert "gitdashy" in out and "update to v9.9.9 · u" in out and "PRs" not in out and "AUTO" not in out
+	out = row0(30)
+	assert "update to v9.9.9 · u" in out  # when even the badge and the prompt cannot share the row, the prompt wins
 
 
 def test_hints_show_each_settings_key(screen):
