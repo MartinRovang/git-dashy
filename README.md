@@ -43,7 +43,7 @@ gitdashy --auto           # review every review-requested PR that shows up from 
 gitdashy --model sonnet
 gitdashy --effort high --depth adaptive   # claude effort level; review depth judged from the PR size
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
-gitdashy --version        # 1.5.0
+gitdashy --version        # 1.6.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
 ```
