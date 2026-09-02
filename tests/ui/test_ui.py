@@ -136,7 +136,7 @@ def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	ui.memory.append("a/b", "x")
 	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"a__b.md": "- changed"}))
-	screen.getch, screen.timeout = _keys(ord("n"), ord("n")), lambda t: None
+	screen.getch, screen.timeout = _keys(ord("j"), ui.curses.KEY_DOWN, ord(" "), 27), lambda t: None  # stray keys ignored
 	ui.dream_screen(screen, st, 0)
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
 	def boom(m):

@@ -320,9 +320,12 @@ def dream_screen(scr, state, sel):
 		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
 		lines += [(n[:-3].replace("__", "/"), f"{len(before[n].splitlines())} → {len(t.splitlines())}") for n, t in new.items()]
 		draw(scr, state, sel, prompt=" ")
-		panel(scr, "dream over", lines, "[y] accept and rewrite memory     [n] discard", accent=6)
+		panel(scr, "dream over", lines, "[y] accept and rewrite memory     [n/esc] discard", accent=6)
 		scr.timeout(-1)
-		if scr.getch() == ord("y"):
+		k = None
+		while k not in (ord("y"), ord("n"), 27):
+			k = scr.getch()
+		if k == ord("y"):
 			team.pull()
 			memory.write(new)
 			team.push("memory: dream cleanup")
