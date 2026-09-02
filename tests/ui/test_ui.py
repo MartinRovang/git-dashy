@@ -145,3 +145,8 @@ def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 	screen.getch = _keys(ord(" "), ord(" "))
 	ui.dream_screen(screen, st, 0)
 	assert "dream failed" in screen.text() and "no memory to dream about" in screen.text()
+
+
+def test_dream_detail_diffs_changed_files_only():
+	out = ui.dream_detail("merged\ndupes", {"a__b.md": "- x\n- x\n", "general.md": "- g\n"}, {"a__b.md": "- x", "general.md": "- g\n"})
+	assert out.startswith("merged\ndupes\n") and "--- a/b" in out and "-- x" in out and "general" not in out
