@@ -32,8 +32,10 @@ def append(repo, text):
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files, one per repo plus a
 general one. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
-fact, move repo-independent lines to general. Keep the "- " bullet style, one fact per line. Files not listed below
-must not be invented; return a file with empty content to delete it.
+fact, move repo-independent lines to general. Keep only overarching knowledge: how the repo is structured and why,
+conventions, how it affects other repos or the database, which authors own which areas. Drop per-PR trivia (what one
+PR changed, one-off bugs, "X is dead after #N") and anything derivable from git history. Keep the "- " bullet style,
+one fact per line. Files not listed below must not be invented; return a file with empty content to delete it.
 
 {files}
 
