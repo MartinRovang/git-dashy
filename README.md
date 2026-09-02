@@ -61,6 +61,9 @@ gitdashy --help
 | `m` | cycle model: opus / sonnet / fable |
 | `d` | cycle review depth: adaptive / low / medium / high |
 | `e` | cycle claude effort: default / low / medium / high / xhigh / max |
+| `i` | cycle refresh interval: 1 / 2 / 5 / 10 / 15 min (the stats strip shows `next refresh Ns / Nm`) |
+| `n` | edit this repo's review memory in `$EDITOR` |
+| `g` | edit the general review memory in `$EDITOR` |
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
@@ -84,6 +87,16 @@ rules, things to always check, what to ignore. It is read fresh for every review
 while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
 without it.
 
+Every REVIEWED row carries a small `depth/effort` tag showing what the review ran with.
+
+### Memory
+
+Reviews remember. Each review may return up to three durable facts about the repo (conventions,
+recurring pitfalls, intentional oddities); they are appended to `~/.prs_memory/<owner>__<repo>.md`
+and fed back into the prompt for every later review of that repo. `~/.prs_memory/general.md` goes
+into every review regardless of repo. Both are plain markdown bullet lists — `n` opens the selected
+PR's repo memory and `g` the general one in `$EDITOR`, so you can add, prune or correct freely.
+
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
 *after* you turn it on — what's already on screen is the baseline and is left alone.
 
@@ -103,8 +116,9 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 |-----|---------|------|
 | `PRS_MODEL` | `opus` | model used for reviews |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
-| `PRS_EFFORT` | (claude's default) | `--effort` passed to claude: low, medium, high, xhigh, max |
+| `PRS_EFFORT` | `medium` | `--effort` passed to claude: low, medium, high, xhigh, max |
 | `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |
+| `PRS_MEMORY` | `~/.prs_memory` | memory directory: `general.md` + one file per repo |
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 
 ## Layout

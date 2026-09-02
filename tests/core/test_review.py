@@ -104,3 +104,23 @@ def test_review_depth_and_effort(monkeypatch):
 	monkeypatch.setattr(config, "EFFORT", "")
 	review(dict(PR), "opus")
 	assert "--effort" not in calls[0]
+
+
+def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append(None, "always run make lint")
+	memory.append("a/b", "- uses tabs\n\n• db layer is generated")
+	prompts = []
+	def fake_run(cmd, **kw):
+		prompts.append(cmd[2])
+		return claude_out(verdict="approve", body="b", memory="ci is slow, do not flag timeouts")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	monkeypatch.setattr(config, "DEPTH", "high")
+	monkeypatch.setattr(config, "EFFORT", "max")
+	review(dict(PR), "opus")
+	assert "## General\n- always run make lint" in prompts[0] and "## a/b\n- uses tabs\n- db layer is generated" in prompts[0]
+	assert open(memory.path("a/b")).read().endswith("- ci is slow, do not flag timeouts\n")
+	assert memory.read("x/y") == "## General\n- always run make lint"
+	e = log.reviewed()[0]
+	assert e["tag"] == "high/max" and "opus high/max" in log.detail(e["review"])

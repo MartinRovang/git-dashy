@@ -1,18 +1,19 @@
 """The curses screen: colours, one draw() per tick, and the key loop."""
 import curses
+import os
 import subprocess
 import threading
 import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, log, update
+from ..core import github, log, memory, update
 from ..core.state import State
 from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  s summaries  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  n/g memory  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -87,7 +88,7 @@ def draw(scr, state, sel, prompt=None):
 	# stats strip
 	vals = list(reviews.values())
 	running = sum(v == "reviewing..." for v in vals)
-	nxt = "" if fetched_at is None else f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s"
+	nxt = "" if fetched_at is None else f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
 	x = 1
 	for label, n, attr in (
 		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),
@@ -149,11 +150,15 @@ def draw(scr, state, sel, prompt=None):
 			put(ref, C(6), ref_w)
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0)
+			tag = p.get("tag", "")
+			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
 			t = p["title"]
 			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
 			put(p.get("author", {}).get("login", ""), C(1), auth_w)
+			if tag:
+				put("  ")
+				put(tag, C(1))
 			if st:
 				put("  ")
 				put(st, st_attr | curses.A_BOLD)
@@ -224,6 +229,15 @@ def confirm(scr, state, sel, question):
 	return yes
 
 
+def edit_memory(scr, repo):
+	"""Open general (repo=None) or per-repo memory in $EDITOR. Reviews read it back next run."""
+	path = memory.path(repo)
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	curses.endwin()
+	subprocess.run([os.environ.get("EDITOR", "nano"), path])
+	scr.refresh()
+
+
 def cycle_through(values, current):
 	return values[(values.index(current) + 1) % len(values)] if current in values else values[0]
 
@@ -252,6 +266,8 @@ def main(scr, interval, auto, model):
 			state.set_auto(not state.auto)
 		elif k == ord("s"):
 			state.subs = cycle_through(config.SUBS, state.subs)
+		elif k == ord("i"):
+			state.interval = cycle_through(config.INTERVALS, state.interval)
 		elif k == ord("t"):
 			state.window = cycle_through(config.WINDOWS, state.window)
 		elif k == ord("m"):
@@ -262,6 +278,8 @@ def main(scr, interval, auto, model):
 			config.EFFORT = cycle_through(config.EFFORTS, config.EFFORT)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
+		elif k == ord("g") or (k == ord("n") and current):
+			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
 		elif k in (10, 13, curses.KEY_ENTER) and current:

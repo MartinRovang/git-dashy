@@ -16,13 +16,19 @@ def reviewed():
 	out = []
 	for line in reversed(lines):
 		e = json.loads(line)
-		out.append({"title": "?", "isDraft": False, **e["pr"], "review": e,
+		out.append({"title": "?", "isDraft": False, **e["pr"], "review": e, "tag": tag(e),
 		            "status": config.STATUS[e["verdict"]], "updatedAt": e["at"]})
 	return out
 
 
+def tag(e):
+	"""'adaptive/medium' — depth[/effort] the review ran with, '' for old entries."""
+	return e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")
+
+
 def log_review(pr, model, verdict, at=None):
 	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
+	         "depth": config.DEPTH, "effort": config.EFFORT,
 	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}
 	with open(LOG, "a") as f:
 		f.write(json.dumps(entry) + "\n")
@@ -50,6 +56,6 @@ def detail(e):
 	bar = "─" * min(78, max(len(ref) + len(p["title"]) + 2, 40))
 	return (f"{bar}\n{ref}  {p['title']}\n{bar}\n"
 	        f"  author   {p.get('author', {}).get('login', '?')}\n  url      {p['url']}\n"
-	        f"  reviewed {at} by {e['model']}  →  {config.STATUS[e['verdict']]}\n\n"
+	        f"  reviewed {at} by {e['model']} {tag(e)}  →  {config.STATUS[e['verdict']]}\n\n"
 	        f"WHAT THE PR DOES\n\n{e['summary'] or '(no summary)'}\n\n"
 	        f"REVIEW\n\n{e['body']}\n\n{bar}\nq close   j/k or ↑/↓ scroll   o open in browser (from the list)\n")

@@ -9,16 +9,16 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
 
-  --interval N   seconds between refreshes (default {config.INTERVAL})
+  --interval N   seconds between refreshes (default {config.INTERVAL}); i cycles 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m cycles at runtime
-  --effort LEVEL claude effort: low, medium, high, xhigh, max (default claude's own, or $PRS_EFFORT); e cycles
+  --effort LEVEL claude effort: low, medium, high, xhigh, max (default {config.EFFORT}, or $PRS_EFFORT); e cycles
   --depth LEVEL  review depth: low, medium, high, adaptive (default {config.DEPTH}, or $PRS_DEPTH); d cycles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
-a auto, m model, d depth, e effort, t REVIEWED window, s summaries, u install the newest release, r refresh, q quit."""
+a auto, m model, d depth, e effort, t REVIEWED window, i interval, s summaries, n repo memory, g general memory ($EDITOR), u install the newest release, r refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):

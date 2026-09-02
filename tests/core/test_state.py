@@ -1,5 +1,6 @@
 import pytest
 
+from dashy import config
 from dashy.core import github, log, review as review_mod, state, update
 from dashy.core.state import State
 
@@ -90,3 +91,21 @@ def test_loop_records_available_release(monkeypatch):
 	st = State(0)
 	one_loop(st, monkeypatch, [("MINE", [], None)])
 	assert st.update == "1.2.3"
+
+
+def test_loop_wait_reads_interval_each_slice(monkeypatch):
+	st = State(600)
+	monkeypatch.setattr(github, "fetch", lambda: [("MINE", [], None)])
+	monkeypatch.setattr(update, "update_available", lambda: "")
+	monkeypatch.setattr(config, "SPLASH_MIN", 0)
+	waits = []
+	def wait(t):
+		waits.append(t)
+		st.interval = 0  # shrink mid-wait: loop must notice and refetch instead of sleeping 600 slices
+		if len(waits) > 1:
+			raise SystemExit
+		return False
+	monkeypatch.setattr(st.wake, "wait", wait)
+	with pytest.raises(SystemExit):
+		st.loop()
+	assert waits == [1, 1]

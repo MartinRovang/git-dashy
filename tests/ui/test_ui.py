@@ -12,7 +12,7 @@ from conftest import PR, FakeScr, claude_out
 
 
 def test_draw_renders_sections_status_and_selection(screen):
-	screen.w = 150  # ponytail: the stats strip drops trailing items on narrower screens
+	screen.w = 170  # ponytail: the stats strip drops trailing items on narrower screens
 	st = State(60)
 	st.sections = [("MINE", [dict(PR, url="m")], None),
 	               ("REVIEW REQUESTED", [dict(PR, url="r", number=8, title="Needs eyes", isDraft=True)], None),

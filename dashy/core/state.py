@@ -51,5 +51,6 @@ class State:
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
 			for p in new:
 				self.start_review(p)
-			self.wake.wait(self.interval)
+			while not self.wake.wait(1) and time.time() < self.fetched_at + self.interval:
+				pass  # 1s slices so an interval change via i takes effect now
 			self.wake.clear()
