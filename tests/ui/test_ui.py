@@ -153,16 +153,16 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen):
 		return screen.line(1)
 	out = row1(200)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
-	assert out.rstrip().endswith("History 4h") and out.index("⚙ Reviewer") < out.index("⚙ View") and "▾" not in out
+	assert out.rstrip().endswith("History 4h") and out.index("Reviewer") < out.index("View") and "☰" not in out
 	out = row1(175)
 	assert "History 4h" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
 	out = row1(150)
-	assert "Effort medium" in out and out.rstrip().endswith("View ▾")  # then View folds first
+	assert "Effort medium" in out and out.rstrip().endswith("☰ View")  # then View folds first
 	out = row1(100)
-	assert "Reviewer ▾" in out and "View ▾" in out and "Model" not in out
+	assert "☰ Reviewer" in out and "☰ View" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
 	out = row1(70)
-	assert "Settings ▾" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
+	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
 	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
 	out = row1(55)
 	assert "Session" in out and "Settings" not in out

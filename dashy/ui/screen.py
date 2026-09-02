@@ -168,8 +168,8 @@ def draw(scr, state, sel, prompt=None):
 		if level == "off":
 			return []
 		if level == "chip":
-			return hint(key) + [(f" ⚙ {label} ▾ ", C(20) | curses.A_BOLD, keys)]
-		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
+			return hint(key) + [(f" ☰ {label} ", C(20) | curses.A_BOLD, keys)]  # folded: a menu, so the burger says so
+		parts = hint(key) + [(f" {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
 		for i, (k, name, value, tone) in enumerate(rows):
 			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
 		return parts
@@ -191,7 +191,7 @@ def draw(scr, state, sel, prompt=None):
 	def stack():
 		if levels["nest"] == "chip":  # both groups under one chip; it anchors every key so S/R/V and the settings all hang from it
 			keys = "S" + "".join(key + "".join(k for k, *_ in rows) for _, key, rows in groups)
-			return hint("S") + [(" ⚙ Settings ▾ ", C(20) | curses.A_BOLD, keys)]
+			return hint("S") + [(" ☰ Settings ", C(20) | curses.A_BOLD, keys)]
 		if levels["nest"] == "off":
 			return []
 		drawn = [render(label, key, rows, levels[key], levels["space"]) for label, key, rows in groups]
