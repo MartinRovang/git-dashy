@@ -41,6 +41,18 @@ def test_draw_clamps_selection_and_handles_empty(screen):
 	assert sel == 0
 
 
+def test_draw_survives_tiny_terminals(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None), ("REVIEWED", [], None)], time.time()
+	for h in (1, 2, 3, 4, 5, 6):
+		screen.h, screen.w = h, 120
+		sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
+		assert sel == 0 and cur["url"] == "u"
+	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
+	screen.h, screen.w = 30, 5
+	ui.draw(screen, st, 0)
+
+
 def test_draw_prompt_replaces_footer(screen):
 	st = State(60)
 	ui.draw(screen, st, 0, prompt=" sure? [y/n]")
@@ -206,6 +218,37 @@ def test_group_menu_toggles_drafts(screen):
 	screen.getch, screen.timeout = _keys(ord("j"), 10, 27), lambda t: None
 	ui.group_menu(screen, st, 0, "V")
 	assert st.drafts is True
+
+
+def test_group_menu_index_survives_a_row_disappearing(screen, monkeypatch):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	on = [True]
+	monkeypatch.setattr(ui.team, "on", lambda: on[0])
+	monkeypatch.setattr(ui.team, "NAME", "org/team")
+	monkeypatch.setattr(ui.team, "ERROR", "")
+	keys = iter([ord("j"), ord("j"), ord("j"), 10, 27, 27])
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		k = next(keys)
+		if len(seen) == 3:
+			on[0] = False  # the Team row vanishes while the cursor sits on it
+		return k
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.group_menu(screen, st, 0, "R")  # Enter with idx past the end must clamp to the last row, not raise
+	assert "Team" in seen[2] and "Team" not in seen[3] and "Effort:  j/k or e move" in seen[4]
+
+
+def test_dropdown_anchor_is_fresh_each_draw(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.w = 200
+	ui.draw(screen, st, 0)
+	assert "m" in ui.ANCHORS
+	screen.w = 50  # everything but Session gone: no anchors, dropdown falls back to the row start
+	ui.draw(screen, st, 0)
+	assert "m" not in ui.ANCHORS and "R" not in ui.ANCHORS
 
 
 def test_strip_shows_update_and_auto_badges(screen):

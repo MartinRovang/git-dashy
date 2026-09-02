@@ -99,6 +99,7 @@ def splash(scr, h, w, spin):
 
 def draw(scr, state, sel, prompt=None):
 	scr.erase()
+	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
@@ -107,13 +108,17 @@ def draw(scr, state, sel, prompt=None):
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
-	top = max(0, cur - (h - 7)) if cur >= 0 else 0
+	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # h - 7 = list rows minus one; never negative
 	all_prs = [p for k, p in rs if k == "pr"]
 	one_owner = len({p["repository"]["nameWithOwner"].split("/")[0] for p in all_prs}) == 1
 	def refof(p):  # ponytail: hide the org when every PR shares it
 		return f"{p['repository']['name'] if one_owner else p['repository']['nameWithOwner']}#{p['number']}"
 	ref_w = max([len(refof(p)) for p in all_prs] + [10])
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
+
+	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
+		scr.refresh()
+		return sel, (rs[cur][1] if cur >= 0 else None)
 
 	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
 	# then a half-block fade row and a blank one so the list starts under a soft edge with some air
@@ -208,7 +213,7 @@ def draw(scr, state, sel, prompt=None):
 	if not rs and fetched_at is None:
 		splash(scr, h, w, spin)
 
-	for y, (kind, payload) in enumerate(rs[top:top + h - 5], start=4):
+	for y, (kind, payload) in enumerate(rs[top:top + max(0, h - 5)], start=4):
 		i = top + y - 4
 		if kind == "head":
 			name, count = payload.rsplit(" (", 1)
@@ -370,6 +375,7 @@ def group_menu(scr, state, sel, key):
 	idx = 0
 	while True:
 		label, _, rows = next(g for g in header_groups(state) if g[1] == key)  # re-read: a pick changes the values
+		idx = min(idx, len(rows) - 1)  # the Team row can go away under us
 		draw(scr, state, sel, prompt=f" {label}:  j/k move   ⏎ open   esc close")
 		y, x = ANCHORS.get(key, (1, 3))
 		name_w = max(len(name) for _, name, _, _ in rows)

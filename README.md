@@ -64,11 +64,6 @@ again but the reviewer has not looked yet.
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
 | `?` | show each setting's key next to it in the header |
-
-`m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` keeps.
-`R` and `V` open the Reviewer and View groups as a menu: `Enter` on a row opens that setting, `Esc` steps back.
-`S` opens both groups under one Settings menu. On a narrow terminal the header tightens, then folds the groups
-into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
@@ -81,6 +76,11 @@ into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip;
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
+
+`m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` (or `q`) keeps.
+`R` and `V` open the Reviewer and View groups as a menu: `Enter` on a row opens that setting, `Esc` (or `q`) steps back.
+`S` opens both groups under one Settings menu. On a narrow terminal the header tightens, then folds the groups
+into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
 
 ## The review
 
