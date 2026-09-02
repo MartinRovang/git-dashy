@@ -39,9 +39,6 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(20, 255, curses.COLOR_BLACK, 240, curses.COLOR_WHITE),  # group label chip on bar 2: light grey, so it does not compete with the app badge
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
-	# a group's pairs sit on a panel one shade lighter than bar 2 (237, so the bar-1 pairs 7/9/10/12 work on it);
-	# the chip is its left edge and this thin right edge closes the box
-	(23, 240, curses.COLOR_WHITE, 237, curses.COLOR_BLACK),  # panel edge ▕
 ]
 
 
@@ -160,10 +157,10 @@ def draw(scr, state, sel, prompt=None):
 		bar(0, w - 1 - right_w, right)
 
 	spacings = [("   │   ", "        "), ("  │  ", "     "), (" │ ", "   ")]  # (between pairs, between groups), loosest first
-	sep, gap = [(t, C(9)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
-	tones = {None: C(7), "on": C(10), "err": C(12)}  # on the group panel
-	def kv(key, value, attr=C(15), k="", key_attr=C(16), hint_attr=C(17)):  # dim key, bright value: a pair, not one phrase
-		return hint(k, hint_attr) + [(key + " ", key_attr, k), (value, attr)]
+	sep, gap = [(t, C(16)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
+	tones = {None: C(15), "on": C(17), "err": C(19)}
+	def kv(key, value, attr=C(15), k=""):  # dim key, bright value, so "Depth adaptive" reads as a pair and not one phrase
+		return hint(k) + [(key + " ", C(16), k), (value, attr)]
 	def render(label, key, rows, level, space):
 		"""A group at one of its levels: "full" = gear chip + pairs, "chip" = the chip with a caret, "off" = nothing.
 		ponytail: the chip is a badge like the app's, so a group reads as one block; collapsed, it anchors every key in it."""
@@ -172,10 +169,10 @@ def draw(scr, state, sel, prompt=None):
 			return []
 		if level == "chip":
 			return hint(key) + [(f" ⚙ {label} ▾ ", C(20) | curses.A_BOLD, keys)]
-		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), (" ", C(7))]
+		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
 		for i, (k, name, value, tone) in enumerate(rows):
-			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k, C(9), C(10))
-		return parts + [(" ▕", C(23))]  # the panel closes with a thin edge in the chip's grey
+			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
+		return parts
 	def width(parts):
 		return sum(len(p[0]) for p in parts)
 	session = [("Session", C(22) | curses.A_BOLD), ("  ", C(15))] \
