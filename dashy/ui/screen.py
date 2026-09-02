@@ -79,8 +79,8 @@ def draw(scr, state, sel, prompt=None):
 
 	# header: one two-row bar. row 0 = identity + status + badges, row 1 = stats
 	total = sum(len(p) for _, p, _ in sections if p)
-	spin = art.SPINNER[int(time.time() * 12) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
-	# 12 fps < the ~16 fps redraw tick, so every frame gets drawn instead of aliasing into stutter
+	spin = art.SPINNER[int(time.time() * 10) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	# 10 fps against the 50ms redraw tick: every frame gets drawn twice, no aliasing into stutter
 	status = f"{spin} fetching…" if fetched_at is None else \
 		f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
 	for y in (0, 1):
@@ -367,8 +367,8 @@ def main(scr, interval, auto, model):
 	threading.Thread(target=state.loop, daemon=True).start()
 	sel, current = 0, None
 	while True:
-		spinning = state.fetched_at is None or "reviewing..." in state.reviews.values()
-		scr.timeout(80 if spinning else 500)  # spin smoothly while fetching or reviewing
+		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
+		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		k = scr.getch()
 		if k in (ord("q"), 27):

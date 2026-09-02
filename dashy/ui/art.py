@@ -1,6 +1,6 @@
 """Splash art. ponytail: background dots blanked so the bat reads on any terminal theme."""
 NAME = "M a r t i n   S o r i a   R ø v a n g"
-SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPINNER = "◐◓◑◒"
 LOGO = [
 	"        *",
 	"       *@                  *-",
