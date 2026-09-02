@@ -3,7 +3,7 @@ import threading
 import time
 
 from .. import config
-from . import github, log, review as review_mod, update
+from . import github, log, review as review_mod, team, update
 
 
 class State:
@@ -45,6 +45,7 @@ class State:
 	def loop(self):
 		while True:
 			t0 = time.time()
+			team.pull()  # newest team log + memory before we read them
 			data = github.fetch()
 			stale = log.mark_rereviews(data)
 			newer = update.update_available()

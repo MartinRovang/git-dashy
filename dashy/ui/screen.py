@@ -7,13 +7,13 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, log, memory, update
+from ..core import github, log, memory, team, update
 from ..core.state import State
 from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  n/g memory  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  n/g memory  T team  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -96,6 +96,7 @@ def draw(scr, state, sel, prompt=None):
 		("model: " + state.model, "", C(6)),
 		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(6)),  # depth[/effort]
 		("summaries: " + state.subs, "", C(6)),
+		*([(team.ERROR or "team: " + team.NAME, "", C(3) if team.ERROR else C(6))] if team.on() else []),
 		("approved", sum(v.startswith("✓") for v in vals), C(4)),
 		("changes", sum(v.startswith("✗") for v in vals), C(3)),
 		("commented", sum(v.startswith("~") for v in vals), C(1)),
@@ -233,9 +234,42 @@ def edit_memory(scr, repo):
 	"""Open general (repo=None) or per-repo memory in $EDITOR. Reviews read it back next run."""
 	path = memory.path(repo)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
+	team.pull()
 	curses.endwin()
 	subprocess.run([os.environ.get("EDITOR", "nano"), path])
 	scr.refresh()
+	team.push(f"memory: {repo or 'general'} edited")
+
+
+def ask(scr, state, sel, question):
+	"""Footer text input. Returns '' on empty/escape."""
+	draw(scr, state, sel, prompt=question)
+	curses.echo()
+	scr.timeout(-1)
+	try:
+		return scr.getstr(scr.getmaxyx()[0] - 1, len(question) + 1, 200).decode().strip()
+	except (KeyboardInterrupt, UnicodeDecodeError):
+		return ""
+	finally:
+		curses.noecho()
+		scr.timeout(500)
+
+
+def team_setup(scr, state, sel):
+	if team.on():
+		confirm(scr, state, sel, f" team {team.NAME} · files in {config.TEAM} · remove that folder to leave  [any key]")
+		return
+	repo = ask(scr, state, sel, " Team repo (owner/name, private recommended; created if missing):")
+	if not repo:
+		return
+	err = team.setup(repo)
+	if err and "/" in repo and not os.path.isdir(repo):  # ponytail: any clone failure of owner/name → offer to create
+		if confirm(scr, state, sel, f" {err} · create {repo} as a private repo? [y/n]"):
+			err = team.setup(repo, create=True)
+	if err:
+		confirm(scr, state, sel, f" {err}  [any key]")
+	else:
+		state.wake.set()  # reload REVIEWED from the team log
 
 
 def cycle_through(values, current):
@@ -246,6 +280,7 @@ def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
 	state = State(interval, model)
+	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()
@@ -282,6 +317,8 @@ def main(scr, interval, auto, model):
 			github.open_in_browser(current["url"])
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
+		elif k == ord("T"):
+			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
 		elif k in (10, 13, curses.KEY_ENTER) and current:

@@ -48,6 +48,9 @@ gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no r
 gitdashy --help
 ```
 
+MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested` or
+`· awaiting review`.
+
 ## Keys
 
 | key | what |
@@ -64,6 +67,7 @@ gitdashy --help
 | `i` | cycle refresh interval: 1 / 2 / 5 / 10 / 15 min (the stats strip shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
+| `T` | team setup: share log + memory through a git repo (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
@@ -97,6 +101,17 @@ and fed back into the prompt for every later review of that repo. `~/.prs_memory
 into every review regardless of repo. Both are plain markdown bullet lists — `n` opens the selected
 PR's repo memory and `g` the general one in `$EDITOR`, so you can add, prune or correct freely.
 
+### Team
+
+Press `T` and give a repo (`org/review-team`, private recommended). gitdashy clones it with `gh` into
+`~/.prs_team` (`PRS_TEAM` overrides), offers to create it if it does not exist, and copies your current
+log and memory in. From then on the review log and all memory files live there: every refresh pulls,
+every review or memory edit commits and pushes. Files are appended only and merge with git's union
+driver, so two people reviewing at once do not conflict. Everyone on the team sees the same REVIEWED
+history, re-review detection works across people, and each teammate's agent learns from everyone's
+reviews. The stats strip shows `team: org/review-team`, or the last git error in red. To leave, delete
+the folder.
+
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
@@ -119,6 +134,7 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
 | `PRS_EFFORT` | `medium` | `--effort` passed to claude: low, medium, high, xhigh, max |
 | `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |
+| `PRS_TEAM` | `~/.prs_team` | team checkout; team mode is on when it contains a `.git` |
 | `PRS_MEMORY` | `~/.prs_memory` | memory directory: `general.md` + one file per repo |
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 

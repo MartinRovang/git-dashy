@@ -8,6 +8,7 @@ DEPTHS = ["adaptive", "low", "medium", "high"]  # d cycles
 EFFORT = os.environ.get("PRS_EFFORT", "medium")  # claude --effort: low, medium, high, xhigh, max; "" = claude's default
 DEPTH = os.environ.get("PRS_DEPTH", "adaptive")  # review depth: low, medium, high, adaptive
 INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
+TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # git checkout shared with the team; T sets it up
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # jsonl, one review per line
 INTERVALS = [60, 120, 300, 600, 900]  # i cycles

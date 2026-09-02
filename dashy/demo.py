@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from itertools import cycle
 
+from . import config
 from .core import github, log, review, update
 
 
@@ -16,6 +17,7 @@ def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None
 
 def install():
 	"""ponytail: swap the three module attrs the app calls out through — no injection framework."""
+	config.TEAM = ""  # never sync the demo
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
 	now = datetime.now(timezone.utc)
 	mine = [pr(101, "Add retry to webhook client", hours=2, now=now),

@@ -3,7 +3,7 @@ import json
 import subprocess
 
 from .. import config
-from . import github, log, memory
+from . import github, log, memory, team
 
 PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
 `gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
@@ -44,6 +44,8 @@ def review(pr, model):
 		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		memory.append(repo, verdict.get("memory"))
-		return log.log_review(pr, model, verdict)
+		status = log.log_review(pr, model, verdict)
+		team.push(f"review {repo}#{n}: {verdict['verdict']}")
+		return status
 	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]

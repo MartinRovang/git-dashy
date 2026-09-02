@@ -15,6 +15,7 @@ def isolated(monkeypatch, tmp_path):
 	"""Never touch the real log, the real git remote, or wait on the splash."""
 	monkeypatch.setattr(log, "LOG", str(tmp_path / "log.jsonl"))
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
 	monkeypatch.setattr(github, "fetch", github.fetch)
