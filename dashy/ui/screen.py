@@ -156,11 +156,12 @@ def draw(scr, state, sel, prompt=None):
 	if right_w < w - 2:
 		bar(0, w - 1 - right_w, right)
 
-	sep, gap = ("  │  " if state.hints else "   │   ", C(16)), ("      " if state.hints else "        ", C(15))  # tighter with hints so the row still fits
+	spacings = [("   │   ", "        "), ("  │  ", "     "), (" │ ", "   ")]  # (between pairs, between groups), loosest first
+	sep, gap = [(t, C(16)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
 	tones = {None: C(15), "on": C(17), "err": C(19)}
 	def kv(key, value, attr=C(15), k=""):  # dim key, bright value, so "Depth adaptive" reads as a pair and not one phrase
 		return hint(k) + [(key + " ", C(16), k), (value, attr)]
-	def render(label, key, rows, level):
+	def render(label, key, rows, level, space):
 		"""A group at one of its levels: "full" = gear chip + pairs, "chip" = the chip with a caret, "off" = nothing.
 		ponytail: the chip is a badge like the app's, so a group reads as one block; collapsed, it anchors every key in it."""
 		keys = key + "".join(k for k, *_ in rows)
@@ -170,7 +171,7 @@ def draw(scr, state, sel, prompt=None):
 			return hint(key) + [(f" ⚙ {label} ▾ ", C(20) | curses.A_BOLD, keys)]
 		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
 		for i, (k, name, value, tone) in enumerate(rows):
-			parts += ([sep] if i else []) + kv(name, value, tones[tone], k)
+			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
 		return parts
 	def width(parts):
 		return sum(len(p[0]) for p in parts)
@@ -180,15 +181,17 @@ def draw(scr, state, sel, prompt=None):
 		+ kv("~", str(sum(v.startswith('~') for v in vals)), C(15) | curses.A_BOLD) + [("   ", C(15))] \
 		+ kv("!", str(sum(v.startswith('error') for v in vals)), C(19) | curses.A_BOLD)
 	# session sits left, its label ending where the app badge ends; the groups stack against the right edge and
-	# degrade one step at a time when the row is too narrow: View to a chip, Reviewer to a chip, then View off, Reviewer off
+	# degrade one step at a time when the row is too narrow: the spacing tightens twice, then View folds to a
+	# chip, then Reviewer, then View drops, then Reviewer — content always wins over air
 	x = bar(1, 2 + len(badge) - len("Session"), session)
 	groups = header_groups(state)
 	levels = {key: "full" for _, key, _ in groups}
-	steps = [("V", "chip"), ("R", "chip"), ("V", "off"), ("R", "off")]
+	levels["space"] = 0
+	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("V", "off"), ("R", "off")]
 	def stack():
-		drawn = [render(label, key, rows, levels[key]) for label, key, rows in groups]
+		drawn = [render(label, key, rows, levels[key], levels["space"]) for label, key, rows in groups]
 		drawn = [g for g in drawn if g]
-		return [piece for g in drawn for piece in g + [gap]][:-1] if drawn else []
+		return [piece for g in drawn for piece in g + [gap[levels["space"]]]][:-1] if drawn else []
 	parts = stack()
 	while parts and x + 3 + width(parts) > w - 3 and steps:
 		key, level = steps.pop(0)
