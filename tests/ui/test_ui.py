@@ -107,7 +107,7 @@ def test_d_and_e_cycle_depth_and_effort(monkeypatch):
 
 
 def test_strip_shows_refreshing_while_fetch_in_flight(screen):
-	screen.w = 170
+	screen.w = 180  # wide enough for the whole strip incl. the version
 	st = State(60)
 	st.sections, st.fetched_at, st.fetching = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
