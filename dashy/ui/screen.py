@@ -79,7 +79,7 @@ def draw(scr, state, sel, prompt=None):
 
 	# header: one two-row bar. row 0 = identity + status + badges, row 1 = stats
 	total = sum(len(p) for _, p, _ in sections if p)
-	spin = art.SPINNER[int(time.time() * 10) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	spin = art.REFRESH_SPINNER[int(time.time() * 10) % len(art.REFRESH_SPINNER)]  # ponytail: frame from the clock, no animation state
 	# 10 fps against the 50ms redraw tick: every frame gets drawn twice, no aliasing into stutter
 	status = f"{spin} fetching…" if fetched_at is None else \
 		f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
