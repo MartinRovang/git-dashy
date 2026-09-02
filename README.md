@@ -2,7 +2,7 @@
   <img src="logo.png" alt="PR Helper — smarter reviews, better code" width="620">
 </p>
 
-<h1 align="center">github-dashy</h1>
+<h1 align="center">git-dashy</h1>
 
 <p align="center">Smarter reviews. Better code. — a terminal PR dashboard with a one-key Claude review.</p>
 
