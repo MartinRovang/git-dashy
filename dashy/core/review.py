@@ -1,5 +1,6 @@
 """Run Claude headless on a PR and post its verdict."""
 import json
+import random
 import subprocess
 
 from .. import config
@@ -22,7 +23,8 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
-HELLO = """🃜🃚🃖🃁🂭🂺 ꧁⎝ 𓆩༺☠︎︎༻𓆪 ⎠꧂ +=={{:::::::::::::::::>
+SPRITE = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/sprite_{:03d}.png"
+HELLO = """<img src="{sprite}" width="200">
 
 **Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
@@ -40,7 +42,7 @@ def review(pr, model):
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 			with open(config.INSTRUCTIONS) as f:
 				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-		github.comment(repo, n, HELLO.format(model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		github.comment(repo, n, HELLO.format(sprite=SPRITE.format(random.randint(1, 12)), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
 			["claude", "-p", prompt, "--output-format", "json",
