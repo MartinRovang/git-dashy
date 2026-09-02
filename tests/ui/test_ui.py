@@ -24,8 +24,10 @@ def test_draw_renders_sections_status_and_selection(screen):
 	assert sel == 1 and cur["url"] == "r"
 	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
 	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
-	assert "this session →" in out and "1 approved" in out and "model: " + st.model in out
-	assert "next refresh" in out
+	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
+	assert "Reviewer   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
+	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
+	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() == "" and "MINE (1)" in screen.line(4)
 
 
 def test_draw_clamps_selection_and_handles_empty(screen):
@@ -37,6 +39,19 @@ def test_draw_clamps_selection_and_handles_empty(screen):
 	assert sel == 0 and cur["url"] == "u"
 	sel, cur = ui.draw(screen, st, -3)
 	assert sel == 0
+
+
+def test_draw_survives_tiny_terminals(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None), ("REVIEWED", [], None)], time.time()
+	for h in range(1, 12):
+		for w in range(1, 40):
+			screen.h, screen.w = h, w
+			sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
+			assert sel == 0 and cur["url"] == "u"
+	screen.h, screen.w = 6, 120
+	ui.draw(screen, st, 0)
+	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
 
 
 def test_draw_prompt_replaces_footer(screen):
@@ -97,13 +112,47 @@ def test_update_screen_accepts_and_reports_failure(screen, monkeypatch, st):
 	assert "failed: no such tag v9.9.9" in screen.text()
 
 
-def test_d_and_e_cycle_depth_and_effort(monkeypatch):
-	from dashy.ui.screen import cycle_through
+def test_dropdown_lists_options_under_the_setting_and_picks_on_enter(screen, monkeypatch):
+	screen.w = 190
 	monkeypatch.setattr(config, "DEPTH", "adaptive")
-	monkeypatch.setattr(config, "EFFORT", "")
-	assert cycle_through(config.DEPTHS, config.DEPTH) == "low"
-	assert cycle_through(config.EFFORTS, config.EFFORT) == "low"
-	assert cycle_through(config.EFFORTS, "max") == ""
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return [ord("j"), ord("d"), 10][len(seen) - 1]  # down, same key = down again, enter
+	screen.getch, screen.timeout = getch, lambda t: None
+	assert ui.dropdown(screen, st, 0, "d") is True and config.DEPTH == "medium"
+	first = seen[0]
+	assert "▸ adaptive" in first and "  low" in first and "Depth:  j/k or d move" in first
+	y, x = ui.ANCHORS["d"]
+	assert screen.line(y).index("Depth ") == x and "╭" in first.splitlines()[y + 1][x:x + 2]
+	assert "▸ medium" in seen[2] and "▸ adaptive" not in seen[2]
+
+
+def test_dropdown_escape_keeps_and_unknown_model_is_listed(screen):
+	st = State(60, model="custom-model")
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.getch, screen.timeout = _keys(ord("j"), 27), lambda t: None
+	assert ui.dropdown(screen, st, 0, "m") is False and st.model == "custom-model"
+	assert "▸ custom-model" in screen.text() or "custom-model" in screen.text()
+
+
+def test_dropdown_shows_effort_default_and_history_all(screen):
+	st = State(60)
+	st.sections, st.fetched_at, st.window = [("MINE", [], None)], time.time(), None
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.dropdown(screen, st, 0, "t")
+	assert "▸ all" in screen.text() and "  4h" in screen.text()
+	screen.getch = _keys(27)
+	ui.dropdown(screen, st, 0, "e")
+	assert "default" in screen.text() and "xhigh" in screen.text()
+	st.interval = 90  # --interval in seconds that is not a whole minute
+	screen.getch = _keys(27)
+	ui.dropdown(screen, st, 0, "i")
+	assert "▸ 90s" in screen.text() and "  5m" in screen.text()
+	screen.h, screen.w = 20, 2
+	ui.popup(screen, 1, 0, "t", ["x"], 0)  # must not raise
 
 
 def test_strip_shows_refreshing_while_fetch_in_flight(screen):
@@ -112,6 +161,138 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 	st.sections, st.fetched_at, st.fetching = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
 	assert "refreshing" in screen.text() and "next refresh" not in screen.text()
+
+
+def test_strip_collapses_groups_to_chips_on_narrow_screens(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	def row1(w):
+		screen.w = w
+		ui.draw(screen, st, 0)
+		return screen.line(1)
+	out = row1(200)
+	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
+	assert out.rstrip().endswith("History 4h") and out.index("Reviewer") < out.index("View") and "☰" not in out
+	out = row1(175)
+	assert "History 4h" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
+	out = row1(150)
+	assert "Effort medium" in out and out.rstrip().endswith("☰ View")  # then View folds first
+	out = row1(100)
+	assert "☰ Reviewer" in out and "☰ View" in out and "Model" not in out
+	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
+	out = row1(70)
+	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
+	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
+	out = row1(55)
+	assert "Session" in out and "Settings" not in out
+
+
+def test_settings_menu_opens_a_group(screen):
+	screen.w = 70
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return [ord("j"), 10, 27, 27][len(seen) - 1]  # to View, open it, back to Settings, close
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.settings_menu(screen, st, 0)
+	assert "▸ Reviewer ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
+	assert "Summaries   all" in seen[2] and "View:  j/k move" in seen[2]
+	assert "▸ View ▸" in seen[3] and "Settings:  j/k move" in seen[3]
+
+
+def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
+	screen.w = 100
+	monkeypatch.setattr(config, "DEPTH", "adaptive")
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return [ord("j"), 10, ord("j"), 10, 27][len(seen) - 1]  # to Depth, open it, pick "low", back in the group, close
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.group_menu(screen, st, 0, "R")
+	assert config.DEPTH == "low"
+	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Reviewer:  j/k move" in seen[0]
+	assert "▸ adaptive" in seen[2] and "Depth:  j/k or d move" in seen[2]
+	assert "Depth    low" in seen[4] and "Reviewer:  j/k move" in seen[4]  # back in the group with the new value
+
+
+def test_group_menu_toggles_drafts(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.getch, screen.timeout = _keys(ord("j"), 10, 27), lambda t: None
+	ui.group_menu(screen, st, 0, "V")
+	assert st.drafts is True
+
+
+def test_group_menu_index_survives_a_row_disappearing(screen, monkeypatch):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	on = [True]
+	monkeypatch.setattr(ui.team, "on", lambda: on[0])
+	monkeypatch.setattr(ui.team, "NAME", "org/team")
+	monkeypatch.setattr(ui.team, "ERROR", "")
+	keys = iter([ord("j"), ord("j"), ord("j"), 10, 27, 27])
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		k = next(keys)
+		if len(seen) == 3:
+			on[0] = False  # the Team row vanishes while the cursor sits on it
+		return k
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.group_menu(screen, st, 0, "R")  # Enter with idx past the end must clamp to the last row, not raise
+	assert "Team" in seen[2] and "Team" not in seen[3] and "Effort:  j/k or e move" in seen[4]
+
+
+def test_dropdown_anchor_is_fresh_each_draw(screen):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.w = 200
+	ui.draw(screen, st, 0)
+	assert "m" in ui.ANCHORS
+	screen.w = 50  # everything but Session gone: no anchors, dropdown falls back to the row start
+	ui.draw(screen, st, 0)
+	assert "m" not in ui.ANCHORS and "R" not in ui.ANCHORS
+
+
+def test_strip_shows_update_and_auto_badges(screen):
+	screen.w = 180
+	st = State(60)
+	st.sections, st.fetched_at, st.update = [("MINE", [], None)], time.time(), "9.9.9"
+	st.set_auto(True)
+	ui.draw(screen, st, 0)
+	out = screen.line(0)
+	assert "update to v9.9.9 · u" in out and "AUTO" in out and "0 agents running" in out
+	assert out.index("PRs") < out.index("agents running") < out.index("updated") < out.index("next refresh") < out.index("AUTO")
+	# narrower: the countdown, status, agents, PR count and AUTO go one by one; the badge and the update prompt stay
+	def row0(w):
+		screen.w = w
+		ui.draw(screen, st, 0)
+		return screen.line(0)
+	out = row0(120)
+	assert "gitdashy" in out and "update to v9.9.9 · u" in out and "AUTO" in out and "next refresh" not in out and "updated" in out
+	out = row0(80)
+	assert "gitdashy v" in out and "update to v9.9.9 · u" in out and out.rstrip().endswith("· u")
+	out = row0(60)
+	assert "gitdashy" in out and "update to v9.9.9 · u" in out and "PRs" not in out and "AUTO" not in out
+	out = row0(30)
+	assert "update to v9.9.9 · u" in out  # when even the badge and the prompt cannot share the row, the prompt wins
+
+
+def test_hints_show_each_settings_key(screen):
+	screen.w = 190
+	st = State(60)
+	st.sections, st.fetched_at, st.hints = [("MINE", [], None)], time.time(), True
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "m Model " + st.model in out and "d Depth" in out and "e Effort" in out
+	assert "s Summaries" in out and "D Drafts" in out and "t History" in out and "i next refresh" in out and "r updated" in out
+	st.hints = False
+	ui.draw(screen, st, 0)
+	assert "m Model" not in screen.text() and "i next refresh" not in screen.text()
 
 
 def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monkeypatch, st, tmp_path):
