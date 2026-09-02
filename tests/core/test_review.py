@@ -18,7 +18,8 @@ def test_review_posts_verdict_and_logs(monkeypatch):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "sonnet") == "✗ changes requested"
 	assert calls[0][:6] == ["gh", "pr", "comment", "7", "--repo", "a/b"]
-	assert calls[0][-1] == "Dashy is on its way! Reviewing with effort **medium** and depth **adaptive** (Dashy picks the depth from the diff size and risk)."
+	assert calls[0][-1].startswith("🃜🃚🃖🃁🂭🂺")
+	assert calls[0][-1].endswith("**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium** and depth **adaptive** (Dashy picks the depth from the diff size and risk).")
 	assert calls[1][0] == "claude" and calls[1][calls[1].index("--model") + 1] == "sonnet"
 	assert calls[2][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
 	assert "--request-changes" in calls[2] and calls[2][-1] == "nope"

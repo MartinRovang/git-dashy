@@ -70,6 +70,7 @@ again but the reviewer has not looked yet.
 | `i` | cycle refresh interval: 1 / 2 / 5 / 10 / 15 min (the stats strip shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
+| `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `T` | team setup: share log + memory through a git repo (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
@@ -103,6 +104,9 @@ recurring pitfalls, intentional oddities); they are appended to `~/.prs_memory/<
 and fed back into the prompt for every later review of that repo. `~/.prs_memory/general.md` goes
 into every review regardless of repo. Both are plain markdown bullet lists — `n` opens the selected
 PR's repo memory and `g` the general one in `$EDITOR`, so you can add, prune or correct freely.
+`Z` dreams: Claude reads every memory file, merges duplicates, drops stale or contradictory lines and
+moves repo-independent facts to general, then shows a summary and per-file line counts. Nothing is
+written until you press `y`.
 
 ### Team
 

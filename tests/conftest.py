@@ -3,7 +3,7 @@ import json
 import pytest
 
 from dashy import config
-from dashy.core import github, log, review, state, update
+from dashy.core import github, log, memory, review, state, update
 from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
@@ -20,6 +20,7 @@ def isolated(monkeypatch, tmp_path):
 	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
 	monkeypatch.setattr(github, "fetch", github.fetch)
 	monkeypatch.setattr(review, "review", review.review)
+	monkeypatch.setattr(memory, "dream", memory.dream)
 
 
 class Result:

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import cycle
 
 from . import config
-from .core import github, log, review, update
+from .core import github, log, memory, review, update
 
 
 def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None):
@@ -19,6 +19,9 @@ def install():
 	"""ponytail: swap the three module attrs the app calls out through — no injection framework."""
 	config.TEAM = ""  # never sync the demo
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
+	config.MEMORY_DIR = log.LOG[:-6] + "-memory"  # Z dream must never rewrite the real memory
+	memory.append(None, "run make lint before flagging style")
+	memory.append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore")
 	now = datetime.now(timezone.utc)
 	mine = [pr(101, "Add retry to webhook client", hours=2, now=now),
 	        pr(98, "WIP: migrate to pydantic v2", hours=30, draft=True, now=now)]
@@ -62,4 +65,9 @@ def install():
 		v = next(verdicts)
 		return log.log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
 
-	github.fetch, review.review, update.update_available = fake_fetch, fake_review, lambda: ""
+	def fake_dream(model):
+		time.sleep(4)
+		return ("merged 2 duplicate lines about tabs in acme/api\nmoved 'run make lint' to general\ndropped a stale note about the old CI",
+		        {n: "\n".join(dict.fromkeys(t.splitlines())) for n, t in memory.files().items()})
+
+	github.fetch, review.review, update.update_available, memory.dream = fake_fetch, fake_review, lambda: "", fake_dream

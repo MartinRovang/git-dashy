@@ -112,3 +112,36 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 	st.sections, st.fetched_at, st.fetching = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
 	assert "refreshing" in screen.text() and "next refresh" not in screen.text()
+
+
+def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	ui.memory.append("a/b", "x\nx")
+	def slow_dream(model):
+		time.sleep(0.3)
+		return "merged dupes", {"a__b.md": "- x"}
+	monkeypatch.setattr(ui.memory, "dream", slow_dream)
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return ord("y")
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.dream_screen(screen, st, 0)
+	assert any("dreaming" in s and "tidying the memories" in s for s in seen)
+	assert "dream over" in seen[-1] and "merged dupes" in seen[-1] and "a/b" in seen[-1] and "2 → 1" in seen[-1]
+	assert open(ui.memory.path("a/b")).read() == "- x\n"
+
+
+def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	ui.memory.append("a/b", "x")
+	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"a__b.md": "- changed"}))
+	screen.getch, screen.timeout = _keys(ord("n"), ord("n")), lambda t: None
+	ui.dream_screen(screen, st, 0)
+	assert open(ui.memory.path("a/b")).read() == "- x\n"
+	def boom(m):
+		raise ValueError("no memory to dream about")
+	monkeypatch.setattr(ui.memory, "dream", boom)
+	screen.getch = _keys(ord(" "), ord(" "))
+	ui.dream_screen(screen, st, 0)
+	assert "dream failed" in screen.text() and "no memory to dream about" in screen.text()

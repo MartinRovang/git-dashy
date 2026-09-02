@@ -2,6 +2,7 @@
 import curses
 import os
 import subprocess
+import random
 import threading
 import time
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  T team  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  Z dream  T team  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -285,6 +286,50 @@ def team_setup(scr, state, sel):
 		state.wake.set()  # reload REVIEWED from the team log
 
 
+DREAM_SKY = "˖ ⋆ ✧ ✦ ☾ · ° ˚ z Z"
+
+
+def dream_screen(scr, state, sel):
+	"""Modal: run memory.dream() in a thread, animate while it runs, then offer to apply the result."""
+	box = [None]  # (summary, files) or Exception
+	def run():
+		try:
+			box[0] = memory.dream(state.model)  # module attr: --demo and tests swap it
+		except Exception as e:  # noqa: BLE001 — surfaced in the panel
+			box[0] = e
+	threading.Thread(target=run, daemon=True).start()
+	rng, t0 = random.Random(0), time.time()
+	scr.timeout(120)
+	try:
+		while box[0] is None:
+			draw(scr, state, sel, prompt=" ")
+			sky = [("".join(rng.choice(DREAM_SKY) if rng.random() < 0.18 else " " for _ in range(44)), "") for _ in range(4)]
+			spin = art.SPINNER[int((time.time() - t0) * 8) % len(art.SPINNER)]
+			panel(scr, "dreaming", sky + [("", ""), (f"{spin}  {state.model} is tidying the memories…", f"{int(time.time() - t0)}s")],
+			      "[esc] wake up without changes", accent=6)
+			if scr.getch() == 27:
+				return
+		if isinstance(box[0], Exception):
+			err = (getattr(box[0], "stderr", None) or str(box[0])).strip().splitlines() or ["?"]
+			panel(scr, "dream failed", [("", ""), (err[-1][:70], "")], "[any key] back", accent=3)
+			scr.timeout(-1)
+			scr.getch()
+			return
+		summary, new = box[0]
+		before = memory.files()
+		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
+		lines += [(n[:-3].replace("__", "/"), f"{len(before[n].splitlines())} → {len(t.splitlines())}") for n, t in new.items()]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, "dream over", lines, "[y] accept and rewrite memory     [n] discard", accent=6)
+		scr.timeout(-1)
+		if scr.getch() == ord("y"):
+			team.pull()
+			memory.write(new)
+			team.push("memory: dream cleanup")
+	finally:
+		scr.timeout(500)
+
+
 def cycle_through(values, current):
 	return values[(values.index(current) + 1) % len(values)] if current in values else values[0]
 
@@ -334,6 +379,8 @@ def main(scr, interval, auto, model):
 			github.open_in_browser(current["url"])
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
+		elif k == ord("Z"):
+			dream_screen(scr, state, sel)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

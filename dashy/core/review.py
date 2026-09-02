@@ -22,7 +22,9 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
-HELLO = "Dashy is on its way! Reviewing with effort **{effort}** and depth **{depth}** ({why})."
+HELLO = """🃜🃚🃖🃁🂭🂺 ꧁⎝ 𓆩༺☠︎︎༻𓆪 ⎠꧂ +=={{:::::::::::::::::>
+
+**Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 TIMEOUT = 900
@@ -38,7 +40,7 @@ def review(pr, model):
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 			with open(config.INSTRUCTIONS) as f:
 				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-		github.comment(repo, n, HELLO.format(effort=config.EFFORT or "default", depth=config.DEPTH,
+		github.comment(repo, n, HELLO.format(model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
 			["claude", "-p", prompt, "--output-format", "json",
