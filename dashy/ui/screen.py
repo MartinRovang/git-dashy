@@ -15,7 +15,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  R/V groups  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -39,6 +39,9 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(20, 255, curses.COLOR_BLACK, 240, curses.COLOR_WHITE),  # group label chip on bar 2: light grey, so it does not compete with the app badge
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
+	# a group's pairs sit on a panel one shade lighter than bar 2 (237, so the bar-1 pairs 7/9/10/12 work on it);
+	# the chip is its left edge and this thin right edge closes the box
+	(23, 240, curses.COLOR_WHITE, 237, curses.COLOR_BLACK),  # panel edge ▕
 ]
 
 
@@ -142,9 +145,9 @@ def draw(scr, state, sel, prompt=None):
 			x += len(text)
 		return x
 
-	def hint(key, on_bar2=True):  # ? toggles: the key that changes a setting, shown right before it
-		return [(key + " ", (C(17) if on_bar2 else C(10)) | curses.A_BOLD)] if state.hints and key else []
-	right = hint("r", False) + [(status, C(9))] + ([("  ·  ", C(9))] + hint("i", False) + [(nxt, C(9), "i")] if nxt else [])
+	def hint(key, attr=C(17)):  # ? toggles: the key that changes a setting, shown right before it
+		return [(key + " ", attr | curses.A_BOLD)] if state.hints and key else []
+	right = hint("r", C(10)) + [(status, C(9))] + ([("  ·  ", C(9))] + hint("i", C(10)) + [(nxt, C(9), "i")] if nxt else [])
 	if state.auto:
 		right += [("   ", C(7)), (" AUTO ", C(5) | curses.A_REVERSE | curses.A_BOLD)]
 	if state.update:
@@ -157,10 +160,10 @@ def draw(scr, state, sel, prompt=None):
 		bar(0, w - 1 - right_w, right)
 
 	spacings = [("   │   ", "        "), ("  │  ", "     "), (" │ ", "   ")]  # (between pairs, between groups), loosest first
-	sep, gap = [(t, C(16)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
-	tones = {None: C(15), "on": C(17), "err": C(19)}
-	def kv(key, value, attr=C(15), k=""):  # dim key, bright value, so "Depth adaptive" reads as a pair and not one phrase
-		return hint(k) + [(key + " ", C(16), k), (value, attr)]
+	sep, gap = [(t, C(9)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
+	tones = {None: C(7), "on": C(10), "err": C(12)}  # on the group panel
+	def kv(key, value, attr=C(15), k="", key_attr=C(16), hint_attr=C(17)):  # dim key, bright value: a pair, not one phrase
+		return hint(k, hint_attr) + [(key + " ", key_attr, k), (value, attr)]
 	def render(label, key, rows, level, space):
 		"""A group at one of its levels: "full" = gear chip + pairs, "chip" = the chip with a caret, "off" = nothing.
 		ponytail: the chip is a badge like the app's, so a group reads as one block; collapsed, it anchors every key in it."""
@@ -169,10 +172,10 @@ def draw(scr, state, sel, prompt=None):
 			return []
 		if level == "chip":
 			return hint(key) + [(f" ⚙ {label} ▾ ", C(20) | curses.A_BOLD, keys)]
-		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
+		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), (" ", C(7))]
 		for i, (k, name, value, tone) in enumerate(rows):
-			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
-		return parts
+			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k, C(9), C(10))
+		return parts + [(" ▕", C(23))]  # the panel closes with a thin edge in the chip's grey
 	def width(parts):
 		return sum(len(p[0]) for p in parts)
 	session = [("Session", C(22) | curses.A_BOLD), ("  ", C(15))] \
@@ -182,13 +185,18 @@ def draw(scr, state, sel, prompt=None):
 		+ kv("!", str(sum(v.startswith('error') for v in vals)), C(19) | curses.A_BOLD)
 	# session sits left, its label ending where the app badge ends; the groups stack against the right edge and
 	# degrade one step at a time when the row is too narrow: the spacing tightens twice, then View folds to a
-	# chip, then Reviewer, then View drops, then Reviewer — content always wins over air
+	# chip, then Reviewer, then both nest under one Settings chip, then that goes too — content always wins over air
 	x = bar(1, 2 + len(badge) - len("Session"), session)
 	groups = header_groups(state)
 	levels = {key: "full" for _, key, _ in groups}
-	levels["space"] = 0
-	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("V", "off"), ("R", "off")]
+	levels["space"], levels["nest"] = 0, "no"
+	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
 	def stack():
+		if levels["nest"] == "chip":  # both groups under one chip; it anchors every key so S/R/V and the settings all hang from it
+			keys = "S" + "".join(key + "".join(k for k, *_ in rows) for _, key, rows in groups)
+			return hint("S") + [(" ⚙ Settings ▾ ", C(20) | curses.A_BOLD, keys)]
+		if levels["nest"] == "off":
+			return []
 		drawn = [render(label, key, rows, levels[key], levels["space"]) for label, key, rows in groups]
 		drawn = [g for g in drawn if g]
 		return [piece for g in drawn for piece in g + [gap[levels["space"]]]][:-1] if drawn else []
@@ -386,6 +394,26 @@ def group_menu(scr, state, sel, key):
 			return
 
 
+def settings_menu(scr, state, sel):
+	"""The two settings groups as a menu under the Settings chip (or the first chip when they are not nested).
+	Enter opens a group, Esc closes."""
+	idx = 0
+	while True:
+		groups = header_groups(state)
+		draw(scr, state, sel, prompt=" Settings:  j/k move   ⏎ open   esc close")
+		y, x = ANCHORS.get("S", ANCHORS.get(groups[0][1], (1, 3)))
+		popup(scr, y, x, "Settings", [f"{label} ▸" for label, _, _ in groups], idx)
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			idx = (idx + 1) % len(groups)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(groups)
+		elif k in (10, 13, curses.KEY_ENTER):
+			group_menu(scr, state, sel, groups[idx][1])
+		elif k in (27, ord("q")):
+			return
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
@@ -536,6 +564,8 @@ def main(scr, interval, auto, model):
 			dropdown(scr, state, sel, chr(k))
 		elif k in (ord("R"), ord("V")):
 			group_menu(scr, state, sel, chr(k))
+		elif k == ord("S"):
+			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
 		elif k == ord("g") or (k == ord("n") and current):

@@ -25,7 +25,7 @@ def test_draw_renders_sections_status_and_selection(screen):
 	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
 	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
 	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
-	assert "Reviewer   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
+	assert "Reviewer  Model " + st.model in out and "Depth " + config.DEPTH in out and "View  Summaries all" in out and "Drafts shown" in out
 	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
 	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() == "" and "MINE (1)" in screen.line(4)
 
@@ -153,16 +153,34 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen):
 		return screen.line(1)
 	out = row1(200)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
-	assert out.rstrip().endswith("History 4h") and out.index("⚙ Reviewer") < out.index("⚙ View") and "▾" not in out
+	assert out.rstrip().endswith("History 4h ▕") and out.index("⚙ Reviewer") < out.index("⚙ View") and "▾" not in out
 	out = row1(175)
-	assert "History 4h" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
+	assert "History 4h ▕" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
 	out = row1(150)
 	assert "Effort medium" in out and out.rstrip().endswith("View ▾")  # then View folds first
 	out = row1(100)
 	assert "Reviewer ▾" in out and "View ▾" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
-	out = row1(60)
-	assert "Session" in out and "Reviewer" not in out and "View" not in out
+	out = row1(70)
+	assert "Settings ▾" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
+	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
+	out = row1(55)
+	assert "Session" in out and "Settings" not in out
+
+
+def test_settings_menu_opens_a_group(screen):
+	screen.w = 70
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return [ord("j"), 10, 27, 27][len(seen) - 1]  # to View, open it, back to Settings, close
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.settings_menu(screen, st, 0)
+	assert "▸ Reviewer ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
+	assert "Summaries   all" in seen[2] and "View:  j/k move" in seen[2]
+	assert "▸ View ▸" in seen[3] and "Settings:  j/k move" in seen[3]
 
 
 def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
