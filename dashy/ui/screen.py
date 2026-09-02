@@ -13,7 +13,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  T team  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  T team  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -62,7 +62,7 @@ def draw(scr, state, sel, prompt=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
-	rs = rows(sections, state.window, state.subs, state.drafts)
+	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
@@ -157,12 +157,14 @@ def draw(scr, state, sel, prompt=None):
 			if is_cur:
 				scr.addnstr(y, 0, " " * (w - 1), w - 1, base)
 			put("▸ " if is_cur else "  ", C(5) | curses.A_BOLD)
+			if p.get("child"):
+				put("    └ ", C(1))  # ponytail: fixed indent, tree is only ever one level deep
 			put(age(p["updatedAt"]).rjust(4), C(1))
 			put("  ")
 			put(ref, C(6), ref_w)
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
-			tag = p.get("tag", "")
+			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
 			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
 			t = p["title"]
 			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
@@ -316,6 +318,8 @@ def main(scr, interval, auto, model):
 			state.subs = cycle_through(config.SUBS, state.subs)
 		elif k == ord("D"):
 			state.drafts = not state.drafts
+		elif k == ord(" ") and current and current["section"] == "REVIEWED":
+			state.expanded ^= {current["url"]}
 		elif k == ord("i"):
 			state.interval = cycle_through(config.INTERVALS, state.interval)
 		elif k == ord("t"):

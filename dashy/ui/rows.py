@@ -10,10 +10,10 @@ def age(iso):
 	return "now"
 
 
-def rows(sections, window=None, subs="all", drafts=True):
+def rows(sections, window=None, subs="all", drafts=True, expanded=()):
 	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
 	window: hours of REVIEWED to show. subs: 'all' / 'open' (no summaries under REVIEWED) / 'off'.
-	drafts: False hides draft PRs."""
+	drafts: False hides draft PRs. expanded: urls whose older REVIEWED entries are unfolded under the newest."""
 	out = []
 	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
 	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
@@ -24,6 +24,8 @@ def rows(sections, window=None, subs="all", drafts=True):
 		if name == "REVIEWED" and cutoff:
 			prs = [p for p in prs or [] if datetime.fromisoformat(p["review"]["at"]) >= cutoff]
 			label = f"{name} · last {window}h"
+		if name == "REVIEWED" and prs:
+			prs = stack(prs, expanded)
 		out.append(("head", f"{label} ({len(prs) if prs is not None else '!'})"))
 		for p in prs or []:
 			p["section"] = name
@@ -33,7 +35,27 @@ def rows(sections, window=None, subs="all", drafts=True):
 			out.append(("empty", "  none"))
 		for p in prs or []:
 			out.append(("pr", p))
-			if summaries.get(p["url"]) and (subs == "all" or (subs == "open" and name != "REVIEWED")):
-				out.append(("sub", summaries[p["url"]]))  # ponytail: one line, truncated in draw
+			summary = p["review"]["summary"] if name == "REVIEWED" else summaries.get(p["url"])
+			if summary and (subs == "all" or (subs == "open" and name != "REVIEWED")):
+				out.append(("sub", summary))  # ponytail: one line, truncated in draw
 		out.append(("blank", ""))
+	return out
+
+
+def stack(prs, expanded):
+	"""Group REVIEWED entries (newest first) by PR: the newest heads the group with p['more'] = hidden count,
+	older ones follow as p['child'] = True only when the url is in expanded."""
+	groups = {}
+	for p in prs:
+		groups.setdefault(p["url"], []).append(p)
+	out = []
+	for url, g in groups.items():
+		head, rest = g[0], g[1:]
+		head["more"] = 0 if url in expanded else len(rest)
+		head["open"] = bool(rest) and url in expanded
+		out.append(head)
+		if url in expanded:
+			for p in rest:
+				p["child"] = True
+			out += rest
 	return out

@@ -27,7 +27,10 @@ def install():
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48, now=now)]
 	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0, now=now)  # 3rd refresh, exercises auto
 	assigned = [pr(300, "Flaky integration test in CI", "acme/api", "erin", 72, now=now)]
-	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 3, now=now),
+	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 26, now=now),  # older review, folds under the newer one
+	         {"verdict": "request_changes", "summary": "Splits auth middleware into token parsing and policy checks.",
+	          "body": "- `api/auth.py:40` policy check runs before the token is validated"}),
+	        (pr(180, "Refactor auth middleware", "acme/api", "frank", 3, now=now),
 	         {"verdict": "approve", "summary": "Splits auth middleware into token parsing and policy checks.",
 	          "body": "LGTM. Clean split, existing tests still cover both paths."}),
 	        (pr(44, "Add S3 lifecycle rules", "acme/infra", "grace", 5, now=now),
@@ -41,7 +44,7 @@ def install():
 	def fake_fetch():
 		fetches[0] += 1
 		time.sleep(1)
-		rr_now = rr + ([late] if fetches[0] >= 3 else []) + [dict(seed[1][0], updatedAt=now.isoformat())]
+		rr_now = rr + ([late] if fetches[0] >= 3 else []) + [dict(seed[2][0], updatedAt=now.isoformat())]
 		return [("MINE", mine, None), ("REVIEW REQUESTED", rr_now, None), ("ASSIGNED", assigned, None),
 		        ("REVIEWED", log.reviewed(), None)]
 

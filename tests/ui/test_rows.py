@@ -56,3 +56,21 @@ def test_rows_drafts_filter():
 	assert [x["url"] for k, x in rows(secs) if k == "pr"] == ["u", "d"]
 	assert [x["url"] for k, x in rows(secs, drafts=False) if k == "pr"] == ["u"]
 	assert ("head", "MINE (1)") in rows(secs, drafts=False)
+
+
+def test_rows_reviewed_stacks_rereviews_and_unfolds():
+	from datetime import datetime, timezone, timedelta
+	now = datetime.now(timezone.utc)
+	def ent(url, hours):
+		e = {"at": (now - timedelta(hours=hours)).isoformat(), "model": "opus", "verdict": "approve",
+		     "summary": "sum " + str(hours), "body": "", "pr": dict(PR, url=url)}
+		return {**e["pr"], "review": e, "status": "✓ approved", "updatedAt": e["at"]}
+	secs = [("REVIEWED", [ent("a", 1), ent("b", 2), ent("a", 3)], None)]
+	rs = rows(secs)
+	prs = [p for k, p in rs if k == "pr"]
+	assert [p["url"] for p in prs] == ["a", "b"] and prs[0]["more"] == 1 and prs[1]["more"] == 0
+	assert ("head", "REVIEWED (2)") in rs and ("sub", "sum 1") in rs and ("sub", "sum 3") not in rs
+	rs = rows(secs, expanded={"a"})
+	prs = [p for k, p in rs if k == "pr"]
+	assert [(p["url"], p.get("child", False)) for p in prs] == [("a", False), ("a", True), ("b", False)]
+	assert prs[0]["more"] == 0 and prs[0]["open"] and ("sub", "sum 3") in rs

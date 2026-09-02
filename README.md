@@ -61,6 +61,7 @@ again but the reviewer has not looked yet.
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
+| `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | cycle summary lines: all / open PRs only / off |
 | `D` | hide / show draft PRs |
 | `m` | cycle model: opus / sonnet / fable |
