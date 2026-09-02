@@ -1,5 +1,6 @@
 """Run Claude headless on a PR and post its verdict."""
 import json
+import pathlib
 import random
 import subprocess
 
@@ -23,13 +24,18 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
-SPRITE = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/sprite_{:03d}.png"
-HELLO = """<img src="{sprite}" width="120">
-
-**Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
+SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # drop more .png in there and they join the rotation
+SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/"
+HELLO = """{sprite}**Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 TIMEOUT = 900
+
+
+def sprite():
+	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
+	names = [p.name for p in SPRITE_DIR.glob("*.png")]
+	return f'<img src="{SPRITE_URL + random.choice(names)}" width="120">\n\n' if names else ""
 
 
 def review(pr, model):
@@ -42,7 +48,7 @@ def review(pr, model):
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 			with open(config.INSTRUCTIONS) as f:
 				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-		github.comment(repo, n, HELLO.format(sprite=SPRITE.format(random.randint(1, 12)), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		github.comment(repo, n, HELLO.format(sprite=sprite(), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
 			["claude", "-p", prompt, "--output-format", "json",

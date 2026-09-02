@@ -19,7 +19,7 @@ def test_review_posts_verdict_and_logs(monkeypatch):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "sonnet") == "✗ changes requested"
 	assert calls[0][:6] == ["gh", "pr", "comment", "7", "--repo", "a/b"]
-	assert re.match(r'<img src="https://\S+/sprites/sprite_0\d\d\.png" width="120">', calls[0][-1])
+	assert re.match(r'<img src="https://\S+/sprites/\S+\.png" width="120">\n\n\*\*Dashy is on its way!', calls[0][-1])
 	assert calls[0][-1].endswith("**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium** and depth **adaptive** (Dashy picks the depth from the diff size and risk).")
 	assert calls[1][0] == "claude" and calls[1][calls[1].index("--model") + 1] == "sonnet"
 	assert calls[2][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
