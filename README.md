@@ -60,14 +60,15 @@ again but the reviewer has not looked yet.
 | `o` | open the PR in your browser |
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
-| `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
+| `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
-| `s` | cycle summary lines: all / open PRs only / off |
+| `s` | pick summary lines: all / open PRs only / off |
+| `?` | show each setting's key next to it in the header |
 | `D` | show / hide draft PRs (hidden by default) |
-| `m` | cycle model: opus / sonnet / fable |
-| `d` | cycle review depth: adaptive / low / medium / high |
-| `e` | cycle claude effort: default / low / medium / high / xhigh / max |
-| `i` | cycle refresh interval: 1 / 2 / 5 / 10 / 15 min (the stats strip shows `next refresh Ns / Nm`) |
+| `m` | pick the model: opus / sonnet / fable |
+| `d` | pick review depth: adaptive / low / medium / high |
+| `e` | pick claude effort: default / low / medium / high / xhigh / max |
+| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
@@ -75,6 +76,11 @@ again but the reviewer has not looked yet.
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
+
+`m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` (or `q`) keeps.
+`R` and `V` open the Reviewer and View groups as a menu: `Enter` on a row opens that setting, `Esc` (or `q`) steps back.
+`S` opens both groups under one Settings menu. On a narrow terminal the header tightens, then folds the groups
+into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
 
 ## The review
 
@@ -87,8 +93,8 @@ is flagged `↻ re-review · was <verdict>` and can be reviewed again.
 `--depth LEVEL` sets how hard the reviewer looks: `low` skims for obvious defects, `medium` reads the
 whole diff, `high` also reads the surrounding code and traces callers, and `adaptive` (the default)
 lets Claude pick from the size and risk of the diff. `--effort LEVEL` is passed straight to
-`claude --effort` (low to max) and controls how much thinking the model spends. `d` and `e` cycle
-them at runtime; the stats strip shows them as `review: <depth>` or `review: <depth>/<effort>`.
+`claude --effort` (low to max) and controls how much thinking the model spends. `d` and `e` pick
+them at runtime; the header's `reviewer` group shows them as `depth <depth>` and `effort <effort>`.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
@@ -116,7 +122,7 @@ log and memory in. From then on the review log and all memory files live there: 
 every review or memory edit commits and pushes. Files are appended only and merge with git's union
 driver, so two people reviewing at once do not conflict. Everyone on the team sees the same REVIEWED
 history, re-review detection works across people, and each teammate's agent learns from everyone's
-reviews. The stats strip shows `team: org/review-team`, or the last git error in red. To leave, delete
+reviews. The header's `reviewer` group shows `team org/review-team`, or the last git error in red. To leave, delete
 the folder.
 
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
@@ -125,7 +131,7 @@ the ones on screen or leave them as the baseline.
 
 ## Versioning & self-update
 
-The version lives in one place — `VERSION` in `prs.py` — and shows in the stats strip and via
+The version lives in one place — `VERSION` in `prs.py` — and shows in the header badge and via
 `gitdashy --version`. Releases are tagged `vX.Y.Z`.
 
 Each refresh also lists the release tags on `origin` (`git ls-remote`, so no `gh` auth and no API

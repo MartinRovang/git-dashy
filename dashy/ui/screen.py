@@ -15,7 +15,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  Z dream  T team  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -23,18 +23,57 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(4, 78, curses.COLOR_GREEN, -1, -1),           # approved
 	(5, 221, curses.COLOR_YELLOW, -1, -1),         # draft / in flight
 	(6, 111, curses.COLOR_BLUE, -1, -1),           # repo ref
-	(7, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),   # bars
+	(7, 252, curses.COLOR_WHITE, 237, curses.COLOR_BLACK),   # bars
 	(8, 16, curses.COLOR_BLACK, 75, curses.COLOR_CYAN),      # bar badge
-	(9, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),   # dim on bar
-	(10, 221, curses.COLOR_YELLOW, 236, curses.COLOR_BLACK), # yellow on bar
-	(11, 78, curses.COLOR_GREEN, 236, curses.COLOR_BLACK),   # green on bar
-	(12, 203, curses.COLOR_RED, 236, curses.COLOR_BLACK),    # red on bar
-	(13, 111, curses.COLOR_BLUE, 236, curses.COLOR_BLACK),   # blue on bar
+	(9, 244, curses.COLOR_WHITE, 237, curses.COLOR_BLACK),   # dim on bar
+	(10, 221, curses.COLOR_YELLOW, 237, curses.COLOR_BLACK), # yellow on bar
+	(11, 78, curses.COLOR_GREEN, 237, curses.COLOR_BLACK),   # green on bar
+	(12, 203, curses.COLOR_RED, 237, curses.COLOR_BLACK),    # red on bar
+	(13, 111, curses.COLOR_BLUE, 237, curses.COLOR_BLACK),   # blue on bar
+	# the secondary header sits on a darker grey than the primary so the two rows read as two bars
+	(15, 252, curses.COLOR_WHITE, 235, curses.COLOR_BLACK),  # bar 2
+	(16, 244, curses.COLOR_WHITE, 235, curses.COLOR_BLACK),  # dim on bar 2
+	(17, 221, curses.COLOR_YELLOW, 235, curses.COLOR_BLACK), # yellow on bar 2
+	(18, 78, curses.COLOR_GREEN, 235, curses.COLOR_BLACK),   # green on bar 2
+	(19, 203, curses.COLOR_RED, 235, curses.COLOR_BLACK),    # red on bar 2
+	(20, 255, curses.COLOR_BLACK, 240, curses.COLOR_WHITE),  # group label chip on bar 2: light grey, so it does not compete with the app badge
+	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
+	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
 ]
+
+
+ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
 
 
 def C(n):
 	return curses.color_pair(n)
+
+
+def settings(state):
+	"""key -> (label, options, current, set, show). ponytail: one table drives the header hints and the dropdowns."""
+	return {
+		"m": ("Model", config.MODELS, state.model, lambda v: setattr(state, "model", v), str),
+		"d": ("Depth", config.DEPTHS, config.DEPTH, lambda v: setattr(config, "DEPTH", v), str),
+		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
+		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
+		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
+		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
+		      lambda v: f"{v}s" if v < 60 or v % 60 else f"{v // 60}m"),  # --interval 45 / 90 read as given
+	}
+
+
+def header_groups(state):
+	"""The settings groups on the second header row: (label, key, rows), rows = (setting key, name, value, tone).
+	tone: None / "on" (yellow) / "err" (red). ponytail: one table, drawn as pairs and listed by the group key."""
+	st = settings(state)
+	def row(k):
+		label, _, current, _, show = st[k]
+		return (k, label, show(current), None)
+	reviewer = [row("m"), row("d"), row("e")]
+	if team.on():
+		reviewer.append(("T", "Team", team.ERROR[:40] if team.ERROR else team.NAME, "err" if team.ERROR else None))  # ponytail: clipped, T shows the whole error
+	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
+	return [("Reviewer", "R", reviewer), ("View", "V", view)]
 
 
 def init_colors():
@@ -48,7 +87,7 @@ def init_colors():
 def splash(scr, h, w, spin):
 	"""ponytail: centred one-liners, clipped by addnstr — no layout engine."""
 	def mid(y, t, attr):
-		if 2 <= y < h - 1:
+		if 4 <= y < h - 1:
 			scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
 	logo = w >= art.LOGO_W + 2 and h >= 8 + len(art.LOGO)
 	y0 = h // 2 - (4 + (len(art.LOGO) + 1 if logo else 0)) // 2
@@ -61,6 +100,7 @@ def splash(scr, h, w, spin):
 
 def draw(scr, state, sel, prompt=None):
 	scr.erase()
+	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
@@ -69,7 +109,7 @@ def draw(scr, state, sel, prompt=None):
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
-	top = max(0, cur - (h - 5)) if cur >= 0 else 0
+	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 2)
 	all_prs = [p for k, p in rs if k == "pr"]
 	one_owner = len({p["repository"]["nameWithOwner"].split("/")[0] for p in all_prs}) == 1
 	def refof(p):  # ponytail: hide the org when every PR shares it
@@ -77,62 +117,119 @@ def draw(scr, state, sel, prompt=None):
 	ref_w = max([len(refof(p)) for p in all_prs] + [10])
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
-	# header: one two-row bar. row 0 = identity + status + badges, row 1 = stats
-	total = sum(len(p) for _, p, _ in sections if p)
-	spin = art.SPINNER[int(time.time() * 12) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
-	# 12 fps < the ~16 fps redraw tick, so every frame gets drawn instead of aliasing into stutter
-	status = f"{spin} fetching…" if fetched_at is None else \
-		f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
-	for y in (0, 1):
-		scr.addnstr(y, 0, " " * (w - 1), w - 1, C(7))
-	badge = " ▌ gitdashy "
-	scr.addnstr(0, 1, badge, w - 2, C(8) | curses.A_BOLD)
-	x0 = min(w - 2, 1 + len(badge))
-	scr.addnstr(0, x0, f"   {total} PRs", max(1, w - 2 - x0), C(7) | curses.A_BOLD)
-	x0 = min(w - 2, x0 + 8 + len(str(total)))
-	scr.addnstr(0, x0, f"  ·  {status}", max(1, w - 2 - x0), C(9))
-	if state.auto:
-		scr.addnstr(0, max(0, w - 8), " AUTO ", 7, C(5) | curses.A_REVERSE | curses.A_BOLD)
-	if state.update:
-		badge = f" ↑ v{state.update} · u "
-		scr.addnstr(0, max(0, w - 9 - len(badge)), badge, len(badge), C(4) | curses.A_REVERSE | curses.A_BOLD)
+	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
+		scr.refresh()
+		return sel, (rs[cur][1] if cur >= 0 else None)
 
-	vals = list(reviews.values())
-	running = sum(v == "reviewing..." for v in vals)
+	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
+	# then a half-block fade row and a blank one so the list starts under a soft edge with some air
+	total = sum(len(p) for _, p, _ in sections if p)
+	spin = art.SPINNER[int(time.time() * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	ago = None if fetched_at is None else age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())
+	status = f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
 	nxt = "" if fetched_at is None else f"{spin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
-	x = 3
-	for label, n, attr in (
-		("agents running", running, C(10) | (curses.A_BOLD if running else 0)),
-		("v" + VERSION, "", C(9)),
-		("model: " + state.model, "", C(13)),
-		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(13)),  # depth[/effort]
-		("summaries: " + state.subs, "", C(13)),
-		*([("drafts: shown", "", C(10))] if state.drafts else []),
-		*([(team.ERROR or "team: " + team.NAME, "", C(12) if team.ERROR else C(13))] if team.on() else []),
-		("this session →", "", C(9)),  # the four counters below are agent verdicts since launch, not the whole log
-		("approved", sum(v.startswith("✓") for v in vals), C(11)),
-		("changes", sum(v.startswith("✗") for v in vals), C(12)),
-		("commented", sum(v.startswith("~") for v in vals), C(9)),
-		("errors", sum(v.startswith("error") for v in vals), C(12)),
-	):
-		txt = f"{n} {label}".strip()
-		if x + len(txt) < w - 1:
-			scr.addnstr(1, x, str(n), w - 1 - x, attr | curses.A_BOLD)
-			scr.addnstr(1, x + len(str(n)), f" {label}   ", w - 1 - x - len(str(n)), C(9))
-		x += len(txt) + 3
-	if nxt and x + len(nxt) < w - 1:
-		scr.addnstr(1, w - 1 - len(nxt), nxt, len(nxt), C(9))
+	vals = list(reviews.values())
+	running = sum(v == "reviewing..." for v in vals)
+	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
+	scr.addnstr(1, 0, " " * (w - 1), w - 1, C(15))
+	scr.addnstr(2, 0, "▀" * (w - 1), w - 1, C(21))  # ponytail: upper half-block = a half-row gradient step, no true gradients in a tty
+
+	def bar(y, x, parts, stop=None):
+		"""Draw (text, attr[, key]) pieces left to right from x; a piece that would not fit is dropped along with
+		the rest. A piece tagged with a setting key records where it landed, so its dropdown can hang there."""
+		stop = w - 1 if stop is None else stop
+		for text, attr, *tag in parts:
+			if x + len(text) > stop:
+				break
+			scr.addnstr(y, x, text, stop - x, attr)
+			for key in tag[0] if tag else "":  # a chip carries its group key plus every setting folded under it
+				ANCHORS[key] = (y, x)
+			x += len(text)
+		return x
+
+	def hint(key, attr=C(17)):  # ? toggles: the key that changes a setting, shown right before it
+		return [(key + " ", attr | curses.A_BOLD)] if state.hints and key else []
+	badge = f" ▌ gitdashy v{VERSION} "
+	# row 0 in pieces, each droppable on its own so content wins over air on a narrow screen: the refresh
+	# countdown goes first, then the status, agents, the PR count, AUTO; the badge and the update prompt are
+	# not on the ladder — they are clipped, and the prompt wins when the two cannot share the row
+	left = {"badge": [(badge, C(8) | curses.A_BOLD)], "prs": [(f"    {total} PRs", C(7) | curses.A_BOLD)],
+	        "agents": [(f"  ·  {running} agents running", C(10) | curses.A_BOLD if running else C(9))]}
+	right = {"status": hint("r", C(10)) + [(status, C(9))],
+	         "nxt": [("  ·  ", C(9))] + hint("i", C(10)) + [(nxt, C(9), "i")] if nxt else [],
+	         "auto": [("   ", C(7)), (" AUTO ", C(5) | curses.A_REVERSE | curses.A_BOLD)] if state.auto else [],
+	         "update": [("   ", C(7)), (f" ↑ update to v{state.update} · u ", C(4) | curses.A_REVERSE | curses.A_BOLD)] if state.update else []}
+	def width(parts):
+		return sum(len(p[0]) for p in parts)
+	def flat(d):
+		return [piece for parts in d.values() for piece in parts]
+	drop = ["nxt", "status", "agents", "prs", "auto"]
+	while drop and 2 + width(flat(left)) + 3 + width(flat(right)) > w - 1:
+		key = drop.pop(0)
+		(left if key in left else right)[key] = []
+	rparts = flat(right)
+	if rparts and rparts[0][0].strip() == "":
+		rparts = rparts[1:]  # no leading gap once the status is gone
+	bar(0, 2, flat(left), stop=max(2, w - 1 - width(rparts) - 1))
+	bar(0, max(2, w - 1 - width(rparts)), rparts)  # clipped by bar's stop when even this is too much
+
+	spacings = [("   │   ", "        "), ("  │  ", "     "), (" │ ", "   ")]  # (between pairs, between groups), loosest first
+	sep, gap = [(t, C(16)) for t, _ in spacings], [(t, C(15)) for _, t in spacings]
+	tones = {None: C(15), "on": C(17), "err": C(19)}
+	def kv(key, value, attr=C(15), k=""):  # dim key, bright value, so "Depth adaptive" reads as a pair and not one phrase
+		return hint(k) + [(key + " ", C(16), k), (value, attr)]
+	def render(label, key, rows, level, space):
+		"""A group at one of its levels: "full" = gear chip + pairs, "chip" = the chip with a caret, "off" = nothing.
+		ponytail: the chip is a badge like the app's, so a group reads as one block; collapsed, it anchors every key in it."""
+		keys = key + "".join(k for k, *_ in rows)
+		if level == "off":
+			return []
+		if level == "chip":
+			return hint(key) + [(f" ☰ {label} ", C(20) | curses.A_BOLD, keys)]  # folded: a menu, so the burger says so
+		parts = hint(key) + [(f" {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
+		for i, (k, name, value, tone) in enumerate(rows):
+			parts += ([sep[space]] if i else []) + kv(name, value, tones[tone], k)
+		return parts
+	session = [("Session", C(22) | curses.A_BOLD), ("  ", C(15))] \
+		+ kv("✓", str(sum(v.startswith('✓') for v in vals)), C(18) | curses.A_BOLD) + [("   ", C(15))] \
+		+ kv("✗", str(sum(v.startswith('✗') for v in vals)), C(19) | curses.A_BOLD) + [("   ", C(15))] \
+		+ kv("~", str(sum(v.startswith('~') for v in vals)), C(15) | curses.A_BOLD) + [("   ", C(15))] \
+		+ kv("!", str(sum(v.startswith('error') for v in vals)), C(19) | curses.A_BOLD)
+	# session sits left, its label ending where the app badge ends; the groups stack against the right edge and
+	# degrade one step at a time when the row is too narrow: the spacing tightens twice, then View folds to a
+	# chip, then Reviewer, then both nest under one Settings chip, then that goes too — content always wins over air
+	x = bar(1, 2 + len(badge) - len("Session"), session)
+	groups = header_groups(state)
+	levels = {key: "full" for _, key, _ in groups}
+	levels["space"], levels["nest"] = 0, "no"
+	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
+	def stack():
+		if levels["nest"] == "chip":  # both groups under one chip; it anchors every key so S/R/V and the settings all hang from it
+			keys = "S" + "".join(key + "".join(k for k, *_ in rows) for _, key, rows in groups)
+			return hint("S") + [(" ☰ Settings ", C(20) | curses.A_BOLD, keys)]
+		if levels["nest"] == "off":
+			return []
+		drawn = [render(label, key, rows, levels[key], levels["space"]) for label, key, rows in groups]
+		drawn = [g for g in drawn if g]
+		return [piece for g in drawn for piece in g + [gap[levels["space"]]]][:-1] if drawn else []
+	parts = stack()
+	while parts and x + 3 + width(parts) > w - 3 and steps:
+		key, level = steps.pop(0)
+		levels[key] = level
+		parts = stack()
+	if parts and x + 3 + width(parts) <= w - 3:
+		bar(1, w - 3 - width(parts), parts)
 
 	if not rs and fetched_at is None:
 		splash(scr, h, w, spin)
 
-	for y, (kind, payload) in enumerate(rs[top:top + h - 3], start=2):
-		i = top + y - 2
+	for y, (kind, payload) in enumerate(rs[top:top + max(0, h - 5)], start=4):
+		i = top + y - 4
 		if kind == "head":
 			name, count = payload.rsplit(" (", 1)
 			scr.addnstr(y, 1, name, w - 2, C(2) | curses.A_BOLD)
-			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", w - 2 - len(name), C(1))
+			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", max(1, w - 2 - len(name)), C(1))
 		elif kind == "err":
 			scr.addnstr(y, 3, payload, w - 4, C(3))
 		elif kind == "empty":
@@ -237,6 +334,100 @@ def update_screen(scr, state, sel):
 		return False
 	finally:
 		scr.timeout(500)
+
+
+def popup(scr, y, x, title, lines, idx, marked=None):
+	"""Bordered list hanging from (y, x): title on the top edge, ▸ on line idx, line `marked` in green.
+	ponytail: addnstr and box chars like panel(), clipped at the footer."""
+	h, w = scr.getmaxyx()
+	if h < 4 or w < 8:  # same guard as draw(): nothing rather than a curses fault
+		return scr.refresh()
+	inner = max([len(l) for l in lines] + [len(title)]) + 6  # "│ ▸ text │"
+	x = max(0, min(x, w - inner - 1))
+	def put(row, text, attr):
+		if row < h - 1:
+			scr.addnstr(row, x, text, inner, attr)
+	put(y + 1, "╭" + "─" * (inner - 2) + "╮", C(6))
+	if y + 1 < h - 1:
+		scr.addnstr(y + 1, x + 2, f" {title} ", inner - 4, C(6) | curses.A_BOLD)
+	for i, line in enumerate(lines):
+		body = f" {'▸' if i == idx else ' '} {line}".ljust(inner - 2)
+		put(y + 2 + i, "│" + body + "│", C(6))
+		if y + 2 + i < h - 1:
+			scr.addnstr(y + 2 + i, x + 1, body, inner - 2,
+			            curses.A_REVERSE | curses.A_BOLD if i == idx else C(4) | curses.A_BOLD if i == marked else 0)
+	put(y + 2 + len(lines), "╰" + "─" * (inner - 2) + "╯", C(6))
+	scr.refresh()
+
+
+def dropdown(scr, state, sel, key):
+	"""Pick a setting's value from a list hanging under its header label (or its group's chip when collapsed).
+	j/k or the key itself moves, Enter picks, Esc keeps. The dashboard keeps ticking behind it."""
+	label, options, current, set_, show = settings(state)[key]
+	options = list(options) + ([current] if current not in options else [])  # --model can name anything
+	idx = options.index(current)
+	while True:
+		draw(scr, state, sel, prompt=f" {label}:  j/k or {key} move   ⏎ pick   esc keep")
+		y, x = ANCHORS.get(key, (1, 3))  # after draw: the label's place at this width
+		popup(scr, y, x, label, [show(o) for o in options], idx, options.index(current))
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN, ord(key)):
+			idx = (idx + 1) % len(options)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(options)
+		elif k in (10, 13, curses.KEY_ENTER):
+			set_(options[idx])
+			return True
+		elif k in (27, ord("q")):
+			return False
+
+
+def group_menu(scr, state, sel, key):
+	"""List a header group's settings under its chip. j/k moves, Enter opens that setting (its dropdown, the
+	drafts toggle, or team setup) and Esc comes back here; Esc again closes."""
+	idx = 0
+	while True:
+		label, _, rows = next(g for g in header_groups(state) if g[1] == key)  # re-read: a pick changes the values
+		idx = min(idx, len(rows) - 1)  # the Team row can go away under us
+		draw(scr, state, sel, prompt=f" {label}:  j/k move   ⏎ open   esc close")
+		y, x = ANCHORS.get(key, (1, 3))
+		name_w = max(len(name) for _, name, _, _ in rows)
+		popup(scr, y, x, label, [f"{name.ljust(name_w)}   {value}" for _, name, value, _ in rows], idx)
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			idx = (idx + 1) % len(rows)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(rows)
+		elif k in (10, 13, curses.KEY_ENTER):
+			sk = rows[idx][0]
+			if sk in settings(state):
+				dropdown(scr, state, sel, sk)
+			elif sk == "D":
+				state.drafts = not state.drafts
+			elif sk == "T":
+				team_setup(scr, state, sel)
+		elif k in (27, ord("q")):
+			return
+
+
+def settings_menu(scr, state, sel):
+	"""The two settings groups as a menu under the Settings chip (or the first chip when they are not nested).
+	Enter opens a group, Esc closes."""
+	idx = 0
+	while True:
+		groups = header_groups(state)
+		draw(scr, state, sel, prompt=" Settings:  j/k move   ⏎ open   esc close")
+		y, x = ANCHORS.get("S", ANCHORS.get(groups[0][1], (1, 3)))
+		popup(scr, y, x, "Settings", [f"{label} ▸" for label, _, _ in groups], idx)
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			idx = (idx + 1) % len(groups)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(groups)
+		elif k in (10, 13, curses.KEY_ENTER):
+			group_menu(scr, state, sel, groups[idx][1])
+		elif k in (27, ord("q")):
+			return
 
 
 def confirm(scr, state, sel, question):
@@ -353,10 +544,6 @@ def dream_detail(summary, before, new):
 	return "\n".join(out) or "nothing changed"
 
 
-def cycle_through(values, current):
-	return values[(values.index(current) + 1) % len(values)] if current in values else values[0]
-
-
 def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
@@ -383,22 +570,18 @@ def main(scr, interval, auto, model):
 			n = 0 if state.auto else len(state.pending_rr())
 			state.set_auto(not state.auto, include_existing=n > 0 and confirm(
 				scr, state, sel, f" Auto on. Also review the {n} already listed? [y/n]"))
-		elif k == ord("s"):
-			state.subs = cycle_through(config.SUBS, state.subs)
 		elif k == ord("D"):
 			state.drafts = not state.drafts
+		elif k == ord("?"):
+			state.hints = not state.hints
 		elif k == ord(" ") and current and current["section"] == "REVIEWED":
 			state.expanded ^= {current["url"]}
-		elif k == ord("i"):
-			state.interval = cycle_through(config.INTERVALS, state.interval)
-		elif k == ord("t"):
-			state.window = cycle_through(config.WINDOWS, state.window)
-		elif k == ord("m"):
-			state.model = cycle_through(config.MODELS, state.model)
-		elif k == ord("d"):
-			config.DEPTH = cycle_through(config.DEPTHS, config.DEPTH)
-		elif k == ord("e"):
-			config.EFFORT = cycle_through(config.EFFORTS, config.EFFORT)
+		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
+			dropdown(scr, state, sel, chr(k))
+		elif k in (ord("R"), ord("V")):
+			group_menu(scr, state, sel, chr(k))
+		elif k == ord("S"):
+			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
 		elif k == ord("g") or (k == ord("n") and current):

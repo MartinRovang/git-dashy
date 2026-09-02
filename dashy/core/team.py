@@ -14,7 +14,7 @@ _lock = threading.Lock()  # review threads push concurrently; git wants one writ
 
 
 def on():
-	return os.path.isdir(os.path.join(config.TEAM, ".git"))
+	return bool(config.TEAM) and os.path.isdir(os.path.join(config.TEAM, ".git"))  # "" (demo) is never a team
 
 
 def _git(*args, cwd=None):
