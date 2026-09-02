@@ -125,9 +125,10 @@ def draw(scr, state, sel, prompt=None):
 	# then a half-block fade row and a blank one so the list starts under a soft edge with some air
 	total = sum(len(p) for _, p, _ in sections if p)
 	spin = art.SPINNER[int(time.time() * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	rspin = art.REFRESH_SPINNER[int(time.time() * 10) % len(art.REFRESH_SPINNER)]  # 10fps under the 20fps tick: every frame lands on a redraw
 	ago = None if fetched_at is None else age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())
 	status = f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
-	nxt = "" if fetched_at is None else f"{spin} refreshing…" if state.fetching else \
+	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
 	running = sum(v == "reviewing..." for v in vals)
@@ -554,8 +555,8 @@ def main(scr, interval, auto, model):
 	threading.Thread(target=state.loop, daemon=True).start()
 	sel, current = 0, None
 	while True:
-		spinning = state.fetched_at is None or "reviewing..." in state.reviews.values()
-		scr.timeout(80 if spinning else 500)  # spin smoothly while fetching or reviewing
+		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
+		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		k = scr.getch()
 		if k in (ord("q"), 27):
