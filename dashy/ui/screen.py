@@ -88,7 +88,8 @@ def draw(scr, state, sel, prompt=None):
 	# stats strip
 	vals = list(reviews.values())
 	running = sum(v == "reviewing..." for v in vals)
-	nxt = "" if fetched_at is None else f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
+	nxt = "" if fetched_at is None else f"{spin} refreshing…" if state.fetching else \
+		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
 	x = 1
 	for label, n, attr in (
 		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),

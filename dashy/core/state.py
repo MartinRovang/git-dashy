@@ -14,6 +14,7 @@ class State:
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs = 4, "all"
 		self.update = ""  # newer released version, refreshed with each fetch
+		self.fetching = False
 
 	def set_auto(self, on, include_existing=False):
 		"""include_existing: review what is already listed too, not just what shows up later."""
@@ -44,7 +45,7 @@ class State:
 
 	def loop(self):
 		while True:
-			t0 = time.time()
+			t0, self.fetching = time.time(), True
 			team.pull()  # newest team log + memory before we read them
 			data = github.fetch()
 			stale = log.mark_rereviews(data)
@@ -52,7 +53,7 @@ class State:
 			if self.fetched_at is None:
 				time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
 			with self.lock:
-				self.sections, self.fetched_at, self.update = data, time.time(), newer
+				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
 					if self.reviews.get(u) != "reviewing...":
 						self.reviews.pop(u, None)

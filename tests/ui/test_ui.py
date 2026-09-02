@@ -104,3 +104,11 @@ def test_d_and_e_cycle_depth_and_effort(monkeypatch):
 	assert cycle_through(config.DEPTHS, config.DEPTH) == "low"
 	assert cycle_through(config.EFFORTS, config.EFFORT) == "low"
 	assert cycle_through(config.EFFORTS, "max") == ""
+
+
+def test_strip_shows_refreshing_while_fetch_in_flight(screen):
+	screen.w = 170
+	st = State(60)
+	st.sections, st.fetched_at, st.fetching = [("MINE", [], None)], time.time(), True
+	ui.draw(screen, st, 0)
+	assert "refreshing" in screen.text() and "next refresh" not in screen.text()
