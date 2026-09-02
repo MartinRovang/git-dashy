@@ -147,6 +147,12 @@ def test_dropdown_shows_effort_default_and_history_all(screen):
 	screen.getch = _keys(27)
 	ui.dropdown(screen, st, 0, "e")
 	assert "default" in screen.text() and "xhigh" in screen.text()
+	st.interval = 90  # --interval in seconds that is not a whole minute
+	screen.getch = _keys(27)
+	ui.dropdown(screen, st, 0, "i")
+	assert "▸ 90s" in screen.text() and "  5m" in screen.text()
+	screen.h, screen.w = 20, 2
+	ui.popup(screen, 1, 0, "t", ["x"], 0)  # must not raise
 
 
 def test_strip_shows_refreshing_while_fetch_in_flight(screen):

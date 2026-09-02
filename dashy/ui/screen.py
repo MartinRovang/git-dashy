@@ -57,7 +57,8 @@ def settings(state):
 		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
 		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
 		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
-		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v), lambda v: f"{v // 60}m"),
+		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
+		      lambda v: f"{v}s" if v < 60 or v % 60 else f"{v // 60}m"),  # --interval 45 / 90 read as given
 	}
 
 
@@ -152,7 +153,7 @@ def draw(scr, state, sel, prompt=None):
 	badge = f" ▌ gitdashy v{VERSION} "
 	# row 0 in pieces, each droppable on its own so content wins over air on a narrow screen: the refresh
 	# countdown goes first, then the status, agents, the PR count, AUTO; the badge and the update prompt are
-	# never dropped, only clipped
+	# not on the ladder — they are clipped, and the prompt wins when the two cannot share the row
 	left = {"badge": [(badge, C(8) | curses.A_BOLD)], "prs": [(f"    {total} PRs", C(7) | curses.A_BOLD)],
 	        "agents": [(f"  ·  {running} agents running", C(10) | curses.A_BOLD if running else C(9))]}
 	right = {"status": hint("r", C(10)) + [(status, C(9))],
@@ -339,6 +340,8 @@ def popup(scr, y, x, title, lines, idx, marked=None):
 	"""Bordered list hanging from (y, x): title on the top edge, ▸ on line idx, line `marked` in green.
 	ponytail: addnstr and box chars like panel(), clipped at the footer."""
 	h, w = scr.getmaxyx()
+	if h < 4 or w < 8:  # same guard as draw(): nothing rather than a curses fault
+		return scr.refresh()
 	inner = max([len(l) for l in lines] + [len(title)]) + 6  # "│ ▸ text │"
 	x = max(0, min(x, w - inner - 1))
 	def put(row, text, attr):
