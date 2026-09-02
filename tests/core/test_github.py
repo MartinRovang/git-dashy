@@ -14,13 +14,18 @@ def test_fetch_dedups_sorts_and_appends_reviewed(monkeypatch):
 	per_flag = {"--author=@me": [a, b], "--review-requested=@me": [a], "--assignee=@me": []}
 	def fake_run(cmd, **kw):
 		if cmd[1] == "api":
-			return Result(json.dumps({"data": {"search": {"nodes": [{"url": "b", "reviewDecision": "APPROVED"}, {"url": "a", "reviewDecision": None}]}}}))
+			return Result(json.dumps({"data": {"search": {"nodes": [
+				{"url": "b", "reviewDecision": "APPROVED"},
+				{"url": "a", "reviewDecision": "CHANGES_REQUESTED", "reviewRequests": {"totalCount": 1}}]}}}))
 		return Result(json.dumps(per_flag[cmd[4]]))
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	secs = github.fetch()
 	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
 	assert [p["url"] for p in secs[0][1]] == ["b", "a"]  # newest first
-	assert [p["status"] for p in secs[0][1]] == ["✓ approved", ""]  # own PRs carry github's review decision
+	assert [p["status"] for p in secs[0][1]] == ["✓ approved", "↻ re-review requested"]  # own PRs carry github's review decision
+	assert github.own_status({"reviewDecision": "CHANGES_REQUESTED", "reviewRequests": {"totalCount": 0}}) == "✗ changes requested"
+	assert github.own_status({"reviewDecision": "REVIEW_REQUIRED", "reviewRequests": {"totalCount": 2}}) == "· awaiting review"
+	assert github.own_status({}) == ""
 	assert secs[1][1] == []  # a already shown under MINE
 	assert secs[3] == ("REVIEWED", [], None)
 

@@ -48,8 +48,9 @@ gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no r
 gitdashy --help
 ```
 
-MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested` or
-`· awaiting review`.
+MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
+`· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
+again but the reviewer has not looked yet.
 
 ## Keys
 

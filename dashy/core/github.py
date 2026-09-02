@@ -12,7 +12,15 @@ SECTIONS = [
 ]
 DECISION = {"APPROVED": "✓ approved", "CHANGES_REQUESTED": "✗ changes requested", "REVIEW_REQUIRED": "· awaiting review"}
 DECISION_QUERY = """{ search(query: "is:pr is:open author:@me", type: ISSUE, first: 100) {
-  nodes { ... on PullRequest { url reviewDecision } } } }"""
+  nodes { ... on PullRequest { url reviewDecision reviewRequests { totalCount } } } } }"""
+
+
+def own_status(node):
+	"""Row status for my own PR from its reviewDecision + pending review requests."""
+	decision, pending = node.get("reviewDecision"), (node.get("reviewRequests") or {}).get("totalCount", 0)
+	if decision == "CHANGES_REQUESTED" and pending:
+		return "↻ re-review requested"  # I pushed and asked again, reviewer has not looked yet
+	return DECISION.get(decision, "")
 VERDICT_FLAG = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}
 
 
@@ -39,9 +47,9 @@ def fetch():
 		try:
 			raw = subprocess.run(["gh", "api", "graphql", "-f", "query=" + DECISION_QUERY],
 			                     capture_output=True, text=True, check=True, timeout=60).stdout
-			decision = {n["url"]: n.get("reviewDecision") for n in json.loads(raw)["data"]["search"]["nodes"] if n}
+			status = {n["url"]: own_status(n) for n in json.loads(raw)["data"]["search"]["nodes"] if n}
 			for p in mine:
-				p["status"] = DECISION.get(decision.get(p["url"]), "")
+				p["status"] = status.get(p["url"], "")
 		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError):
 			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
