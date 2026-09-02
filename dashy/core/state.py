@@ -12,7 +12,7 @@ class State:
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
-		self.window, self.subs = 4, "all"
+		self.window, self.subs, self.drafts = 4, "all", True  # drafts: show draft PRs
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False
 

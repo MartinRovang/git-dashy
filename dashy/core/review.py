@@ -11,6 +11,7 @@ PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>",
+ "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of durable facts about this repo worth remembering for future reviews (conventions, recurring pitfalls, intentional oddities); not already in memory; empty string if nothing>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 DEPTH = {
@@ -21,6 +22,8 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
+HELLO = "Dashy is on its way! Reviewing with effort **{effort}** and depth **{depth}** ({why})."
+WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 TIMEOUT = 900
 
@@ -35,6 +38,8 @@ def review(pr, model):
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 			with open(config.INSTRUCTIONS) as f:
 				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
+		github.comment(repo, n, HELLO.format(effort=config.EFFORT or "default", depth=config.DEPTH,
+		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
 			["claude", "-p", prompt, "--output-format", "json",
 			 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
@@ -42,6 +47,8 @@ def review(pr, model):
 		).stdout
 		text = json.loads(out)["result"].strip()
 		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
+		if config.DEPTH == "adaptive" and verdict.get("depth_used"):
+			verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		memory.append(repo, verdict.get("memory"))
 		status = log.log_review(pr, model, verdict)

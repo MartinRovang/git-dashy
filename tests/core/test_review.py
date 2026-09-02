@@ -17,9 +17,11 @@ def test_review_posts_verdict_and_logs(monkeypatch):
 		return claude_out(verdict="request_changes", summary="adds x", body="nope")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "sonnet") == "✗ changes requested"
-	assert calls[0][0] == "claude" and calls[0][calls[0].index("--model") + 1] == "sonnet"
-	assert calls[1][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
-	assert "--request-changes" in calls[1] and calls[1][-1] == "nope"
+	assert calls[0][:6] == ["gh", "pr", "comment", "7", "--repo", "a/b"]
+	assert calls[0][-1] == "Dashy is on its way! Reviewing with effort **medium** and depth **adaptive** (Dashy picks the depth from the diff size and risk)."
+	assert calls[1][0] == "claude" and calls[1][calls[1].index("--model") + 1] == "sonnet"
+	assert calls[2][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
+	assert "--request-changes" in calls[2] and calls[2][-1] == "nope"
 	entry = json.loads(open(log.LOG).read())
 	assert entry["verdict"] == "request_changes" and entry["summary"] == "adds x"
 	assert entry["model"] == "sonnet" and entry["pr"]["url"] == "u"
@@ -36,7 +38,7 @@ def test_review_verdict_flags(monkeypatch, verdict, flag, status):
 		return claude_out(verdict=verdict, body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus") == status
-	assert flag in calls[1]
+	assert flag in calls[2]
 
 
 def test_review_unparseable_output_is_error_and_not_posted(monkeypatch):
@@ -46,7 +48,7 @@ def test_review_unparseable_output_is_error_and_not_posted(monkeypatch):
 		return Result(json.dumps({"result": "I could not review this"}))
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus").startswith("error:")
-	assert len(calls) == 1 and not __import__("os").path.exists(log.LOG)
+	assert len(calls) == 2 and calls[1][0] == "claude" and not __import__("os").path.exists(log.LOG)
 
 
 def test_review_unknown_verdict_is_error(monkeypatch):
@@ -56,7 +58,7 @@ def test_review_unknown_verdict_is_error(monkeypatch):
 
 def test_review_gh_failure_surfaces_stderr(monkeypatch):
 	def fake_run(cmd, **kw):
-		if cmd[0] == "gh":
+		if cmd[:3] == ["gh", "pr", "review"]:
 			raise subprocess.CalledProcessError(1, cmd, stderr="line1\nfatal: nope\n")
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
@@ -80,7 +82,7 @@ def test_review_appends_instructions_file(monkeypatch, tmp_path):
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus") == "✓ approved"
-	assert calls[0][2].endswith("Additional instructions from the reviewer:\nAlways check the changelog.")
+	assert calls[1][2].endswith("Additional instructions from the reviewer:\nAlways check the changelog.")
 
 
 def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
@@ -99,11 +101,25 @@ def test_review_depth_and_effort(monkeypatch):
 	monkeypatch.setattr(config, "DEPTH", "high")
 	monkeypatch.setattr(config, "EFFORT", "max")
 	review(dict(PR), "opus")
-	assert "Depth: very in-depth" in calls[0][2] and calls[0][-2:] == ["--effort", "max"]
+	assert "Depth: very in-depth" in calls[1][2] and calls[1][-2:] == ["--effort", "max"]
+	assert calls[0][-1].endswith("effort **max** and depth **high** (set by the reviewer).")
 	calls.clear()
 	monkeypatch.setattr(config, "EFFORT", "")
 	review(dict(PR), "opus")
-	assert "--effort" not in calls[0]
+	assert "--effort" not in calls[1] and "effort **default**" in calls[0][-1]
+
+
+def test_review_adaptive_appends_depth_used(monkeypatch):
+	calls = []
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(
+		verdict="approve", body="b", depth_used="high", depth_reason="touches auth"))
+	review(dict(PR), "opus")
+	assert calls[2][-1] == "b\n\n_Dashy reviewed at **high** depth: touches auth_"
+	assert log.reviewed()[0]["review"]["body"].endswith("touches auth_")
+	calls.clear()
+	monkeypatch.setattr(config, "DEPTH", "high")
+	review(dict(PR), "opus")
+	assert calls[2][-1] == "b"  # set depth: nothing to explain
 
 
 def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
@@ -113,7 +129,8 @@ def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
 	memory.append("a/b", "- uses tabs\n\n• db layer is generated")
 	prompts = []
 	def fake_run(cmd, **kw):
-		prompts.append(cmd[2])
+		if cmd[0] == "claude":
+			prompts.append(cmd[2])
 		return claude_out(verdict="approve", body="b", memory="ci is slow, do not flag timeouts")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	monkeypatch.setattr(config, "DEPTH", "high")

@@ -10,14 +10,17 @@ def age(iso):
 	return "now"
 
 
-def rows(sections, window=None, subs="all"):
+def rows(sections, window=None, subs="all", drafts=True):
 	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
-	window: hours of REVIEWED to show. subs: 'all' / 'open' (no summaries under REVIEWED) / 'off'."""
+	window: hours of REVIEWED to show. subs: 'all' / 'open' (no summaries under REVIEWED) / 'off'.
+	drafts: False hides draft PRs."""
 	out = []
 	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
 	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
 	for name, prs, err in sections:
 		label = name
+		if not drafts and prs:
+			prs = [p for p in prs if not p.get("isDraft")]
 		if name == "REVIEWED" and cutoff:
 			prs = [p for p in prs or [] if datetime.fromisoformat(p["review"]["at"]) >= cutoff]
 			label = f"{name} · last {window}h"

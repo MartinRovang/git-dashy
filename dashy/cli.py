@@ -18,7 +18,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
-a auto, m model, d depth, e effort, t REVIEWED window, i interval, s summaries, n repo memory, g general memory ($EDITOR), T team repo setup, u install the newest release, r refresh, q quit."""
+a auto, m model, d depth, e effort, t REVIEWED window, i interval, s summaries, D hide/show drafts, n repo memory, g general memory ($EDITOR), T team repo setup, u install the newest release, r refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):

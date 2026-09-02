@@ -62,6 +62,7 @@ again but the reviewer has not looked yet.
 | `a` | toggle auto mode |
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
 | `s` | cycle summary lines: all / open PRs only / off |
+| `D` | hide / show draft PRs |
 | `m` | cycle model: opus / sonnet / fable |
 | `d` | cycle review depth: adaptive / low / medium / high |
 | `e` | cycle claude effort: default / low / medium / high / xhigh / max |

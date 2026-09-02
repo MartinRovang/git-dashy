@@ -62,5 +62,11 @@ def post_review(repo, number, verdict, body):
 	               capture_output=True, text=True, check=True, timeout=60)
 
 
+def comment(repo, number, body):
+	"""Post a plain comment on the PR. Raises CalledProcessError / TimeoutExpired on failure."""
+	subprocess.run(["gh", "pr", "comment", str(number), "--repo", repo, "--body", body],
+	               capture_output=True, text=True, check=True, timeout=60)
+
+
 def open_in_browser(url):
 	subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

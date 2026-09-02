@@ -48,3 +48,11 @@ def test_rows_subs_modes():
 
 
 LS_REMOTE = ("abc\trefs/tags/v0.9.0\n" "def\trefs/tags/v1.10.0\n" "fed\trefs/tags/v1.2.0\n")
+
+
+def test_rows_drafts_filter():
+	p, d = dict(PR), {**PR, "url": "d", "isDraft": True}
+	secs = [("MINE", [p, d], None)]
+	assert [x["url"] for k, x in rows(secs) if k == "pr"] == ["u", "d"]
+	assert [x["url"] for k, x in rows(secs, drafts=False) if k == "pr"] == ["u"]
+	assert ("head", "MINE (1)") in rows(secs, drafts=False)

@@ -13,7 +13,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  n/g memory  T team  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  n/g memory  T team  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -62,7 +62,7 @@ def draw(scr, state, sel, prompt=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
-	rs = rows(sections, state.window, state.subs)
+	rs = rows(sections, state.window, state.subs, state.drafts)
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
@@ -105,6 +105,7 @@ def draw(scr, state, sel, prompt=None):
 		("model: " + state.model, "", C(13)),
 		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(13)),  # depth[/effort]
 		("summaries: " + state.subs, "", C(13)),
+		*([("drafts: hidden", "", C(10))] if not state.drafts else []),
 		*([(team.ERROR or "team: " + team.NAME, "", C(12) if team.ERROR else C(13))] if team.on() else []),
 		("this session →", "", C(9)),  # the four counters below are agent verdicts since launch, not the whole log
 		("approved", sum(v.startswith("✓") for v in vals), C(11)),
@@ -313,6 +314,8 @@ def main(scr, interval, auto, model):
 				scr, state, sel, f" Auto on. Also review the {n} already listed? [y/n]"))
 		elif k == ord("s"):
 			state.subs = cycle_through(config.SUBS, state.subs)
+		elif k == ord("D"):
+			state.drafts = not state.drafts
 		elif k == ord("i"):
 			state.interval = cycle_through(config.INTERVALS, state.interval)
 		elif k == ord("t"):
