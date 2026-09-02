@@ -91,3 +91,16 @@ def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
 
 
 # ---- reviewed log / detail ----
+
+
+def test_review_depth_and_effort(monkeypatch):
+	calls = []
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
+	monkeypatch.setattr(config, "DEPTH", "high")
+	monkeypatch.setattr(config, "EFFORT", "max")
+	review(dict(PR), "opus")
+	assert "Depth: very in-depth" in calls[0][2] and calls[0][-2:] == ["--effort", "max"]
+	calls.clear()
+	monkeypatch.setattr(config, "EFFORT", "")
+	review(dict(PR), "opus")
+	assert "--effort" not in calls[0]

@@ -7,16 +7,18 @@ from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--instructions FILE] [--demo] [--version] [--help]
+Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
 
   --interval N   seconds between refreshes (default {config.INTERVAL})
   --auto         Claude reviews every review-requested PR that appears from now on
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m cycles at runtime
+  --effort LEVEL claude effort: low, medium, high, xhigh, max (default claude's own, or $PRS_EFFORT); e cycles
+  --depth LEVEL  review depth: low, medium, high, adaptive (default {config.DEPTH}, or $PRS_DEPTH); d cycles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
-a auto, m model, t REVIEWED window, s summaries, u install the newest release, r refresh, q quit."""
+a auto, m model, d depth, e effort, t REVIEWED window, s summaries, u install the newest release, r refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):
@@ -32,6 +34,10 @@ def run(argv=None):
 		return print(f"gitdashy {VERSION}")
 	if "--demo" in argv:
 		demo.install()
+	config.EFFORT = arg("--effort", config.EFFORT, str, argv)
+	config.DEPTH = arg("--depth", config.DEPTH, str, argv)
+	if config.DEPTH not in config.DEPTHS:
+		return print(f"gitdashy: --depth must be low, medium, high or adaptive, not {config.DEPTH!r}")
 	config.INSTRUCTIONS = arg("--instructions", config.INSTRUCTIONS, str, argv)
 	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
 	               arg("--model", config.DEFAULT_MODEL, str, argv))

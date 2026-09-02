@@ -2,6 +2,7 @@ import time
 
 import pytest
 
+from dashy import config
 from dashy.core import log
 from dashy.ui import screen as ui
 from dashy.core.review import review
@@ -11,7 +12,7 @@ from conftest import PR, FakeScr, claude_out
 
 
 def test_draw_renders_sections_status_and_selection(screen):
-	screen.w = 140
+	screen.w = 150  # ponytail: the stats strip drops trailing items on narrower screens
 	st = State(60)
 	st.sections = [("MINE", [dict(PR, url="m")], None),
 	               ("REVIEW REQUESTED", [dict(PR, url="r", number=8, title="Needs eyes", isDraft=True)], None),
@@ -94,3 +95,12 @@ def test_update_screen_accepts_and_reports_failure(screen, monkeypatch, st):
 	monkeypatch.setattr(ui.update, "apply_update", lambda v: "no such tag v9.9.9")
 	assert ui.update_screen(screen, st, 0) is False
 	assert "failed: no such tag v9.9.9" in screen.text()
+
+
+def test_d_and_e_cycle_depth_and_effort(monkeypatch):
+	from dashy.ui.screen import cycle_through
+	monkeypatch.setattr(config, "DEPTH", "adaptive")
+	monkeypatch.setattr(config, "EFFORT", "")
+	assert cycle_through(config.DEPTHS, config.DEPTH) == "low"
+	assert cycle_through(config.EFFORTS, config.EFFORT) == "low"
+	assert cycle_through(config.EFFORTS, "max") == ""

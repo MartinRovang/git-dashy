@@ -37,7 +37,7 @@ def mark_rereviews(sections):
 	out = []
 	for p in [p for n, prs, _ in sections if n == "REVIEW REQUESTED" for p in prs or []]:
 		e = last.get(p["url"])
-		if e and datetime.fromisoformat(p["updatedAt"]) > datetime.fromisoformat(e["at"]):
+		if e and datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"]):
 			p["prev"] = f"↻ re-review · was {config.STATUS[e['verdict']]}"
 			out.append(p["url"])
 	return out

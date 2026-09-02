@@ -41,6 +41,7 @@ gitdashy                  # 300s refresh
 gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
+gitdashy --effort high --depth adaptive   # claude effort level; review depth judged from the PR size
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
 gitdashy --version        # 1.5.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
@@ -58,6 +59,8 @@ gitdashy --help
 | `t` | cycle the REVIEWED window: 1h / 4h / 6h / all |
 | `s` | cycle summary lines: all / open PRs only / off |
 | `m` | cycle model: opus / sonnet / fable |
+| `d` | cycle review depth: adaptive / low / medium / high |
+| `e` | cycle claude effort: default / low / medium / high / xhigh / max |
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
@@ -69,6 +72,12 @@ result with `gh pr review` as an **approve**, **request changes**, or **comment*
 appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in the REVIEWED section,
 where `Enter` opens the summary and full review. A PR that gets a new review request after a verdict
 is flagged `↻ re-review · was <verdict>` and can be reviewed again.
+
+`--depth LEVEL` sets how hard the reviewer looks: `low` skims for obvious defects, `medium` reads the
+whole diff, `high` also reads the surrounding code and traces callers, and `adaptive` (the default)
+lets Claude pick from the size and risk of the diff. `--effort LEVEL` is passed straight to
+`claude --effort` (low to max) and controls how much thinking the model spends. `d` and `e` cycle
+them at runtime; the stats strip shows them as `review: <depth>` or `review: <depth>/<effort>`.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
@@ -94,6 +103,8 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 |-----|---------|------|
 | `PRS_MODEL` | `opus` | model used for reviews |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
+| `PRS_EFFORT` | (claude's default) | `--effort` passed to claude: low, medium, high, xhigh, max |
+| `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 
 ## Layout

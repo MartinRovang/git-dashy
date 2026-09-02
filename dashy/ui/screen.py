@@ -12,7 +12,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  t window  s summaries  u update  r refresh  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  a auto  m model  d depth  e effort  t window  s summaries  u update  r refresh  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -93,6 +93,7 @@ def draw(scr, state, sel, prompt=None):
 		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),
 		("v" + VERSION, "", C(1)),
 		("model: " + state.model, "", C(6)),
+		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(6)),  # depth[/effort]
 		("summaries: " + state.subs, "", C(6)),
 		("approved", sum(v.startswith("✓") for v in vals), C(4)),
 		("changes", sum(v.startswith("✗") for v in vals), C(3)),
@@ -255,6 +256,10 @@ def main(scr, interval, auto, model):
 			state.window = cycle_through(config.WINDOWS, state.window)
 		elif k == ord("m"):
 			state.model = cycle_through(config.MODELS, state.model)
+		elif k == ord("d"):
+			config.DEPTH = cycle_through(config.DEPTHS, config.DEPTH)
+		elif k == ord("e"):
+			config.EFFORT = cycle_through(config.EFFORTS, config.EFFORT)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
 		elif k == ord("u") and state.update:
