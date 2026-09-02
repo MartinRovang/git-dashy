@@ -3,6 +3,7 @@ import json
 import pathlib
 import random
 import subprocess
+from urllib.parse import quote
 
 from .. import config
 from . import github, log, memory, team
@@ -24,7 +25,7 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
-SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # drop more .png in there and they join the rotation
+SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # any .png in here, at any depth, joins the rotation
 SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/"
 HELLO = """{sprite}**Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
@@ -34,8 +35,8 @@ TIMEOUT = 900
 
 def sprite():
 	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
-	names = [p.name for p in SPRITE_DIR.glob("*.png")]
-	return f'<img src="{SPRITE_URL + random.choice(names)}" width="120">\n\n' if names else ""
+	paths = [p.relative_to(SPRITE_DIR).as_posix() for p in SPRITE_DIR.rglob("*.png")]
+	return f'<img src="{SPRITE_URL + quote(random.choice(paths))}" width="120">\n\n' if paths else ""
 
 
 def review(pr, model):
