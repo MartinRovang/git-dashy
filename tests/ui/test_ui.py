@@ -22,7 +22,7 @@ def test_draw_renders_sections_status_and_selection(screen):
 	sel, cur = ui.draw(screen, st, 1)
 	out = screen.text()
 	assert sel == 1 and cur["url"] == "r"
-	assert "PRs 2" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
+	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
 	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
 	assert "1 approved" in out and "model: " + st.model in out
 	assert "next refresh" in out

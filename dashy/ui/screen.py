@@ -23,6 +23,11 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(6, 111, curses.COLOR_BLUE, -1, -1),           # repo ref
 	(7, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),   # bars
 	(8, 16, curses.COLOR_BLACK, 75, curses.COLOR_CYAN),      # bar badge
+	(9, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),   # dim on bar
+	(10, 221, curses.COLOR_YELLOW, 236, curses.COLOR_BLACK), # yellow on bar
+	(11, 78, curses.COLOR_GREEN, 236, curses.COLOR_BLACK),   # green on bar
+	(12, 203, curses.COLOR_RED, 236, curses.COLOR_BLACK),    # red on bar
+	(13, 111, curses.COLOR_BLUE, 236, curses.COLOR_BLACK),   # blue on bar
 ]
 
 
@@ -70,46 +75,49 @@ def draw(scr, state, sel, prompt=None):
 	ref_w = max([len(refof(p)) for p in all_prs] + [10])
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
-	# header bar
+	# header: one two-row bar. row 0 = identity + status + badges, row 1 = stats
 	total = sum(len(p) for _, p, _ in sections if p)
 	spin = art.SPINNER[int(time.time() * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
 	status = f"{spin} fetching…" if fetched_at is None else \
 		f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
-	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
-	scr.addnstr(0, 1, f" PRs {total} ", w - 2, C(8) | curses.A_BOLD)
-	x0 = min(w - 2, 10 + len(str(total)))
-	scr.addnstr(0, x0, f"  {status}", max(1, w - 2 - x0), C(7))
+	for y in (0, 1):
+		scr.addnstr(y, 0, " " * (w - 1), w - 1, C(7))
+	badge = " ▌ gitdashy "
+	scr.addnstr(0, 1, badge, w - 2, C(8) | curses.A_BOLD)
+	x0 = min(w - 2, 1 + len(badge))
+	scr.addnstr(0, x0, f"   {total} PRs", max(1, w - 2 - x0), C(7) | curses.A_BOLD)
+	x0 = min(w - 2, x0 + 8 + len(str(total)))
+	scr.addnstr(0, x0, f"  ·  {status}", max(1, w - 2 - x0), C(9))
 	if state.auto:
 		scr.addnstr(0, max(0, w - 8), " AUTO ", 7, C(5) | curses.A_REVERSE | curses.A_BOLD)
 	if state.update:
 		badge = f" ↑ v{state.update} · u "
 		scr.addnstr(0, max(0, w - 9 - len(badge)), badge, len(badge), C(4) | curses.A_REVERSE | curses.A_BOLD)
 
-	# stats strip
 	vals = list(reviews.values())
 	running = sum(v == "reviewing..." for v in vals)
 	nxt = "" if fetched_at is None else f"{spin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
-	x = 1
+	x = 3
 	for label, n, attr in (
-		("agents running", running, C(5) | (curses.A_BOLD if running else 0)),
-		("v" + VERSION, "", C(1)),
-		("model: " + state.model, "", C(6)),
-		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(6)),  # depth[/effort]
-		("summaries: " + state.subs, "", C(6)),
-		*([(team.ERROR or "team: " + team.NAME, "", C(3) if team.ERROR else C(6))] if team.on() else []),
-		("approved", sum(v.startswith("✓") for v in vals), C(4)),
-		("changes", sum(v.startswith("✗") for v in vals), C(3)),
-		("commented", sum(v.startswith("~") for v in vals), C(1)),
-		("errors", sum(v.startswith("error") for v in vals), C(3)),
+		("agents running", running, C(10) | (curses.A_BOLD if running else 0)),
+		("v" + VERSION, "", C(9)),
+		("model: " + state.model, "", C(13)),
+		("review: " + config.DEPTH + (config.EFFORT and "/" + config.EFFORT), "", C(13)),  # depth[/effort]
+		("summaries: " + state.subs, "", C(13)),
+		*([(team.ERROR or "team: " + team.NAME, "", C(12) if team.ERROR else C(13))] if team.on() else []),
+		("approved", sum(v.startswith("✓") for v in vals), C(11)),
+		("changes", sum(v.startswith("✗") for v in vals), C(12)),
+		("commented", sum(v.startswith("~") for v in vals), C(9)),
+		("errors", sum(v.startswith("error") for v in vals), C(12)),
 	):
 		txt = f"{n} {label}".strip()
 		if x + len(txt) < w - 1:
 			scr.addnstr(1, x, str(n), w - 1 - x, attr | curses.A_BOLD)
-			scr.addnstr(1, x + len(str(n)), f" {label}   ", w - 1 - x - len(str(n)), C(1))
+			scr.addnstr(1, x + len(str(n)), f" {label}   ", w - 1 - x - len(str(n)), C(9))
 		x += len(txt) + 3
 	if nxt and x + len(nxt) < w - 1:
-		scr.addnstr(1, w - 1 - len(nxt), nxt, len(nxt), C(1))
+		scr.addnstr(1, w - 1 - len(nxt), nxt, len(nxt), C(9))
 
 	if not rs and fetched_at is None:
 		splash(scr, h, w, spin)
