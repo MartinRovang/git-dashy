@@ -79,8 +79,9 @@ def draw(scr, state, sel, prompt=None):
 
 	# header: one two-row bar. row 0 = identity + status + badges, row 1 = stats
 	total = sum(len(p) for _, p, _ in sections if p)
-	spin = art.REFRESH_SPINNER[int(time.time() * 10) % len(art.REFRESH_SPINNER)]  # ponytail: frame from the clock, no animation state
-	# 10 fps against the 50ms redraw tick: every frame gets drawn twice, no aliasing into stutter
+	spin = art.SPINNER[int(time.time() * 12) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	# both run under the 20 fps redraw tick, so every frame gets drawn instead of aliasing into stutter
+	rspin = art.REFRESH_SPINNER[int(time.time() * 10) % len(art.REFRESH_SPINNER)]
 	status = f"{spin} fetching…" if fetched_at is None else \
 		f"updated {age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())} ago"
 	for y in (0, 1):
@@ -99,7 +100,7 @@ def draw(scr, state, sel, prompt=None):
 
 	vals = list(reviews.values())
 	running = sum(v == "reviewing..." for v in vals)
-	nxt = "" if fetched_at is None else f"{spin} refreshing…" if state.fetching else \
+	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
 	x = 3
 	for label, n, attr in (
