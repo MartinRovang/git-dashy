@@ -24,7 +24,7 @@ DEPTH = {
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
 SPRITE = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/sprite_{:03d}.png"
-HELLO = """<img src="{sprite}" width="200">
+HELLO = """<img src="{sprite}" width="120">
 
 **Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
