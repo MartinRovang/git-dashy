@@ -66,7 +66,7 @@ again but the reviewer has not looked yet.
 | `?` | show each setting's key next to it in the header |
 
 `m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` keeps.
-`R` and `L` open the Reviewer and List groups as a menu: `Enter` on a row opens that setting, `Esc` steps back.
+`R` and `V` open the Reviewer and View groups as a menu: `Enter` on a row opens that setting, `Esc` steps back.
 On a narrow terminal the groups fold into their chips (`Reviewer ▾`), and the same keys still work from there.
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |

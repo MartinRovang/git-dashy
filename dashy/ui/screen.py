@@ -15,7 +15,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  R/L groups  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  R/V groups  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -71,8 +71,8 @@ def header_groups(state):
 	reviewer = [row("m"), row("d"), row("e")]
 	if team.on():
 		reviewer.append(("T", "Team", team.ERROR[:40] if team.ERROR else team.NAME, "err" if team.ERROR else None))  # ponytail: clipped, T shows the whole error
-	lst = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
-	return [("Reviewer", "R", reviewer), ("List", "L", lst)]
+	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
+	return [("Reviewer", "R", reviewer), ("View", "V", view)]
 
 
 def init_colors():
@@ -161,14 +161,14 @@ def draw(scr, state, sel, prompt=None):
 	def kv(key, value, attr=C(15), k=""):  # dim key, bright value, so "Depth adaptive" reads as a pair and not one phrase
 		return hint(k) + [(key + " ", C(16), k), (value, attr)]
 	def render(label, key, rows, level):
-		"""A group at one of its levels: "full" = chip + pairs, "chip" = the chip with a caret, "off" = nothing.
+		"""A group at one of its levels: "full" = gear chip + pairs, "chip" = the chip with a caret, "off" = nothing.
 		ponytail: the chip is a badge like the app's, so a group reads as one block; collapsed, it anchors every key in it."""
 		keys = key + "".join(k for k, *_ in rows)
 		if level == "off":
 			return []
 		if level == "chip":
-			return hint(key) + [(f" {label} ▾ ", C(20) | curses.A_BOLD, keys)]
-		parts = hint(key) + [(f" {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
+			return hint(key) + [(f" ⚙ {label} ▾ ", C(20) | curses.A_BOLD, keys)]
+		parts = hint(key) + [(f" ⚙ {label} ", C(20) | curses.A_BOLD, key), ("  ", C(15))]
 		for i, (k, name, value, tone) in enumerate(rows):
 			parts += ([sep] if i else []) + kv(name, value, tones[tone], k)
 		return parts
@@ -180,11 +180,11 @@ def draw(scr, state, sel, prompt=None):
 		+ kv("~", str(sum(v.startswith('~') for v in vals)), C(15) | curses.A_BOLD) + [("   ", C(15))] \
 		+ kv("!", str(sum(v.startswith('error') for v in vals)), C(19) | curses.A_BOLD)
 	# session sits left, its label ending where the app badge ends; the groups stack against the right edge and
-	# degrade one step at a time when the row is too narrow: List to a chip, Reviewer to a chip, then List off, Reviewer off
+	# degrade one step at a time when the row is too narrow: View to a chip, Reviewer to a chip, then View off, Reviewer off
 	x = bar(1, 2 + len(badge) - len("Session"), session)
 	groups = header_groups(state)
 	levels = {key: "full" for _, key, _ in groups}
-	steps = [("L", "chip"), ("R", "chip"), ("L", "off"), ("R", "off")]
+	steps = [("V", "chip"), ("R", "chip"), ("V", "off"), ("R", "off")]
 	def stack():
 		drawn = [render(label, key, rows, levels[key]) for label, key, rows in groups]
 		drawn = [g for g in drawn if g]
@@ -531,7 +531,7 @@ def main(scr, interval, auto, model):
 			state.expanded ^= {current["url"]}
 		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
 			dropdown(scr, state, sel, chr(k))
-		elif k in (ord("R"), ord("L")):
+		elif k in (ord("R"), ord("V")):
 			group_menu(scr, state, sel, chr(k))
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
