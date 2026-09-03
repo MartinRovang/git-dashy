@@ -13,7 +13,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-check [--model NAME]
-       gitdashy install [--dry-run] [--uninstall]
+       gitdashy install [--dry-run] [--yes] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
@@ -36,8 +36,9 @@ remember files a fact you learned while working, into the same drafts a review w
   directory's origin; --general is for something true of every repo.
 
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
-  directory and two imports. Idempotent, and --uninstall reverses exactly what it wrote. Reviews need none
-  of this — they read memory through the prompt and always have.
+  directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
+  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. Reviews need
+  none of this — they read memory through the prompt and always have. See docs/install.md.
 
 init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
   (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
@@ -74,6 +75,25 @@ def sync_memory(argv):
 	team.activate()  # ponytail: names the team and points LOG at its checkout; memory.sources() needs it
 	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."),
 	                         "--no-pull" not in argv, "--general" in argv))
+
+
+def install(argv):
+	"""Wire this machine, after saying what that means and being told to go ahead."""
+	if "--uninstall" in argv:
+		return print("\n".join(install_mod.remove("--dry-run" in argv)))
+	print("\n".join(install_mod.explain()))
+	if "--dry-run" in argv:
+		return print("\n".join(["", "--dry-run, so nothing was changed. Without it you are asked first."]))
+	if "--yes" not in argv:
+		if not sys.stdin.isatty():  # ponytail: never write global config from a script that cannot be asked
+			raise SystemExit("\ngitdashy: not a terminal — pass --yes if you meant to install unattended")
+		try:
+			if input("\nGo ahead? [y/N] ").strip().lower() not in ("y", "yes"):
+				return print("nothing changed")
+		except (EOFError, KeyboardInterrupt):
+			return print("\nnothing changed")
+	print("")
+	print("\n".join(install_mod.apply()))
 
 
 def init(argv):
@@ -129,7 +149,7 @@ def run(argv=None):
 	if len(argv) > 1 and argv[1] == "remember":
 		return remember(argv)
 	if len(argv) > 1 and argv[1] == "install":
-		return print("\n".join((install_mod.remove if "--uninstall" in argv else install_mod.apply)("--dry-run" in argv)))
+		return install(argv)
 	if len(argv) > 1 and argv[1] == "init":
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "self-check":

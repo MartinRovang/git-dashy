@@ -49,6 +49,32 @@ def _ours(link, target):
 	return os.path.islink(link) and os.path.realpath(link) == os.path.realpath(target)
 
 
+def explain():
+	"""What install would change on this machine, in the user's own paths. Returns report lines."""
+	d, out = claude_dir(), []
+	out.append("gitdashy install wires this machine so every agent session reads what your reviews learned.")
+	out.append("")
+	out.append("Reviews do not need this. They read memory through their own prompt and always have; this is")
+	out.append("only so a coding session sees the same facts. It is additive, and reversible.")
+	out.append("")
+	out.append("It will:")
+	for link, target in links():
+		state = ("already correct" if _ours(link, target)
+		         else "EXISTS, will be left alone" if os.path.lexists(link) else "new")
+		out.append(f"  · symlink {knowledge.tilde(link)} -> {knowledge.tilde(target)}   [{state}]")
+	md = os.path.join(d, "CLAUDE.md")
+	out.append(f"  · append two imports to {knowledge.tilde(md)}, inside a marked block"
+	           + ("   [already there]" if IMPORT in _read(md) else "   [new]"))
+	out.append("")
+	out.append("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.")
+	out.append("Cross-repo facts load live through the symlink — the session reads the same file a review")
+	out.append("writes, so nothing is copied and nothing goes stale. Per-repo facts are separate: run")
+	out.append("`gitdashy init` inside a repo to add those, or leave them out.")
+	out.append("")
+	out.append("Reverse it any time with `gitdashy install --uninstall`, which removes only what it wrote.")
+	return out
+
+
 def apply(dry=False):
 	"""Wire this machine so every session reads review memory. Returns report lines."""
 	d = claude_dir()
