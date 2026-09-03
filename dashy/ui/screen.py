@@ -15,7 +15,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  esc menu  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -40,6 +40,14 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
 ]
+# ponytail: a theme swaps the 256-colour values above, nothing else. Keys are the accents (cyan, red, green, yellow,
+# blue) and the bar greys; anything not listed keeps the default. New theme = one more line.
+THEMES = {
+	"dashy": {},
+	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61},
+	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243},
+	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60},
+}
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -62,6 +70,11 @@ def settings(state):
 	}
 
 
+def set_theme(name):
+	config.THEME = name
+	init_colors()  # init_pair repaints live, no redraw needed
+
+
 def header_groups(state):
 	"""The settings groups on the second header row: (label, key, rows), rows = (setting key, name, value, tone).
 	tone: None / "on" (yellow) / "err" (red). ponytail: one table, drawn as pairs and listed by the group key."""
@@ -80,7 +93,9 @@ def init_colors():
 	curses.curs_set(0)
 	curses.use_default_colors()
 	many = curses.COLORS >= 256
+	theme = THEMES.get(config.THEME, {})
 	for pair, fg256, fg8, bg256, bg8 in COLORS:
+		fg256, bg256 = theme.get(fg256, fg256), theme.get(bg256, bg256)
 		curses.init_pair(pair, fg256 if many else fg8, (bg256 if many else bg8) if bg256 != -1 else -1)
 
 
@@ -283,7 +298,7 @@ def draw(scr, state, sel, prompt=None):
 	foot = prompt or FOOTER
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
-	scr.refresh()
+	scr.noutrefresh()  # staged only: a popup drawn on top pushes one frame, so it never flashes without it
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
 
@@ -431,9 +446,41 @@ def settings_menu(scr, state, sel):
 			return
 
 
+def esc_menu(scr, state, sel):
+	"""Esc: a btop-style menu in the middle of the screen. Enter cycles the theme, toggles notifications,
+	refreshes, or quits. Returns True to quit."""
+	idx = 0
+	while True:
+		items = [f"Theme    {config.THEME:<8}", f"Notify   {'on' if config.NOTIFY else 'off':<8}", "Refresh", "Quit"]
+		draw(scr, state, sel, prompt=" Menu:  j/k move   ⏎ pick   esc close   q quit")
+		h, w = scr.getmaxyx()
+		popup(scr, h // 2 - 4, (w - len(items[0]) - 6) // 2, "gitdashy", items, idx)
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			idx = (idx + 1) % len(items)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(items)
+		elif k == ord("q"):
+			return True
+		elif k in (10, 13, curses.KEY_ENTER):
+			if idx == 0:
+				names = list(THEMES)
+				set_theme(names[(names.index(config.THEME) + 1) % len(names)] if config.THEME in names else names[0])
+			elif idx == 1:
+				config.NOTIFY = not config.NOTIFY
+			elif idx == 2:
+				state.wake.set()
+				return False
+			else:
+				return True
+		elif k == 27:
+			return False
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	scr.timeout(-1)
 	yes = scr.getch() == ord("y")
 	scr.timeout(500)
@@ -454,6 +501,7 @@ def edit_memory(scr, repo):
 def ask(scr, state, sel, question):
 	"""Footer text input. Returns '' on empty/escape."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	curses.echo()
 	scr.timeout(-1)
 	try:
@@ -545,6 +593,12 @@ def dream_detail(summary, before, new):
 	return "\n".join(out) or "nothing changed"
 
 
+def snapshot(state):
+	"""Everything the settings row can change, in the shape config.save writes."""
+	return {"model": state.model, "interval": state.interval, "subs": state.subs, "window": state.window,
+	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME}
+
+
 def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
@@ -553,13 +607,17 @@ def main(scr, interval, auto, model):
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()
-	sel, current = 0, None
+	sel, current, saved = 0, None, snapshot(state)
 	while True:
 		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
 		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
+		scr.refresh()
 		k = scr.getch()
-		if k in (ord("q"), 27):
+		if snapshot(state) != saved:  # ponytail: one save site; any key path that changed a setting lands here
+			saved = snapshot(state)
+			config.save(saved)
+		if k == ord("q") or (k == 27 and esc_menu(scr, state, sel)):
 			return
 		if k in (ord("j"), curses.KEY_DOWN):
 			sel += 1

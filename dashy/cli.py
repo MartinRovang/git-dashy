@@ -37,6 +37,7 @@ def run(argv=None):
 		return print(f"gitdashy {VERSION}")
 	if "--demo" in argv:
 		demo.install()
+	config.load()
 	config.EFFORT = arg("--effort", config.EFFORT, str, argv)
 	config.DEPTH = arg("--depth", config.DEPTH, str, argv)
 	if config.DEPTH not in config.DEPTHS:

@@ -123,3 +123,25 @@ def test_set_auto_include_existing_reviews_listed_prs(monkeypatch):
 	st.wake.clear()
 	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [{"url": "old"}, {"url": "done"}], None)])
 	assert started == ["old"]
+
+
+def test_notifies_only_new_after_first_fetch(monkeypatch):
+	import dashy.core.state as state_mod
+	sent = []
+	monkeypatch.setattr(state_mod, "notify", lambda p: sent.append(p["url"]))
+	st = State(0)
+	one_loop(st, monkeypatch, [("ASSIGNED", [{"url": "old"}], None)])
+	assert sent == []  # first fetch is the baseline, no notification storm on startup
+	one_loop(st, monkeypatch, [("ASSIGNED", [{"url": "old"}], None), ("REVIEW REQUESTED", [{"url": "new"}], None)])
+	assert sent == ["new"]
+
+
+def test_notify_off_stays_quiet(monkeypatch):
+	import dashy.core.state as state_mod
+	sent = []
+	monkeypatch.setattr(state_mod, "notify", lambda p: sent.append(p["url"]))
+	monkeypatch.setattr(config, "NOTIFY", False)
+	st = State(0)
+	one_loop(st, monkeypatch, [("ASSIGNED", [], None)])
+	one_loop(st, monkeypatch, [("ASSIGNED", [{"url": "new"}], None)])
+	assert sent == [] and st.known == {"new"}

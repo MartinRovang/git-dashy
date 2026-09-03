@@ -18,6 +18,7 @@ def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None
 def install():
 	"""ponytail: swap the three module attrs the app calls out through — no injection framework."""
 	config.TEAM = ""  # never sync the demo
+	config.SETTINGS = ""  # never read or write the real settings
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
 	config.MEMORY_DIR = log.LOG[:-6] + "-memory"  # Z dream must never rewrite the real memory
 	memory.append(None, "run make lint before flagging style")
@@ -30,6 +31,7 @@ def install():
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48, now=now)]
 	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0, now=now)  # 3rd refresh, exercises auto
 	assigned = [pr(300, "Flaky integration test in CI", "acme/api", "erin", 72, now=now)]
+	late_assigned = pr(301, "Bump base image to fix CVE", "acme/infra", "erin", 0, now=now)  # 2nd refresh, desktop notification
 	seed = [(pr(180, "Refactor auth middleware", "acme/api", "frank", 26, now=now),  # older review, folds under the newer one
 	         {"verdict": "request_changes", "summary": "Splits auth middleware into token parsing and policy checks.",
 	          "body": "- `api/auth.py:40` policy check runs before the token is validated"}),
@@ -48,7 +50,8 @@ def install():
 		fetches[0] += 1
 		time.sleep(1)
 		rr_now = rr + ([late] if fetches[0] >= 3 else []) + [dict(seed[2][0], updatedAt=now.isoformat())]
-		return [("MINE", mine, None), ("REVIEW REQUESTED", rr_now, None), ("ASSIGNED", assigned, None),
+		assigned_now = assigned + ([late_assigned] if fetches[0] >= 2 else [])
+		return [("MINE", mine, None), ("REVIEW REQUESTED", rr_now, None), ("ASSIGNED", assigned_now, None),
 		        ("REVIEWED", log.reviewed(), None)]
 
 	verdicts = cycle([

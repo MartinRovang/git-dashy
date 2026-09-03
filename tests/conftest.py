@@ -15,6 +15,7 @@ def isolated(monkeypatch, tmp_path):
 	"""Never touch the real log, the real git remote, or wait on the splash."""
 	monkeypatch.setattr(log, "LOG", str(tmp_path / "log.jsonl"))
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
@@ -41,6 +42,7 @@ class FakeScr:
 		self.cells = {}
 	def refresh(self):
 		pass
+	noutrefresh = refresh
 	def addnstr(self, y, x, s, n, attr=0):
 		assert 0 <= y < self.h and 0 <= x < self.w and n >= 1, (y, x, n)
 		for i, ch in enumerate(s[:n]):
