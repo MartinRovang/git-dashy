@@ -1,5 +1,6 @@
 """Run Claude headless on a PR and post its verdict."""
 import json
+import os
 import pathlib
 import random
 import subprocess
@@ -37,6 +38,20 @@ SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/spri
 HELLO = """{sprite}**Dashy is on its way!** {what} with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+# ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
+# CLAUDE.md is a dialogue protocol, and this call has no dialogue — it has a JSON contract it can break by
+# answering in prose. And without it the prompt would depend on which directory gitdashy was launched from.
+SAFE = "--safe-mode"
+LENS = """You are reviewing a pull request. Reason about structure before style.
+
+For every change ask: where does the state live and who owns it; where does feedback or observability live;
+what breaks if this is deleted; and when does the timing work — ordering, async boundaries, races. Danger
+concentrates in the seams: between services, across process and async boundaries, at database calls, wherever
+two systems agree on a contract. Read the definition of a thing, not just the code that uses it — inferring a
+type or a contract from a call site is how real defects survive review. Before flagging a deviation, check
+whether it is already the established pattern in this codebase; an intentional oddity is not a defect.
+Security is structural, not a checklist appended at the end. Watch for duplicated or doubled logic, and say
+plainly what you verified first-hand and what you took on trust."""
 TIMEOUT = 900
 
 
@@ -44,6 +59,37 @@ def sprite():
 	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
 	paths = [p.relative_to(SPRITE_DIR).as_posix() for p in SPRITE_DIR.rglob("*.png")]
 	return f'<img src="{SPRITE_URL + quote(random.choice(paths))}" width="120">\n\n' if paths else ""
+
+
+MARKER = "GITDASHY_SELFCHECK_MARKER"
+
+
+def self_check(model):
+	"""Prove the three things a review depends on. Returns [(name, ok, detail)].
+
+	ponytail: unit tests assert the flags are passed; only a real call proves claude honours them. If
+	--safe-mode stopped suppressing CLAUDE.md the reviews would not fail, they would just quietly inherit
+	whatever is on the machine — so nothing else would ever tell us.
+	"""
+	import tempfile
+	out = []
+	with tempfile.TemporaryDirectory() as d:
+		with open(os.path.join(d, "CLAUDE.md"), "w") as f:
+			f.write(f"# local\n\nThe marker is {MARKER}.\n")
+		cmd = ["claude", "-p", f"Run the bash command: echo TOOLOK\nThen reply with exactly three words: "
+		                        f"your codename, then YES or NO for whether your instructions mention {MARKER}, "
+		                        f"then the command's output. Nothing else.",
+		       "--output-format", "json", SAFE, "--append-system-prompt", "Your codename is SCOPED.",
+		       "--allowedTools", "Bash(echo:*)", "--model", model]
+		try:
+			raw = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300, cwd=d).stdout
+			said = json.loads(raw)["result"].strip()
+		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, OSError) as e:
+			return [("could not run claude", False, (getattr(e, "stderr", None) or str(e)).strip()[:120])]
+	out.append(("--append-system-prompt reaches the model", "SCOPED" in said, said[:80]))
+	out.append(("--safe-mode hides the local CLAUDE.md", MARKER not in said and " NO " in f" {said} ", said[:80]))
+	out.append(("--allowedTools still runs tools", "TOOLOK" in said, said[:80]))
+	return out
 
 
 def review(pr, model):
@@ -61,7 +107,7 @@ def review(pr, model):
 		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
-			["claude", "-p", prompt, "--output-format", "json",
+			["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
 			 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
 			capture_output=True, text=True, check=True, timeout=TIMEOUT,
 		).stdout
@@ -70,9 +116,10 @@ def review(pr, model):
 		if config.DEPTH == "adaptive" and verdict.get("depth_used"):
 			verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
-		memory.append(repo, verdict.get("memory"))
+		promoted = memory.append(repo, verdict.get("memory"))  # drafts, and whatever a second review confirmed
 		status = log.log_review(pr, model, verdict)
 		team.push(f"review {repo}#{n}: {verdict['verdict']}")
+		team.push_dir(config.MEMORY_DIR, f"memory: {repo}#{n}" + (f", {len(promoted)} confirmed" if promoted else ""), "mine")
 		return status
 	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]

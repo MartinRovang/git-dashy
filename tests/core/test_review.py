@@ -124,11 +124,11 @@ def test_review_adaptive_appends_depth_used(monkeypatch):
 	assert calls[2][-1] == "b"  # set depth: nothing to explain
 
 
-def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
+def test_review_reads_memory_and_only_drafts_what_it_proposes(monkeypatch, tmp_path):
 	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	memory.append(None, "always run make lint")
-	memory.append("a/b", "- uses tabs\n\n• db layer is generated")
+	(tmp_path / "general.md").write_text("- always run make lint\n")
+	(tmp_path / "a__b.md").write_text("- uses tabs\n- db layer is generated\n")
 	prompts = []
 	def fake_run(cmd, **kw):
 		if cmd[0] == "claude":
@@ -138,11 +138,28 @@ def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "DEPTH", "high")
 	monkeypatch.setattr(config, "EFFORT", "max")
 	review(dict(PR), "opus")
-	assert "## General\n- always run make lint" in prompts[0] and "## a/b\n- uses tabs\n- db layer is generated" in prompts[0]
-	assert open(memory.path("a/b")).read().endswith("- ci is slow, do not flag timeouts\n")
-	assert memory.read("x/y") == "## General\n- always run make lint"
+	assert "## General\n### mine\n- always run make lint" in prompts[0]
+	assert "## a/b\n### mine\n- uses tabs\n- db layer is generated" in prompts[0]
+	assert memory.drafts("a/b") == [(1, "ci is slow, do not flag timeouts")]  # one review only drafts
+	assert "ci is slow" not in memory.read("a/b")  # so the next review cannot be shown its own guess
+	assert memory.read("x/y") == "## General\n### mine\n- always run make lint"
 	e = log.reviewed()[0]
 	assert e["tag"] == "high/max" and "opus high/max" in log.detail(e["review"])
+
+
+def test_a_second_independent_review_turns_a_draft_into_a_fact(monkeypatch, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: claude_out(verdict="approve", body="b", memory="ci is slow, do not flag timeouts"))
+	review(dict(PR), "opus")
+	assert memory.drafts("a/b") == [(1, "ci is slow, do not flag timeouts")]
+	review(dict(PR), "opus")
+	assert memory.drafts("a/b") == []
+	assert open(memory.path("a/b")).read() == "- ci is slow, do not flag timeouts\n"
+	review(dict(PR), "opus")  # now settled: proposing it a third time adds nothing
+	assert memory.drafts("a/b") == []
+	assert open(memory.path("a/b")).read() == "- ci is slow, do not flag timeouts\n"
 
 
 def test_rereview_prompt_includes_earlier_review(monkeypatch):
@@ -161,3 +178,17 @@ def test_rereview_prompt_includes_earlier_review(monkeypatch):
 	assert "**Dashy is on its way!** Re-reviewing (was ✗ changes requested on 2026-01-02) with model" in calls[0]
 	assert "RE-REVIEW: you already reviewed this PR on 2026-01-02 with verdict request_changes" in prompts[1]
 	assert "- cache never invalidated" in prompts[1]
+
+
+def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
+	"""The corpus/CLAUDE.md of whatever dir gitdashy was launched from must not reach the reviewer."""
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	cmd = calls[1]
+	assert "--safe-mode" in cmd
+	assert cmd[cmd.index("--append-system-prompt") + 1] == review_mod.LENS
+	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt
