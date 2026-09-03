@@ -112,6 +112,20 @@ you are trying to keep.
 
 ## 3. How a fact travels
 
+### 3.0 Where a claim comes from
+
+Two surfaces propose facts, and until recently only one of them ever did:
+
+| surface | how |
+|---|---|
+| a review | automatic — the `memory` field of every review |
+| a coding session | `gitdashy remember`, which the shipped corpus now instructs the agent to use |
+
+The second was built and then nothing called it, so every fact in the store came from a
+review. That made the loop one-way: reviews learned, sessions only read. A session's
+claim is a single claim, which is precisely what the gate below is for — it drafts, and
+something else has to arrive at the same thing independently before it counts.
+
 ### 3.1 Arrival
 
 A review returns up to three lines in its `memory` field. For each:

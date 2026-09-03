@@ -47,6 +47,24 @@ Anything unclear on non-trivial work gets said out loud, not assumed.
 Trivial changes do not need this. A typo is a typo. Spending clarification on obvious
 work is its own kind of failure.
 
+## File what you learn
+
+When you work something out about this repo that would still be true next month — a
+convention and what it protects, a constraint that is not obvious from the code, why
+something is shaped the way it is — file it:
+
+```sh
+gitdashy remember "the viewer owns mask state; the store only mirrors it"
+gitdashy remember --general "logic that can live in the API does"
+```
+
+It becomes a draft, not a fact. Something else has to arrive at the same thing
+independently before it counts, so filing a guess costs nothing and filing something
+real means the next review already knows it.
+
+Do not file what this task did, what one bug was, or anything git already records. The
+test is whether it would help someone opening this repo cold in three months.
+
 ## How to talk
 
 Be concise and concrete. State assumptions. Disagree when you have reason to, and say
