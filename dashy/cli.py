@@ -4,7 +4,7 @@ import os
 import sys
 
 from . import VERSION, config, demo
-from .core import memory, mirror, review as review_mod, team
+from .core import install as install_mod, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -13,6 +13,8 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-check [--model NAME]
+       gitdashy install [--dry-run] [--uninstall]
+       gitdashy init --into DIR --loader FILE [--repo owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -32,6 +34,14 @@ sync-memory copies this repo's review memory into PATH as a read-only mirror, so
 remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
   review and a coding session found independently is confirmed by their agreement. --repo defaults to this
   directory's origin; --general is for something true of every repo.
+
+install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
+  directory and two imports. Idempotent, and --uninstall reverses exactly what it wrote. Reviews need none
+  of this — they read memory through the prompt and always have.
+
+init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
+  (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
+  path so the running dashboard re-mirrors it on every refresh. No hooks.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -64,6 +74,19 @@ def sync_memory(argv):
 	team.activate()  # ponytail: names the team and points LOG at its checkout; memory.sources() needs it
 	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."),
 	                         "--no-pull" not in argv, "--general" in argv))
+
+
+def init(argv):
+	"""Wire one repo so a session there reads its review memory."""
+	into, loader = arg("--into", "", str, argv), arg("--loader", "", str, argv)
+	if not into or not loader:
+		raise SystemExit("gitdashy: init needs --into DIR (where the mirror goes) and --loader FILE "
+		                 "(the instruction file that should import it)")
+	team.activate()
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not repo:
+		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name")
+	print("\n".join(install_mod.wire_repo(into, loader, repo)))
 
 
 def remember(argv):
@@ -105,6 +128,10 @@ def run(argv=None):
 		return sync_memory(argv)
 	if len(argv) > 1 and argv[1] == "remember":
 		return remember(argv)
+	if len(argv) > 1 and argv[1] == "install":
+		return print("\n".join((install_mod.remove if "--uninstall" in argv else install_mod.apply)("--dry-run" in argv)))
+	if len(argv) > 1 and argv[1] == "init":
+		return init(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:

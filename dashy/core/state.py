@@ -3,7 +3,16 @@ import threading
 import time
 
 from .. import config
-from . import github, log, review as review_mod, team, update
+from . import github, install, log, mirror, review as review_mod, team, update
+
+
+def refresh_mirrors():
+	"""Re-mirror every repo `gitdashy init` registered. Never raises: a bad entry must not stop a refresh."""
+	for into, repo in install.registered():
+		try:
+			mirror.sync(into, repo, pull=False)  # already pulled above; and this must not touch the network
+		except Exception:  # noqa: BLE001 — a stale registry entry is not worth losing the refresh loop over
+			continue
 
 
 class State:
@@ -49,6 +58,7 @@ class State:
 		while True:
 			t0, self.fetching = time.time(), True
 			team.pull()  # newest team log + memory before we read them
+			refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
 			data = github.fetch()
 			stale = log.mark_rereviews(data)
 			newer = update.update_available()

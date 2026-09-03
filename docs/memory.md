@@ -5,6 +5,26 @@ anything under `dashy/core/memory.py`, read this first.
 
 ---
 
+## 0. What needs installing
+
+Reviews read and write memory with **no setup at all**: the memory directory
+appears on first use and every review reads it back. That half is just gitdashy.
+
+The half that reaches a regular coding session is what installs — and until now it
+lived in one contributor's private agent corpus, so nobody else could reach it.
+
+| | scope |
+|---|---|
+| `gitdashy install` | machine — two symlinks and two imports in the agent config |
+| `gitdashy init --into DIR --loader FILE` | repo — the mirror, its ignore rule, its import, and the refresh |
+
+`init` registers the path in `~/.prs_mirrors`, and the running dashboard re-mirrors
+each entry on the refresh tick it already uses to pull the team. No session hook:
+that would mean editing global settings and living inside a start-up timeout, and
+the mirror only has to be as fresh as the facts, which change slowly.
+
+---
+
 ## 1. The one rule
 
 > A fact is not a fact because a model wrote it. It is a fact because it recurred.
