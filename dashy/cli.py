@@ -78,6 +78,7 @@ def remember(argv):
 		return print(f"gitdashy: {where} already knows that")
 	promoted = memory.append(scope, fact)
 	team.push_dir(config.MEMORY_DIR, f"memory: remembered for {where}", "mine")
+	team.push(f"memory: evidence for {where}")  # ponytail: a promotion writes the pool, which lives over there
 	if promoted:  # ponytail: the counter counts observations; it does not know which surface each came from
 		return print(f"gitdashy: {where} — confirmed by a second independent observation: {promoted[0]}")
 	print(f"gitdashy: {where} — drafted; one more independent observation confirms it")

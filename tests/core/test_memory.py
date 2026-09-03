@@ -194,3 +194,29 @@ def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
 	open(os.path.join(mate, "a__b.md"), "w").write("- something only martin accepted\n")
 	assert "martin accepted" not in memory.read("a/b")
 	assert not any("pool" in k for k in memory.files())  # nor into the dream
+
+
+def test_a_repo_the_team_holds_memory_for_is_visible_even_if_never_reviewed(monkeypatch, tmp_path):
+	"""A repo you only ever code in still corroborates, as long as the team already has facts for it."""
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path)  # nothing in the review log at all
+	assert not memory.team_visible("a/b")
+	(shared / "a__b.md").write_text("- the team already knows this repo\n")
+	assert memory.team_visible("a/b")
+	memory.append("a/b", "coding taught me this")
+	memory.append("a/b", "coding taught me this")
+	assert facts(memory.pool_path(memory.whoami(), "a/b")) == ["- coding taught me this"]
+
+
+def test_a_general_fact_always_pools_since_it_names_no_repo(monkeypatch, tmp_path):
+	in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path)
+	assert memory.team_visible(None)
+	memory.append(None, "PHI reaches the frontend")
+	memory.append(None, "PHI reaches the frontend")
+	assert facts(memory.pool_path(memory.whoami(), None)) == ["- PHI reaches the frontend"]
+
+
+def test_nothing_pools_when_you_are_not_in_a_team(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	assert not memory.team_visible(None) and not memory.team_visible("a/b")

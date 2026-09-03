@@ -371,7 +371,8 @@ def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, s
 	assert "share with org/t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
 	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
 	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
-	assert [w for w, _ in pushes] == ["team", "mine"]  # each side pushed its own repo
+	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
+	assert [w for w, _ in pushes] == ["team", "mine", "team"]
 
 
 def test_share_screen_says_so_when_there_is_nothing_to_share(screen, monkeypatch, st, tmp_path):

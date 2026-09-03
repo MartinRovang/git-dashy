@@ -105,14 +105,23 @@ def logged_repos():
 	return out
 
 
-def _pool(repo, fact):
-	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt.
+def team_visible(repo):
+	"""True when the team can already see this repo's name, so pooling a fact about it discloses nothing.
 
-	ponytail: only for repos already named in the shared log. Reviewing there put the repo in front of
-	the team already, so this discloses nothing that reviewing did not — and it bootstraps on its own,
-	which "repos the team already has memory for" could not, since at the start that set is empty.
+	ponytail: the shared review log is what bootstraps this — it fills as you review, where "repos the
+	team already has memory for" would have started empty and never filled. But team memory counts too,
+	or a repo you only ever code in could never corroborate, despite being just as plainly theirs.
 	"""
-	if team.on() and repo in logged_repos():
+	if not team.on():
+		return False
+	if repo is None:
+		return True  # a general fact names no repo, so there is nothing to disclose
+	return os.path.exists(path(repo, os.path.join(config.TEAM, "memory"))) or repo in logged_repos()
+
+
+def _pool(repo, fact):
+	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt."""
+	if team_visible(repo):
 		_append_line(pool_path(whoami(), repo), fact)
 
 

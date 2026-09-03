@@ -506,6 +506,7 @@ def share_screen(scr, state, sel):
 		elif k == ord("x"):
 			memory.forget(repo, fact)
 			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
+			team.push(f"memory: withdraw {repo or 'general'}")  # forget also withdraws it from the pool
 		elif k in (27, ord("q")):
 			return
 

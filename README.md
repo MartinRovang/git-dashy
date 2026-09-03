@@ -260,7 +260,12 @@ gitdashy remember --general "PHI reaches the frontend; treat it as such"
 
 It becomes a draft, not a fact — the same gate a review's claim passes. `--repo` defaults to the current
 directory's origin. So a fact that a review proposed once and a session independently arrived at is
-confirmed by their agreement, and neither surface can confirm itself, since drafts are never read back. Re-run it whenever you
+confirmed by their agreement, and neither surface can confirm itself, since drafts are never read back.
+
+Once confirmed it becomes yours, and — if you are in a team and they can already see that repo, either
+from the shared log or because they hold memory for it — it also joins the evidence pool, so `P` can tell
+you when someone else found the same thing. A repo the team has never seen keeps its name to itself; the
+fact still becomes yours. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
 cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled, which on
 the default interval is minutes old at most.

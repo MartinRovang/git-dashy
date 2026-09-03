@@ -127,10 +127,21 @@ people's pools agreeing is four independent reviews across two humans. Raw draft
 never leave your machine; what is shared is what you already accepted, and even
 that is evidence only, never context.
 
-Scoped to repos already named in the shared review log. Reviewing there put the
-repo in front of the team already, so pooling discloses nothing that reviewing
-did not — and unlike "repos the team already has memory for", it bootstraps,
-since that set starts empty and would never fill.
+**When does a fact pool?** On promotion, and only if the team can already see the
+repo's name — which means one of:
+
+| condition | why it is enough |
+|---|---|
+| the repo is in the shared review log | reviewing there already showed them the name |
+| the team holds memory for the repo | they demonstrably work on it |
+| the fact is general | it names no repo, so there is nothing to disclose |
+
+The log is what bootstraps this: it fills as you review, where "repos the team
+already has memory for" would have started empty and never filled. Team memory is
+there as well, or a repo you only ever *code* in could never corroborate, despite
+being just as plainly theirs. And a repo that is neither — a side project you
+reviewed privately — never has its name leave your machine, though its facts still
+become yours.
 
 ### 3.4 Discard
 
@@ -185,6 +196,7 @@ has either recurred across two independent reviews or been shared by a human.
 | event | writes | pushes |
 |---|---|---|
 | review proposes facts | drafts, promotions into `mine`, and the pool | private + team repo |
+| `gitdashy remember` | the same drafts, and the pool on promotion | private + team repo |
 | `P` → `t` | team memory file, withdraws from the pool | team repo |
 | `P` → `x` | removes from `mine`, withdraws from the pool | private + team repo |
 | `n` / `g` edit | `mine` only — team memory is not hand-editable from the TUI | private repo |
