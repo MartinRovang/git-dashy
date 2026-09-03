@@ -47,6 +47,7 @@ gitdashy --version        # 1.16.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
 gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
+gitdashy remember "the viewer owns mask state"   # file what a coding session learned
 ```
 
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
@@ -223,7 +224,32 @@ gitdashy sync-memory --into .agent/team    # --repo defaults to this directory's
 
 Point your agent's instruction file at them (for Claude Code, a `CLAUDE.local.md` holding
 `@.agent/team/general.md` and `@.agent/team/repo.md`) and every session starts knowing the
-conventions, pitfalls and cross-repo effects the reviews have accumulated. Re-run it whenever you
+conventions, pitfalls and cross-repo effects the reviews have accumulated.
+
+Cross-repo facts can skip the mirror entirely. A **user-level** `CLAUDE.md` import follows a symlink out
+of its own tree, where a project-level one refuses to, so:
+
+```sh
+ln -s ~/.prs_memory ~/.claude/prs-memory        # then add to ~/.claude/CLAUDE.md:
+                                                #   @prs-memory/general.md
+```
+
+puts `general.md` into every session everywhere, live, with nothing to sync. Per-repo facts still want the
+mirror — a session in one repo should not load facts about ten others. Reviews are unaffected either way:
+they run `--safe-mode`, so memory reaches them only through the prompt, never twice.
+
+### Feeding memory from the other side
+
+A coding session that works something out can file it where reviews file theirs:
+
+```sh
+gitdashy remember "the viewer owns mask state, the store only mirrors it"
+gitdashy remember --general "PHI reaches the frontend; treat it as such"
+```
+
+It becomes a draft, not a fact — the same gate a review's claim passes. `--repo` defaults to the current
+directory's origin. So a fact that a review proposed once and a session independently arrived at is
+confirmed by their agreement, and neither surface can confirm itself, since drafts are never read back. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
 cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled, which on
 the default interval is minutes old at most.

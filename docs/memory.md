@@ -151,9 +151,24 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 | reader | sees | never sees |
 |---|---|---|
 | review prompt | `mine` + `team`, general + repo, each block labelled by source | drafts |
-| agent session | `.agent/team/{general,repo}.md` — the same merged text | drafts |
+| agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
+| agent session, one repo | `.agent/team/{general,repo}.md` — the merged text, mirrored | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
+
+Sessions read memory by two routes, and the split is deliberate. Cross-repo facts
+go in globally, because a user-level `CLAUDE.md` import **does** follow a symlink
+out of its tree — that is how an identity corpus loads — so one symlink and one
+`@` line make `general.md` live everywhere with nothing to sync. Per-repo facts
+cannot ride that route: a session in one repo has no business loading facts about
+ten others, so they arrive through the mirror, scoped to the repo they describe.
+
+A project-level import refuses a symlink, whether it points at a file or a
+directory. Both were tested. That asymmetry is the whole reason the mirror copies.
+
+Reviews are unaffected by the global route because they run `--safe-mode`, which
+drops `CLAUDE.md` entirely — so memory reaches a review only through
+`memory.read()`, and never twice.
 
 Because drafts are excluded everywhere, the review prompt's existing line —
 *"Memory from earlier reviews, trust it"* — is now defensible: everything under it
@@ -217,13 +232,19 @@ for one you touch monthly. It should be revisited with real numbers.
 
 ## 8. Open issues
 
-1. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
+1. **Observations are not tagged by surface.** The counter records that a fact
+   was seen twice, not that a review and a session saw it independently. So
+   `gitdashy remember` twice will confirm a fact — a deliberate escape hatch
+   (editing `mine/` by hand with `n`/`g` does the same thing more directly), but
+   it means "confirmed across surfaces" is a hope, not a guarantee. Tagging each
+   observation would make it one.
+2. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
    Wants either an age cap or inclusion in the dream (as drafts, clearly marked).
    The pool self-prunes on share and forget, so only drafts grow unboundedly.
-2. **`PROMOTE_AT` is unvalidated.** No data yet.
-3. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
+3. **`PROMOTE_AT` is unvalidated.** No data yet.
+4. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
    yours. You can still edit the team checkout directly with git.
-4. **Nothing here has met a real review yet.** The whole path is test-verified
+5. **Nothing here has met a real review yet.** The whole path is test-verified
    only. Numbers from real use should settle issues 1-3.
 
 ---

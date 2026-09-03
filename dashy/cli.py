@@ -3,13 +3,14 @@ import curses
 import sys
 
 from . import VERSION, config, demo
-from .core import mirror, team
+from .core import memory, mirror, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull]
+       gitdashy remember [--repo owner/name | --general] FACT
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -23,6 +24,10 @@ sync-memory copies the shared review memory into PATH as read-only mirrors (gene
   agent session in that repo reads what the reviews learned. --repo defaults to this directory's origin.
   Refuses to write anywhere git would commit it. --no-pull skips the team fetch, for callers on a
   timeout: it mirrors whatever the last refresh pulled.
+
+remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
+  review and a coding session found independently is confirmed by their agreement. --repo defaults to this
+  directory's origin; --general is for something true of every repo.
 
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
@@ -47,6 +52,34 @@ def sync_memory(argv):
 	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."), "--no-pull" not in argv))
 
 
+def remember(argv):
+	"""File a fact a coding session learned, into the same drafts a review writes to."""
+	rest, skip = [], False
+	for a in argv[2:]:  # ponytail: the fact is everything that is not a flag or a flag's value
+		if skip:
+			skip = False
+		elif a == "--repo":
+			skip = True
+		elif a != "--general":
+			rest.append(a)
+	fact = " ".join(rest).strip()
+	if not fact:
+		raise SystemExit("gitdashy: remember needs a fact to remember")
+	team.activate()
+	general = "--general" in argv
+	repo = "" if general else (arg("--repo", "", str, argv) or team.origin_slug("."))
+	if not general and not repo:
+		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name, or --general")
+	scope, where = repo or None, repo or "general"
+	if memory.already_known(scope, fact):
+		return print(f"gitdashy: {where} already knows that")
+	promoted = memory.append(scope, fact)
+	team.push_dir(config.MEMORY_DIR, f"memory: remembered for {where}", "mine")
+	if promoted:  # ponytail: the counter counts observations; it does not know which surface each came from
+		return print(f"gitdashy: {where} — confirmed by a second independent observation: {promoted[0]}")
+	print(f"gitdashy: {where} — drafted; one more independent observation confirms it")
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -55,6 +88,8 @@ def run(argv=None):
 		return print(f"gitdashy {VERSION}")
 	if len(argv) > 1 and argv[1] == "sync-memory":
 		return sync_memory(argv)
+	if len(argv) > 1 and argv[1] == "remember":
+		return remember(argv)
 	if "--demo" in argv:
 		demo.install()
 	config.EFFORT = arg("--effort", config.EFFORT, str, argv)

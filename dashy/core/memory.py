@@ -144,6 +144,11 @@ def known(repo):
 	return [f for _, base in sources() for scope in (None, repo) for f in _facts(path(scope, base))]
 
 
+def already_known(repo, fact):
+	"""True when this fact is already approved somewhere that covers `repo`."""
+	return any(_same(fact, t) for t in known(repo))
+
+
 def drafts(repo):
 	"""[(count, fact)] for one repo's unconfirmed facts."""
 	return [_parse(l) for l in _read(queue_path(repo)).splitlines() if l.strip()]
