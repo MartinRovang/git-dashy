@@ -6,7 +6,7 @@ import threading
 import time
 
 from .. import config
-from . import github, install, log, mirror, review as review_mod, team, update
+from . import github, install, log, memory, mirror, review as review_mod, team, update
 
 
 def refresh_mirrors():
@@ -68,6 +68,7 @@ class State:
 		while True:
 			t0, self.fetching = time.time(), True
 			team.pull()  # newest team log + memory before we read them
+			memory.backup("tick")  # ponytail: after the pull, so the copy includes what just arrived
 			refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
 			data = github.fetch()
 			stale = log.mark_rereviews(data)

@@ -1,3 +1,4 @@
+import inspect
 import pytest
 
 from dashy import config
@@ -165,3 +166,12 @@ def test_notify_off_stays_quiet(monkeypatch):
 	one_loop(st, monkeypatch, [("ASSIGNED", [], None)])
 	one_loop(st, monkeypatch, [("ASSIGNED", [{"url": "new"}], None)])
 	assert sent == [] and st.known == {"new"}
+
+
+def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
+	"""Memory is the one thing here that cannot be recreated, so a copy rides the normal refresh."""
+	from dashy.core import memory, state as state_mod
+	called = []
+	monkeypatch.setattr(memory, "backup", lambda reason="tick": called.append(reason))
+	src = inspect.getsource(state_mod.State.loop)
+	assert "memory.backup" in src and src.index("team.pull") < src.index("memory.backup")

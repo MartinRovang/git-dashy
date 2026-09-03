@@ -258,6 +258,41 @@ into `team/`: sharing is your decision, not the model's.
 
 ---
 
+## 5b. Getting it back
+
+Memory is the only thing here that cannot be recreated. A review can be run again, a mirror
+is derived, a clone can be re-cloned — but a fact you lose is gone. Two nets sit under it,
+and neither needs any setup.
+
+**Local git history.** The first time anything writes to your memory directory, gitdashy
+runs `git init` in it. No remote is required and none is added; the commit is the point,
+and a missing origin is the normal state of a machine that has not joined a team. Every
+write since then is a commit:
+
+```
+git -C ~/.prs_memory log --oneline
+git -C ~/.prs_memory show HEAD~1:general.md      # read it as it was
+git -C ~/.prs_memory checkout HEAD~1 -- general.md   # put it back
+```
+
+Joining a team later still works: a checkout with **local-only history** is not "already a
+checkout", so `L` with a URL adopts it as before. The old history is not merged — it has a
+different root — but it is not deleted either. It moves to `~/.prs_memory.local-history-<n>`
+beside the directory and stays there until you remove it. `git --git-dir <that> log` reads it.
+
+**Compressed copies.** Every `.md` across both sources is tarred into
+`~/.prs_backups/<utc>-<reason>-<hash>.tar.gz` — on each refresh tick, and always immediately
+before a dream rewrites anything. The newest 30 are kept. An archive is written only when the
+content hash differs from the newest one, so an idle dashboard does not fill the directory
+with identical tarballs. Restore with `tar xzf`; the paths inside are `mine/` and `team/`.
+
+The directory is outside every synced tree, so backups are never pushed anywhere.
+
+The one that most needs this: `Z` (dream) applies a model's output verbatim and **deletes any
+file it returned empty**. It is one keypress, and before this it was unrecoverable on a default
+install. It now takes a backup and a commit first, so accepting a bad dream is a decision you
+can walk back.
+
 ## 6. What is deliberately *not* done
 
 - **No automatic team promotion, even on corroboration.** Two people agreeing is

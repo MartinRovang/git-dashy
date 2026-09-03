@@ -170,9 +170,12 @@ def test_adopt_refuses_an_existing_checkout_or_a_symlink(monkeypatch, tmp_path):
 	mine = tmp_path / "mine"
 	mine.mkdir()
 	subprocess.run(["git", "init", "-q", str(mine)], check=True)
+	# ponytail: with an ORIGIN. Local-only history is no longer "already a checkout" — every memory dir
+	# has it now, because that is what makes a bad dream recoverable.
+	subprocess.run(["git", "-C", str(mine), "remote", "add", "origin", "git@github.com:org/other.git"], check=True)
 	monkeypatch.delenv("PRS_MEMORY", raising=False)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mine))
-	assert "already a git checkout" in knowledge.adopt("git@github.com:org/mem.git")
+	assert "already a checkout of" in knowledge.adopt("git@github.com:org/mem.git")
 	link = tmp_path / "link"
 	os.symlink(tmp_path / "elsewhere", link)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(link))
@@ -280,3 +283,90 @@ def test_adopt_that_succeeds_still_keeps_everything(monkeypatch, tmp_path):
 	assert (mem / "drafts" / "x.md").exists()                  # drafts came across too
 	assert (mem / "general.md").read_text() == "- theirs\n"    # and theirs arrived
 	assert team.is_repo(str(mem))                              # it is a checkout now
+
+
+def test_adopting_over_local_history_keeps_that_history_beside_it(monkeypatch, tmp_path):
+	"""Every memory dir has local history now, so adopt must work through it — and not throw it away."""
+	import subprocess as sp
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	(mem / "acme__api.md").write_text("- mine\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	assert team.init_history(str(mem)) and not team.has_remote(str(mem))
+
+	assert knowledge.adopt(_memory_repo(tmp_path, "general.md")) == ""
+
+	assert (mem / "acme__api.md").read_text() == "- mine\n"      # facts came across
+	assert (mem / "general.md").read_text() == "- theirs\n"      # and theirs arrived
+	assert team.has_remote(str(mem))                              # it is a real checkout now
+	kept = [d for d in os.listdir(tmp_path) if ".local-history-" in d]
+	assert len(kept) == 1                                         # the old history is beside it
+	r = sp.run(["git", "--git-dir", str(tmp_path / kept[0]), "log", "--oneline"], capture_output=True, text=True)
+	assert r.returncode == 0 and r.stdout.strip()                 # and it still reads
+
+
+def test_a_memory_dir_gets_history_on_the_first_write(monkeypatch, tmp_path):
+	"""The net under every rewrite: `git checkout HEAD~1 -- general.md` has to be a thing you can do."""
+	from dashy.core import memory
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	(mem / "general.md").write_text("- two years of facts\n")
+	memory._append_line(str(mem / "general.md"), "one more")
+	assert team.is_repo(str(mem)) and not team.has_remote(str(mem))
+	team.push_dir(str(mem), "memory: test", "mine")   # commits; no remote, and that is not an error
+	assert team.ERROR == ""
+
+	memory.write({"mine/general.md": ""})             # a dream that deletes the file
+	assert not (mem / "general.md").exists()
+	import subprocess as sp
+	got = sp.run(["git", "-C", str(mem), "show", "HEAD:general.md"], capture_output=True, text=True)
+	assert "two years of facts" in got.stdout        # recoverable
+
+
+def test_backups_are_compressed_deduplicated_and_capped(monkeypatch, tmp_path):
+	"""Markdown is tiny; losing one file once is not."""
+	from dashy.core import memory
+	mem, backups = tmp_path / "prs_memory", tmp_path / "backups"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", str(backups))
+	monkeypatch.setattr(memory, "KEEP_BACKUPS", 3)
+	(mem / "general.md").write_text("- a fact\n")
+
+	first = memory.backup("test")
+	assert first.endswith(".tar.gz") and os.path.getsize(first) > 0
+	assert memory.backup("test") == ""               # unchanged content is not stored twice
+	import tarfile
+	with tarfile.open(first) as t:
+		assert t.getnames() == ["mine/general.md"]
+
+	for i in range(5):
+		(mem / "general.md").write_text(f"- fact {i}\n")
+		memory.backup("test")
+	assert len(os.listdir(backups)) == 3             # capped, oldest pruned
+	assert not any(n.endswith(".part") for n in os.listdir(backups))
+
+
+def test_backup_never_raises_and_never_blocks(monkeypatch, tmp_path):
+	"""It runs on the refresh tick and before a dream; failing must not stop either."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "gone"))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", "/proc/nope/backups")  # unwritable
+	assert memory.backup("test") == ""
+
+
+def test_a_relative_path_is_a_path_not_an_owner_name(tmp_path):
+	"""The docstring had said the dot made it a path. Nothing implemented that."""
+	assert not knowledge.is_remote("./notes")
+	assert not knowledge.is_remote("../shared/memory")
+	assert not knowledge.is_remote("~/somewhere")
+	assert not knowledge.is_remote(str(tmp_path))          # an existing dir always wins
+	assert knowledge.is_remote("owner/name")               # still owner/name, as T reads it
+	assert knowledge.is_remote("git@github.com:o/r.git")
+	assert knowledge.is_remote("https://github.com/o/r.git")

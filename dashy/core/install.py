@@ -93,7 +93,10 @@ def _strip_blocks(text, begin, end):
 			break
 		head = "\n".join(l for l, _ in lines[:at])
 		tail = "\n".join(l for l, _ in lines[close + 1:])
-		text = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n")
+		# ponytail: splitlines() drops the terminator, so rejoining a file that ended in a newline gave
+		# it back without one. It is a user-owned file; leave it shaped the way they had it.
+		body = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n").rstrip("\n")
+		text = body + "\n" if text.endswith("\n") and not body.endswith("\n") else body
 	return text
 
 
@@ -117,24 +120,29 @@ def _unwrite(path, before):
 
 
 def _write_text(path, text):
-	"""Replace a file atomically. Same reason as _write_json: these are files somebody else owns."""
-	tmp = path + ".gitdashy.tmp"
+	"""Replace a file atomically, through a symlink and keeping its mode.
+
+	ponytail: writing to a temp file and renaming truncates nothing, so an error partway leaves the old
+	file rather than half the new one — which is what `json.dump` into an opened "w" did to settings.json,
+	leaving it unparseable and every later run refusing on it.
+	ponytail: os.replace onto the PATH swaps a symlink out for a plain file. ~/.claude/CLAUDE.md living in
+	a dotfiles checkout is exactly the setup people have, and the old open(path, "w") wrote through the
+	link. Resolve first, so the target is rewritten and the link stays a link.
+	ponytail: and copy the mode across. settings.json is where Claude Code keeps env blocks with API keys
+	in them; a 0600 file coming back 0664 because of the umask is a real leak, quietly.
+	"""
+	real = os.path.realpath(path)
+	tmp = real + ".gitdashy.tmp"
 	with open(tmp, "w") as f:
 		f.write(text)
-	os.replace(tmp, path)
+	if os.path.exists(real):
+		shutil.copymode(real, tmp)
+	os.replace(tmp, real)
 
 
 def _write_json(path, data):
-	"""Replace a config file atomically.
-
-	ponytail: json.dump into an opened "w" truncates first, so an error or a signal partway through
-	leaves settings.json half-written — unparseable, and every later run refuses on it. A temp file
-	beside it and one rename means the file is either the old one or the new one, never neither.
-	"""
-	tmp = path + ".gitdashy.tmp"
-	with open(tmp, "w") as f:
-		json.dump(data, f, indent=2)
-	os.replace(tmp, path)
+	"""ponytail: one writer, so the symlink and mode rules cannot hold in one place and not the other."""
+	_write_text(path, json.dumps(data, indent=2))
 
 
 def _ours(link, target):

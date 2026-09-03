@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 from .. import config
 from . import log, mirror, team
@@ -46,7 +47,10 @@ def is_remote(s):
 	s = s.strip()
 	if not s or os.path.isdir(os.path.expanduser(s)):
 		return False
-	return bool("://" in s or re.match(r"^[^@/\s]+@[^:/\s]+:", s) or re.match(r"^[\w.-]+/[\w.-]+$", s))
+	# ponytail: the owner half may not START with a dot, or "./notes" matched owner/name and gitdashy
+	# went to clone it from GitHub. The docstring above had claimed the dot made it a path since the
+	# day it was written; nothing implemented that, and nothing checked.
+	return bool("://" in s or re.match(r"^[^@/\s]+@[^:/\s]+:", s) or re.match(r"^[\w-][\w.-]*/[\w.-]+$", s))
 
 
 def abspath(path):
@@ -106,15 +110,17 @@ def adopt(url, dest=None):
 	dest = dest or config.LOCAL_MEMORY
 	if os.environ.get("PRS_MEMORY"):
 		return "PRS_MEMORY is set in the environment; unset it to change this here"
-	if team.is_repo(dest):
-		return f"{tilde(dest)} is already a git checkout"
+	# ponytail: local-only history is not "already a checkout" — every memory dir has it now, since it is
+	# what makes a bad dream recoverable. Only a checkout with an ORIGIN is already pointed somewhere.
+	if team.is_repo(dest) and team.has_remote(dest):
+		return f"{tilde(dest)} is already a checkout of {team._url(dest)}"
 	if os.path.islink(dest):
 		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
 	# ponytail: your memory dir gets pushed, and it holds drafts/. Making it the TEAM repo would publish
 	# every unconfirmed guess to everyone — the one thing the whole design promises never happens.
 	if url and team.on() and team.same_remote(url, team._url(config.TEAM)):
 		return "that is the team repo — your memory holds drafts, which are yours alone. Use a different one."
-	keep = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
+	keep = sorted(n for n in os.listdir(dest) if n != ".git") if os.path.isdir(dest) else []
 	tmp = dest + ".incoming"
 	shutil.rmtree(tmp, ignore_errors=True)
 	err = team.clone(url, tmp)
@@ -130,11 +136,18 @@ def adopt(url, dest=None):
 	if clash:
 		shutil.rmtree(tmp, ignore_errors=True)  # safe here, and only here: nothing of yours is in it yet
 		return f"{', '.join(clash)} exists in both {tilde(dest)} and the repo; merge it by hand"
-	moved = []
+	moved, old_git = [], ""
 	try:
 		for name in keep:
 			shutil.move(os.path.join(dest, name), os.path.join(tmp, name))
 			moved.append(name)
+		if os.path.isdir(os.path.join(dest, ".git")):
+			# ponytail: your local history has a different root than the repo you are adopting, so it
+			# cannot be merged in — but it is the record of everything before today and it is not ours
+			# to delete. It goes to a sibling with a name that never collides, and stays until you
+			# remove it. `git -C <that> log` still reads it.
+			old_git = f"{dest}.local-history-{int(time.time())}"
+			shutil.move(os.path.join(dest, ".git"), old_git)
 		if os.path.isdir(dest):
 			os.rmdir(dest)
 		os.rename(tmp, dest)
@@ -142,6 +155,11 @@ def adopt(url, dest=None):
 		# ponytail: put back what moved. A half-moved memory dir is the same loss by a slower route —
 		# the files exist, but nothing reads them from there and nothing says where they went.
 		os.makedirs(dest, exist_ok=True)
+		if old_git and os.path.isdir(old_git):
+			try:
+				shutil.move(old_git, os.path.join(dest, ".git"))
+			except OSError:
+				pass
 		for name in reversed(moved):
 			try:
 				shutil.move(os.path.join(tmp, name), os.path.join(dest, name))
@@ -199,7 +217,9 @@ def rmtree_owned(path):
 	"""
 	real = os.path.realpath(path)
 	if os.path.islink(path):
-		return f"{tilde(path)} is a link to {tilde(real)} — removing the link, not what it points at"
+		# ponytail: says refusing, because it refuses. The old wording described an action it never took,
+		# which is the kind of message that gets believed by the first caller to reach it.
+		return f"refusing: {tilde(path)} is a link to {tilde(real)}; remove the link if that is what you meant"
 	if not os.path.isdir(path):
 		return "" if not os.path.lexists(path) else f"{tilde(path)} is not a directory"
 	if real in (os.sep, os.path.realpath(os.path.expanduser("~"))) or os.path.dirname(real) == real:

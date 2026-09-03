@@ -6,9 +6,12 @@ the team's memory is never automatic — that lands in contexts where nobody who
 it happen — so it takes one keypress from you.
 """
 import difflib
+import hashlib
 import json
 import os
 import re
+import tarfile
+import time
 
 from .. import config
 from . import log, team
@@ -50,6 +53,72 @@ def project():
 	         if (t := "\n".join(l for l in _read(os.path.join(base, PROJECT)).splitlines()
 	                             if l.strip() != SETUP_MARK).strip())]
 	return "\n\n".join(parts)
+
+
+BACKUPS = os.path.expanduser("~/.prs_backups")  # ponytail: outside every synced tree, so it is never pushed
+KEEP_BACKUPS = 30
+
+
+def _history():
+	"""Give the memory dir git history the first time anything writes to it. Cheap when it already has.
+
+	ponytail: skipped in demo mode, which shells out to nothing by design — the demo writes to a throwaway
+	memory dir and a `git init` there would be a subprocess the demo promises never to run.
+	"""
+	if config.MEMORY_DIR and config.SETTINGS:
+		team.init_history(config.MEMORY_DIR)
+
+
+def _everything():
+	"""[(arcname, path)] for every file worth keeping a copy of — facts, drafts, both sources."""
+	out = []
+	for label, base in [("mine", config.MEMORY_DIR)] + ([("team", os.path.join(config.TEAM, "memory"))]
+	                                                    if team.on() else []):
+		for root, dirs, names in os.walk(base or "."):
+			dirs[:] = [d for d in dirs if d != ".git"]  # ponytail: history, not content; and it is huge
+			for n in sorted(names):
+				if n.endswith(".md"):
+					full = os.path.join(root, n)
+					out.append((os.path.join(label, os.path.relpath(full, base)), full))
+	return sorted(out)
+
+
+def backup(reason="tick"):
+	"""Keep a compressed copy of every memory file. Returns the archive path, or "" when nothing changed.
+
+	ponytail: memory is the one thing in this system that cannot be recreated — a review can be run
+	again, a mirror is derived, a clone can be re-cloned. Markdown is tiny and gzip flattens it, so the
+	cost of keeping thirty of these is nothing next to the cost of losing one file once.
+	ponytail: skipped when the content hashes the same as the newest archive, or a refresh tick would
+	write an identical tarball every minute forever and push the real ones out of the window.
+	ponytail: never raises. It runs on the refresh tick and before a dream — a backup that fails must
+	not be the thing that stops either of them.
+	"""
+	try:
+		files = _everything() if config.SETTINGS else []  # ponytail: demo memory is throwaway by design
+		if not files:
+			return ""
+		h = hashlib.sha256()
+		for arc, full in files:
+			h.update(arc.encode() + b"\0")
+			with open(full, "rb") as f:
+				h.update(f.read() + b"\0")
+		digest = h.hexdigest()[:12]
+		os.makedirs(BACKUPS, exist_ok=True)
+		have = sorted(n for n in os.listdir(BACKUPS) if n.endswith(".tar.gz"))
+		if have and have[-1].endswith(f"-{digest}.tar.gz"):
+			return ""  # ponytail: identical to the newest one; keeping it twice buys nothing
+		name = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{reason}-{digest}.tar.gz"
+		dest = os.path.join(BACKUPS, name)
+		with tarfile.open(dest + ".part", "w:gz") as t:
+			for arc, full in files:
+				t.add(full, arcname=arc)
+		os.replace(dest + ".part", dest)  # ponytail: named only once complete, so a half-write is never found
+		for old in sorted(n for n in os.listdir(BACKUPS) if n.endswith(".tar.gz"))[:-KEEP_BACKUPS]:
+			os.remove(os.path.join(BACKUPS, old))
+		return dest
+	except (OSError, tarfile.TarError):
+		return ""
 
 
 def sources():
@@ -128,6 +197,7 @@ def _facts(p):
 
 
 def _append_line(p, fact):
+	_history()
 	os.makedirs(os.path.dirname(p), exist_ok=True)
 	with open(p, "a") as f:
 		f.write(f"- {fact}\n")
@@ -220,6 +290,7 @@ def drafts(repo):
 
 
 def _write_drafts(repo, items):
+	_history()
 	p = queue_path(repo)
 	if not items:
 		if os.path.exists(p):
@@ -379,7 +450,14 @@ def dream(model):
 
 
 def write(new):
-	"""Overwrite memory files from a dream(); empty content deletes the file. You approved this, so it lands."""
+	"""Overwrite memory files from a dream(); empty content deletes the file. You approved this, so it lands.
+
+	ponytail: a keypress here rewrites every file and DELETES any the model returned empty. Both nets go
+	down first — a compressed copy outside every synced tree, and a commit — so "you approved this" means
+	a decision you can walk back, not one that is final because a model was confident.
+	"""
+	_history()
+	backup("dream")
 	for key, t in new.items():
 		base = _base(key)
 		if not base:

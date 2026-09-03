@@ -75,6 +75,9 @@ def test_every_git_call_is_bounded_and_never_prompts(monkeypatch, tmp_path):
 	"""pull/push run on every refresh tick from a daemon thread — a credential prompt there hangs the TUI."""
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "t"))
 	(tmp_path / "t" / ".git").mkdir(parents=True)
+	# ponytail: an origin, because pull now skips a checkout that has none — local-only history has
+	# nothing to pull and no error worth showing. The invariant under test is unchanged.
+	(tmp_path / "t" / ".git" / "config").write_text('[remote "origin"]\n\turl = git@github.com:o/r.git\n')
 	seen = []
 	def fake_run(cmd, **kw):
 		seen.append((cmd[:2], kw.get("env", {}).get("GIT_TERMINAL_PROMPT"), kw.get("timeout")))

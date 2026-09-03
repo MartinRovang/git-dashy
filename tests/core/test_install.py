@@ -648,7 +648,7 @@ def test_rmtree_owned_refuses_a_link_a_root_and_a_home(tmp_path, monkeypatch):
 	(real / "keep").write_text("x")
 	link = tmp_path / "link"
 	os.symlink(real, link)
-	assert "link to" in knowledge.rmtree_owned(str(link))
+	assert "refusing" in knowledge.rmtree_owned(str(link)) and "link to" in knowledge.rmtree_owned(str(link))
 	assert (real / "keep").exists()  # the target is untouched
 	monkeypatch.setenv("HOME", str(tmp_path))
 	assert "refusing" in knowledge.rmtree_owned(str(tmp_path))
@@ -739,3 +739,31 @@ def test_a_registry_from_before_the_format_changed_is_not_dropped(monkeypatch, t
 	assert "not a path at all" not in str(install.registered())
 	reg.write_text(reg.read_text() + "not a path at all\n")
 	assert len(install.registered()) == 2  # and a line that is neither is still just skipped
+
+
+def test_writing_a_config_keeps_the_symlink_and_the_mode(monkeypatch, tmp_path):
+	"""~/.claude/CLAUDE.md in a dotfiles checkout is the normal setup, not the exotic one."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	dotfiles = tmp_path / "dotfiles"
+	dotfiles.mkdir()
+	(dotfiles / "CLAUDE.md").write_text("# mine\n\nkeep this\n")
+	(cfg / "CLAUDE.md").symlink_to(dotfiles / "CLAUDE.md")
+	(cfg / "settings.json").write_text("{}")
+	os.chmod(cfg / "settings.json", 0o600)
+
+	install.full_apply(corpus)
+	assert os.path.islink(cfg / "CLAUDE.md")                       # still a link
+	assert "@identity" in (dotfiles / "CLAUDE.md").read_text()     # written through it
+	assert oct(os.stat(cfg / "settings.json").st_mode)[-3:] == "600"  # env blocks hold API keys
+
+	install.full_remove()
+	assert os.path.islink(cfg / "CLAUDE.md")
+	assert (dotfiles / "CLAUDE.md").read_text() == "# mine\n\nkeep this\n"
+	assert oct(os.stat(cfg / "settings.json").st_mode)[-3:] == "600"
+
+
+def test_stripping_a_block_keeps_the_files_last_newline():
+	"""A user-owned file, rewritten — leave it shaped the way they had it."""
+	text = f"# mine\n\n{install.CBEGIN}\nx\n{install.CEND}\n\nmore\n"
+	assert install._strip_blocks(text, install.CBEGIN, install.CEND) == "# mine\nmore\n"
+	assert install._strip_blocks("# mine\nmore", install.CBEGIN, install.CEND) == "# mine\nmore"

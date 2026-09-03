@@ -52,22 +52,75 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+def has_remote(d):
+	"""True when the checkout at `d` has an origin.
+
+	ponytail: reads .git/config rather than spawning git. This is on the refresh tick now, and a
+	subprocess per tick to learn something that changes about once in a checkout's life is waste —
+	and `git remote get-url` does not go through _remote, so putting it on the tick path would have
+	quietly broken the invariant that every git call there is bounded and cannot prompt.
+	ponytail: a .git that is a FILE is a worktree or a submodule; fall back to asking git rather than
+	guessing from a path that does not exist.
+	"""
+	g = os.path.join(d, ".git")
+	if os.path.isdir(g):
+		try:
+			with open(os.path.join(g, "config")) as f:
+				return '[remote "origin"]' in f.read()
+		except OSError:
+			return False  # a .git with no readable config is not something we can push to
+	return bool(_url(d)) if os.path.exists(g) else False
+
+
+def init_history(d):
+	"""Give `d` local git history, no remote needed. True when it has one. Never raises.
+
+	ponytail: memory is the one thing here that cannot be recreated — a dream rewrites every file and
+	deletes any the model returned empty, and on a default install ~/.prs_memory was a plain directory
+	with no history, no remote and no snapshot. `git init` costs nothing and makes every write in the
+	system undoable with commands the user already knows.
+	ponytail: identity comes from -c, not from their global config. A machine that has never set
+	user.email would otherwise fail to commit, which is exactly the machine with no other backup.
+	"""
+	if is_repo(d):
+		return True
+	if not d or not os.path.isdir(d):
+		return False
+	with _lock:
+		if _git("init", "-q", cwd=d).returncode != 0:
+			return False
+		_git("add", "-A", cwd=d)
+		_git("-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost",
+		     "commit", "-qm", "gitdashy: memory as it was before this was tracked", cwd=d)
+	return is_repo(d)
+
+
 def pull_dir(d, label="sync"):
 	"""ponytail: git is the sync server for any checkout, not just the team's — the private one uses it too."""
-	if is_repo(d):
+	if is_repo(d) and has_remote(d):  # ponytail: local-only history has nothing to pull and no error to show
 		with _lock:
 			_note(_git("pull", "--rebase", "-q", cwd=d), label)
 
 
 def push_dir(d, msg, label="sync"):
+	"""Commit, and push when there is somewhere to push to.
+
+	ponytail: the commit is the point, not the push. A memory dir with local-only history must record
+	every change — that is what makes a bad dream recoverable — and a missing origin is not an error to
+	put on the header, it is the normal state of a machine that has not joined anything.
+	"""
 	if not is_repo(d):
 		return
 	with _lock:
 		_git("add", "-A", cwd=d)
 		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
 			return  # nothing new
-		if not _note(_git("commit", "-qm", msg, cwd=d), label):
+		if not _note(_git("-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost",
+		                  "commit", "-qm", msg, cwd=d), label):
 			return
+	if not has_remote(d):
+		return  # ponytail: committed, which is the half that protects you. Nothing to push to.
+	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
 			_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)
 
