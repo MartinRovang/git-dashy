@@ -1,0 +1,189 @@
+"""Where knowledge is read and written: the local memory dir and the team checkout.
+
+ponytail: the filesystem carries the setting, not a config file. Pointing memory somewhere new
+replaces the dir with a symlink to it — the same trick as team mode, which is "on" because
+~/.prs_team happens to contain a .git. Env vars still win; they are set before we ever run.
+"""
+import os
+import re
+import shutil
+import subprocess
+
+from .. import config
+from . import log, mirror, team
+
+DEFAULT_STORE = os.path.expanduser("~/.prs_team")
+
+
+def tilde(path):
+	home = os.path.expanduser("~")
+	return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def show(path):
+	"""`path` for the header: ~-shortened, and "→ target" when it is a symlink pointing elsewhere."""
+	target = os.path.realpath(path) if os.path.islink(path) else ""
+	return tilde(path) + (f" → {tilde(target)}" if target and target != path else "")
+
+
+def store_moved():
+	"""True when the team checkout is not where it would be by default — only then is it worth a header row."""
+	return os.path.islink(config.TEAM) or config.TEAM != DEFAULT_STORE
+
+
+def effective():
+	"""The memory dir your own facts live in. ponytail: team mode does NOT repoint this any more — the
+	team is a second source that memory.sources() reads alongside, not a replacement for yours."""
+	return config.MEMORY_DIR
+
+
+def is_remote(s):
+	"""True when `s` names a git remote rather than a local directory.
+
+	ponytail: an existing directory always wins, so a real path is never mistaken for a repo. `./x/y`
+	is a path because of the dot; a bare `x/y` that does not exist is read as owner/name, as T does.
+	"""
+	s = s.strip()
+	if not s or os.path.isdir(os.path.expanduser(s)):
+		return False
+	return bool("://" in s or re.match(r"^[^@/\s]+@[^:/\s]+:", s) or re.match(r"^[\w.-]+/[\w.-]+$", s))
+
+
+def abspath(path):
+	"""os.path.abspath, but it cannot raise. ponytail: a relative path needs the cwd, and a cwd that
+	has been deleted makes getcwd() throw — which, inside curses, used to take the whole dashboard down."""
+	try:
+		return os.path.abspath(os.path.expanduser(path))
+	except OSError:
+		return os.path.expanduser(path)
+
+
+def inside_git(path):
+	"""True when memory written at `path` would land in a repo that does not ignore it.
+
+	ponytail: asked before the directory is created, so a typo does not leave a stray dir behind.
+	"""
+	try:
+		return mirror.tracked(abspath(path))
+	except OSError:
+		return False  # cannot even resolve it; whatever writes next will say why, more clearly than this
+
+
+def repoint(path, new, env):
+	"""Make `path` a symlink to `new`, moving what is already there. Returns "" or an error string."""
+	if os.environ.get(env):
+		return f"{env} is set in the environment; unset it to change this here"
+	new = abspath(new)
+	if os.path.realpath(path) == new:
+		return ""
+	if os.path.lexists(new) and not os.path.isdir(new):
+		return f"{tilde(new)} exists and is not a directory"
+	try:
+		os.makedirs(new, exist_ok=True)
+		if os.path.islink(path):
+			os.remove(path)  # only a pointer; there is nothing under it to move
+		elif os.path.isdir(path):
+			for name in os.listdir(path):
+				if not os.path.lexists(os.path.join(new, name)):
+					shutil.move(os.path.join(path, name), os.path.join(new, name))
+			if os.listdir(path):  # ponytail: same name on both sides — refuse rather than pick a winner
+				return f"{tilde(path)} still holds files that also exist in {tilde(new)}; merge them by hand"
+			os.rmdir(path)
+		elif os.path.lexists(path):
+			return f"{tilde(path)} exists and is not a directory"
+		os.symlink(new, path)
+	except OSError as e:
+		return str(e)
+	return ""
+
+
+def adopt(url, dest=None):
+	"""Make your memory directory a checkout of `url`, keeping the facts already in it. "" or an error.
+
+	ponytail: clone to a sibling, move what is there across, then swap. Cloning straight in is not an
+	option — git wants an empty directory, and yours holds the facts you are trying to keep.
+	"""
+	dest = dest or config.LOCAL_MEMORY
+	if os.environ.get("PRS_MEMORY"):
+		return "PRS_MEMORY is set in the environment; unset it to change this here"
+	if team.is_repo(dest):
+		return f"{tilde(dest)} is already a git checkout"
+	if os.path.islink(dest):
+		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
+	# ponytail: your memory dir gets pushed, and it holds drafts/. Making it the TEAM repo would publish
+	# every unconfirmed guess to everyone — the one thing the whole design promises never happens.
+	if url and team.on() and team.same_remote(url, team._url(config.TEAM)):
+		return "that is the team repo — your memory holds drafts, which are yours alone. Use a different one."
+	keep = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
+	tmp = dest + ".incoming"
+	shutil.rmtree(tmp, ignore_errors=True)
+	err = team.clone(url, tmp)
+	if err:
+		shutil.rmtree(tmp, ignore_errors=True)
+		return err
+	try:
+		for name in keep:
+			if os.path.lexists(os.path.join(tmp, name)):  # ponytail: refuse rather than pick a winner
+				shutil.rmtree(tmp, ignore_errors=True)
+				return f"{name} exists in both {tilde(dest)} and the repo; merge it by hand"
+			shutil.move(os.path.join(dest, name), os.path.join(tmp, name))
+		if os.path.isdir(dest):
+			os.rmdir(dest)
+		os.rename(tmp, dest)
+	except OSError as e:
+		return str(e)
+	team.union_attrs(dest)
+	team.push_dir(dest, "gitdashy: memory from " + os.uname().nodename, "mine")
+	return ""
+
+
+def set_local(new):
+	"""Point the solo memory dir at `new`. Returns "" or an error string."""
+	err = repoint(config.LOCAL_MEMORY, new, "PRS_MEMORY")
+	if not err:
+		config.MEMORY_DIR = config.LOCAL_MEMORY  # ponytail: always yours now, in a team or not
+	return err
+
+
+def set_store(new):
+	"""Point the team checkout dir at `new`. Returns "" or an error string."""
+	if team.on():
+		return "leave the team first — the refresh thread is pulling in that folder"
+	return repoint(config.TEAM, new, "PRS_TEAM")
+
+
+def unpushed():
+	"""Work in the team checkout the remote does not have. -1 when that cannot be told.
+
+	ponytail: commits ahead AND a dirty tree. A push that failed earlier — no git identity configured,
+	say — leaves files staged but uncommitted, which is zero commits ahead and still someone's work.
+	leave() deletes this directory, so the question has to be "is anything here unsaved", not "how many
+	commits".
+	"""
+	r = subprocess.run(["git", "-C", config.TEAM, "log", "--oneline", "@{u}..HEAD"],
+	                   capture_output=True, text=True, timeout=60)
+	if r.returncode != 0:
+		return -1
+	dirty = subprocess.run(["git", "-C", config.TEAM, "status", "--porcelain"],
+	                       capture_output=True, text=True, timeout=60)
+	if dirty.returncode != 0 or dirty.stdout.strip():
+		return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
+	return len(r.stdout.strip().splitlines())
+
+
+def leave():
+	"""Drop the team checkout and go back to solo memory. Returns "" or an error string."""
+	if not team.on():
+		return "not in a team"
+	ahead = unpushed()
+	if ahead != 0:  # ponytail: -1 (no upstream, no git) is also "do not delete" — the log may exist only here
+		return f"{config.TEAM} has {ahead if ahead > 0 else 'possibly'} unpushed reviews; push them first"
+	try:
+		shutil.rmtree(os.path.realpath(config.TEAM))
+		if os.path.islink(config.TEAM):
+			os.remove(config.TEAM)
+	except OSError as e:
+		return str(e)
+	config.LOG = log.LOG = config.LOCAL_LOG  # MEMORY_DIR never moved, so there is nothing to move back
+	team.NAME = team.ERROR = ""
+	return ""

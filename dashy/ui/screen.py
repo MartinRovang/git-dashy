@@ -4,12 +4,13 @@ import difflib
 import os
 import subprocess
 import random
+import textwrap
 import threading
 import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, log, memory, team, update
+from ..core import github, knowledge, log, memory, team, update
 from ..core.state import State
 from . import art
 from .rows import age, rows
@@ -83,10 +84,14 @@ def header_groups(state):
 		label, _, current, _, show = st[k]
 		return (k, label, show(current), None)
 	reviewer = [row("m"), row("d"), row("e")]
-	if team.on():
-		reviewer.append(("T", "Team", team.ERROR[:40] if team.ERROR else team.NAME, "err" if team.ERROR else None))  # ponytail: clipped, T shows the whole error
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
-	return [("Reviewer", "R", reviewer), ("View", "V", view)]
+	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
+	know = [("L", "Memory", knowledge.show(knowledge.effective()), None),
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (team.NAME or "off"),  # ponytail: clipped, T shows it whole
+	         "err" if team.ERROR else ("on" if team.on() else None))]
+	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
+		know.append(("C", "Store", knowledge.show(config.TEAM), None))
+	return [("Reviewer", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
 def init_colors():
@@ -219,7 +224,7 @@ def draw(scr, state, sel, prompt=None):
 	groups = header_groups(state)
 	levels = {key: "full" for _, key, _ in groups}
 	levels["space"], levels["nest"] = 0, "no"
-	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
+	steps = [("space", 1), ("space", 2), ("K", "chip"), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
 	def stack():
 		if levels["nest"] == "chip":  # both groups under one chip; it anchors every key so S/R/V and the settings all hang from it
 			keys = "S" + "".join(key + "".join(k for k, *_ in rows) for _, key, rows in groups)
@@ -422,6 +427,8 @@ def group_menu(scr, state, sel, key):
 				state.drafts = not state.drafts
 			elif sk == "T":
 				team_setup(scr, state, sel)
+			elif sk in ("L", "C"):
+				set_path(scr, state, sel, sk)
 		elif k in (27, ord("q")):
 			return
 
@@ -491,11 +498,12 @@ def edit_memory(scr, repo):
 	"""Open general (repo=None) or per-repo memory in $EDITOR. Reviews read it back next run."""
 	path = memory.path(repo)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
-	team.pull()
+	team.pull_dir(config.MEMORY_DIR, "mine")  # ponytail: n/g edit YOUR memory; pulling the team's did nothing
 	curses.endwin()
 	subprocess.run([os.environ.get("EDITOR", "nano"), path])
 	scr.refresh()
-	team.push(f"memory: {repo or 'general'} edited")
+	# ponytail: n/g edit YOUR memory, which is no longer inside the team checkout — push the one we wrote
+	team.push_dir(config.MEMORY_DIR, f"memory: {repo or 'general'} edited", "mine")
 
 
 def ask(scr, state, sel, question):
@@ -513,11 +521,88 @@ def ask(scr, state, sel, question):
 		scr.timeout(500)
 
 
+def share_screen(scr, state, sel):
+	"""Facts of yours the team does not have yet: t shares one, x forgets it.
+
+	ponytail: one at a time, not a list. A fact is a sentence you have to actually read to judge, and a
+	column of clipped sentences is exactly how something wrong gets waved through into everyone's context.
+	"""
+	i = 0
+	while True:
+		items = memory.shareable()
+		if not items:
+			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
+			return
+		index = memory.pools()  # ponytail: one scan per redraw, not one per fact
+		items.sort(key=lambda rf: -len(memory.backers(index, *rf)))  # what two people found comes first
+		i %= len(items)
+		repo, fact = items[i]
+		who = memory.backers(index, repo, fact)
+		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
+		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"share with {team.NAME or 'the team'}  ·  {i + 1}/{len(items)}",
+		      [(repo or "general", mark), ("", ""), *body],
+		      "[t] share   [x] forget   [j/k] move   [esc] close")
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			i += 1
+		elif k in (ord("k"), curses.KEY_UP):
+			i -= 1
+		elif k == ord("t"):
+			memory.share(repo, fact)
+			team.push(f"memory: share {repo or 'general'}")
+		elif k == ord("x"):
+			memory.forget(repo, fact)
+			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
+			team.push(f"memory: withdraw {repo or 'general'}")  # forget also withdraws it from the pool
+		elif k in (27, ord("q")):
+			return
+
+
+def set_path(scr, state, sel, which):
+	"""Point Memory (L) or Store (C) at another directory.
+
+	ponytail: the filesystem keeps the setting — the old location becomes a symlink to the new one, so it
+	survives a restart without a config file, the same way team mode persists as a .git in a known folder.
+	"""
+	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAM, False)
+	note = "  (the team's memory is in use; this applies when you leave)" if live else ""
+	tail = ", or a git repo to clone" if which == "L" else ""
+	new = ask(scr, state, sel, f" {what} directory{tail} [{knowledge.tilde(cur)}]{note}:")
+	if not new:
+		return
+	try:
+		if knowledge.is_remote(new):
+			if which != "L":
+				confirm(scr, state, sel, " Store is a local directory — T is what clones a team repo  [any key]")
+				return
+			if not confirm(scr, state, sel, f" clone {new} into {knowledge.tilde(cur)}, keeping the facts already there? [y/n]"):
+				return
+			err = knowledge.adopt(new)
+		elif knowledge.inside_git(new) and not confirm(
+				scr, state, sel, f" {new} sits in a git repo that does not ignore it — memory could be committed. continue? [y/n]"):
+			return
+		else:
+			err = knowledge.set_local(new) if which == "L" else knowledge.set_store(new)
+	except OSError as e:  # ponytail: whatever the typo was, say it on the footer — never unwind out of curses
+		err = str(e)
+	if err:
+		confirm(scr, state, sel, f" {err}  [any key]")
+
+
 def team_setup(scr, state, sel):
 	if team.on():
-		confirm(scr, state, sel, f" team {team.NAME} · files in {config.TEAM} · remove that folder to leave  [any key]")
+		name = team.NAME
+		if not confirm(scr, state, sel, f" team {name} · files in {config.TEAM} · leave and go back to local memory? [y/n]"):
+			return
+		err = knowledge.leave()
+		if err:
+			confirm(scr, state, sel, f" {err}  [any key]")
+		else:
+			state.wake.set()  # ponytail: REVIEWED must reload from the solo log, the team one is gone
 		return
-	repo = ask(scr, state, sel, " Team repo (owner/name, private recommended; created if missing):")
+	repo = ask(scr, state, sel, " Team repo (owner/name, a local path, or a git URL; owner/name is created if missing):")
 	if not repo:
 		return
 	err = team.setup(repo)
@@ -559,8 +644,7 @@ def dream_screen(scr, state, sel):
 			scr.timeout(-1)
 			scr.getch()
 			return
-		summary, new = box[0]
-		before = memory.files()
+		summary, before, new = box[0]  # what the dream saw, not what is on disk now
 		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
 		lines += [(n[:-3].replace("__", "/"), f"{len(before[n].splitlines())} → {len(t.splitlines())}") for n, t in new.items()]
 		scr.timeout(-1)
@@ -575,8 +659,10 @@ def dream_screen(scr, state, sel):
 				               input=dream_detail(summary, before, new), text=True)
 				scr.refresh()
 		if k == ord("y"):
+			team.pull_dir(config.MEMORY_DIR, "mine")  # a dream rewrites both sources, so both are pulled
 			team.pull()
 			memory.write(new)
+			team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")  # a dream rewrites both sources
 			team.push("memory: dream cleanup")
 	finally:
 		scr.timeout(500)
@@ -637,8 +723,10 @@ def main(scr, interval, auto, model):
 			state.expanded ^= {current["url"]}
 		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
 			dropdown(scr, state, sel, chr(k))
-		elif k in (ord("R"), ord("V")):
+		elif k in (ord("R"), ord("V"), ord("K")):
 			group_menu(scr, state, sel, chr(k))
+		elif k in (ord("L"), ord("C")):
+			set_path(scr, state, sel, chr(k))
 		elif k == ord("S"):
 			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
@@ -647,6 +735,8 @@ def main(scr, interval, auto, model):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
 			dream_screen(scr, state, sel)
+		elif k == ord("P"):
+			share_screen(scr, state, sel)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

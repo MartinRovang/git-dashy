@@ -3,7 +3,7 @@ import json
 import pytest
 
 from dashy import config
-from dashy.core import github, log, memory, review, state, update
+from dashy.core import github, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
@@ -17,6 +17,12 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
 	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
+	# ponytail: demo.install() and team.activate() write these globals directly, so without pinning them here
+	# one test's temp paths leak into the next — the header reads both on every draw
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
+	monkeypatch.setattr(team, "NAME", "")
+	monkeypatch.setattr(team, "ERROR", "")
+	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
 	monkeypatch.setattr(github, "fetch", github.fetch)

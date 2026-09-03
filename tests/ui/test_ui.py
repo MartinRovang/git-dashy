@@ -163,26 +163,32 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 	assert "refreshing" in screen.text() and "next refresh" not in screen.text()
 
 
-def test_strip_collapses_groups_to_chips_on_narrow_screens(screen):
+def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)  # conftest moves TEAM; pin the optional row off
+	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
 	def row1(w):
 		screen.w = w
 		ui.draw(screen, st, 0)
 		return screen.line(1)
-	out = row1(200)
+	out = row1(240)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
-	assert out.rstrip().endswith("History 4h") and out.index("Reviewer") < out.index("View") and "☰" not in out
-	out = row1(175)
-	assert "History 4h" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
-	out = row1(150)
-	assert "Effort medium" in out and out.rstrip().endswith("☰ View")  # then View folds first
-	out = row1(100)
-	assert "☰ Reviewer" in out and "☰ View" in out and "Model" not in out
+	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
+	assert out.index("Reviewer") < out.index("View") < out.index("Knowledge")
+	out = row1(225)
+	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
+	out = row1(200)
+	assert "History 4h" in out and out.rstrip().endswith("☰ Knowledge")  # Knowledge folds first, it is the least-touched
+	out = row1(160)
+	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
+	out = row1(120)
+	assert "☰ Reviewer" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
-	out = row1(70)
-	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
-	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
+	assert ui.ANCHORS["L"] == ui.ANCHORS["T"] == ui.ANCHORS["K"]
+	out = row1(80)
+	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # all three nested under one chip
+	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["K"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
 	out = row1(55)
 	assert "Session" in out and "Settings" not in out
 
@@ -230,21 +236,23 @@ def test_group_menu_toggles_drafts(screen):
 def test_group_menu_index_survives_a_row_disappearing(screen, monkeypatch):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
-	on = [True]
-	monkeypatch.setattr(ui.team, "on", lambda: on[0])
-	monkeypatch.setattr(ui.team, "NAME", "org/team")
+	moved = [True]
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: moved[0])
 	monkeypatch.setattr(ui.team, "ERROR", "")
-	keys = iter([ord("j"), ord("j"), ord("j"), 10, 27, 27])
+	keys = iter([ord("j"), ord("j"), 10, 27, 27])
 	seen = []
 	def getch():
 		seen.append(screen.text())
 		k = next(keys)
-		if len(seen) == 3:
-			on[0] = False  # the Team row vanishes while the cursor sits on it
+		if len(seen) == 2:
+			moved[0] = False  # the Store row vanishes while the cursor sits on it
 		return k
 	screen.getch, screen.timeout = getch, lambda t: None
-	ui.group_menu(screen, st, 0, "R")  # Enter with idx past the end must clamp to the last row, not raise
-	assert "Team" in seen[2] and "Team" not in seen[3] and "Effort:  j/k or e move" in seen[4]
+	opened = []
+	monkeypatch.setattr(ui, "team_setup", lambda *a: opened.append("T"))
+	ui.group_menu(screen, st, 0, "K")  # Enter with idx past the end must clamp to the last row, not raise
+	assert "Store" in seen[1] and "Store" not in seen[2]
+	assert opened == ["T"]  # clamped onto the last surviving row, which is Team
 
 
 def test_dropdown_anchor_is_fresh_each_draw(screen):
@@ -282,14 +290,17 @@ def test_strip_shows_update_and_auto_badges(screen):
 	assert "update to v9.9.9 · u" in out  # when even the badge and the prompt cannot share the row, the prompt wins
 
 
-def test_hints_show_each_settings_key(screen):
-	screen.w = 190
+def test_hints_show_each_settings_key(screen, monkeypatch):
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)
+	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
+	screen.w = 250  # three groups, each key spelled out: nothing folds only well past 200
 	st = State(60)
 	st.sections, st.fetched_at, st.hints = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
 	out = screen.text()
 	assert "m Model " + st.model in out and "d Depth" in out and "e Effort" in out
 	assert "s Summaries" in out and "D Drafts" in out and "t History" in out and "i next refresh" in out and "r updated" in out
+	assert "L Memory ~/.prs_memory" in out and "T Team off" in out
 	st.hints = False
 	ui.draw(screen, st, 0)
 	assert "m Model" not in screen.text() and "i next refresh" not in screen.text()
@@ -297,10 +308,10 @@ def test_hints_show_each_settings_key(screen):
 
 def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	ui.memory.append("a/b", "x\nx")
+	(tmp_path / "a__b.md").write_text("- x\n- x\n")  # confirmed facts; drafts are not dreamt about
 	def slow_dream(model):
 		time.sleep(0.3)
-		return "merged dupes", {"a__b.md": "- x"}
+		return "merged dupes", {"mine/a__b.md": "- x\n- x\n"}, {"mine/a__b.md": "- x"}
 	monkeypatch.setattr(ui.memory, "dream", slow_dream)
 	seen = []
 	def getch():
@@ -315,8 +326,8 @@ def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monke
 
 def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	ui.memory.append("a/b", "x")
-	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"a__b.md": "- changed"}))
+	(tmp_path / "a__b.md").write_text("- x\n")
+	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"mine/a__b.md": "- x\n"}, {"mine/a__b.md": "- changed"}))
 	screen.getch, screen.timeout = _keys(ord("j"), ui.curses.KEY_DOWN, ord(" "), 27), lambda t: None  # stray keys ignored
 	ui.dream_screen(screen, st, 0)
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
@@ -350,3 +361,106 @@ def test_esc_menu_theme_notify_refresh_quit(screen, monkeypatch):
 	assert ui.esc_menu(screen, st, 0) is False  # esc closes without quitting
 	screen.getch = _keys(ord("k"), 10)
 	assert ui.esc_menu(screen, st, 0) is True  # k wraps to Quit
+
+
+def _team(monkeypatch, tmp_path):
+	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine.mkdir(parents=True)
+	shared.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(ui.team, "on", lambda: True)
+	monkeypatch.setattr(ui.team, "NAME", "org/t")
+	return mine, shared
+
+
+def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- worth sharing\n- keep to myself\n")
+	pushes = []
+	monkeypatch.setattr(ui.team, "push", lambda m: pushes.append(("team", m)))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushes.append(("mine", m)))
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return next(keys)
+	keys = iter([ord("t"), ord("x"), 27])
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "share with org/t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
+	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
+	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
+	assert [w for w, _ in pushes] == ["team", "mine", "team"]
+
+
+def test_share_screen_says_so_when_there_is_nothing_to_share(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- already theirs\n")
+	(shared / "a__b.md").write_text("- already theirs\n")
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "nothing of yours the team is missing" in screen.text()
+
+
+def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
+	mine, _ = _team(monkeypatch, tmp_path)
+	ui.memory.append("a/b", "one review said so")  # a draft is not yours to share
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "nothing of yours the team is missing" in screen.text()
+
+
+def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- only I found this\n- both of us found this\n")
+	pool = tmp_path / "team" / "memory" / "pool"
+	(pool / "me").mkdir(parents=True)
+	(pool / "martin").mkdir(parents=True)
+	(pool / "me" / "a__b.md").write_text("- both of us found this\n")
+	(pool / "martin" / "a__b.md").write_text("- Both of us found this.\n")  # reworded, still the same fact
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	out = screen.text()
+	assert "both of us found this" in out and "★ 2 people found this" in out  # corroborated one is shown first
+	assert "1/2" in out
+
+
+def test_set_path_clones_a_git_url_and_asks_first(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	got = []
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: got.append(u) or "")
+	monkeypatch.setattr(ui.knowledge, "set_local", lambda p: pytest.fail("a URL must not be treated as a path"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:NilsPontus/Np_Claude_Agentic.git")
+	screen.getch, screen.timeout = _keys(ord("y")), lambda t: None
+	ui.set_path(screen, st, 0, "L")
+	assert got == ["git@github.com:NilsPontus/Np_Claude_Agentic.git"]
+	assert "clone git@github.com:NilsPontus/Np_Claude_Agentic.git" in screen.text()
+
+
+def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("must not clone after n"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org/mem.git")
+	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
+	ui.set_path(screen, st, 0, "L")
+
+
+def test_set_path_sends_a_url_for_the_store_back_to_T(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("the store is not cloned here"))
+	monkeypatch.setattr(ui.knowledge, "set_store", lambda p: pytest.fail("a URL is not a directory"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org/team.git")
+	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
+	ui.set_path(screen, st, 0, "C")
+	assert "T is what clones a team repo" in screen.text()
+
+
+def test_set_path_reports_a_broken_path_instead_of_crashing(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	def boom(p):
+		raise OSError(2, "No such file or directory")
+	monkeypatch.setattr(ui.knowledge, "set_local", boom)
+	monkeypatch.setattr(ui, "ask", lambda *a: "/some/where")
+	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
+	ui.set_path(screen, st, 0, "L")  # must not unwind out of curses
+	assert "No such file or directory" in screen.text()
