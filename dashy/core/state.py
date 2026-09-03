@@ -1,4 +1,5 @@
 """Background refresh loop and everything the UI reads."""
+import os
 import threading
 import time
 
@@ -9,6 +10,11 @@ from . import github, install, log, mirror, review as review_mod, team, update
 def refresh_mirrors():
 	"""Re-mirror every repo `gitdashy init` registered. Never raises: a bad entry must not stop a refresh."""
 	for into, repo in install.registered():
+		# ponytail: only into a repo that is still there. makedirs would otherwise rebuild the tree of a
+		# repo you deleted and write memory back into it — a dashboard resurrecting folders behind you.
+		if not os.path.isdir(os.path.dirname(os.path.dirname(into)) or "."):
+			install.unregister(into)
+			continue
 		try:
 			mirror.sync(into, repo, pull=False)  # already pulled above; and this must not touch the network
 		except Exception:  # noqa: BLE001 — a stale registry entry is not worth losing the refresh loop over

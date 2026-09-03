@@ -7,12 +7,19 @@ CORPUS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 0
 
-# 1. local ignore FIRST, so nothing is ever briefly visible to git
-EX=.git/info/exclude
-mkdir -p .git/info && touch "$EX"
+# 1. The ignore FIRST, and nothing at all if it cannot be written. .git is a FILE in a linked worktree
+#    or a submodule, so the path is asked for rather than assumed; without -e a failure here used to
+#    fall through and seed files git could see, which is the one thing this must never do.
+GITDIR="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+[ -n "$GITDIR" ] || exit 0
+case "$GITDIR" in /*) ;; *) GITDIR="$PWD/$GITDIR" ;; esac
+mkdir -p "$GITDIR/info" 2>/dev/null || exit 0
+EX="$GITDIR/info/exclude"
+touch "$EX" 2>/dev/null || exit 0
 for p in ".agent/" "CLAUDE.local.md"; do
-  grep -qxF "$p" "$EX" 2>/dev/null || echo "$p" >> "$EX"
+  grep -qxF "$p" "$EX" 2>/dev/null || echo "$p" >> "$EX" || exit 0
 done
+grep -qxF ".agent/" "$EX" 2>/dev/null || exit 0  # ponytail: verify, never assume the write landed
 
 # 2. seed this repo's own notes, never overwriting
 mkdir -p .agent

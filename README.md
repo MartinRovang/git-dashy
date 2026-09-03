@@ -272,7 +272,7 @@ symlink out of its own tree, where a project-level one refuses to — so one com
 gitdashy install            # explains itself and asks; --dry-run to look, --uninstall to reverse
 ```
 
-That symlinks your memory (and the team's) into the agent config directory and adds two imports, putting
+That symlinks your memory (and the team's) into the agent config directory and adds three imports, putting
 every general fact into every session, everywhere, live — nothing to sync, nothing to expire, and it starts
 carrying the team's the moment you have one. It is idempotent, it never replaces anything it did not
 create, and `--uninstall` removes exactly what it wrote.

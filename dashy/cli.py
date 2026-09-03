@@ -14,7 +14,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-check [--model NAME]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
-       gitdashy init --into DIR --loader FILE [--repo owner/name]
+       gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -48,7 +48,8 @@ install --full also puts an agent corpus on this machine, so coding sessions wor
 
 init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
   (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
-  path so the running dashboard re-mirrors it on every refresh. No hooks.
+  path so the running dashboard re-mirrors it on every refresh. No hooks. --into DIR --forget stops
+  refreshing one; the files stay, they just go still.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -90,8 +91,10 @@ def install(argv):
 	if "--uninstall" in argv:
 		return print("\n".join((install_mod.full_remove if full else install_mod.remove)(dry)))
 	print("\n".join(install_mod.full_explain(corpus, url) if full else install_mod.explain()))
-	if "--dry-run" in argv:
-		return print("\n".join(["", "--dry-run, so nothing was changed. Without it you are asked first."]))
+	if dry:
+		print("")
+		print("\n".join(install_mod.full_apply(corpus, url, dry=True) if full else install_mod.apply(dry=True)))
+		return print("\n--dry-run, so nothing was changed. Without it you are asked first.")
 	if "--yes" not in argv:
 		if not sys.stdin.isatty():  # ponytail: never write global config from a script that cannot be asked
 			raise SystemExit("\ngitdashy: not a terminal — pass --yes if you meant to install unattended")
@@ -107,6 +110,8 @@ def install(argv):
 def init(argv):
 	"""Wire one repo so a session there reads its review memory."""
 	into, loader = arg("--into", "", str, argv), arg("--loader", "", str, argv)
+	if into and "--forget" in argv:  # ponytail: the registry grows on its own, so it needs a way out
+		return print(f"gitdashy: {'no longer refreshing' if install_mod.unregister(into) else 'was not refreshing'} {into}")
 	if not into or not loader:
 		raise SystemExit("gitdashy: init needs --into DIR (where the mirror goes) and --loader FILE "
 		                 "(the instruction file that should import it)")

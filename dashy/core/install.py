@@ -6,6 +6,7 @@ agent corpus, and so was unreachable for everyone else.
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -92,8 +93,13 @@ def apply(dry=False):
 		elif os.path.lexists(link):  # ponytail: never replace something we did not make
 			out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone")
 		else:
-			out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(target)}")
+			pending = "" if os.path.isdir(target) else "   (waits until there is one)"
+			out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(target)}{pending}")
 			if not dry:
+				# ponytail: make your own memory dir rather than leaving a link to nothing. The team's is
+				# left dangling on purpose — it exists once you join, and a missing import is skipped.
+				if target == config.LOCAL_MEMORY:
+					os.makedirs(target, exist_ok=True)
 				os.symlink(target, link)
 	md = os.path.join(d, "CLAUDE.md")
 	text = _read(md)
@@ -178,13 +184,27 @@ def _toplevel(path):
 	return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _gitdir(root):
+	"""The directory holding info/exclude. ponytail: NOT <root>/.git — in a linked worktree or a
+	submodule that is a FILE, and building a path through it raises NotADirectoryError. Ask git."""
+	r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+	                   capture_output=True, text=True, timeout=60)
+	d = r.stdout.strip()
+	if r.returncode != 0 or not d:
+		return ""
+	return d if os.path.isabs(d) else os.path.join(root, d)
+
+
 def _exclude(root, rel):
-	"""Keep the mirror out of git via .git/info/exclude.
+	"""Keep the mirror out of git via info/exclude.
 
 	ponytail: never .gitignore. That file is tracked and belongs to everyone; a mirror is one machine's
 	local copy, and committing an ignore rule for it puts your setup in someone else's history.
 	"""
-	p = os.path.join(root, ".git", "info", "exclude")
+	gd = _gitdir(root)
+	if not gd:
+		return "FAIL  cannot find the git directory — refusing to write a mirror git could commit"
+	p = os.path.join(gd, "info", "exclude")
 	rule = rel.rstrip("/") + "/"
 	if rule in _read(p).splitlines():
 		return f"ok    {rule} is already excluded"
@@ -277,8 +297,18 @@ def full_explain(corpus, url=""):
 HOOK = "session-start.sh"
 
 
+def _count(settings):
+	"""How many SessionStart hooks there are in total, across every group."""
+	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get("SessionStart", []))
+
+
 def _hooks(settings, script):
-	"""SessionStart entries that are not ours. ponytail: match on the script, so a re-install never doubles."""
+	"""SessionStart groups with our hook taken out. Empty groups are dropped.
+
+	ponytail: callers compare HOOK counts, never group counts. Ours can end up sharing a group with
+	somebody else's — then the group survives, the count of groups is unchanged, and a group-count
+	check concludes we were never installed and appends a second copy.
+	"""
 	out = []
 	for group in settings.get("hooks", {}).get("SessionStart", []):
 		kept = [h for h in group.get("hooks", []) if script not in str(h.get("command", ""))]
@@ -336,13 +366,16 @@ def full_apply(corpus, url="", dry=False):
 		settings = json.loads(_read(sp) or "{}")
 	except ValueError:
 		return out + [f"FAIL  {knowledge.tilde(sp)} is not valid JSON — fix it first, nothing was changed"]
-	if len(_hooks(settings, HOOK)) != len(settings.get("hooks", {}).get("SessionStart", [])):
+	script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
+	if _count({"hooks": {"SessionStart": _hooks(settings, HOOK)}}) != _count(settings):
 		out.append("ok    the SessionStart hook is already registered")
+	elif not script_ok:  # ponytail: a corpus that ships no hook must not leave every session start failing
+		out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
 	else:
 		out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
 		if not dry:
 			settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
-				{"hooks": [{"type": "command", "command": f'"{script}"', "timeout": 10,
+				{"hooks": [{"type": "command", "command": shlex.quote(script), "timeout": 10,
 				            "statusMessage": "Preparing repo notes"}]})
 			with open(sp, "w") as f:
 				json.dump(settings, f, indent=2)
@@ -376,7 +409,7 @@ def full_remove(dry=False):
 		settings = None
 	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
 		kept = _hooks(settings, HOOK)
-		if len(kept) != len(settings["hooks"]["SessionStart"]):
+		if _count({"hooks": {"SessionStart": kept}}) != _count(settings):
 			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
 			if not dry:
 				settings["hooks"]["SessionStart"] = kept
@@ -384,5 +417,12 @@ def full_remove(dry=False):
 					settings["hooks"].pop("SessionStart")
 				with open(sp, "w") as f:
 					json.dump(settings, f, indent=2)
+	known = registered()
+	if known:
+		out.append(f"{did}forget  {len(known)} registered mirror{'s' if len(known) > 1 else ''}"
+		           f" — the files stay, they simply stop being refreshed")
+		if not dry:
+			for into, _ in known:
+				unregister(into)
 	out.append(f"note    {knowledge.tilde(CORPUS_HOME)} is left on disk — you may have edited it")
 	return out + [""] + remove(dry)

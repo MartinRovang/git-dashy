@@ -198,3 +198,93 @@ def test_the_shipped_corpus_is_generic(monkeypatch, tmp_path):
 	             "neoservo", "neocoms", "ous", "ce-marked"):
 		assert not re.search(rf"\b{re.escape(word)}\b", blob), f"the shipped corpus mentions {word!r}"
 	assert install.corpus_files(corpus)  # and it actually has identity files to import
+
+
+def worktree(tmp_path):
+	"""A linked worktree, where .git is a FILE rather than a directory."""
+	main = tmp_path / "main"
+	main.mkdir()
+	subprocess.run(["git", "init", "-q", str(main)], check=True)
+	subprocess.run(["git", "-C", str(main), "-c", "user.email=t@t", "-c", "user.name=t",
+	                "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+	wt = tmp_path / "wt"
+	subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", str(wt), "-b", "side"], check=True)
+	assert wt.joinpath(".git").is_file()  # the whole point of this fixture
+	return wt
+
+
+def test_wiring_a_worktree_still_hides_the_mirror_from_git(monkeypatch, tmp_path):
+	"""In a worktree .git is a file; building <root>/.git/info/exclude raised, and the seed went ahead."""
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	os.makedirs(tmp_path / "mem")
+	(tmp_path / "mem" / "o__n.md").write_text("- a fact\n")
+	wt = worktree(tmp_path)
+	loader = wt / "NOTES.md"
+	loader.write_text("# notes\n")
+	out = install.wire_repo(str(wt / ".agent" / "team"), str(loader), "o/n")
+	assert not any(l.startswith("FAIL") for l in out), out
+	assert (wt / ".agent" / "team" / "repo.md").exists()
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert ".agent" not in seen, seen  # the guarantee the docs make
+
+
+def test_the_session_hook_seeds_nothing_it_cannot_hide(tmp_path):
+	"""If the ignore cannot be written, the hook must stop rather than create visible files."""
+	wt = worktree(tmp_path)
+	hook = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+	                    "corpus", "bin", "session-start.sh")
+	subprocess.run(["bash", hook], cwd=str(wt), capture_output=True)
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert (wt / ".agent").is_dir() and (wt / "CLAUDE.local.md").exists()
+	assert seen.strip() == "", seen  # seeded, and invisible to git
+
+
+def test_the_hook_is_registered_once_even_sharing_a_group(monkeypatch, tmp_path):
+	"""Counting groups instead of hooks installed a second copy, and then failed to remove either."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	got["hooks"]["SessionStart"][0]["hooks"].append({"type": "command", "command": "someone-else"})
+	got["hooks"]["SessionStart"].append({"hooks": []})  # an empty group somebody left behind
+	(cfg / "settings.json").write_text(__import__("json").dumps(got))
+	out = install.full_apply(corpus)
+	assert any("already registered" in l for l in out)
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	assert sum(len(g["hooks"]) for g in got["hooks"]["SessionStart"]) == 2  # not three
+	install.full_remove()
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	left = [h for g in got.get("hooks", {}).get("SessionStart", []) for h in g["hooks"]]
+	assert [h["command"] for h in left] == ["someone-else"]  # ours gone, theirs untouched
+
+
+def test_a_corpus_without_a_hook_script_registers_none(monkeypatch, tmp_path):
+	"""--corpus URL can fetch anything; a missing hook must not break every session start."""
+	cfg, _ = full_env(monkeypatch, tmp_path)
+	bare = tmp_path / "bare"
+	(bare / "identity").mkdir(parents=True)
+	(bare / "identity" / "AGENT.md").write_text("# a\n")
+	out = install.full_apply(str(bare))
+	assert any("SKIP" in l and "not executable" in l for l in out)
+	# nothing registered, so there was nothing to write settings.json for either
+	assert not (cfg / "settings.json").exists() or \
+		not __import__("json").loads((cfg / "settings.json").read_text() or "{}").get("hooks")
+
+
+def test_a_deleted_repo_is_forgotten_not_resurrected(monkeypatch, tmp_path):
+	"""makedirs would rebuild the tree of a repo you deleted and write memory back into it."""
+	fresh(monkeypatch, tmp_path)
+	gone = tmp_path / "gone" / "sub" / "team"
+	install.register(str(gone), "o/n")
+	state.refresh_mirrors()
+	assert not gone.exists() and install.registered() == []  # dropped, not recreated
+
+
+def test_forgetting_a_mirror_leaves_its_files_alone(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	live = tmp_path / "repo" / ".agent" / "team"
+	live.mkdir(parents=True)
+	(live / "repo.md").write_text("- stays\n")
+	install.register(str(live), "o/n")
+	assert install.unregister(str(live)) is True
+	assert install.registered() == [] and (live / "repo.md").exists()

@@ -43,15 +43,17 @@ One store, at every tier. Installing does not move, copy or convert it.
 
 ## What `gitdashy install` writes
 
-Two symlinks and one marked block. Nothing else.
+Two symlinks and one marked block. Nothing else. Your memory directory is created if it is not there;
+the team link is left pointing at nothing until you join one, and a missing import is simply skipped.
 
 ```
 ~/.claude/prs-memory  ->  ~/.prs_memory
 ~/.claude/prs-team    ->  ~/.prs_team/memory      (harmless before you have a team)
 
 ~/.claude/CLAUDE.md   +=  <!-- gitdashy:begin -->
-                          … @prs-memory/general.md
-                          … @prs-team/general.md
+                          … @prs-team/project.md     what the team is building
+                          … @prs-memory/general.md   your cross-repo facts
+                          … @prs-team/general.md     the team's
                           <!-- gitdashy:end -->
 ```
 
