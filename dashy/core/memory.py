@@ -15,6 +15,7 @@ from . import log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
+PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
 
@@ -29,6 +30,16 @@ def path(repo=None, base=None):
 
 def queue_path(repo):
 	return os.path.join(config.MEMORY_DIR, QUEUE, slug(repo))
+
+
+def project():
+	"""The team's stated project context — objective, domain, constraints. "" when there is none.
+
+	ponytail: declared, not learned. Nothing in the promotion pipeline may touch it: it is not a fact
+	someone's reviewer noticed twice, it is what the team says the work is for. So it is excluded from
+	the dream, from sharing, and from ever being read as a repo's facts.
+	"""
+	return _read(os.path.join(config.TEAM, "memory", PROJECT)) if team.on() else ""
 
 
 def sources():
@@ -235,7 +246,7 @@ def shareable():
 	base = os.path.join(config.TEAM, "memory")
 	out = []
 	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
-		if not name.endswith(".md"):
+		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = None if name == "general.md" else name[:-3].replace("__", "/")
 		theirs = _facts(path(repo, base))
@@ -297,7 +308,7 @@ def files():
 	for label, base in sources():
 		key = "mine" if label == "mine" else "team"
 		for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-			if n.endswith(".md"):
+			if n.endswith(".md") and n != PROJECT:  # the dream tidies learned facts, not a stated brief
 				out[f"{key}/{n}"] = open(os.path.join(base, n)).read()
 	return dict(sorted(out.items(), key=lambda kv: (not kv[0].endswith("general.md"), kv[0])))
 

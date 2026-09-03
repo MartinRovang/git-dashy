@@ -11,7 +11,7 @@ from . import github, log, memory, team
 
 PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
 `gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
-{depth}{memory}{prev}
+{depth}{project}{memory}{prev}
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>",
@@ -97,7 +97,9 @@ def review(pr, model):
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
 	try:
 		mem, prev = memory.read(repo), log.last(pr["url"])
+		brief = memory.project()
 		prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
+		                       project="\n\nWhat this team is building, and for whom:\n" + brief if brief else "",
 		                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 		                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs

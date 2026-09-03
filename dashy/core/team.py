@@ -155,6 +155,38 @@ def is_own_memory(repo):
 		return True
 	return is_repo(config.MEMORY_DIR) and same_remote(repo, _url(config.MEMORY_DIR))
 
+PROJECT_TEMPLATE = """# What we are building
+
+Fill this in once, together. Everyone who joins this team reads it, and so does every review —
+so a reviewer knows what the code is for before it judges whether a change serves it.
+
+Keep it short. This is intent, not documentation: the things that would change a verdict.
+
+## The project
+
+What it is, and who uses it.
+
+## Why it matters
+
+The outcome that makes the work worth doing.
+
+## Constraints that change decisions
+
+Regulatory, contractual, performance, compatibility — anything with real consequences for
+what is acceptable, not just what is tidy.
+
+## How this codebase is shaped
+
+The handful of structural facts a newcomer would otherwise learn the hard way.
+"""
+
+
+def seed_project(path):
+	"""Give a new team repo a brief to fill in. ponytail: never overwrite — theirs is the real one."""
+	if not os.path.exists(path):
+		with open(path, "w") as f:
+			f.write(PROJECT_TEMPLATE)
+
 
 def setup(repo, create=False):
 	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
@@ -169,6 +201,7 @@ def setup(repo, create=False):
 	old_log = log.LOG
 	activate()
 	os.makedirs(os.path.join(config.TEAM, "memory"), exist_ok=True)
+	seed_project(os.path.join(config.TEAM, "memory", "project.md"))
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
 		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))

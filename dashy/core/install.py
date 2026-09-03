@@ -25,6 +25,7 @@ independent observations agreed, so trust them — but they are what the code tu
 The team file does not exist until you are in a team, and a missing import is simply skipped. Facts about
 one repo arrive separately, through that repo's own mirror.
 
+@prs-team/project.md
 {IMPORT}
 @prs-team/general.md
 {END}
@@ -67,7 +68,7 @@ def explain():
 		         else "EXISTS, will be left alone" if os.path.lexists(link) else "new")
 		out.append(f"  · symlink {knowledge.tilde(link)} -> {knowledge.tilde(target)}   [{state}]")
 	md = os.path.join(d, "CLAUDE.md")
-	out.append(f"  · append two imports to {knowledge.tilde(md)}, inside a marked block"
+	out.append(f"  · append three imports to {knowledge.tilde(md)}, inside a marked block"
 	           + ("   [already there]" if IMPORT in _read(md) else "   [new]"))
 	out.append("")
 	out.append("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.")

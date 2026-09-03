@@ -192,3 +192,21 @@ def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
 	assert "--safe-mode" in cmd
 	assert cmd[cmd.index("--append-system-prompt") + 1] == review_mod.LENS
 	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt
+
+
+def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
+	from dashy.core import memory, team
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	(tmp_path / "team" / "memory").mkdir(parents=True)
+	(tmp_path / "team" / "memory" / "project.md").write_text("We build X for surgeons.\n")
+	monkeypatch.setattr(team, "on", lambda: True)
+	prompts = []
+	def fake_run(cmd, **kw):
+		if cmd[0] == "claude":
+			prompts.append(cmd[2])
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	assert "What this team is building, and for whom:\nWe build X for surgeons." in prompts[0]
+	assert prompts[0].index("this team is building") < prompts[0].index("Respond with ONLY")

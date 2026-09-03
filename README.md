@@ -207,6 +207,19 @@ to leave it, which refuses while the checkout still holds reviews it has not pus
 The whole model — every store, promotion rule and discard rule — is written up in
 [`docs/memory.md`](docs/memory.md).
 
+### What the team is building
+
+A team repo also carries `memory/project.md` — the team's own statement of what is being built, for
+whom, and under what constraints. gitdashy seeds it with a template when the repo is created; you fill
+it in once, together.
+
+It goes into **every review** and every session, ahead of the learned facts, so a reviewer knows what
+the code is *for* before judging whether a change serves it. It is declared, not learned — the
+promotion pipeline never touches it, the dream never rewrites it, and it is never offered for sharing.
+
+That split keeps two things apart: `project.md` is what the team is doing, and a corpus's `USER.md` is
+who *you* are. Nobody should have to restate the project in their own file.
+
 ### Where knowledge lives
 
 `K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the

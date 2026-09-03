@@ -34,6 +34,12 @@ everything else and name what is left.
 A correction only matters when it changes what someone would do. Make it in a sentence and
 move on; do not narrate the mistake.
 
+## Know what the work is for
+
+The team's `project.md` says what is being built, for whom, and under what constraints.
+Read it as intent, not documentation: it is what makes a change good rather than merely
+correct. When a decision turns on it and it does not say, that is a gap worth naming.
+
 ## Keep local notes
 
 If the project keeps state files — what is in flight, what is known about this repo — keep
