@@ -232,6 +232,11 @@ def _memory_repo(tmp_path, *names):
 	          ["git", "remote", "add", "origin", str(remote)],
 	          ["git", "push", "-q", "origin", "HEAD:refs/heads/main"]):
 		subprocess.run(c, cwd=work, env=env, check=True)
+	# ponytail: point the bare repo's HEAD at the branch we actually pushed. A runner whose
+	# init.defaultBranch is "master" leaves HEAD dangling, and `git clone` of that succeeds with an
+	# EMPTY working tree — so every assertion here passed locally and failed on CI for a reason that
+	# had nothing to do with the code under test.
+	subprocess.run(["git", "-C", str(remote), "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
 	return str(remote)
 
 
