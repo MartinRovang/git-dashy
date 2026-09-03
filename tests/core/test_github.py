@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 
 import pytest
 
@@ -96,3 +97,39 @@ def test_request_review_reports_a_timeout_instead_of_raising(monkeypatch):
 		raise subprocess.TimeoutExpired(cmd, 30)
 	monkeypatch.setattr(github.subprocess, "run", hang)
 	assert "30 seconds" in github.request_review("a/b", 7, "alice")
+
+
+def test_detail_normalises_checks_and_never_raises(monkeypatch):
+	import json as _json
+	payload = {"headRefName": "feat/kb", "additions": 412, "deletions": 96, "changedFiles": 14,
+	           "statusCheckRollup": [{"name": "ci", "conclusion": "SUCCESS"},
+	                                 {"name": "lint", "conclusion": "FAILURE"},
+	                                 {"context": "e2e", "state": "PENDING"},
+	                                 {"name": "odd", "conclusion": "WHAT"},
+	                                 {"conclusion": "SUCCESS"}]}
+	monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result(_json.dumps(payload)))
+	d = github.detail("a/b", 7)
+	assert d["branch"] == "feat/kb" and (d["add"], d["del"], d["files"]) == (412, 96, 14)
+	assert d["checks"] == [{"name": "ci", "state": "ok"}, {"name": "lint", "state": "fail"},
+	                       {"name": "e2e", "state": "run"}, {"name": "odd", "state": "run"}]
+	def boom(*a, **k):
+		raise subprocess.TimeoutExpired("gh", 1)
+	monkeypatch.setattr(subprocess, "run", boom)
+	assert github.detail("a/b", 7) == {}  # a pane is decoration; the row is still right
+
+
+def test_want_detail_fetches_once_off_the_draw_thread(monkeypatch):
+	from dashy.core.state import State
+	calls = []
+	monkeypatch.setattr(github, "detail", lambda repo, n: calls.append((repo, n)) or {"branch": "b"})
+	st = State(60)
+	assert st.want_detail(None) is None
+	# first ask starts a fetch and returns nothing yet
+	assert st.want_detail(dict(PR)) is None
+	for _ in range(200):
+		if dict(PR)["url"] in st.details:
+			break
+		time.sleep(0.005)
+	assert st.want_detail(dict(PR)) == {"branch": "b"}
+	st.want_detail(dict(PR))
+	assert len(calls) == 1  # cached, not refetched on every draw

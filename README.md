@@ -51,13 +51,21 @@ gitdashy remember "the viewer owns mask state"   # file what a coding session le
 gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
+The list is a table — `age · repo · pr · title · author · state` — with your own PRs in their own
+section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `p`
+opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
+found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
+
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
 again but the reviewer has not looked yet. Next to it, one chip per reviewer: `✓bob` approved,
 `✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
 
 `p` on one of your own rows **pre-reviews it**: the same reviewer, the same prompt, the same memory —
-but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/<owner>__<repo>__<n>.md` and `p` again reopens it there. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
+but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/<owner>__<repo>__<n>.md`, and `p` again reopens it — including
+after a restart, because the name is derived rather than remembered. Once the PR has been updated since
+that file was written, `p` offers a fresh pre-review instead of handing you one that describes the old
+diff. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
 approve your own PR, and a verdict on your own work is a second opinion from the same head.
 
 Its findings do not become facts on their own. They wait in a separate pool, and only a later **real**
@@ -73,12 +81,13 @@ than whether the fact recurred.
 | `o` | open the PR in your browser |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
-| `p` | on a MINE row: pre-review your own PR. Nothing is posted; press `p` again to reopen it in `less` |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in `less`, and offers a fresh one once the PR has changed since |
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
+| `p` | show / hide the detail pane for the selected PR |
 | `?` | show each setting's key next to it in the header |
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |

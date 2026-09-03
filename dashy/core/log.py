@@ -31,10 +31,28 @@ def tag(e):
 	return e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")
 
 
+KINDS = {"blocking": "err", "note": "warn", "nit": "dim"}  # tone the detail pane colours each by
+
+
+def findings(verdict):
+	"""[{kind, loc, text}] the reviewer listed. [] for anything malformed or from before the field existed.
+
+	ponytail: model output, so every field is checked. A review whose findings are junk still has a body,
+	and the pane falls back to it — a bad list must not cost you the review itself.
+	"""
+	out = []
+	for f in verdict.get("findings") or []:
+		if isinstance(f, dict) and str(f.get("kind", "")).lower() in KINDS and f.get("text"):
+			out.append({"kind": str(f["kind"]).lower(), "loc": str(f.get("loc", ""))[:60],
+			            "text": " ".join(str(f["text"]).split())[:120]})
+	return out[:12]  # ponytail: a pane, not a report — the body has the whole thing
+
+
 def log_review(pr, model, verdict, at=None):
 	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
 	         "depth": config.DEPTH, "effort": config.EFFORT,
-	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}
+	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"],
+	         "findings": findings(verdict)}
 	with open(LOG, "a") as f:
 		f.write(json.dumps(entry) + "\n")
 	return config.STATUS[verdict["verdict"]]

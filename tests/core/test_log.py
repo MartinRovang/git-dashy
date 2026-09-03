@@ -41,3 +41,16 @@ def test_mark_rereviews_flags_updated_logged_prs_only():
 	secs = [("REVIEW REQUESTED", [old, same, fresh], None), ("REVIEWED", reviewed(), None)]
 	assert mark_rereviews(secs) == ["old"]
 	assert old["prev"] == "↻ re-review · was ✓ approved" and "prev" not in same and "prev" not in fresh
+
+
+def test_findings_are_kept_but_never_trusted():
+	from dashy.core.log import findings
+	good = {"findings": [{"kind": "Blocking", "loc": "keymap.ts:88", "text": "duplicate  binding\nnot detected"},
+	                     {"kind": "nit", "text": "no loc is fine"}]}
+	assert findings(good) == [
+		{"kind": "blocking", "loc": "keymap.ts:88", "text": "duplicate binding not detected"},
+		{"kind": "nit", "loc": "", "text": "no loc is fine"}]
+	assert findings({}) == []  # a review from before the field existed
+	assert findings({"findings": None}) == []
+	assert findings({"findings": ["a string", {"kind": "bogus", "text": "x"}, {"kind": "nit"}, 7]}) == []
+	assert len(findings({"findings": [{"kind": "nit", "text": f"f{i}"} for i in range(40)]})) == 12
