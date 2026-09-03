@@ -124,10 +124,11 @@ def copy(text):
 	for cmd in CLIPBOARDS:
 		if shutil.which(cmd[0]):
 			try:
-				subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-				return cmd[0]
+				if subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0:
+					return cmd[0]
 			except subprocess.TimeoutExpired:
-				continue  # a tool that hangs instead of daemonizing: try the next one, else the escape
+				pass
+			# ponytail: a tool that failed (xclip with no DISPLAY) or hung: try the next one, else the escape
 	out = sys.__stdout__  # curses owns sys.stdout's buffer; the raw tty still takes the escape
 	out.write(f"\033]52;c;{base64.b64encode(text.encode()).decode()}\a")
 	out.flush()

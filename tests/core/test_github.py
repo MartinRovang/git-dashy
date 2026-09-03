@@ -54,13 +54,16 @@ def test_copy_uses_first_clipboard_tool_on_path(monkeypatch):
 	from dashy.core import github
 	ran = []
 	monkeypatch.setattr(github.shutil, "which", lambda c: c == "xclip")
-	monkeypatch.setattr(github.subprocess, "run", lambda cmd, **kw: ran.append((cmd, kw["input"])))
+	rc = [0]
+	monkeypatch.setattr(github.subprocess, "run", lambda cmd, **kw: ran.append((cmd, kw["input"])) or Result(returncode=rc[0]))
 	assert github.copy("https://x/pr/1") == "xclip"
 	assert ran == [(["xclip", "-selection", "clipboard"], "https://x/pr/1")]
-	monkeypatch.setattr(github.shutil, "which", lambda c: None)
 	monkeypatch.setattr(github.sys, "__stdout__", __import__("io").StringIO())
-	assert github.copy("u") == "terminal" and len(ran) == 1
+	rc[0] = 1  # xclip on PATH but no DISPLAY: it fails, the escape must still go out
+	assert github.copy("u") == "terminal" and len(ran) == 2
 	assert github.sys.__stdout__.getvalue() == "\033]52;c;dQ==\a"
+	monkeypatch.setattr(github.shutil, "which", lambda c: None)
+	assert github.copy("u") == "terminal" and len(ran) == 2
 
 
 def test_reviewers_merges_requests_over_latest_reviews():
