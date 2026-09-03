@@ -193,6 +193,7 @@ def run(argv=None):
 		raise SystemExit(0 if all(ok for _, ok, _ in rows) else 1)
 	if "--demo" in argv:
 		demo.install()
+	config.load()
 	config.EFFORT = arg("--effort", config.EFFORT, str, argv)
 	config.DEPTH = arg("--depth", config.DEPTH, str, argv)
 	if config.DEPTH not in config.DEPTHS:

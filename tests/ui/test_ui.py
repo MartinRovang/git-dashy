@@ -63,9 +63,10 @@ def test_draw_prompt_replaces_footer(screen):
 def test_draw_truncates_long_title_on_narrow_screen(screen):
 	screen.w = 40
 	st = State(60)
-	st.sections = [("MINE", [dict(PR, title="x" * 200)], None)]
-	ui.draw(screen, st, 0)  # must not raise
-	assert "…" in screen.text()
+	st.sections = [("MINE", [dict(PR, title="x" * 200), dict(PR, url="v", title="y" * 200)], None)]
+	ui.draw(screen, st, 1)  # must not raise; the unselected row clips, the selected one scrolls
+	out = screen.text()
+	assert "xxxxx…" in out and "yyyyy…" not in out and "yyyyy" in out
 
 
 def test_draw_reviewed_rows_use_logged_status(screen, monkeypatch):
@@ -344,6 +345,25 @@ def test_dream_detail_diffs_changed_files_only():
 	assert out.startswith("merged\ndupes\n") and "--- a/b" in out and "-- x" in out and "general" not in out
 
 
+def test_esc_menu_theme_notify_refresh_quit(screen, monkeypatch):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(config, "THEME", "dashy")
+	monkeypatch.setattr(config, "NOTIFY", True)
+	# Enter cycles the theme, j+Enter toggles notify, j+Enter refreshes and closes
+	screen.getch, screen.timeout = _keys(10, ord("j"), 10, ord("j"), 10), lambda t: None
+	assert ui.esc_menu(screen, st, 0) is False and st.wake.is_set()
+	assert config.THEME == "dracula" and config.NOTIFY is False
+	assert "▸ Refresh" in screen.text() and "Theme    dracula" in screen.text() and "Notify   off" in screen.text()
+	row = next(y for y in range(screen.h) if "gitdashy" in screen.line(y) and "╭" in screen.line(y))
+	assert abs(row - screen.h // 2) <= 3 and abs(screen.line(row).index("╭") - screen.w // 2) <= 12  # mid-screen, not on the header
+	screen.getch = _keys(27)
+	assert ui.esc_menu(screen, st, 0) is False  # esc closes without quitting
+	screen.getch = _keys(ord("k"), 10)
+	assert ui.esc_menu(screen, st, 0) is True  # k wraps to Quit
+
+
 def _team(monkeypatch, tmp_path):
 	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
 	mine.mkdir(parents=True)
@@ -445,3 +465,37 @@ def test_set_path_reports_a_broken_path_instead_of_crashing(screen, monkeypatch,
 	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
 	ui.set_path(screen, st, 0, "L")  # must not unwind out of curses
 	assert "No such file or directory" in screen.text()
+
+
+def test_marquee_scrolls_only_when_overflowing():
+	from dashy.ui import art
+	assert art.marquee("short", 10, 0.0) == "short"
+	assert art.marquee("x", 0, 0.0) == ""
+	frames = [art.marquee("abcdefghij", 4, t, cps=1) for t in range(20)]  # integer ticks, no float rounding
+	assert frames[0] == "abcd" and frames[1] == "bcde" and all(len(f) == 4 for f in frames)
+	assert "j   ·   " [:4] in frames and frames[17] == frames[0]  # wraps: 10 chars + 7-char gap
+
+
+def test_draw_marquees_selected_overflowing_title(screen):
+	screen.w = 60
+	st = State(60)
+	st.sections = [("MINE", [dict(PR, title="A" * 30 + "B" * 30 + "C" * 30)], None)]
+	st.fetched_at = time.time()
+	ui.draw(screen, st, 0)
+	assert ui.SCROLLING[0] and "…" not in screen.line(4)
+	st.sections = [("MINE", [dict(PR, title="tiny")], None)]
+	ui.draw(screen, st, 0)
+	assert not ui.SCROLLING[0]
+
+
+def test_add_reviewer_picks_a_collaborator_and_requests_them(screen, monkeypatch, st):
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None)], time.time()
+	asked = []
+	monkeypatch.setattr(ui.github, "collaborators", lambda repo: ["me", "alice", "bob"])
+	monkeypatch.setattr(ui.github, "request_review", lambda repo, n, login: asked.append((repo, n, login)) or "")
+	monkeypatch.setattr(ui.curses, "napms", lambda ms: None, raising=False)
+	monkeypatch.setattr(ui.curses, "flushinp", lambda: None, raising=False)
+	screen.getch, screen.timeout = _keys(ord("j"), 10), lambda t: None  # down past alice, enter on bob
+	ui.add_reviewer(screen, st, 0, dict(PR))
+	assert asked == [("a/b", 7, "bob")] and "✓ asked bob" in screen.text() and st.wake.is_set()
+

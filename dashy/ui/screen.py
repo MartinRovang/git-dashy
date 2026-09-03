@@ -16,7 +16,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  y copy url  + reviewer  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  esc menu  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -41,9 +41,18 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
 ]
+# ponytail: a theme swaps the 256-colour values above, nothing else. Keys are the accents (cyan, red, green, yellow,
+# blue) and the bar greys; anything not listed keeps the default. New theme = one more line.
+THEMES = {
+	"dashy": {},
+	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61},
+	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243},
+	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60},
+}
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
+SCROLLING = [False]  # draw() sets it when the selected title is a marquee; main() ticks faster while it is
 
 
 def C(n):
@@ -61,6 +70,11 @@ def settings(state):
 		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
 		      lambda v: f"{v}s" if v < 60 or v % 60 else f"{v // 60}m"),  # --interval 45 / 90 read as given
 	}
+
+
+def set_theme(name):
+	config.THEME = name
+	init_colors()  # init_pair repaints live, no redraw needed
 
 
 def header_groups(state):
@@ -85,7 +99,9 @@ def init_colors():
 	curses.curs_set(0)
 	curses.use_default_colors()
 	many = curses.COLORS >= 256
+	theme = THEMES.get(config.THEME, {})
 	for pair, fg256, fg8, bg256, bg8 in COLORS:
+		fg256, bg256 = theme.get(fg256, fg256), theme.get(bg256, bg256)
 		curses.init_pair(pair, fg256 if many else fg8, (bg256 if many else bg8) if bg256 != -1 else -1)
 
 
@@ -103,9 +119,15 @@ def splash(scr, h, w, spin):
 		mid(y0 + 5 + i, line, C(5) | curses.A_BOLD)
 
 
+REVIEWER_COLOR = {}  # glyph -> colour pair, filled after init_colors: ✓ green, ✗ red, · pending yellow, ~ dim
+
+
 def draw(scr, state, sel, prompt=None):
+	if not REVIEWER_COLOR:
+		REVIEWER_COLOR.update({"✓": C(4), "✗": C(3), "·": C(5), "~": C(1)})
 	scr.erase()
 	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
+	SCROLLING[0] = False
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
@@ -123,7 +145,7 @@ def draw(scr, state, sel, prompt=None):
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
 	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
-		scr.refresh()
+		scr.noutrefresh()
 		return sel, (rs[cur][1] if cur >= 0 else None)
 
 	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
@@ -273,11 +295,19 @@ def draw(scr, state, sel, prompt=None):
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
 			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
+			revs = p.get("reviewers", "").split()  # "✓bob ·alice": one token per reviewer, coloured by its glyph
+			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0)
 			t = p["title"]
-			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
+			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
+				SCROLLING[0] = True
+				put(art.marquee(t, title_w, time.time()), curses.A_BOLD, title_w)
+			else:
+				put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
 			put(p.get("author", {}).get("login", ""), C(1), auth_w)
+			for r in revs:
+				put(" ")
+				put(r, REVIEWER_COLOR.get(r[0], C(1)) | curses.A_BOLD)
 			if tag:
 				put("  ")
 				put(tag, C(1))
@@ -288,7 +318,9 @@ def draw(scr, state, sel, prompt=None):
 	foot = prompt or FOOTER
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
-	scr.refresh()
+	# ponytail: no refresh here — getch() flushes the frame, and a popup/panel drawn on top flushes once with it.
+	# refreshing here too pushed a popup-less frame every tick, which is what stuttered the dropdowns.
+	scr.noutrefresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
 
@@ -438,9 +470,76 @@ def settings_menu(scr, state, sel):
 			return
 
 
+def esc_menu(scr, state, sel):
+	"""Esc: a btop-style menu in the middle of the screen. Enter cycles the theme, toggles notifications,
+	refreshes, or quits. Returns True to quit."""
+	idx = 0
+	while True:
+		items = [f"Theme    {config.THEME:<8}", f"Notify   {'on' if config.NOTIFY else 'off':<8}", "Refresh", "Quit"]
+		draw(scr, state, sel, prompt=" Menu:  j/k move   ⏎ pick   esc close   q quit")
+		h, w = scr.getmaxyx()
+		popup(scr, h // 2 - 4, (w - len(items[0]) - 6) // 2, "gitdashy", items, idx)
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			idx = (idx + 1) % len(items)
+		elif k in (ord("k"), curses.KEY_UP):
+			idx = (idx - 1) % len(items)
+		elif k == ord("q"):
+			return True
+		elif k in (10, 13, curses.KEY_ENTER):
+			if idx == 0:
+				names = list(THEMES)
+				set_theme(names[(names.index(config.THEME) + 1) % len(names)] if config.THEME in names else names[0])
+			elif idx == 1:
+				config.NOTIFY = not config.NOTIFY
+			elif idx == 2:
+				state.wake.set()
+				return False
+			else:
+				return True
+		elif k == 27:
+			return False
+
+
+def add_reviewer(scr, state, sel, pr):
+	"""Pick a collaborator of the PR's repo (or type a login when gh cannot list them) and request their review."""
+	repo, number = pr["repository"]["nameWithOwner"], pr["number"]
+	draw(scr, state, sel, prompt=f" {art.SPINNER[0]} fetching collaborators of {repo}…")
+	scr.refresh()  # show the prompt before blocking on gh
+	me = pr.get("author", {}).get("login")
+	options = [c for c in github.collaborators(repo) if c != me]
+	if not options:
+		login = ask(scr, state, sel, f" reviewer login for #{number}: ")
+	else:
+		idx = 0
+		while True:
+			draw(scr, state, sel, prompt=f" reviewer for #{number}:  j/k move   ⏎ request   esc cancel")
+			popup(scr, 4, 3, f"request review · {repo}#{number}", options, idx)
+			k = scr.getch()
+			if k in (ord("j"), curses.KEY_DOWN):
+				idx = (idx + 1) % len(options)
+			elif k in (ord("k"), curses.KEY_UP):
+				idx = (idx - 1) % len(options)
+			elif k in (10, 13, curses.KEY_ENTER):
+				login = options[idx]
+				break
+			elif k in (27, ord("q")):
+				return
+	if not login:
+		return
+	err = github.request_review(repo, number, login)
+	draw(scr, state, sel, prompt=f" ✓ asked {login} to review #{number}" if not err else f" ✗ {err}"[:200])
+	scr.refresh()
+	curses.napms(900)
+	curses.flushinp()  # keys mashed during the flash would each fire another request
+	if not err:
+		state.wake.set()  # refetch so the new reviewer shows on the row
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	scr.timeout(-1)
 	yes = scr.getch() == ord("y")
 	scr.timeout(500)
@@ -462,6 +561,7 @@ def edit_memory(scr, repo):
 def ask(scr, state, sel, question):
 	"""Footer text input. Returns '' on empty/escape."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	curses.echo()
 	scr.timeout(-1)
 	try:
@@ -631,6 +731,12 @@ def dream_detail(summary, before, new):
 	return "\n".join(out) or "nothing changed"
 
 
+def snapshot(state):
+	"""Everything the settings row can change, in the shape config.save writes."""
+	return {"model": state.model, "interval": state.interval, "subs": state.subs, "window": state.window,
+	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME}
+
+
 def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
@@ -639,13 +745,18 @@ def main(scr, interval, auto, model):
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()
-	sel, current = 0, None
+	sel, current, saved = 0, None, snapshot(state)
 	while True:
 		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
-		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
+		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
+		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
 		k = scr.getch()
-		if k in (ord("q"), 27):
+		if snapshot(state) != saved:  # ponytail: one save site; any key path that changed a setting lands here
+			saved = snapshot(state)
+			config.save(saved)
+		if k == ord("q") or (k == 27 and esc_menu(scr, state, sel)):
+			config.save(snapshot(state))  # the menu may have changed the theme or notify on the way out
 			return
 		if k in (ord("j"), curses.KEY_DOWN):
 			sel += 1
@@ -673,6 +784,15 @@ def main(scr, interval, auto, model):
 			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
+		elif k == ord("+") and current and current["section"] == "MINE":
+			add_reviewer(scr, state, sel, current)
+		elif k == ord("y") and current:
+			tool = github.copy(current["url"])
+			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
+			     f" sent {current['url']} to the terminal (OSC 52) — if nothing landed, install wl-clipboard or xclip")
+			scr.refresh()
+			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
+			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
