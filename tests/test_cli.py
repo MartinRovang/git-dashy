@@ -90,3 +90,42 @@ def test_self_check_reports_and_exits_nonzero_on_failure(monkeypatch, capsys):
 def test_a_flag_with_no_value_is_a_message_not_a_traceback():
 	with pytest.raises(SystemExit, match="--repo needs a value"):
 		cli.run(["gitdashy", "remember", "a fact", "--repo"])
+
+def test_install_asks_before_writing_and_a_no_changes_nothing(monkeypatch, tmp_path, capsys):
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mem"))
+	monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+	monkeypatch.setattr("builtins.input", lambda _: "n")
+	cli.run(["gitdashy", "install"])
+	assert "nothing changed" in capsys.readouterr().out
+	assert not (cfg / "prs-memory").exists() and not (cfg / "CLAUDE.md").exists()
+	monkeypatch.setattr("builtins.input", lambda _: "y")
+	cli.run(["gitdashy", "install"])
+	capsys.readouterr()
+	assert (cfg / "prs-memory").is_symlink() and "@prs-memory" in (cfg / "CLAUDE.md").read_text()
+
+
+def test_install_refuses_unattended_without_yes(monkeypatch, tmp_path):
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mem"))
+	monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+	with pytest.raises(SystemExit, match="not a terminal"):
+		cli.run(["gitdashy", "install"])
+	assert not (cfg / "prs-memory").exists()
+	cli.run(["gitdashy", "install", "--yes"])  # explicit, so it proceeds
+	assert (cfg / "prs-memory").is_symlink()
+
+
+def test_install_dry_run_explains_and_writes_nothing(monkeypatch, tmp_path, capsys):
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mem"))
+	monkeypatch.setattr("builtins.input", lambda _: pytest.fail("--dry-run must not ask"))
+	cli.run(["gitdashy", "install", "--dry-run"])
+	assert "nothing was changed" in capsys.readouterr().out
+	assert not (cfg / "prs-memory").exists()

@@ -98,11 +98,13 @@ What needs installing is the other half: making a regular coding session read th
 
 | | what it does |
 |---|---|
-| `gitdashy install` | once per machine — every session reads the cross-repo facts |
+| `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 
 Reviews are unaffected by all of it: they run `--safe-mode` and read memory through the prompt.
+[`docs/install.md`](docs/install.md) is the full account — every file it writes, why a symlink and not a
+copy, and how to undo it.
 
 ## The review
 
@@ -253,7 +255,7 @@ nothing on a session-start timeout budget. It goes stale only while gitdashy is 
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:
 
 ```sh
-gitdashy install            # --dry-run to see it first, --uninstall to reverse it
+gitdashy install            # explains itself and asks; --dry-run to look, --uninstall to reverse
 ```
 
 That symlinks your memory (and the team's) into the agent config directory and adds two imports, putting

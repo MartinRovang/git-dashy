@@ -111,3 +111,17 @@ def test_the_refresh_loop_is_still_a_method_on_state():
 	"""Regression: refresh_mirrors was once defined inside the class body, which swallowed loop()."""
 	assert callable(getattr(state.State, "loop", None))
 	assert callable(getattr(state, "refresh_mirrors", None))
+
+
+def test_explain_names_real_paths_and_the_state_of_each(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	out = "\n".join(install.explain())
+	assert "[new]" in out and str(cfg / "prs-memory") in out
+	assert "will NOT" in out and "hooks" in out and "settings.json" in out
+	assert "--uninstall" in out  # you are told how to reverse it before you agree to it
+	install.apply()
+	out = "\n".join(install.explain())
+	assert "already correct" in out and "already there" in out and "[new]" not in out
+	(cfg / "prs-memory").unlink()
+	(cfg / "prs-memory").mkdir()
+	assert "EXISTS, will be left alone" in "\n".join(install.explain())
