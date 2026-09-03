@@ -17,6 +17,7 @@ your reviews already have.
 | press `T` in the dashboard | the same, shared with a team and gated by `P` | a private git repo you name |
 | `gitdashy install` | **coding sessions read it too** | two symlinks and one block in your agent config |
 | `gitdashy init` in a repo | sessions there also read that repo's own facts | that repo's `.git/info/exclude` and the file you name |
+| `gitdashy install --full` | **the whole thing** — an agent corpus in every session, plus all of the above | the above, and one `SessionStart` hook |
 
 Each tier is additive and independent, and turning one on later is **retroactive** —
 months of learning become visible the moment you install, with nothing to migrate.
@@ -120,3 +121,68 @@ yours into theirs), and the **evidence pool**, which is never read as memory by 
 
 Joining a team copies the review **log** — shared history, a record of what happened —
 and deliberately not your memory.
+
+
+---
+
+## `gitdashy install --full`
+
+The tiers above make a session *know what your reviews learned*. This one also makes it
+*work to a stated discipline* — it installs an agent corpus.
+
+It is a much bigger commitment than plain `install`, so it is a separate command with its
+own consent screen, and that screen states the cost in tokens before you agree.
+
+```sh
+gitdashy install --full                              # the small corpus gitdashy ships
+gitdashy install --full --corpus git@host:you/corpus.git   # or your own
+```
+
+### What it writes
+
+- copies (or clones) the corpus to `~/.agent-corpus`, and **never touches it again** —
+  an existing one is left exactly as it is, because by then you have edited it
+- symlinks `~/.claude/identity` at that corpus's `identity/`
+- imports those files in `~/.claude/CLAUDE.md`, in a block separate from the memory one,
+  so either can be removed without the other
+- seeds `USER.md` from `USER.md.template` if absent — and never overwrites what you wrote
+- registers **one** `SessionStart` hook, added surgically: your other settings and other
+  hooks are preserved, and installing twice never doubles it
+- everything plain `install` does
+
+### The hook
+
+`corpus/bin/session-start.sh`, run at the start of every session in every repo. It seeds
+`.agent/STATE.md` and `.agent/PROJECT-MEMORY.md` if missing, creates a `CLAUDE.local.md`
+that imports them, and calls `gitdashy init` for that repo's review memory.
+
+It adds `.agent/` and `CLAUDE.local.md` to `.git/info/exclude` **first**, so none of it is
+ever briefly visible to git. It exits silently outside a git repo, and it never writes
+anything git can see.
+
+### What it costs
+
+About 1,600 tokens of instructions in every session on the machine, permanently, plus one
+hook at every session start. The consent screen computes the real number from the corpus
+you are actually installing — your own will be larger.
+
+### Undoing it
+
+```sh
+gitdashy install --full --uninstall
+```
+
+Removes the symlink, the corpus import block and the hook — leaving your other settings,
+your other hooks and anything you wrote in `CLAUDE.md` untouched. **The corpus itself stays
+on disk**, because by then it is yours and may not look like what was installed.
+
+### The shipped corpus
+
+`corpus/` in this repository: about 1,200 words of engineering discipline and a blank
+`USER.md.template`. It is deliberately small — short enough that you will read it before
+agreeing to load it in every session.
+
+It is a starting point with opinions, not a standard. Fork it, change it, or point
+`--corpus` at something else entirely. The one part worth filling in immediately is
+`USER.md`: an agent that knows what you are building makes better calls than one reasoning
+from the code alone.

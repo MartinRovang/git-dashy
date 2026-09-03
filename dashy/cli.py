@@ -3,7 +3,7 @@ import curses
 import os
 import sys
 
-from . import VERSION, config, demo
+from . import HERE, VERSION, config, demo
 from .core import install as install_mod, memory, mirror, review as review_mod, team
 from .ui import screen
 
@@ -13,7 +13,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-check [--model NAME]
-       gitdashy install [--dry-run] [--yes] [--uninstall]
+       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
@@ -38,7 +38,13 @@ remember files a fact you learned while working, into the same drafts a review w
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
   directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. Reviews need
-  none of this — they read memory through the prompt and always have. See docs/install.md.
+  none of this — they read memory through the prompt and always have.
+
+install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
+  it installs the small one gitdashy ships (or --corpus URL for your own), imports it, seeds a USER.md for
+  you to fill in, and registers one SessionStart hook that seeds a repo's local notes. It says what that
+  costs in tokens and asks separately, because it is a much bigger commitment than the line above. See
+  docs/install.md.
 
 init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
   (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
@@ -79,9 +85,11 @@ def sync_memory(argv):
 
 def install(argv):
 	"""Wire this machine, after saying what that means and being told to go ahead."""
+	full, dry = "--full" in argv, "--dry-run" in argv
+	corpus, url = os.path.join(HERE, "corpus"), arg("--corpus", "", str, argv)
 	if "--uninstall" in argv:
-		return print("\n".join(install_mod.remove("--dry-run" in argv)))
-	print("\n".join(install_mod.explain()))
+		return print("\n".join((install_mod.full_remove if full else install_mod.remove)(dry)))
+	print("\n".join(install_mod.full_explain(corpus, url) if full else install_mod.explain()))
 	if "--dry-run" in argv:
 		return print("\n".join(["", "--dry-run, so nothing was changed. Without it you are asked first."]))
 	if "--yes" not in argv:
@@ -93,7 +101,7 @@ def install(argv):
 		except (EOFError, KeyboardInterrupt):
 			return print("\nnothing changed")
 	print("")
-	print("\n".join(install_mod.apply()))
+	print("\n".join(install_mod.full_apply(corpus, url) if full else install_mod.apply()))
 
 
 def init(argv):
