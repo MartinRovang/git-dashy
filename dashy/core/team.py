@@ -46,6 +46,13 @@ def push(msg):
 			_note(_git("pull", "--rebase", "-q")) and _note(_git("push", "-q"))
 
 
+def origin_slug(path):
+	"""owner/name from the git remote at `path`, "" when there is no repo or no origin."""
+	r = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=60)
+	url = r.stdout.strip().rstrip("/").removesuffix(".git").replace(":", "/")
+	return "/".join(url.split("/")[-2:]) if r.returncode == 0 and url else ""
+
+
 def activate():
 	"""Point log + memory at the team checkout. Called at startup and after setup()."""
 	global NAME
@@ -53,9 +60,7 @@ def activate():
 		return
 	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")
 	config.MEMORY_DIR = os.path.join(config.TEAM, "memory")
-	url = _git("remote", "get-url", "origin").stdout.strip()
-	NAME = url.rstrip("/").removesuffix(".git").replace(":", "/").split("/")[-2:]
-	NAME = "/".join(NAME)
+	NAME = origin_slug(config.TEAM)
 
 
 def setup(repo, create=False):

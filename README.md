@@ -46,6 +46,7 @@ gitdashy --instructions review-rules.md   # your own text, appended to every rev
 gitdashy --version        # 1.16.0
 gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
 gitdashy --help
+gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
 ```
 
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
@@ -129,6 +130,32 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
 
+### Agent sessions
+
+What the reviews learn is worth having open in the editor too. `gitdashy sync-memory --into PATH`
+copies the memory into a repo as two read-only mirrors — `general.md` and `repo.md` — for an agent
+session working there to read:
+
+```sh
+cd ~/src/my-repo
+gitdashy sync-memory --into .agent/team    # --repo defaults to this directory's origin
+```
+
+Point your agent's instruction file at them (for Claude Code, a `CLAUDE.local.md` holding
+`@.agent/team/general.md` and `@.agent/team/repo.md`) and every session starts knowing the
+conventions, pitfalls and cross-repo effects the reviews have accumulated. Re-run it whenever you
+want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
+cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled, which on
+the default interval is minutes old at most.
+
+It is a copy, not a link: Claude Code confines instruction-file imports to the project tree, so `~`,
+absolute and symlinked paths are all refused. The mirrors carry a header saying they are read-only,
+naming their source and when they were taken — edit the real memory with `n` / `g`, never the mirror,
+or the two disagree.
+
+Memory is often team-private, so `sync-memory` refuses to write anywhere git would commit it. Ignore
+the target path first (`.git/info/exclude` keeps the rule out of the tracked `.gitignore`).
+
 ## Versioning & self-update
 
 The version lives in one place — `VERSION` in `prs.py` — and shows in the header badge and via
@@ -168,6 +195,9 @@ dashy/
     github.py     everything that shells out to gh
     review.py     runs Claude headless, posts the verdict
     log.py        ~/.prs_reviewed.jsonl store + detail view
+    memory.py     ~/.prs_memory store, and the dream cleanup
+    team.py       git-backed sync of the log and memory
+    mirror.py     read-only copies of the memory, for agent sessions
     update.py     release check and self-update
 tests/            mirrors dashy/: one test file per module
 ```
