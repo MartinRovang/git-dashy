@@ -716,7 +716,8 @@ def main(scr, interval, auto, model):
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
-			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})")
+			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
+			     f" sent {current['url']} to the terminal (OSC 52) — if nothing landed, install wl-clipboard or xclip")
 			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
 			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
