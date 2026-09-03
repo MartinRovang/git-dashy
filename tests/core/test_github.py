@@ -48,3 +48,51 @@ def test_fetch_handles_bad_json(monkeypatch):
 
 
 # ---- review ----
+
+
+def test_copy_uses_first_clipboard_tool_on_path(monkeypatch):
+	from dashy.core import github
+	ran = []
+	monkeypatch.setattr(github.shutil, "which", lambda c: c == "xclip")
+	rc = [0]
+	monkeypatch.setattr(github.subprocess, "run", lambda cmd, **kw: ran.append((cmd, kw["input"])) or Result(returncode=rc[0]))
+	assert github.copy("https://x/pr/1") == "xclip"
+	assert ran == [(["xclip", "-selection", "clipboard"], "https://x/pr/1")]
+	monkeypatch.setattr(github.sys, "__stdout__", __import__("io").StringIO())
+	rc[0] = 1  # xclip on PATH but no DISPLAY: it fails, the escape must still go out
+	assert github.copy("u") == "terminal" and len(ran) == 2
+	assert github.sys.__stdout__.getvalue() == "\033]52;c;dQ==\a"
+	monkeypatch.setattr(github.shutil, "which", lambda c: None)
+	assert github.copy("u") == "terminal" and len(ran) == 2
+
+
+def test_reviewers_merges_requests_over_latest_reviews():
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "APPROVED"},
+	                                    {"author": {"login": "carol"}, "state": "CHANGES_REQUESTED"}, None]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "alice"}},
+	                                     {"requestedReviewer": {"login": "carol"}},  # re-requested after her ✗
+	                                     {"requestedReviewer": {"slug": "backend"}}, {"requestedReviewer": None}]}}
+	assert github.reviewers(node) == "✓bob ·carol ·alice ·backend"
+	assert github.reviewers({}) == ""
+
+
+def test_collaborators_and_request_review_shell_out(monkeypatch):
+	calls = []
+	def run(cmd, **kw):
+		calls.append(cmd)
+		return Result(stdout="alice\nbob\n") if cmd[2] == "repos/a/b/collaborators" else Result(returncode=1, stderr="nope")
+	monkeypatch.setattr(github.subprocess, "run", run)
+	assert github.collaborators("a/b") == ["alice", "bob"]
+	assert github.request_review("a/b", 7, "alice") == "nope"
+	assert calls[1] == ["gh", "api", "-X", "POST", "repos/a/b/pulls/7/requested_reviewers", "-f", "reviewers[]=alice"]
+	def boom(cmd, **kw):
+		raise subprocess.CalledProcessError(1, cmd, stderr="")
+	monkeypatch.setattr(github.subprocess, "run", boom)
+	assert github.collaborators("a/b") == []
+
+
+def test_request_review_reports_a_timeout_instead_of_raising(monkeypatch):
+	def hang(cmd, **kw):
+		raise subprocess.TimeoutExpired(cmd, 30)
+	monkeypatch.setattr(github.subprocess, "run", hang)
+	assert "30 seconds" in github.request_review("a/b", 7, "alice")

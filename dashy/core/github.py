@@ -1,6 +1,9 @@
 """Everything that shells out to `gh`."""
+import base64
 import json
+import shutil
 import subprocess
+import sys
 
 from . import log
 
@@ -12,7 +15,10 @@ SECTIONS = [
 ]
 DECISION = {"APPROVED": "✓ approved", "CHANGES_REQUESTED": "✗ changes requested", "REVIEW_REQUIRED": "· awaiting review"}
 DECISION_QUERY = """{ search(query: "is:pr is:open author:@me", type: ISSUE, first: 100) {
-  nodes { ... on PullRequest { url reviewDecision reviewRequests { totalCount } } } } }"""
+  nodes { ... on PullRequest { url reviewDecision
+    reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } ... on Team { slug } } } }
+    latestReviews(first: 20) { nodes { author { login } state } } } } } }"""
+REVIEW_GLYPH = {"APPROVED": "✓", "CHANGES_REQUESTED": "✗", "COMMENTED": "~", "PENDING": "·"}
 
 
 def own_status(node):
@@ -21,6 +27,42 @@ def own_status(node):
 	if decision == "CHANGES_REQUESTED" and pending:
 		return "↻ re-review requested"  # I pushed and asked again, reviewer has not looked yet
 	return DECISION.get(decision, "")
+
+
+def reviewers(node):
+	"""'✓bob ·alice' — everyone asked to review or who did, with their latest state (· = not yet)."""
+	out = {}
+	for n in (node.get("latestReviews") or {}).get("nodes") or []:
+		if n and n.get("author"):
+			out[n["author"]["login"]] = REVIEW_GLYPH.get(n.get("state"), "~")
+	for n in (node.get("reviewRequests") or {}).get("nodes") or []:
+		r = (n or {}).get("requestedReviewer") or {}
+		if r.get("login") or r.get("slug"):
+			out[r.get("login") or r["slug"]] = "·"  # a fresh request supersedes an older review
+	return " ".join(g + who for who, g in out.items())
+
+
+def collaborators(repo):
+	"""Logins with access to repo, [] when gh cannot list them (no admin, offline)."""
+	try:
+		raw = subprocess.run(["gh", "api", f"repos/{repo}/collaborators", "--paginate", "--jq", ".[].login"],
+		                     capture_output=True, text=True, check=True, timeout=30).stdout
+		return raw.split()
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+		return []
+
+
+def request_review(repo, number, login):
+	"""Ask login to review PR number; the gh error text, or "" on success."""
+	# ponytail: REST, not `gh pr edit` — that one dies on the Projects-classic deprecation warning
+	try:
+		r = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers", "-f", f"reviewers[]={login}"],
+		                   capture_output=True, text=True, timeout=30)
+	except subprocess.TimeoutExpired as e:
+		return str(e)
+	return "" if r.returncode == 0 else r.stderr.strip()
+
+
 VERDICT_FLAG = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}
 
 
@@ -47,9 +89,10 @@ def fetch():
 		try:
 			raw = subprocess.run(["gh", "api", "graphql", "-f", "query=" + DECISION_QUERY],
 			                     capture_output=True, text=True, check=True, timeout=60).stdout
-			status = {n["url"]: own_status(n) for n in json.loads(raw)["data"]["search"]["nodes"] if n}
+			nodes = {n["url"]: n for n in json.loads(raw)["data"]["search"]["nodes"] if n}
 			for p in mine:
-				p["status"] = status.get(p["url"], "")
+				n = nodes.get(p["url"], {})
+				p["status"], p["reviewers"] = own_status(n), reviewers(n)
 		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError):
 			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
@@ -70,3 +113,23 @@ def comment(repo, number, body):
 
 def open_in_browser(url):
 	subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+CLIPBOARDS = (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"], ["pbcopy"])
+
+
+def copy(text):
+	"""Put text on the clipboard: the first tool on PATH, else the OSC 52 escape most terminals honour.
+	Returns what did it ("xclip", "terminal"). ponytail: shell out or one escape, no clipboard library."""
+	for cmd in CLIPBOARDS:
+		if shutil.which(cmd[0]):
+			try:
+				if subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0:
+					return cmd[0]
+			except subprocess.TimeoutExpired:
+				pass
+			# ponytail: a tool that failed (xclip with no DISPLAY) or hung: try the next one, else the escape
+	out = sys.__stdout__  # curses owns sys.stdout's buffer; the raw tty still takes the escape
+	out.write(f"\033]52;c;{base64.b64encode(text.encode()).decode()}\a")
+	out.flush()
+	return "terminal"

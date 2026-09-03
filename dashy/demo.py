@@ -24,8 +24,9 @@ def install():
 	memory.append(None, "run make lint before flagging style")
 	memory.append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore")
 	now = datetime.now(timezone.utc)
-	mine = [pr(101, "Add retry to webhook client", hours=2, now=now),
-	        pr(98, "WIP: migrate to pydantic v2", hours=30, draft=True, now=now)]
+	mine = [dict(pr(101, "Add retry to webhook client", hours=2, now=now), status="· awaiting review", reviewers="✓bob ·carol"),
+	        dict(pr(98, "WIP: migrate to pydantic v2 and drop the hand-rolled validators in the ingest and export paths",
+	                hours=30, draft=True, now=now), reviewers="")]  # long title: overflows most terminals, shows the marquee
 	rr = [pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1, now=now),
 	      pr(207, "Cache user lookups in session middleware", "acme/web", "carol", 5, now=now),
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48, now=now)]
@@ -73,4 +74,12 @@ def install():
 		return ("merged 2 duplicate lines about tabs in acme/api\nmoved 'run make lint' to general\ndropped a stale note about the old CI",
 		        {n: "\n".join(dict.fromkeys(t.splitlines())) for n, t in memory.files().items()})
 
+	def fake_request_review(repo, number, login):
+		time.sleep(1)
+		for p in mine:
+			if p["number"] == number:
+				p["reviewers"] = (p["reviewers"] + f" ·{login}").strip()
+		return "" if login != "dave" else "dave is on leave (demo error)"
+
 	github.fetch, review.review, update.update_available, memory.dream = fake_fetch, fake_review, lambda: "", fake_dream
+	github.collaborators, github.request_review, github.copy = lambda repo: ["alice", "bob", "carol", "dave", "erin"], fake_request_review, lambda t: "demo"

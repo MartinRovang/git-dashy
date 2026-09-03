@@ -31,8 +31,8 @@ def isolated(monkeypatch, tmp_path):
 
 
 class Result:
-	def __init__(self, stdout=""):
-		self.stdout = stdout
+	def __init__(self, stdout="", returncode=0, stderr=""):
+		self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
 
 
 def claude_out(**fields):
