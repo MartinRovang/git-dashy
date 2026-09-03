@@ -54,7 +54,8 @@ def collaborators(repo):
 
 def request_review(repo, number, login):
 	"""Ask login to review PR number; the gh error text, or "" on success."""
-	r = subprocess.run(["gh", "pr", "edit", str(number), "--repo", repo, "--add-reviewer", login],
+	# ponytail: REST, not `gh pr edit` — that one dies on the Projects-classic deprecation warning
+	r = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers", "-f", f"reviewers[]={login}"],
 	                   capture_output=True, text=True, timeout=30)
 	return "" if r.returncode == 0 else r.stderr.strip()
 VERDICT_FLAG = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}

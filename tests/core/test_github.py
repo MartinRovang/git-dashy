@@ -77,11 +77,11 @@ def test_collaborators_and_request_review_shell_out(monkeypatch):
 	calls = []
 	def run(cmd, **kw):
 		calls.append(cmd)
-		return Result(stdout="alice\nbob\n") if cmd[1] == "api" else Result(returncode=1, stderr="nope")
+		return Result(stdout="alice\nbob\n") if cmd[2] == "repos/a/b/collaborators" else Result(returncode=1, stderr="nope")
 	monkeypatch.setattr(github.subprocess, "run", run)
 	assert github.collaborators("a/b") == ["alice", "bob"]
 	assert github.request_review("a/b", 7, "alice") == "nope"
-	assert calls[1] == ["gh", "pr", "edit", "7", "--repo", "a/b", "--add-reviewer", "alice"]
+	assert calls[1] == ["gh", "api", "-X", "POST", "repos/a/b/pulls/7/requested_reviewers", "-f", "reviewers[]=alice"]
 	def boom(cmd, **kw):
 		raise subprocess.CalledProcessError(1, cmd, stderr="")
 	monkeypatch.setattr(github.subprocess, "run", boom)
