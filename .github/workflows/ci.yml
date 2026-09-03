@@ -1,0 +1,29 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install pytest
+      - run: python3 -m pytest -q
+
+  version-bumped:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git fetch origin "$GITHUB_BASE_REF" --depth=1
+      - name: VERSION in dashy/__init__.py must differ from base branch
+        run: |
+          base=$(git show "origin/$GITHUB_BASE_REF:dashy/__init__.py" | grep -m1 '^VERSION = ')
+          head=$(grep -m1 '^VERSION = ' dashy/__init__.py)
+          echo "base: $base"; echo "head: $head"
+          [ "$base" != "$head" ] || { echo "::error::Bump VERSION in dashy/__init__.py before merging"; exit 1; }
