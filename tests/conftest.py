@@ -47,6 +47,7 @@ class FakeScr:
 		self.cells = {}
 	def refresh(self):
 		pass
+	noutrefresh = refresh
 	def addnstr(self, y, x, s, n, attr=0):
 		assert 0 <= y < self.h and 0 <= x < self.w and n >= 1, (y, x, n)
 		for i, ch in enumerate(s[:n]):

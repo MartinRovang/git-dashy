@@ -130,7 +130,7 @@ def draw(scr, state, sel, prompt=None):
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
 	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
-		scr.refresh()
+		scr.noutrefresh()
 		return sel, (rs[cur][1] if cur >= 0 else None)
 
 	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
@@ -303,7 +303,9 @@ def draw(scr, state, sel, prompt=None):
 	foot = prompt or FOOTER
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
-	scr.refresh()
+	# ponytail: no refresh here — getch() flushes the frame, and a popup/panel drawn on top flushes once with it.
+	# refreshing here too pushed a popup-less frame every tick, which is what stuttered the dropdowns.
+	scr.noutrefresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
 
@@ -457,6 +459,7 @@ def add_reviewer(scr, state, sel, pr):
 	"""Pick a collaborator of the PR's repo (or type a login when gh cannot list them) and request their review."""
 	repo, number = pr["repository"]["nameWithOwner"], pr["number"]
 	draw(scr, state, sel, prompt=f" {art.SPINNER[0]} fetching collaborators of {repo}…")
+	scr.refresh()  # show the prompt before blocking on gh
 	me = pr.get("author", {}).get("login")
 	options = [c for c in github.collaborators(repo) if c != me]
 	if not options:
@@ -480,6 +483,7 @@ def add_reviewer(scr, state, sel, pr):
 		return
 	err = github.request_review(repo, number, login)
 	draw(scr, state, sel, prompt=f" ✓ asked {login} to review #{number}" if not err else f" ✗ {err}"[:200])
+	scr.refresh()
 	curses.napms(900)
 	curses.flushinp()  # keys mashed during the flash would each fire another request
 	if not err:
@@ -727,6 +731,7 @@ def main(scr, interval, auto, model):
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
 			     f" sent {current['url']} to the terminal (OSC 52) — if nothing landed, install wl-clipboard or xclip")
+			scr.refresh()
 			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
 			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
