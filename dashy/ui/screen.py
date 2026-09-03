@@ -646,7 +646,11 @@ def set_path(scr, state, sel, which):
 def team_setup(scr, state, sel):
 	if team.on():
 		name = team.NAME
-		if not confirm(scr, state, sel, f" team {name} · files in {config.TEAM} · leave and go back to local memory? [y/n]"):
+		# ponytail: a symlinked TEAM keeps its checkout — only the link goes. Said here, because the
+		# prompt is the last place anyone reads before agreeing to something that deletes files.
+		where = (f"the checkout at {knowledge.tilde(os.path.realpath(config.TEAM))} is kept"
+		         if os.path.islink(config.TEAM) else f"files in {config.TEAM} are deleted")
+		if not confirm(scr, state, sel, f" team {name} · {where} · leave and go back to local memory? [y/n]"):
 			return
 		err = knowledge.leave()
 		if err:

@@ -593,14 +593,85 @@ def test_uninstall_leaves_somebody_elses_hook_of_the_same_name(monkeypatch, tmp_
 def test_a_broken_settings_file_undoes_the_symlink_and_imports(monkeypatch, tmp_path):
 	"""Every failure path used to keep whatever it had already done — this is the one nobody named."""
 	cfg, corpus = full_env(monkeypatch, tmp_path)
+	# ponytail: seeded, because an empty CLAUDE.md satisfies "@identity not in text" just as well as
+	# a preserved one — and the undo was in fact emptying it. The assertion has to be what SURVIVES.
+	(cfg / "CLAUDE.md").write_text("# mine\n\nkeep this\n")
 	(cfg / "settings.json").write_text("{not json")
 	out = install.full_apply(corpus)
 	assert any(l.startswith("FAIL") and "valid JSON" in l for l in out)
 	assert any("undone" in l for l in out)
+	assert not any("COULD NOT UNDO" in l for l in out)
 	assert not os.path.lexists(cfg / "identity")
-	assert "@identity" not in (cfg / "CLAUDE.md").read_text()
+	assert (cfg / "CLAUDE.md").read_text() == "# mine\n\nkeep this\n"  # byte for byte, not merely un-imported
 	(cfg / "settings.json").write_text("{}")
 	assert not any(l.startswith("FAIL") for l in install.full_apply(corpus))  # and it recovers
+
+
+def test_an_undone_install_leaves_no_claude_md_it_created(monkeypatch, tmp_path):
+	"""Undo means the state before. A file we made and then emptied is not that state."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "settings.json").write_text("{not json")
+	assert not (cfg / "CLAUDE.md").exists()
+	install.full_apply(corpus)
+	assert not (cfg / "CLAUDE.md").exists()
+
+
+def test_the_corpus_undo_cannot_be_retargeted_after_it_is_queued(monkeypatch, tmp_path):
+	"""A late-bound global in an rmtree lambda is a recursive delete pointed at whatever it says later."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "settings.json").write_text("{not json")
+	elsewhere = tmp_path / "someone-elses-work"
+	elsewhere.mkdir()
+	(elsewhere / "thesis.txt").write_text("years of it")
+	real_rm, calls, real_read = install.knowledge.rmtree_owned, [], install._read
+
+	def spy(path):
+		calls.append(path)
+		return real_rm(path)
+
+	def moved(path):  # the global moves AFTER the undo is queued and BEFORE it runs
+		monkeypatch.setattr(install, "CORPUS_HOME", str(elsewhere), raising=False)
+		return real_read(path)
+
+	monkeypatch.setattr(install.knowledge, "rmtree_owned", spy)
+	monkeypatch.setattr(install, "_read", moved)
+	install.full_apply(corpus)
+	assert calls and str(elsewhere) not in calls  # it deleted what it queued, not what the name says now
+	assert (elsewhere / "thesis.txt").exists()
+
+
+def test_rmtree_owned_refuses_a_link_a_root_and_a_home(tmp_path, monkeypatch):
+	"""rm -rf with no confirmation gets a gate, not a comment."""
+	from dashy.core import knowledge
+	real = tmp_path / "real"
+	real.mkdir()
+	(real / "keep").write_text("x")
+	link = tmp_path / "link"
+	os.symlink(real, link)
+	assert "link to" in knowledge.rmtree_owned(str(link))
+	assert (real / "keep").exists()  # the target is untouched
+	monkeypatch.setenv("HOME", str(tmp_path))
+	assert "refusing" in knowledge.rmtree_owned(str(tmp_path))
+	assert "refusing" in knowledge.rmtree_owned(os.sep)
+	assert knowledge.rmtree_owned(str(tmp_path / "never-existed")) == ""  # gone is gone
+	assert knowledge.rmtree_owned(str(real)) == "" and not real.exists()
+
+
+def test_leaving_a_team_does_not_delete_through_a_symlink(monkeypatch, tmp_path):
+	"""realpath-then-rmtree deleted the checkout a link pointed at — someone's actual repo."""
+	from dashy.core import knowledge
+	work = tmp_path / "my-real-checkout"
+	work.mkdir()
+	(work / "important.md").write_text("mine")
+	link = tmp_path / "team"
+	os.symlink(work, link)
+	monkeypatch.setattr(config, "TEAM", str(link))
+	monkeypatch.setattr(knowledge.team, "on", lambda: True)
+	monkeypatch.setattr(knowledge, "unpushed", lambda: 0)
+	monkeypatch.setattr(knowledge.team, "NAME", "t", raising=False)
+	assert knowledge.leave() == ""
+	assert not os.path.lexists(link)          # the link is ours
+	assert (work / "important.md").exists()   # what it pointed at is not
 
 
 def test_a_code_block_survives_being_written_back(monkeypatch, tmp_path):
@@ -633,3 +704,38 @@ def test_setup_holds_the_file_still(monkeypatch, tmp_path):
 	after = [l for l in user.read_text().splitlines() if l.startswith("## ")]
 	assert after[:3] == before  # same order, nothing moved
 	assert after[0] == "## Context"
+
+
+def test_tilde_fences_and_unclosed_ones_do_not_leak(monkeypatch, tmp_path):
+	"""Three loops each knew about ``` and none about ~~~, so a fence meant three different things."""
+	assert install.sections("## A\n\n~~~\n## B\n~~~\n") == {"A": "~~~\n## B\n~~~"}
+	# an info string can only open, so a fenced sample quoting one does not close the block
+	assert install.sections("## A\n\n```\n```python\n```\n") == {"A": "```\n```python\n```"}
+	# a longer fence is not closed by a shorter one
+	assert install.sections("## A\n\n````\n```\n## B\n````\n") == {"A": "````\n```\n## B\n````"}
+	# and an unclosed fence in an answer is closed by the writer, not left to swallow what follows
+	text = install.compose("W", "l", [("Name", "```"), ("Role", "CTO")])
+	assert install.sections(text)["Role"] == "CTO"
+
+
+def test_a_fenced_quote_of_our_own_markers_is_not_eaten(monkeypatch, tmp_path):
+	"""CLAUDE.md is the user's file; quoting the block we add is a normal thing to write in it."""
+	quoted = f"# mine\n\n```\n{install.CBEGIN}\nsample\n{install.CEND}\n```\n"
+	assert install._strip_blocks(quoted, install.CBEGIN, install.CEND) == quoted
+	# a real block beside the quoted one still goes, and only it
+	live = quoted + f"\n{install.CBEGIN}\nreal\n{install.CEND}\n"
+	out = install._strip_blocks(live, install.CBEGIN, install.CEND)
+	assert "sample" in out and "real" not in out
+
+
+def test_a_registry_from_before_the_format_changed_is_not_dropped(monkeypatch, tmp_path):
+	"""json.loads failing on every line read the whole registry back as empty, silently."""
+	reg = tmp_path / "prs_mirrors"
+	reg.write_text(f"{tmp_path}/a\t{tmp_path}/repo-a\n")
+	monkeypatch.setattr(install, "REGISTRY", str(reg))
+	assert install.registered() == [(f"{tmp_path}/a", f"{tmp_path}/repo-a", "", "")]
+	install.register(str(tmp_path / "b"), str(tmp_path / "repo-b"))
+	assert len(install.registered()) == 2  # the old line and the new one coexist
+	assert "not a path at all" not in str(install.registered())
+	reg.write_text(reg.read_text() + "not a path at all\n")
+	assert len(install.registered()) == 2  # and a line that is neither is still just skipped

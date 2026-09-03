@@ -171,6 +171,30 @@ def unpushed():
 	return len(r.stdout.strip().splitlines())
 
 
+def rmtree_owned(path):
+	"""Delete a directory this program created. Returns "" or an error string.
+
+	ponytail: rmtree is `rm -rf` with no confirmation and no trash, so it gets a gate rather than a
+	comment. Three refusals, each for a way the path can stop being the thing we think we own:
+	a symlink (deleting what it POINTS AT is never what "remove this directory" meant), something
+	that is not a directory, and a path shallow enough to be a home or a filesystem root.
+	ponytail: errors come back instead of being ignored. A half-deleted tree is precisely the state
+	that poisons the next run, and ignore_errors=True is what stops anyone finding out.
+	"""
+	real = os.path.realpath(path)
+	if os.path.islink(path):
+		return f"{tilde(path)} is a link to {tilde(real)} — removing the link, not what it points at"
+	if not os.path.isdir(path):
+		return "" if not os.path.lexists(path) else f"{tilde(path)} is not a directory"
+	if real in (os.sep, os.path.realpath(os.path.expanduser("~"))) or os.path.dirname(real) == real:
+		return f"refusing to delete {tilde(real)}"
+	try:
+		shutil.rmtree(path)
+	except OSError as e:
+		return str(e)
+	return ""
+
+
 def leave():
 	"""Drop the team checkout and go back to solo memory. Returns "" or an error string."""
 	if not team.on():
@@ -178,12 +202,18 @@ def leave():
 	ahead = unpushed()
 	if ahead != 0:  # ponytail: -1 (no upstream, no git) is also "do not delete" — the log may exist only here
 		return f"{config.TEAM} has {ahead if ahead > 0 else 'possibly'} unpushed reviews; push them first"
-	try:
-		shutil.rmtree(os.path.realpath(config.TEAM))
-		if os.path.islink(config.TEAM):
+	# ponytail: a symlinked TEAM used to be resolved with realpath and deleted at the far end. If you
+	# pointed it at a checkout you actually work in, "leave the team" deleted that repo. The link is
+	# ours to remove; what it points at is yours, and it is said out loud rather than silently kept.
+	if os.path.islink(config.TEAM):
+		try:
 			os.remove(config.TEAM)
-	except OSError as e:
-		return str(e)
+		except OSError as e:
+			return str(e)
+	else:
+		err = rmtree_owned(config.TEAM)
+		if err:
+			return err
 	config.LOG = log.LOG = config.LOCAL_LOG  # MEMORY_DIR never moved, so there is nothing to move back
 	team.NAME = team.ERROR = ""
 	return ""

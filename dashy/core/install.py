@@ -45,15 +45,54 @@ def links():
 	        (os.path.join(d, "prs-team"), os.path.join(config.TEAM, "memory"))]
 
 
+def _fence(line, open_at):
+	"""Track a fenced code block across one line. Returns the new state: None, or (char, width).
+
+	ponytail: three loops each toggled on "```" alone. "~~~" was invisible to all of them, and any
+	divergence between reader and writer corrupts text — which is how the escaping bug got in. One
+	function, so a fence means exactly one thing everywhere it matters.
+	ponytail: a closing fence is the same character, at least as wide, and carries nothing after it.
+	An info string ("```python") can only open, so a fenced block quoting one is not closed by it.
+	"""
+	bare = line.lstrip()
+	for ch in ("`", "~"):
+		if bare.startswith(ch * 3):
+			width = len(bare) - len(bare.lstrip(ch))
+			if open_at is None:
+				return (ch, width)
+			if open_at[0] == ch and width >= open_at[1] and not bare[width:].strip():
+				return None
+	return open_at
+
+
+def _outside(text):
+	"""(line, is_outside_a_fence) for every line, so markers inside a code block stay text."""
+	at = None
+	for line in text.splitlines():
+		was = at
+		at = _fence(line, at)
+		yield line, was is None and at is None
+
+
 def _strip_blocks(text, begin, end):
 	"""Every begin..end block gone, not just the first.
 
 	ponytail: a config copied between machines, or two installs racing, leaves the block twice —
 	and removing one of two is worse than removing none, because it reads as a clean uninstall.
+	ponytail: markers inside a fence are text. CLAUDE.md is the user's own file, and quoting our
+	install block in a code sample is a normal thing to do — eating it on uninstall is data loss
+	in the same file this whole path exists to protect.
 	"""
-	while begin in text and end in text.partition(begin)[2]:
-		head, _, rest = text.partition(begin)
-		_, _, tail = rest.partition(end)
+	while True:
+		lines = list(_outside(text))
+		at = next((i for i, (l, out) in enumerate(lines) if out and begin in l), None)
+		if at is None:
+			break
+		close = next((i for i, (l, out) in enumerate(lines) if i >= at and out and end in l), None)
+		if close is None:
+			break
+		head = "\n".join(l for l, _ in lines[:at])
+		tail = "\n".join(l for l, _ in lines[close + 1:])
 		text = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n")
 	return text
 
@@ -63,6 +102,39 @@ def _read(p):
 		return open(p).read()
 	except FileNotFoundError:
 		return ""
+
+
+def _unwrite(path, before):
+	"""Put a file back the way it was — gone, if it was not there."""
+	if before:
+		with open(path, "w") as f:
+			f.write(before)
+	else:
+		try:
+			os.remove(path)
+		except OSError:
+			pass
+
+
+def _write_text(path, text):
+	"""Replace a file atomically. Same reason as _write_json: these are files somebody else owns."""
+	tmp = path + ".gitdashy.tmp"
+	with open(tmp, "w") as f:
+		f.write(text)
+	os.replace(tmp, path)
+
+
+def _write_json(path, data):
+	"""Replace a config file atomically.
+
+	ponytail: json.dump into an opened "w" truncates first, so an error or a signal partway through
+	leaves settings.json half-written — unparseable, and every later run refuses on it. A temp file
+	beside it and one rename means the file is either the old one or the new one, never neither.
+	"""
+	tmp = path + ".gitdashy.tmp"
+	with open(tmp, "w") as f:
+		json.dump(data, f, indent=2)
+	os.replace(tmp, path)
 
 
 def _ours(link, target):
@@ -144,8 +216,7 @@ def remove(dry=False):
 	if BEGIN in text and END in text:
 		out.append(f"{did}remove  the import block from {knowledge.tilde(md)}")
 		if not dry:
-			with open(md, "w") as f:
-				f.write(_strip_blocks(text, BEGIN, END))
+			_write_text(md, _strip_blocks(text, BEGIN, END))
 	elif IMPORT in text:
 		out.append(f"SKIP    {knowledge.tilde(md)} imports the memory but not in a block we wrote — remove it by hand")
 	else:
@@ -170,7 +241,14 @@ def registered():
 		try:
 			e = json.loads(line)
 		except ValueError:
-			continue  # a line we cannot read is not a reason to lose the rest
+			# ponytail: the format before this was "<into>\t<repo>". Dropping such a line silently read
+			# the whole registry back as empty, so every mirror on that machine stopped refreshing with
+			# nothing said. Only reachable on a machine that ran this branch before the change — which
+			# is exactly the machines reviewing it.
+			part = line.split("\t")
+			if not part[0].startswith(os.sep):
+				continue  # a line we cannot read is not a reason to lose the rest
+			e = {"into": part[0], "repo": part[1] if len(part) > 1 else ""}
 		into = e.get("into") or e.get("forget")
 		if not isinstance(into, str) or not into:
 			continue
@@ -272,8 +350,7 @@ def _unimport(loader, into):
 			continue
 		kept.append(l)
 	if kept != text.splitlines():
-		with open(loader, "w") as f:
-			f.write("\n".join(kept).rstrip("\n") + "\n" if any(k.strip() for k in kept) else "")
+		_write_text(loader, "\n".join(kept).rstrip("\n") + "\n" if any(k.strip() for k in kept) else "")
 
 
 def wire_repo(into, loader, repo):
@@ -385,86 +462,114 @@ def full_apply(corpus, url="", dry=False):
 	undo = []
 
 	def fail(msg):
+		# ponytail: an undo that failed is reported, not swallowed. A half-unwound install is the one
+		# state worth naming out loud — it is what the next run trips over, and silence here was how
+		# the original poisoning stayed invisible for four review rounds.
+		done, left = [], []
 		for what, act in reversed(undo):
 			try:
-				act()
-			except OSError:
-				pass
-		return out + [f"FAIL  {msg}"] + ([f"      undone: {', '.join(w for w, _ in undo)}"] if undo else [])
+				err = act()
+			except OSError as e:
+				err = str(e)
+			(left.append(f"{what} ({err})") if err else done.append(what))
+		return out + [f"FAIL  {msg}"] \
+		           + ([f"      undone: {', '.join(done)}"] if done else []) \
+		           + ([f"      COULD NOT UNDO: {', '.join(left)} — remove by hand"] if left else [])
 
-	if not os.path.isdir(d):
-		return [f"FAIL  no agent config directory at {knowledge.tilde(d)} — is claude installed?"]
-	if os.path.isdir(CORPUS_HOME):
-		out.append(f"ok    {knowledge.tilde(CORPUS_HOME)} is already there — left as it is")
-	else:
-		out.append(f"{did}install  the corpus into {knowledge.tilde(CORPUS_HOME)}")
-		if not dry:
-			from . import team
-			try:
-				err = team.clone(url, CORPUS_HOME) if url else (shutil.copytree(corpus, CORPUS_HOME) and "")
-			except OSError as e:  # ponytail: the clone path checked its error; the copy path did not, and
-				err = str(e)      # then symlinked, imported and hooked a directory that was never there
-			if os.path.isdir(CORPUS_HOME):
-				undo.append((knowledge.tilde(CORPUS_HOME), lambda: shutil.rmtree(CORPUS_HOME, ignore_errors=True)))
-			if err:
-				return fail(err)
-	home = CORPUS_HOME if not dry or os.path.isdir(CORPUS_HOME) else corpus
-	link = os.path.join(d, "identity")
-	ident = os.path.join(home, "identity")
-	if _ours(link, ident):
-		out.append(f"ok    {knowledge.tilde(link)} already points at the corpus")
-	elif os.path.lexists(link):
-		out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone, so nothing is imported")
-	elif not os.path.isdir(ident):
-		# ponytail: refuse rather than leave a link to nothing. An identity that is not there imports
-		# nothing, and a dangling symlink in the agent config is worse than an install that stopped.
-		# ponytail: checked on a dry run too — --dry-run is what you reach for to find out why the real
-		# one failed, and it used to answer with a clean plan in exactly the state that had broken it.
-		return fail(f"{knowledge.tilde(ident)} has no identity/ — nothing to install")
-	else:
-		out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(ident)}")
-		if not dry:
-			os.symlink(ident, link)
-			undo.append((knowledge.tilde(link), lambda: os.remove(link)))
-	user, tmpl = os.path.join(ident, "USER.md"), os.path.join(ident, "USER.md.template")
-	if os.path.exists(user):
-		out.append("ok    USER.md is already filled in")
-	elif os.path.exists(tmpl):
-		out.append(f"{did}seed  USER.md from the template — fill it in, it is the highest-value file here")
-		if not dry:
-			shutil.copy(tmpl, user)
-	md = os.path.join(d, "CLAUDE.md")
-	text = _read(md)
-	if CBEGIN in text:
-		out.append(f"ok    {knowledge.tilde(md)} already imports the corpus")
-	else:
-		out.append(f"{did}add   the corpus imports to {knowledge.tilde(md)}")
-		if not dry:
-			with open(md, "a") as f:
-				f.write(("\n" if text and not text.endswith("\n") else "") + "\n" + corpus_block(home))
-			undo.append((f"the imports in {knowledge.tilde(md)}",
-			             lambda: open(md, "w").write(_strip_blocks(_read(md), CBEGIN, CEND))))
-	script = HOOK
-	sp = os.path.join(d, "settings.json")
+	def go():
+		if not os.path.isdir(d):
+			return [f"FAIL  no agent config directory at {knowledge.tilde(d)} — is claude installed?"]
+		if os.path.isdir(CORPUS_HOME):
+			out.append(f"ok    {knowledge.tilde(CORPUS_HOME)} is already there — left as it is")
+		else:
+			out.append(f"{did}install  the corpus into {knowledge.tilde(CORPUS_HOME)}")
+			if not dry:
+				from . import team
+				try:
+					err = team.clone(url, CORPUS_HOME) if url else (shutil.copytree(corpus, CORPUS_HOME) and "")
+				except OSError as e:  # ponytail: the clone path checked its error; the copy path did not, and
+					err = str(e)      # then symlinked, imported and hooked a directory that was never there
+				if os.path.isdir(CORPUS_HOME):
+					# ponytail: the path is bound HERE, as a default argument. `lambda: rmtree(CORPUS_HOME)`
+					# reads the global when the undo runs, so anything that rebinds it between these two
+					# points retargets a recursive delete — and the tests rebind it routinely.
+					undo.append((knowledge.tilde(CORPUS_HOME),
+					             lambda p=CORPUS_HOME: knowledge.rmtree_owned(p)))
+				if err:
+					return fail(err)
+		home = CORPUS_HOME if not dry or os.path.isdir(CORPUS_HOME) else corpus
+		link = os.path.join(d, "identity")
+		ident = os.path.join(home, "identity")
+		if _ours(link, ident):
+			out.append(f"ok    {knowledge.tilde(link)} already points at the corpus")
+		elif os.path.lexists(link):
+			out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone, so nothing is imported")
+		elif not os.path.isdir(ident):
+			# ponytail: refuse rather than leave a link to nothing. An identity that is not there imports
+			# nothing, and a dangling symlink in the agent config is worse than an install that stopped.
+			# ponytail: checked on a dry run too — --dry-run is what you reach for to find out why the real
+			# one failed, and it used to answer with a clean plan in exactly the state that had broken it.
+			return fail(f"{knowledge.tilde(ident)} has no identity/ — nothing to install")
+		else:
+			out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(ident)}")
+			if not dry:
+				os.symlink(ident, link)
+				undo.append((knowledge.tilde(link), lambda: os.remove(link)))
+		user, tmpl = os.path.join(ident, "USER.md"), os.path.join(ident, "USER.md.template")
+		if os.path.exists(user):
+			out.append("ok    USER.md is already filled in")
+		elif os.path.exists(tmpl):
+			out.append(f"{did}seed  USER.md from the template — fill it in, it is the highest-value file here")
+			if not dry:
+				shutil.copy(tmpl, user)
+				# ponytail: an unwound install must not leave a template in a corpus that was already
+				# there. Only reachable when CORPUS_HOME pre-existed — otherwise the clone's own undo
+				# takes it — which is exactly the case where the directory is not ours to litter.
+				undo.append((f"the seeded {knowledge.tilde(user)}", lambda: os.remove(user)))
+		md = os.path.join(d, "CLAUDE.md")
+		text = _read(md)
+		if CBEGIN in text:
+			out.append(f"ok    {knowledge.tilde(md)} already imports the corpus")
+		else:
+			out.append(f"{did}add   the corpus imports to {knowledge.tilde(md)}")
+			if not dry:
+				with open(md, "a") as f:
+					f.write(("\n" if text and not text.endswith("\n") else "") + "\n" + corpus_block(home))
+				# ponytail: read FIRST. `open(md, "w").write(_strip_blocks(_read(md), ...))` evaluates the
+				# callee before the argument, so the truncation happened before the read and the undo
+				# wrote back an empty file — the user's whole global CLAUDE.md, destroyed by the code
+				# added to stop this path leaving things behind.
+				# ponytail: a file we created is removed, not left empty. Undo means the state before.
+				undo.append((f"the imports in {knowledge.tilde(md)}", lambda: _unwrite(md, text)))
+		script = HOOK
+		sp = os.path.join(d, "settings.json")
+		try:
+			settings = json.loads(_read(sp) or "{}")
+		except ValueError:
+			return fail(f"{knowledge.tilde(sp)} is not valid JSON — fix it first")
+		script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
+		if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
+			out.append("ok    the SessionStart hook is already registered")
+		elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
+			out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
+		else:
+			out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
+			if not dry:
+				settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
+					{"hooks": [{"type": "command", "command": f"{shlex.quote(script)} {shlex.quote(home)}",
+					            "timeout": 10,
+					            "statusMessage": "Preparing repo notes"}]})
+				_write_json(sp, settings)
+		return out + [""] + (apply(dry) if not dry else [f"{did}do    everything plain `install` does"])
+
+	# ponytail: only fail() unwound, so anything that RAISED walked out past the undo list — a
+	# permission error on the symlink left the fresh clone at CORPUS_HOME, which is the exact
+	# poisoning the unwinding was added to remove, reached by a different door. Every exit from
+	# this function now goes through fail(), whether it was chosen or thrown.
 	try:
-		settings = json.loads(_read(sp) or "{}")
-	except ValueError:
-		return fail(f"{knowledge.tilde(sp)} is not valid JSON — fix it first")
-	script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
-	if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
-		out.append("ok    the SessionStart hook is already registered")
-	elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
-		out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
-	else:
-		out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
-		if not dry:
-			settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
-				{"hooks": [{"type": "command", "command": f"{shlex.quote(script)} {shlex.quote(home)}",
-				            "timeout": 10,
-				            "statusMessage": "Preparing repo notes"}]})
-			with open(sp, "w") as f:
-				json.dump(settings, f, indent=2)
-	return out + [""] + (apply(dry) if not dry else [f"{did}do    everything plain `install` does"])
+		return go()
+	except OSError as e:
+		return fail(str(e))
 
 
 def full_remove(dry=False):
@@ -482,8 +587,7 @@ def full_remove(dry=False):
 	if CBEGIN in text and CEND in text:
 		out.append(f"{did}remove  the corpus imports from {knowledge.tilde(md)}")
 		if not dry:
-			with open(md, "w") as f:
-				f.write(_strip_blocks(text, CBEGIN, CEND))
+			_write_text(md, _strip_blocks(text, CBEGIN, CEND))
 	sp = os.path.join(d, "settings.json")
 	try:
 		settings = json.loads(_read(sp) or "{}")
@@ -498,8 +602,7 @@ def full_remove(dry=False):
 				settings["hooks"]["SessionStart"] = kept
 				if not kept:
 					settings["hooks"].pop("SessionStart")
-				with open(sp, "w") as f:
-					json.dump(settings, f, indent=2)
+				_write_json(sp, settings)
 	known = registered()
 	if known:
 		out.append(f"{did}forget  {len(known)} mirror{'s' if len(known) > 1 else ''} — the import each repo"
@@ -539,11 +642,9 @@ def sections(text):
 	a code block is not a heading, and one that compose() escaped was never a heading — miss either and
 	setup, which rewrites the file from what this returns, silently rearranges what you wrote.
 	"""
-	out, key, buf, fence = {}, None, [], False
-	for line in text.splitlines():
-		if line.lstrip().startswith("```"):
-			fence = not fence
-		if line.startswith("## ") and not fence:
+	out, key, buf = {}, None, []
+	for line, plain in _outside(text):
+		if line.startswith("## ") and plain:
 			if key is not None:
 				_add(out, key, buf)
 			key, buf = line[3:].strip(), []
@@ -562,22 +663,24 @@ def _escape(body):
 	while rendering a literal backslash on disk, and USER.md is read by the agent as-is, not through
 	sections(). A guard only half of a round trip knows about corrupts the other half.
 	"""
-	out, fence = [], False
+	out, at = [], None
 	for l in body.splitlines():
-		if l.lstrip().startswith("```"):
-			fence = not fence
-		out.append(("\\" + l) if l.startswith("#") and not fence else l)
+		was, at = at, _fence(l, at)
+		out.append(("\\" + l) if l.startswith("#") and was is None and at is None else l)
+	# ponytail: an answer with an unclosed fence would otherwise bleed into the sections after it —
+	# the writer tracks fences per body, the reader per file, so the next read hands back one section
+	# swallowing the rest. Closing it here keeps the writer's invariant local to the answer.
+	if at is not None:
+		out.append(at[0] * at[1])
 	return "\n".join(out)
 
 
 def _unescape(body):
 	# ponytail: a literal "\#" somebody typed comes back as "#". Lossy, and rarer than the corruption
 	# escaping prevents — but it is a real edit to their text, so it is written down rather than assumed.
-	out, fence = [], False
-	for l in body.splitlines():
-		if l.lstrip().startswith("```"):
-			fence = not fence
-		out.append(l[1:] if l.startswith("\\#") and not fence else l)
+	out = []
+	for l, plain in _outside(body):
+		out.append(l[1:] if l.startswith("\\#") and plain else l)
 	return "\n".join(out)
 
 
@@ -627,8 +730,7 @@ def setup(ask, corpus_home=None):
 		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.",
 		               [(k, said.get(k, have.get(k, ""))) for k in order])
 		if text:
-			with open(user, "w") as f:
-				f.write(text)
+			_write_text(user, text)
 			out.append(f"wrote  {knowledge.tilde(user)}")
 		else:
 			out.append(f"ok     {knowledge.tilde(user)} left as it was — nothing answered")
@@ -648,8 +750,7 @@ def setup(ask, corpus_home=None):
 	if not text:
 		return out + [f"ok     no brief written — `gitdashy setup` again whenever you want one"]
 	os.makedirs(os.path.dirname(dest), exist_ok=True)
-	with open(dest, "w") as f:
-		f.write(text)
+	_write_text(dest, text)
 	out.append(f"wrote  {knowledge.tilde(dest)}")
 	if not mine:
 		team.push_dir(config.TEAM, "memory: the project brief", "sync")
