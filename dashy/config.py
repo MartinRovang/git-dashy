@@ -17,8 +17,8 @@ LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # 
 LOCAL_MEMORY, LOCAL_LOG = MEMORY_DIR, LOG
 INTERVALS = [60, 120, 300, 600, 900]  # i cycles
 INTERVAL = 300  # seconds between refreshes, --interval overrides
-NOTIFY = os.environ.get("PRS_NOTIFY", "1") != "0"  # desktop popup when a PR asks for me; N toggles
-THEME = os.environ.get("PRS_THEME", "dashy")  # colour theme, c cycles; names in ui.screen.THEMES
+NOTIFY = os.environ.get("PRS_NOTIFY", "1") != "0"  # desktop popup when a PR asks for me; the Esc menu toggles it
+THEME = os.environ.get("PRS_THEME", "dashy")  # colour theme, the Esc menu cycles it; names in ui.screen.THEMES
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
 SUBS = ["all", "open", "off"]  # which rows get a summary line under them
 SUB = "all"
@@ -34,7 +34,8 @@ ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "noti
 def load():
 	"""Saved settings override the defaults above; an env var or CLI flag still wins over the file."""
 	try:
-		saved = json.load(open(SETTINGS))
+		with open(SETTINGS) as f:
+			saved = json.load(f)
 	except (OSError, ValueError):
 		return
 	for key, name in SAVED.items():
