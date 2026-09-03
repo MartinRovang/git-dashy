@@ -159,9 +159,17 @@ once do not conflict.
 source that reviews read *alongside* yours, and a fact only reaches it when you send it:
 
 ```
-P  →  the facts of yours the team does not have, one at a time
+P  →  ★ 2 people found this
+      neo-api CI reports "skipping" for format-check
       t  share this one       x  forget it       esc  leave it
 ```
+
+Facts two people arrived at independently sort first and say so. That works without anyone's drafts
+leaving their machine: when a fact is promoted into your own memory it is also written to
+`memory/pool/<you>/`, a record of what you have already accepted — evidence only, never read into
+anyone's prompt, mirror or dream. Two people's pools agreeing is four independent reviews across two
+humans. It only covers repos already named in the shared review log, so it tells the team nothing that
+reviewing there had not already told them. Sharing or forgetting a fact withdraws it from the pool.
 
 Nothing reaches team memory automatically. A wrong fact in your own memory you meet again tomorrow and
 fix; a wrong fact in the team's lands in contexts where nobody who could correct it will ever see it

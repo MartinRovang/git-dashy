@@ -128,3 +128,69 @@ def test_dream_with_no_memory_raises(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "none"))
 	with pytest.raises(ValueError):
 		memory.dream("opus")
+
+
+def logged(tmp_path, *repos):
+	"""Put repos into the shared review log — pooling only covers names the team can already see."""
+	from dashy.core import log
+	with open(log.LOG, "w") as f:
+		for r in repos:
+			f.write('{"pr": {"repository": {"nameWithOwner": "%s"}}}\n' % r)
+
+
+def test_a_promoted_fact_is_pooled_only_for_a_repo_the_team_can_already_see(monkeypatch, tmp_path):
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path, "a/b")
+	memory.append("a/b", "CI skips the DB tests")
+	memory.append("a/b", "CI skips the DB tests")  # promoted
+	memory.append("secret/side", "my weekend project uses bun")
+	memory.append("secret/side", "my weekend project uses bun")  # promoted, but never reviewed by the team
+	me = memory.whoami()
+	assert facts(memory.pool_path(me, "a/b")) == ["- CI skips the DB tests"]
+	assert not os.path.exists(memory.pool_path(me, "secret/side"))  # the repo name never leaves
+	assert facts(memory.path("secret/side")) == ["- my weekend project uses bun"]  # still yours
+
+
+def test_a_draft_is_never_pooled(monkeypatch, tmp_path):
+	in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path, "a/b")
+	memory.append("a/b", "only one review said this")
+	assert not os.path.exists(memory.pool_path(memory.whoami(), "a/b"))  # evidence means accepted, not proposed
+
+
+def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path, "a/b")
+	memory.append("a/b", "the API owns all validation")
+	memory.append("a/b", "the API owns all validation")
+	# a teammate's checkout brings their own pool along
+	mate = os.path.join(config.TEAM, "memory", memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- The API owns all validation.\n")  # reworded
+	index = memory.pools()
+	assert memory.backers(index, "a/b", "the API owns all validation") == sorted([memory.whoami(), "martin"])
+	assert memory.backers(index, "a/b", "something nobody said") == []
+
+
+def test_sharing_and_forgetting_withdraw_the_evidence(monkeypatch, tmp_path):
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path, "a/b")
+	memory.append("a/b", "keep this one")
+	memory.append("a/b", "keep this one")
+	me = memory.whoami()
+	assert os.path.exists(memory.pool_path(me, "a/b"))
+	memory.share("a/b", "keep this one")
+	assert not os.path.exists(memory.pool_path(me, "a/b"))  # it is team memory now, not evidence
+	memory.append("a/b", "drop this one")
+	memory.append("a/b", "drop this one")
+	memory.forget("a/b", "drop this one")
+	assert not os.path.exists(memory.pool_path(me, "a/b"))  # withdrawn when you no longer accept it
+
+
+def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	mate = os.path.join(config.TEAM, "memory", memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- something only martin accepted\n")
+	assert "martin accepted" not in memory.read("a/b")
+	assert not any("pool" in k for k in memory.files())  # nor into the dream

@@ -6,13 +6,15 @@ the team's memory is never automatic — that lands in contexts where nobody who
 it happen — so it takes one keypress from you.
 """
 import difflib
+import json
 import os
 import re
 
 from .. import config
-from . import team
+from . import log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
+POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.82  # difflib ratio above which two wordings count as the same fact
 
@@ -80,6 +82,63 @@ def _append_line(p, fact):
 		f.write(f"- {fact}\n")
 
 
+def whoami():
+	return re.sub(r"[^A-Za-z0-9_-]", "", os.environ.get("USER", "")) or "someone"
+
+
+def pool_path(user, repo):
+	return os.path.join(config.TEAM, "memory", POOL, user, slug(repo))
+
+
+def logged_repos():
+	"""Repos named in the shared review log — the team can already see these names."""
+	out = set()
+	try:
+		with open(log.LOG) as f:
+			for line in f:
+				try:
+					out.add(json.loads(line)["pr"]["repository"]["nameWithOwner"])
+				except (ValueError, KeyError, TypeError):
+					continue
+	except OSError:
+		pass
+	return out
+
+
+def _pool(repo, fact):
+	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt.
+
+	ponytail: only for repos already named in the shared log. Reviewing there put the repo in front of
+	the team already, so this discloses nothing that reviewing did not — and it bootstraps on its own,
+	which "repos the team already has memory for" could not, since at the start that set is empty.
+	"""
+	if team.on() and repo in logged_repos():
+		_append_line(pool_path(whoami(), repo), fact)
+
+
+def pools():
+	"""{user: [(repo, fact)]} across everyone's pool. {} when you are not in a team."""
+	root = os.path.join(config.TEAM, "memory", POOL)
+	out = {}
+	for user in sorted(os.listdir(root)) if team.on() and os.path.isdir(root) else []:
+		d = os.path.join(root, user)
+		if not os.path.isdir(d):
+			continue
+		items = []
+		for name in sorted(os.listdir(d)):
+			if name.endswith(".md"):
+				repo = None if name == "general.md" else name[:-3].replace("__", "/")
+				items += [(repo, f) for f in _facts(os.path.join(d, name))]
+		if items:
+			out[user] = items
+	return out
+
+
+def backers(index, repo, fact):
+	"""Who has accepted this fact, from a pools() index. Two names is two people's reviewers agreeing."""
+	return sorted(u for u, items in index.items() if any(r == repo and _same(f, fact) for r, f in items))
+
+
 def known(repo):
 	"""Every approved fact already covering `repo`, across both sources and both scopes."""
 	return [f for _, base in sources() for scope in (None, repo) for f in _facts(path(scope, base))]
@@ -125,6 +184,7 @@ def append(repo, text):
 	promoted = [t for n, t in items if n >= PROMOTE_AT]
 	for t in promoted:
 		_append_line(path(repo), t)
+		_pool(repo, t)
 	return promoted
 
 
@@ -147,11 +207,23 @@ def share(repo, fact):
 	"""Put one of your facts into the team's memory. Returns the file written."""
 	dest = path(repo, os.path.join(config.TEAM, "memory"))
 	_append_line(dest, fact)
+	_unpool(repo, fact)  # it is memory now; keeping the evidence would just grow forever
 	return dest
 
 
+def _unpool(repo, fact):
+	p = pool_path(whoami(), repo)
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _same(_parse(l)[1], fact)]
+	if kept:
+		with open(p, "w") as f:
+			f.write("\n".join(kept) + "\n")
+	elif os.path.exists(p):
+		os.remove(p)
+
+
 def forget(repo, fact):
-	"""Drop one fact from your own memory."""
+	"""Drop one fact from your own memory, and withdraw it as evidence."""
+	_unpool(repo, fact)
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _same(_parse(l)[1], fact)]
 	if kept:

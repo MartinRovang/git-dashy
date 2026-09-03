@@ -484,12 +484,16 @@ def share_screen(scr, state, sel):
 		if not items:
 			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
 			return
+		index = memory.pools()  # ponytail: one scan per redraw, not one per fact
+		items.sort(key=lambda rf: -len(memory.backers(index, *rf)))  # what two people found comes first
 		i %= len(items)
 		repo, fact = items[i]
+		who = memory.backers(index, repo, fact)
+		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
 		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
 		draw(scr, state, sel, prompt=" ")
 		panel(scr, f"share with {team.NAME or 'the team'}  ·  {i + 1}/{len(items)}",
-		      [(repo or "general", "yours"), ("", ""), *body],
+		      [(repo or "general", mark), ("", ""), *body],
 		      "[t] share   [x] forget   [j/k] move   [esc] close")
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN):

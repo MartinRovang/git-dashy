@@ -389,3 +389,18 @@ def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
 	screen.getch, screen.timeout = _keys(27), lambda t: None
 	ui.share_screen(screen, st, 0)
 	assert "nothing of yours the team is missing" in screen.text()
+
+
+def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- only I found this\n- both of us found this\n")
+	pool = tmp_path / "team" / "memory" / "pool"
+	(pool / "me").mkdir(parents=True)
+	(pool / "martin").mkdir(parents=True)
+	(pool / "me" / "a__b.md").write_text("- both of us found this\n")
+	(pool / "martin" / "a__b.md").write_text("- Both of us found this.\n")  # reworded, still the same fact
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	out = screen.text()
+	assert "both of us found this" in out and "★ 2 people found this" in out  # corroborated one is shown first
+	assert "1/2" in out
