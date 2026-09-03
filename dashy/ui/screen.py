@@ -472,6 +472,7 @@ def add_reviewer(scr, state, sel, pr):
 	err = github.request_review(repo, number, login)
 	draw(scr, state, sel, prompt=f" ✓ asked {login} to review #{number}" if not err else f" ✗ {err}"[:200])
 	curses.napms(900)
+	curses.flushinp()  # keys mashed during the flash would each fire another request
 	if not err:
 		state.wake.set()  # refetch so the new reviewer shows on the row
 
@@ -717,6 +718,7 @@ def main(scr, interval, auto, model):
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})")
 			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
+			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
