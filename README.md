@@ -52,7 +52,8 @@ gitdashy remember "the viewer owns mask state"   # file what a coding session le
 
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
-again but the reviewer has not looked yet.
+again but the reviewer has not looked yet. Next to it, one chip per reviewer: `✓bob` approved,
+`✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
 
 ## Keys
 
@@ -60,6 +61,8 @@ again but the reviewer has not looked yet.
 |-----|------|
 | `j` / `k`, `↑` / `↓` | move |
 | `o` | open the PR in your browser |
+| `y` | copy the PR URL to the clipboard |
+| `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |

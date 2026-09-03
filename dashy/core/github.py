@@ -55,9 +55,14 @@ def collaborators(repo):
 def request_review(repo, number, login):
 	"""Ask login to review PR number; the gh error text, or "" on success."""
 	# ponytail: REST, not `gh pr edit` — that one dies on the Projects-classic deprecation warning
-	r = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers", "-f", f"reviewers[]={login}"],
-	                   capture_output=True, text=True, timeout=30)
+	try:
+		r = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers", "-f", f"reviewers[]={login}"],
+		                   capture_output=True, text=True, timeout=30)
+	except subprocess.TimeoutExpired as e:
+		return str(e)
 	return "" if r.returncode == 0 else r.stderr.strip()
+
+
 VERDICT_FLAG = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}
 
 
@@ -118,8 +123,11 @@ def copy(text):
 	Returns what did it ("xclip", "terminal"). ponytail: shell out or one escape, no clipboard library."""
 	for cmd in CLIPBOARDS:
 		if shutil.which(cmd[0]):
-			subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-			return cmd[0]
+			try:
+				subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+				return cmd[0]
+			except subprocess.TimeoutExpired:
+				continue  # a tool that hangs instead of daemonizing: try the next one, else the escape
 	out = sys.__stdout__  # curses owns sys.stdout's buffer; the raw tty still takes the escape
 	out.write(f"\033]52;c;{base64.b64encode(text.encode()).decode()}\a")
 	out.flush()

@@ -86,3 +86,10 @@ def test_collaborators_and_request_review_shell_out(monkeypatch):
 		raise subprocess.CalledProcessError(1, cmd, stderr="")
 	monkeypatch.setattr(github.subprocess, "run", boom)
 	assert github.collaborators("a/b") == []
+
+
+def test_request_review_reports_a_timeout_instead_of_raising(monkeypatch):
+	def hang(cmd, **kw):
+		raise subprocess.TimeoutExpired(cmd, 30)
+	monkeypatch.setattr(github.subprocess, "run", hang)
+	assert "30 seconds" in github.request_review("a/b", 7, "alice")

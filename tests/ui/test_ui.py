@@ -467,3 +467,16 @@ def test_draw_marquees_selected_overflowing_title(screen):
 	st.sections = [("MINE", [dict(PR, title="tiny")], None)]
 	ui.draw(screen, st, 0)
 	assert not ui.SCROLLING[0]
+
+
+def test_add_reviewer_picks_a_collaborator_and_requests_them(screen, monkeypatch, st):
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None)], time.time()
+	asked = []
+	monkeypatch.setattr(ui.github, "collaborators", lambda repo: ["me", "alice", "bob"])
+	monkeypatch.setattr(ui.github, "request_review", lambda repo, n, login: asked.append((repo, n, login)) or "")
+	monkeypatch.setattr(ui.curses, "napms", lambda ms: None, raising=False)
+	monkeypatch.setattr(ui.curses, "flushinp", lambda: None, raising=False)
+	screen.getch, screen.timeout = _keys(ord("j"), 10), lambda t: None  # down past alice, enter on bob
+	ui.add_reviewer(screen, st, 0, dict(PR))
+	assert asked == [("a/b", 7, "bob")] and "✓ asked bob" in screen.text() and st.wake.is_set()
+
