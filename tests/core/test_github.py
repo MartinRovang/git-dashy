@@ -58,7 +58,9 @@ def test_copy_uses_first_clipboard_tool_on_path(monkeypatch):
 	assert github.copy("https://x/pr/1") == "xclip"
 	assert ran == [(["xclip", "-selection", "clipboard"], "https://x/pr/1")]
 	monkeypatch.setattr(github.shutil, "which", lambda c: None)
-	assert github.copy("u") is None and len(ran) == 1
+	monkeypatch.setattr(github.sys, "__stdout__", __import__("io").StringIO())
+	assert github.copy("u") == "terminal" and len(ran) == 1
+	assert github.sys.__stdout__.getvalue() == "\033]52;c;dQ==\a"
 
 
 def test_reviewers_merges_requests_over_latest_reviews():

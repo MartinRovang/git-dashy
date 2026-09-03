@@ -1,7 +1,9 @@
 """Everything that shells out to `gh`."""
+import base64
 import json
 import shutil
 import subprocess
+import sys
 
 from . import log
 
@@ -111,9 +113,13 @@ CLIPBOARDS = (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--cli
 
 
 def copy(text):
-	"""Put text on the clipboard with the first tool on PATH; the tool's name, or None if there is none."""
-	for cmd in CLIPBOARDS:  # ponytail: shell out, no clipboard library
+	"""Put text on the clipboard: the first tool on PATH, else the OSC 52 escape most terminals honour.
+	Returns what did it ("xclip", "terminal"). ponytail: shell out or one escape, no clipboard library."""
+	for cmd in CLIPBOARDS:
 		if shutil.which(cmd[0]):
 			subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 			return cmd[0]
-	return None
+	out = sys.__stdout__  # curses owns sys.stdout's buffer; the raw tty still takes the escape
+	out.write(f"\033]52;c;{base64.b64encode(text.encode()).decode()}\a")
+	out.flush()
+	return "terminal"

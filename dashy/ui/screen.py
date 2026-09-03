@@ -715,7 +715,7 @@ def main(scr, interval, auto, model):
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
-			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}" if tool else " no clipboard tool found (wl-copy, xclip, xsel or pbcopy)")
+			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})")
 			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
