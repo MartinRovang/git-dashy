@@ -100,6 +100,7 @@ What needs installing is the other half: making a regular coding session read th
 |---|---|
 | `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
+| `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 
@@ -253,7 +254,8 @@ cd ~/src/my-repo
 gitdashy sync-memory --into .agent/team    # --repo defaults to this directory's origin
 ```
 
-One command per repo wires that in:
+You normally never do this by hand — `install --full`'s hook does it in every repo you open. The command
+exists for wiring an agent that is not Claude Code, and looks like this:
 
 ```sh
 cd ~/src/my-repo

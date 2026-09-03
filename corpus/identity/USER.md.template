@@ -1,8 +1,8 @@
 # Who you are
 
-Just you. What the *team* is building lives in the team's own knowledge repo, in
-`project.md`, written once and read by everyone — so it does not belong here, and you
-should not have to restate it.
+Just you. What is being *built* goes in `project.md` — `gitdashy setup` will ask you for
+both. On your own that file is yours; in a team it is the team's, written once and read by
+everyone. Either way it is not this file, and you should not restate it here.
 
 A few honest lines beat a long empty form.
 

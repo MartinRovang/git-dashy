@@ -33,13 +33,18 @@ def queue_path(repo):
 
 
 def project():
-	"""The team's stated project context — objective, domain, constraints. "" when there is none.
+	"""What the work is for — yours, then the team's. "" when neither has been written.
+
+	ponytail: two sources, like everything else. It used to be the team's alone, which left anyone
+	working on their own with nowhere to put it — and a USER.md template pointing them at a file that
+	could not exist.
 
 	ponytail: declared, not learned. Nothing in the promotion pipeline may touch it: it is not a fact
-	someone's reviewer noticed twice, it is what the team says the work is for. So it is excluded from
+	someone's reviewer noticed twice, it is what somebody says the work is for. So it is excluded from
 	the dream, from sharing, and from ever being read as a repo's facts.
 	"""
-	return _read(os.path.join(config.TEAM, "memory", PROJECT)) if team.on() else ""
+	parts = [f"### {label}\n{t}" for label, base in sources() if (t := _read(os.path.join(base, PROJECT)))]
+	return "\n\n".join(parts)
 
 
 def sources():
@@ -148,6 +153,11 @@ def team_visible(repo):
 	if repo is None:
 		return True  # a general fact names no repo, so there is nothing to disclose
 	return os.path.exists(path(repo, os.path.join(config.TEAM, "memory"))) or repo in logged_repos()
+
+
+def project_path(mine=True):
+	"""Where a project brief is written: yours, or the team's."""
+	return os.path.join(config.MEMORY_DIR if mine else os.path.join(config.TEAM, "memory"), PROJECT)
 
 
 def _pool(repo, fact):

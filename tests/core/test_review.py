@@ -208,5 +208,6 @@ def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	review(dict(PR), "opus")
-	assert "What this team is building, and for whom:\nWe build X for surgeons." in prompts[0]
-	assert prompts[0].index("this team is building") < prompts[0].index("Respond with ONLY")
+	assert "What this is being built for, and for whom:" in prompts[0]
+	assert "### team" in prompts[0] and "We build X for surgeons." in prompts[0]  # labelled, like any source
+	assert prompts[0].index("being built for") < prompts[0].index("Respond with ONLY")

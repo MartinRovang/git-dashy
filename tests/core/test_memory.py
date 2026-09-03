@@ -334,3 +334,21 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 def test_no_team_means_no_brief(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.project() == ""
+
+
+def test_a_brief_belongs_to_whoever_wrote_it(monkeypatch, tmp_path):
+	"""It used to be the team's alone, which left anyone working solo with nowhere to put it."""
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	(mine / "project.md").write_text("A tool for one person.\n")
+	assert memory.project() == "### mine\nA tool for one person."
+	(shared / "project.md").write_text("What we build together.\n")
+	both = memory.project()
+	assert "### mine" in both and "### team org/t" in both and both.index("mine") < both.index("team")
+	assert memory.shareable() == []          # still never offered for sharing
+	assert not any("project" in k for k in memory.files())  # and still not dreamt over
+
+
+def test_a_solo_brief_reaches_a_review_with_no_team_at_all(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "project.md").write_text("Just me, building a thing.\n")
+	assert memory.project() == "### mine\nJust me, building a thing."

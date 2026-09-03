@@ -429,3 +429,62 @@ def full_remove(dry=False):
 				unregister(into)
 	out.append(f"note    {knowledge.tilde(CORPUS_HOME)} is left on disk — you may have edited it")
 	return out + [""] + remove(dry)
+
+
+ASK_YOU = (("Name", "what you would like to be called"),
+           ("Role", "what you do, and where you are strongest"),
+           ("How you work", "where you want friction and where you do not"),
+           ("What you own", "the parts of the system that are yours to answer for"))
+ASK_PROJECT = (("The project", "what it is, and who uses it"),
+               ("Why it matters", "the outcome that makes the work worth doing"),
+               ("Constraints", "regulatory, contractual, performance — anything with real consequences"),
+               ("How the code is shaped", "what a newcomer would otherwise learn the hard way"))
+
+
+def compose(title, lead, answers):
+	"""A markdown brief from (heading, answer) pairs, skipping the ones left blank."""
+	body = "".join(f"## {k}\n\n{v}\n\n" for k, v in answers if v)
+	return f"# {title}\n\n{lead}\n\n{body}" if body else ""
+
+
+def setup(ask, corpus_home=None):
+	"""Walk the two briefs a corpus needs, writing only what was answered. Returns report lines.
+
+	ponytail: asked rather than templated. A blank template is a template nobody fills in, and an agent
+	that knows neither who you are nor what the work is for reasons from the code alone — which is the
+	one thing it can already see.
+	"""
+	out = []
+	home = corpus_home or CORPUS_HOME
+	user = os.path.join(home, "identity", "USER.md")
+	if os.path.isdir(os.path.dirname(user)):
+		got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_YOU]
+		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", got)
+		if text:
+			with open(user, "w") as f:
+				f.write(text)
+			out.append(f"wrote  {knowledge.tilde(user)}")
+		else:
+			out.append(f"ok     {knowledge.tilde(user)} left as it was — nothing answered")
+	else:
+		out.append(f"SKIP   no corpus at {knowledge.tilde(home)} — run `gitdashy install --full` first")
+	from . import memory, team
+	mine = not team.on()
+	dest = memory.project_path(mine=mine)
+	whose = "yours" if mine else f"the team's, shared with everyone in {team.NAME or 'it'}"
+	if os.path.exists(dest):
+		out.append(f"ok     {knowledge.tilde(dest)} already written — edit it directly to change it")
+		return out
+	out.append("")
+	out.append(f"Now what the work is for. This brief is {whose}, and every review reads it.")
+	got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_PROJECT]
+	text = compose("What is being built", "Written by `gitdashy setup`. Every review reads this.", got)
+	if not text:
+		return out + [f"ok     no brief written — `gitdashy setup` again whenever you want one"]
+	os.makedirs(os.path.dirname(dest), exist_ok=True)
+	with open(dest, "w") as f:
+		f.write(text)
+	out.append(f"wrote  {knowledge.tilde(dest)}")
+	if not mine:
+		team.push_dir(config.TEAM, "memory: the project brief", "sync")
+	return out

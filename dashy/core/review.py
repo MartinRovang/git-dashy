@@ -99,7 +99,7 @@ def review(pr, model):
 		mem, prev = memory.read(repo), log.last(pr["url"])
 		brief = memory.project()
 		prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
-		                       project="\n\nWhat this team is building, and for whom:\n" + brief if brief else "",
+		                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
 		                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 		                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs

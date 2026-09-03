@@ -300,3 +300,49 @@ def test_forgetting_a_mirror_leaves_its_files_alone(monkeypatch, tmp_path):
 	install.register(str(live), "o/n")
 	assert install.unregister(str(live)) is True
 	assert install.registered() == [] and (live / "repo.md").exists()
+
+
+def test_setup_writes_only_what_was_answered(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	answers = iter(["Nils", "", "ask first", "", "a platform", "", "CE marking", ""])
+	out = install.setup(lambda p: next(answers), str(home))
+	user = (home / "identity" / "USER.md").read_text()
+	assert "## Name\n\nNils" in user and "## How you work\n\nask first" in user
+	assert "## Role" not in user and "## What you own" not in user  # blanks are skipped, not left empty
+	brief = (tmp_path / "mem" / "project.md").read_text()
+	assert "## The project\n\na platform" in brief and "## Constraints\n\nCE marking" in brief
+	assert any("wrote" in l and "USER.md" in l for l in out)
+
+
+def test_setup_answering_nothing_writes_nothing(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	(home / "identity" / "USER.md").write_text("# mine\n")
+	out = install.setup(lambda p: "", str(home))
+	assert (home / "identity" / "USER.md").read_text() == "# mine\n"  # never clobbered by a skipped run
+	assert not (tmp_path / "mem" / "project.md").exists()
+	assert any("nothing answered" in l for l in out) and any("no brief written" in l for l in out)
+
+
+def test_setup_never_overwrites_a_brief_that_exists(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	os.makedirs(tmp_path / "mem")
+	(tmp_path / "mem" / "project.md").write_text("ours, already written\n")
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	out = install.setup(lambda p: "new answer", str(home))
+	assert (tmp_path / "mem" / "project.md").read_text() == "ours, already written\n"
+	assert any("already written" in l for l in out)
+
+
+def test_setup_says_so_with_no_corpus_installed(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	out = install.setup(lambda p: "x", str(tmp_path / "nope"))
+	assert any("SKIP" in l and "install --full" in l for l in out)

@@ -12,6 +12,7 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy setup
        gitdashy self-check [--model NAME]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
@@ -50,6 +51,10 @@ init wires one repo, so a session there also reads that repo's own facts: it exc
   (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
   path so the running dashboard re-mirrors it on every refresh. No hooks. --into DIR --forget stops
   refreshing one; the files stay, they just go still.
+
+setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
+  for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
+  one, and every review reads the brief. Re-runnable, and every question is skippable.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -105,6 +110,18 @@ def install(argv):
 			return print("\nnothing changed")
 	print("")
 	print("\n".join(install_mod.full_apply(corpus, url) if full else install_mod.apply()))
+
+
+def setup(argv):
+	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for."""
+	print("Two short briefs. Leave any line blank to skip it, and edit the files later — nothing is final.\n")
+	def ask(prompt):
+		try:
+			return input(f"  {prompt}\n  > ").strip()
+		except (EOFError, KeyboardInterrupt):
+			raise SystemExit("\nnothing written")
+	team.activate()
+	print("\n" + "\n".join(install_mod.setup(ask)))
 
 
 def init(argv):
@@ -163,6 +180,8 @@ def run(argv=None):
 		return remember(argv)
 	if len(argv) > 1 and argv[1] == "install":
 		return install(argv)
+	if len(argv) > 1 and argv[1] == "setup":
+		return setup(argv)
 	if len(argv) > 1 and argv[1] == "init":
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "self-check":

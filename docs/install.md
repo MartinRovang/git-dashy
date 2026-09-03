@@ -81,7 +81,30 @@ you added them by hand — it says so and leaves them, rather than deleting your
 
 ---
 
-## What `gitdashy init` writes, per repo
+## `gitdashy init` — what it is, and when you would ever type it
+
+**You normally do not.** `install --full` registers a hook that runs it in every repo you
+open. It is listed here because it is the seam a different agent gets wired through.
+
+It does exactly four things, to one repo:
+
+| | |
+|---|---|
+| writes `DIR/repo.md` | a read-only copy of what reviews learned about **this** repo |
+| adds `DIR` to `.git/info/exclude` | so git never sees it — never the tracked `.gitignore` |
+| appends one line to `--loader` | `@DIR/repo.md`, the import that makes a session load it |
+| registers `DIR` | so the running dashboard refreshes it each tick |
+
+That is the whole job. It does **not** seed `.agent/STATE.md`, does not create notes, and
+does not install anything — the hook does those, around it.
+
+One consequence of running it by hand: it excludes only the mirror directory, while the
+hook excludes `.agent/` and the loader wholesale. So a hand-run `init` followed by adding
+`.agent/STATE.md` yourself leaves that file **visible to git**.
+
+`gitdashy init --into DIR --forget` stops refreshing one. The files stay; they just go still.
+
+## What it writes, in detail
 
 A **project-level** import refuses to follow a symlink, whether it points at a file or a
 directory. Both were tested. So a repo's own facts have to be *copied* in:
