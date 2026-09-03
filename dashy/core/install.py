@@ -148,6 +148,9 @@ def registered():
 	ponytail: deduplicated on READ, so register can append without a lock. The hook runs at every
 	session start, and two starting together would otherwise interleave a read-modify-write and drop one.
 	ponytail: root and loader may be "" — entries written before they were recorded.
+	ponytail: append-only in both directions, so the file only grows. Self-limiting per path — a
+	tombstoned entry leaves this list, so refresh writes one tombstone and not one per tick — but
+	repeated init/--forget cycles never shrink it. Compact on read-then-rewrite if it ever matters.
 	"""
 	seen = {}
 	for line in _read(REGISTRY).splitlines():
@@ -479,9 +482,28 @@ ASK_PROJECT = (("The project", "what it is, and who uses it"),
 SETUP_MARK = "<!-- written by gitdashy setup -->"
 
 
-def compose(title, lead, answers):
-	"""A markdown brief from (heading, answer) pairs, skipping the ones left blank."""
-	body = "".join(f"## {k}\n\n{v}\n\n" for k, v in answers if v)
+def sections(text):
+	"""{heading: body} from a brief, in file order. Anything above the first `## ` is not a section."""
+	out, key, buf = {}, None, []
+	for line in text.splitlines():
+		if line.startswith("## "):
+			if key is not None:
+				out[key] = "\n".join(buf).strip()
+			key, buf = line[3:].strip(), []
+		elif key is not None:
+			buf.append(line)
+	if key is not None:
+		out[key] = "\n".join(buf).strip()
+	return out
+
+
+def compose(title, lead, answers, extra=()):
+	"""A markdown brief from (heading, body) pairs, dropping the empty ones.
+
+	ponytail: `extra` carries sections nobody asked about — added by hand, or by an older version that
+	asked different questions. A rewrite that only knew its own questions would delete them.
+	"""
+	body = "".join(f"## {k}\n\n{v}\n\n" for k, v in list(answers) + list(extra) if v)
 	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
@@ -503,8 +525,18 @@ def setup(ask, corpus_home=None):
 		# line destroys the rest. Only a file setup itself wrote is safe to rewrite.
 		out.append(f"ok     {knowledge.tilde(user)} is yours already — edit it directly to change it")
 	elif os.path.isdir(os.path.dirname(user)):
-		got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_YOU]
-		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", got)
+		# ponytail: blank means KEEP, not erase. compose() rewrites the whole file, so a run that only
+		# answered one question used to delete every other section — including ones added by hand — while
+		# three separate messages promised every question was skippable.
+		have = sections(_read(user))
+		got = []
+		for k, hint in ASK_YOU:
+			now = have.get(k, "")
+			said = ask(f"{k} — {hint}" + (f"\n  [now: {now.splitlines()[0][:60]}]" if now else ""))
+			got.append((k, said or now))
+		asked = {k for k, _ in ASK_YOU}
+		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", got,
+		               [(k, v) for k, v in have.items() if k not in asked])
 		if text:
 			with open(user, "w") as f:
 				f.write(text)

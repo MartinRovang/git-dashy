@@ -473,3 +473,48 @@ def test_a_corpus_with_no_identity_stops_rather_than_dangling(monkeypatch, tmp_p
 	out = install.full_apply(str(bare))
 	assert out[-1].startswith("FAIL") and "no identity" in out[-1]
 	assert not os.path.lexists(cfg / "identity")  # nothing linked at all
+
+
+def test_setup_blank_keeps_what_is_there(monkeypatch, tmp_path):
+	"""A rewrite that only knew its own answers deleted every section it did not ask about."""
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	user = home / "identity" / "USER.md"
+	full = iter(["Martin R", "Engineer", "ask first", "the viewer", "", "", "", ""])
+	install.setup(lambda p: next(full), str(home))
+	user.write_text(user.read_text() + "\n## Hand added\n\nsomething I wrote\n")
+	partial = iter(["Martin Rovang", "", "", "", "", "", "", ""])
+	install.setup(lambda p: next(partial), str(home))
+	got = install.sections(user.read_text())
+	assert got["Name"] == "Martin Rovang"          # answered, so replaced
+	assert got["Role"] == "Engineer"               # blank, so kept
+	assert got["How you work"] == "ask first" and got["What you own"] == "the viewer"
+	assert got["Hand added"] == "something I wrote"  # never asked about, still there
+
+
+def test_setup_shows_what_is_there_before_asking(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	(home / "identity" / "USER.md").write_text(install.compose("t", "l", [("Name", "Martin R")]))
+	seen = []
+	install.setup(lambda p: seen.append(p) or "", str(home))
+	assert any("[now: Martin R]" in p for p in seen)  # you can see what blank would keep
+
+
+def test_sections_reads_a_brief_back():
+	text = "<!-- m -->\n# T\n\nlead\n\n## A\n\none\n\n## B\n\ntwo\nlines\n"
+	assert install.sections(text) == {"A": "one", "B": "two\nlines"}
+	assert install.sections("no headings at all") == {}
+
+
+def test_the_setup_marker_never_reaches_a_review(monkeypatch, tmp_path):
+	"""It exists so setup can tell its output from yours; a reviewer has no use for it."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "project.md").write_text(install.compose("What is being built", "lead", [("The project", "a thing")]))
+	got = memory.project()
+	assert "a thing" in got and install.SETUP_MARK not in got and "<!--" not in got

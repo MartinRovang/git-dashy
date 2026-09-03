@@ -43,7 +43,11 @@ def project():
 	someone's reviewer noticed twice, it is what somebody says the work is for. So it is excluded from
 	the dream, from sharing, and from ever being read as a repo's facts.
 	"""
-	parts = [f"### {label}\n{t}" for label, base in sources() if (t := _read(os.path.join(base, PROJECT)))]
+	# ponytail: strip gitdashy's own marker line. It exists so setup can tell its output from yours;
+	# a reviewer has no use for it, and everything else in this prompt is there to be read.
+	parts = [f"### {label}\n{t}" for label, base in sources()
+	         if (t := "\n".join(l for l in _read(os.path.join(base, PROJECT)).splitlines()
+	                             if not l.startswith("<!--")).strip())]
 	return "\n\n".join(parts)
 
 
