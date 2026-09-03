@@ -38,7 +38,7 @@ could correct it will ever see it happen.
 
 ---
 
-## 2. The six stores
+## 2. The seven stores
 
 ```
   ┌─ drafts ──────────────────────────────────────────────────────┐
@@ -78,6 +78,16 @@ could correct it will ever see it happen.
   │  Written on promotion, withdrawn on share or forget.          │
   │  NEVER read into any prompt, any mirror, or the dream.        │
   │  Only for repos already named in the shared review log.       │
+  └───────────────────────────────────────────────────────────────┘
+
+  ┌─ project brief (declared, not learned) ───────────────────────┐
+  │  <team>/memory/project.md                                     │
+  │  What the team is building, for whom, under what constraints. │
+  │  Written by people, once. Read by every session and every     │
+  │  review — so a reviewer knows what the code is FOR before it  │
+  │  judges whether a change serves it.                           │
+  │  The promotion pipeline never touches it: not dreamt over,    │
+  │  not promoted into, never offered for sharing.                │
   └───────────────────────────────────────────────────────────────┘
 
   ┌─ log (separate axis) ─────────────────────────────────────────┐
@@ -181,7 +191,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 
 | reader | sees | never sees |
 |---|---|---|
-| review prompt | `mine` + `team`, general + repo, each block labelled by source | drafts |
+| review prompt | the team's `project.md`, then `mine` + `team` facts, labelled by source | drafts |
 | agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
 | agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |

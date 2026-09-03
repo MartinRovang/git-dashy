@@ -157,7 +157,9 @@ def test_full_install_seeds_user_md_and_never_ships_a_real_one(monkeypatch, tmp_
 		"a filled-in USER.md must never be committed to the repo"
 	install.full_apply(corpus)
 	seeded = os.path.join(str(tmp_path / "corpus-home"), "identity", "USER.md")
-	assert os.path.exists(seeded) and "Fill this in" in open(seeded).read()
+	seeded_text = open(seeded).read()
+	assert os.path.exists(seeded) and "Who you are" in seeded_text and "**Name:**" in seeded_text
+	assert "project.md" in seeded_text  # and it says where the SHARED context lives instead
 	open(seeded, "w").write("# me\n")
 	install.full_apply(corpus)
 	assert open(seeded).read() == "# me\n"  # what you wrote is never overwritten
@@ -189,6 +191,10 @@ def test_the_shipped_corpus_is_generic(monkeypatch, tmp_path):
 	for root, _, fs in os.walk(corpus):
 		for f in fs:
 			blob += open(os.path.join(root, f)).read().lower()
-	for word in ("neomedsys", "nils", "pontus", "phi", "medquery", "neo-api", "nms-platform"):
-		assert word not in blob, f"the shipped corpus mentions {word!r}"
+	import re
+	# ponytail: word boundaries. "phi" is inside "philosophy" and "ous" inside "obvious" — substring
+	# matching here would fail on innocent prose and pass on a real leak that happened to be hyphenated.
+	for word in ("neomedsys", "nils", "pontus", "phi", "medquery", "neo-api", "nms-platform",
+	             "neoservo", "neocoms", "ous", "ce-marked"):
+		assert not re.search(rf"\b{re.escape(word)}\b", blob), f"the shipped corpus mentions {word!r}"
 	assert install.corpus_files(corpus)  # and it actually has identity files to import

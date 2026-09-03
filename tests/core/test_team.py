@@ -109,3 +109,11 @@ def test_joining_a_team_refuses_your_own_memory_from_either_side(monkeypatch, tm
 	assert team.is_own_memory("https://github.com/org/mine")  # or by the remote it pushes to
 	assert not team.is_own_memory("https://gitlab.com/org/mine")  # a different host is a different repo
 	assert not (tmp_path / "team").exists()
+
+def test_a_new_team_repo_gets_a_brief_to_fill_in(monkeypatch, tmp_path):
+	p = tmp_path / "project.md"
+	team.seed_project(str(p))
+	assert "What we are building" in p.read_text() and "Constraints that change decisions" in p.read_text()
+	p.write_text("ours, written\n")
+	team.seed_project(str(p))
+	assert p.read_text() == "ours, written\n"  # never overwritten
