@@ -371,6 +371,10 @@ def full_apply(corpus, url="", dry=False):
 		out.append(f"ok    {knowledge.tilde(link)} already points at the corpus")
 	elif os.path.lexists(link):
 		out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone, so nothing is imported")
+	elif not dry and not os.path.isdir(ident):
+		# ponytail: refuse rather than leave a link to nothing. An identity that is not there imports
+		# nothing, and a dangling symlink in the agent config is worse than an install that stopped.
+		return out + [f"FAIL  {knowledge.tilde(ident)} has no identity/ — nothing to install"]
 	else:
 		out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(ident)}")
 		if not dry:

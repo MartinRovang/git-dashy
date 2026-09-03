@@ -444,3 +444,32 @@ def test_forgetting_a_mirror_does_not_rewrite_the_registry(monkeypatch, tmp_path
 	assert install.unregister(str(tmp_path / "a")) is False  # already gone
 	install.register(str(tmp_path / "a"), "o/a")  # and it can come back
 	assert sorted(i for i, *_ in install.registered()) == [str(tmp_path / "a"), str(tmp_path / "b")]
+
+
+def bare_remote(tmp_path, monkeypatch):
+	remote = tmp_path / "remote.git"
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"),
+	             ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	return remote
+
+
+def test_an_empty_repo_fails_cleanly_rather_than_half_installing(monkeypatch, tmp_path):
+	"""It used to report success at every step while leaving a dangling symlink and importing nothing."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	remote = bare_remote(tmp_path, monkeypatch)
+	out = install.full_apply(corpus, str(remote))
+	assert out[-1].startswith("FAIL") and "no identity" in out[-1]
+	assert not os.path.lexists(cfg / "identity")
+	assert "@identity" not in (cfg / "CLAUDE.md").read_text() if (cfg / "CLAUDE.md").exists() else True
+
+
+def test_a_corpus_with_no_identity_stops_rather_than_dangling(monkeypatch, tmp_path):
+	cfg, _ = full_env(monkeypatch, tmp_path)
+	bare = tmp_path / "not-a-corpus"
+	(bare / "docs").mkdir(parents=True)
+	(bare / "docs" / "x.md").write_text("# unrelated\n")
+	out = install.full_apply(str(bare))
+	assert out[-1].startswith("FAIL") and "no identity" in out[-1]
+	assert not os.path.lexists(cfg / "identity")  # nothing linked at all
