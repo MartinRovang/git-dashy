@@ -44,6 +44,7 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
+SCROLLING = [False]  # draw() sets it when the selected title is a marquee; main() ticks faster while it is
 
 
 def C(n):
@@ -106,6 +107,7 @@ def splash(scr, h, w, spin):
 def draw(scr, state, sel, prompt=None):
 	scr.erase()
 	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
+	SCROLLING[0] = False
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
@@ -275,7 +277,11 @@ def draw(scr, state, sel, prompt=None):
 			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
 			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
 			t = p["title"]
-			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
+			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
+				SCROLLING[0] = True
+				put(art.marquee(t, title_w, time.time()), curses.A_BOLD, title_w)
+			else:
+				put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
 			put(p.get("author", {}).get("login", ""), C(1), auth_w)
 			if tag:
@@ -642,8 +648,8 @@ def main(scr, interval, auto, model):
 	sel, current = 0, None
 	while True:
 		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
-		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
+		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
 		k = scr.getch()
 		if k in (ord("q"), 27):
 			return
