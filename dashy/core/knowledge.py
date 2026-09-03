@@ -5,6 +5,7 @@ replaces the dir with a symlink to it — the same trick as team mode, which is 
 ~/.prs_team happens to contain a .git. Env vars still win; they are set before we ever run.
 """
 import os
+import re
 import shutil
 import subprocess
 
@@ -35,19 +36,43 @@ def effective():
 	return config.MEMORY_DIR
 
 
+def is_remote(s):
+	"""True when `s` names a git remote rather than a local directory.
+
+	ponytail: an existing directory always wins, so a real path is never mistaken for a repo. `./x/y`
+	is a path because of the dot; a bare `x/y` that does not exist is read as owner/name, as T does.
+	"""
+	s = s.strip()
+	if not s or os.path.isdir(os.path.expanduser(s)):
+		return False
+	return bool("://" in s or re.match(r"^[^@/\s]+@[^:/\s]+:", s) or re.match(r"^[\w.-]+/[\w.-]+$", s))
+
+
+def abspath(path):
+	"""os.path.abspath, but it cannot raise. ponytail: a relative path needs the cwd, and a cwd that
+	has been deleted makes getcwd() throw — which, inside curses, used to take the whole dashboard down."""
+	try:
+		return os.path.abspath(os.path.expanduser(path))
+	except OSError:
+		return os.path.expanduser(path)
+
+
 def inside_git(path):
 	"""True when memory written at `path` would land in a repo that does not ignore it.
 
 	ponytail: asked before the directory is created, so a typo does not leave a stray dir behind.
 	"""
-	return mirror.tracked(os.path.abspath(os.path.expanduser(path)))
+	try:
+		return mirror.tracked(abspath(path))
+	except OSError:
+		return False  # cannot even resolve it; whatever writes next will say why, more clearly than this
 
 
 def repoint(path, new, env):
 	"""Make `path` a symlink to `new`, moving what is already there. Returns "" or an error string."""
 	if os.environ.get(env):
 		return f"{env} is set in the environment; unset it to change this here"
-	new = os.path.abspath(os.path.expanduser(new))
+	new = abspath(new)
 	if os.path.realpath(path) == new:
 		return ""
 	if os.path.lexists(new) and not os.path.isdir(new):
@@ -68,6 +93,42 @@ def repoint(path, new, env):
 		os.symlink(new, path)
 	except OSError as e:
 		return str(e)
+	return ""
+
+
+def adopt(url, dest=None):
+	"""Make your memory directory a checkout of `url`, keeping the facts already in it. "" or an error.
+
+	ponytail: clone to a sibling, move what is there across, then swap. Cloning straight in is not an
+	option — git wants an empty directory, and yours holds the facts you are trying to keep.
+	"""
+	dest = dest or config.LOCAL_MEMORY
+	if os.environ.get("PRS_MEMORY"):
+		return "PRS_MEMORY is set in the environment; unset it to change this here"
+	if team.is_repo(dest):
+		return f"{tilde(dest)} is already a git checkout"
+	if os.path.islink(dest):
+		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
+	keep = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
+	tmp = dest + ".incoming"
+	shutil.rmtree(tmp, ignore_errors=True)
+	err = team.clone(url, tmp)
+	if err:
+		shutil.rmtree(tmp, ignore_errors=True)
+		return err
+	try:
+		for name in keep:
+			if os.path.lexists(os.path.join(tmp, name)):  # ponytail: refuse rather than pick a winner
+				shutil.rmtree(tmp, ignore_errors=True)
+				return f"{name} exists in both {tilde(dest)} and the repo; merge it by hand"
+			shutil.move(os.path.join(dest, name), os.path.join(tmp, name))
+		if os.path.isdir(dest):
+			os.rmdir(dest)
+		os.rename(tmp, dest)
+	except OSError as e:
+		return str(e)
+	team.union_attrs(dest)
+	team.push_dir(dest, "gitdashy: memory from " + os.uname().nodename, "mine")
 	return ""
 
 

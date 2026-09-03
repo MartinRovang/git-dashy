@@ -70,6 +70,13 @@ could correct it will ever see it happen.
 `<private>` is `config.MEMORY_DIR` (`$PRS_MEMORY`, default `~/.prs_memory`).
 `<team>` is `config.TEAM` (`$PRS_TEAM`, default `~/.prs_team`).
 
+`<private>` may itself be a git checkout, in which case gitdashy pushes it after
+every review — that is how your facts and drafts follow you between machines
+without passing through the team. `L` takes a repo as well as a path: it clones
+into a sibling, moves what is already there across, then swaps. Cloning straight
+in is not possible, since git wants an empty directory and yours holds the facts
+you are trying to keep.
+
 ---
 
 ## 3. How a fact travels

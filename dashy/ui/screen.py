@@ -518,13 +518,25 @@ def set_path(scr, state, sel, which):
 	"""
 	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAM, False)
 	note = "  (the team's memory is in use; this applies when you leave)" if live else ""
-	new = ask(scr, state, sel, f" {what} directory [{knowledge.tilde(cur)}]{note}:")
+	tail = ", or a git repo to clone" if which == "L" else ""
+	new = ask(scr, state, sel, f" {what} directory{tail} [{knowledge.tilde(cur)}]{note}:")
 	if not new:
 		return
-	if knowledge.inside_git(new) and not confirm(
-			scr, state, sel, f" {new} sits in a git repo that does not ignore it — memory could be committed. continue? [y/n]"):
-		return
-	err = knowledge.set_local(new) if which == "L" else knowledge.set_store(new)
+	try:
+		if knowledge.is_remote(new):
+			if which != "L":
+				confirm(scr, state, sel, " Store is a local directory — T is what clones a team repo  [any key]")
+				return
+			if not confirm(scr, state, sel, f" clone {new} into {knowledge.tilde(cur)}, keeping the facts already there? [y/n]"):
+				return
+			err = knowledge.adopt(new)
+		elif knowledge.inside_git(new) and not confirm(
+				scr, state, sel, f" {new} sits in a git repo that does not ignore it — memory could be committed. continue? [y/n]"):
+			return
+		else:
+			err = knowledge.set_local(new) if which == "L" else knowledge.set_store(new)
+	except OSError as e:  # ponytail: whatever the typo was, say it on the footer — never unwind out of curses
+		err = str(e)
 	if err:
 		confirm(scr, state, sel, f" {err}  [any key]")
 

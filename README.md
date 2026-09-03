@@ -75,7 +75,7 @@ again but the reviewer has not looked yet.
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
-| `L` | point the local memory directory somewhere else |
+| `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the team checkout somewhere else (only while you are not in a team) |
 | `T` | team setup: share log + memory through a git repo, or leave the team you are in (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
@@ -193,6 +193,11 @@ The whole model — every store, promotion rule and discard rule — is written 
 `K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
 solo directory when you are on your own and the team's when you are in a team, `Team` is the repo or `off`, and
 `Store` appears only once the checkout sits somewhere other than its default.
+
+`L` also takes a **git repo** — `owner/name`, a path, or a `git@`/`https://` URL. gitdashy clones it and
+makes it your memory directory, moving the facts already there into it (and refusing, rather than choosing,
+if a file exists on both sides). From then on your memory is a checkout that gitdashy pushes, so your facts
+and drafts follow you between machines without ever passing through the team.
 
 `L` and `C` point the memory directory and the team checkout somewhere else. There is no config file — the old
 location becomes a symlink to the new one and whatever was there moves across, so the setting survives a restart

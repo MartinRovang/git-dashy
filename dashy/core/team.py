@@ -92,18 +92,29 @@ def activate():
 	NAME = origin_slug(config.TEAM)  # ponytail: MEMORY_DIR stays yours — memory.sources() reads both
 
 
-def setup(repo, create=False):
-	"""Clone (or create private + clone) the team repo, seed it with local log/memory. Returns '' or an error."""
-	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
-		return ERROR
+def clone(repo, dest):
+	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
 	local = os.path.isdir(repo) or "://" in repo or "@" in repo
-	cmd = ["git", "clone", "-q", repo, config.TEAM] if local else ["gh", "repo", "clone", repo, config.TEAM]
-	if not _note(_remote(cmd)):
-		return ERROR
-	with open(os.path.join(config.TEAM, ".gitattributes"), "a+") as f:
+	cmd = ["git", "clone", "-q", repo, dest] if local else ["gh", "repo", "clone", repo, dest]
+	return "" if _note(_remote(cmd)) else ERROR
+
+
+def union_attrs(dest):
+	"""Make append-only files merge without conflicts, so two people writing at once never collide."""
+	with open(os.path.join(dest, ".gitattributes"), "a+") as f:
 		f.seek(0)
 		if "merge=union" not in f.read():
 			f.write("*.jsonl merge=union\n*.md merge=union\n")
+
+
+def setup(repo, create=False):
+	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
+	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
+		return ERROR
+	err = clone(repo, config.TEAM)
+	if err:
+		return err
+	union_attrs(config.TEAM)
 	old_log = log.LOG
 	activate()
 	os.makedirs(os.path.join(config.TEAM, "memory"), exist_ok=True)

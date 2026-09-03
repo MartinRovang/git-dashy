@@ -404,3 +404,43 @@ def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, 
 	out = screen.text()
 	assert "both of us found this" in out and "★ 2 people found this" in out  # corroborated one is shown first
 	assert "1/2" in out
+
+
+def test_set_path_clones_a_git_url_and_asks_first(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	got = []
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: got.append(u) or "")
+	monkeypatch.setattr(ui.knowledge, "set_local", lambda p: pytest.fail("a URL must not be treated as a path"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:NilsPontus/Np_Claude_Agentic.git")
+	screen.getch, screen.timeout = _keys(ord("y")), lambda t: None
+	ui.set_path(screen, st, 0, "L")
+	assert got == ["git@github.com:NilsPontus/Np_Claude_Agentic.git"]
+	assert "clone git@github.com:NilsPontus/Np_Claude_Agentic.git" in screen.text()
+
+
+def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("must not clone after n"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org/mem.git")
+	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
+	ui.set_path(screen, st, 0, "L")
+
+
+def test_set_path_sends_a_url_for_the_store_back_to_T(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("the store is not cloned here"))
+	monkeypatch.setattr(ui.knowledge, "set_store", lambda p: pytest.fail("a URL is not a directory"))
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org/team.git")
+	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
+	ui.set_path(screen, st, 0, "C")
+	assert "T is what clones a team repo" in screen.text()
+
+
+def test_set_path_reports_a_broken_path_instead_of_crashing(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	def boom(p):
+		raise OSError(2, "No such file or directory")
+	monkeypatch.setattr(ui.knowledge, "set_local", boom)
+	monkeypatch.setattr(ui, "ask", lambda *a: "/some/where")
+	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
+	ui.set_path(screen, st, 0, "L")  # must not unwind out of curses
+	assert "No such file or directory" in screen.text()
