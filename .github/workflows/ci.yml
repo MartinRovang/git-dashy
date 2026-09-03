@@ -27,3 +27,19 @@ jobs:
           head=$(grep -m1 '^VERSION = ' dashy/__init__.py)
           echo "base: $base"; echo "head: $head"
           [ "$base" != "$head" ] || { echo "::error::Bump VERSION in dashy/__init__.py before merging"; exit 1; }
+
+  release:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release v$VERSION unless the tag already exists
+        run: |
+          tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
+          gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
+          gh release create "$tag" --generate-notes
