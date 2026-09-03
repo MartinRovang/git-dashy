@@ -704,6 +704,7 @@ def main(scr, interval, auto, model):
 			saved = snapshot(state)
 			config.save(saved)
 		if k == ord("q") or (k == 27 and esc_menu(scr, state, sel)):
+			config.save(snapshot(state))  # the menu may have changed the theme or notify on the way out
 			return
 		if k in (ord("j"), curses.KEY_DOWN):
 			sel += 1

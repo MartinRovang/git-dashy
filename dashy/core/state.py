@@ -3,7 +3,6 @@ import pathlib
 import subprocess
 import threading
 import time
-import webbrowser
 
 from .. import config
 from . import github, log, review as review_mod, team, update
@@ -67,25 +66,32 @@ class State:
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
 			for p in new:
 				self.start_review(p)
-			wanted = {p["url"]: p for name, prs, _ in data if name in ("REVIEW REQUESTED", "ASSIGNED") for p in prs or []}
-			if self.known is not None and config.NOTIFY:
-				for u in wanted.keys() - self.known:
-					notify(wanted[u])
-			self.known = set(wanted)
+			asks = [(name, prs, err) for name, prs, err in data if name in ("REVIEW REQUESTED", "ASSIGNED")]
+			if not any(err for _, _, err in asks):  # a failed section would look like every PR left, then came back
+				wanted = {p["url"]: (p, name) for name, prs, _ in asks for p in prs}
+				if self.known is not None and config.NOTIFY:
+					for u in wanted.keys() - self.known:
+						notify(*wanted[u])
+				self.known = set(wanted)
 			while not self.wake.wait(1) and time.time() < self.fetched_at + self.interval:
 				pass  # 1s slices so an interval change via i takes effect now
 			self.wake.clear()
 
 
-def notify(pr):
-	"""Desktop popup for a PR that just asked for me, with an Open button. Silent if notify-send is missing."""
-	cmd = ["notify-send", "-a", "gitdashy", "-u", "normal", "-c", "im.received", "-A", "open=Open PR",
-	       "-i", str(pathlib.Path(__file__).parents[1] / "notify.png"),
-	       f'#{pr["number"]} {pr["title"]}', f'<b>{pr["repository"]["name"]}</b> · {pr["author"]["login"]} wants a review']
+def notify_cmd(pr, section):
+	"""The notify-send argv for a PR that just asked for me. Raises on a payload missing a field."""
+	what = "wants a review" if section == "REVIEW REQUESTED" else "assigned you"
+	return ["notify-send", "-a", "gitdashy", "-u", "normal", "-c", "im.received", "-A", "open=Open PR",
+	        "-i", str(pathlib.Path(__file__).parents[1] / "notify.png"),
+	        f'#{pr["number"]} {pr["title"]}', f'<b>{pr["repository"]["name"]}</b> · {pr["author"]["login"]} {what}']
+
+
+def notify(pr, section):
+	"""Desktop popup with an Open button. Silent if notify-send is missing or the payload is odd (deleted author)."""
 	def run():  # ponytail: -A blocks until dismissed, so wait in a thread; notify-send only (Linux)
 		try:
-			if subprocess.run(cmd, capture_output=True, text=True).stdout.strip() == "open":
-				webbrowser.open(pr["url"])
-		except OSError:
-			pass
+			if subprocess.run(notify_cmd(pr, section), capture_output=True, text=True).stdout.strip() == "open":
+				github.open_in_browser(pr["url"])
+		except (OSError, KeyError, TypeError):
+			pass  # a popup is decoration; the refresh loop must outlive it
 	threading.Thread(target=run, daemon=True).start()
