@@ -493,6 +493,7 @@ def add_reviewer(scr, state, sel, pr):
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	scr.timeout(-1)
 	yes = scr.getch() == ord("y")
 	scr.timeout(500)
@@ -514,6 +515,7 @@ def edit_memory(scr, repo):
 def ask(scr, state, sel, question):
 	"""Footer text input. Returns '' on empty/escape."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	curses.echo()
 	scr.timeout(-1)
 	try:
@@ -695,6 +697,7 @@ def main(scr, interval, auto, model):
 	while True:
 		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
+		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
 		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
 		k = scr.getch()
 		if k in (ord("q"), 27):
