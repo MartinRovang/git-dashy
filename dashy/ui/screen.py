@@ -72,8 +72,8 @@ def header_groups(state):
 		return (k, label, show(current), None)
 	reviewer = [row("m"), row("d"), row("e")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
-	# Memory is the dir reviews actually read and write: the team checkout when in a team, the solo dir otherwise
-	know = [("L", "Memory", knowledge.show(knowledge.effective()), "on" if team.on() else None),
+	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
+	know = [("L", "Memory", knowledge.show(knowledge.effective()), None),
 	        ("T", "Team", team.ERROR[:40] if team.ERROR else (team.NAME or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory

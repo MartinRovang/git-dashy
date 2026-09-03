@@ -32,7 +32,8 @@ def store_moved():
 
 
 def effective():
-	"""The memory dir reviews actually read and write right now. Team mode has already repointed it."""
+	"""The memory dir your own facts live in. ponytail: team mode does NOT repoint this any more — the
+	team is a second source that memory.sources() reads alongside, not a replacement for yours."""
 	return config.MEMORY_DIR
 
 
@@ -135,8 +136,8 @@ def adopt(url, dest=None):
 def set_local(new):
 	"""Point the solo memory dir at `new`. Returns "" or an error string."""
 	err = repoint(config.LOCAL_MEMORY, new, "PRS_MEMORY")
-	if not err and not team.on():
-		config.MEMORY_DIR = config.LOCAL_MEMORY  # solo: the effective dir is the one we just repointed
+	if not err:
+		config.MEMORY_DIR = config.LOCAL_MEMORY  # ponytail: always yours now, in a team or not
 	return err
 
 
@@ -167,7 +168,6 @@ def leave():
 			os.remove(config.TEAM)
 	except OSError as e:
 		return str(e)
-	config.MEMORY_DIR = config.LOCAL_MEMORY
-	config.LOG = log.LOG = config.LOCAL_LOG
+	config.LOG = log.LOG = config.LOCAL_LOG  # MEMORY_DIR never moved, so there is nothing to move back
 	team.NAME = team.ERROR = ""
 	return ""

@@ -238,8 +238,15 @@ into `team/`: sharing is your decision, not the model's.
 |---|---|---|
 | `PROMOTE_AT` | 2 | independent reviews before a draft becomes yours |
 | corroboration | 2 people | pools agreeing before `P` marks it ★ (display only) |
-| `NEAR` | 0.82 | difflib ratio at which two wordings are the same fact |
+| `NEAR` | 0.88 | difflib ratio over **tokens** at which two wordings are the same fact |
 | `CLONE` | 300s | cap on any command that talks to a remote |
+
+`NEAR` compares tokens, not characters. On lines this short a character ratio puts
+one wrong word above the bar — `format-check` against `type-check` scored 0.886 —
+so a second review would "confirm" a fact that says the wrong thing, keeping the
+first wording. On tokens the populations separate: measured rewordings bottom out
+at 0.889, different facts top out at 0.857. That margin is thin, and it wants a
+number from real use as much as the next one does.
 
 `PROMOTE_AT = 2` is a guess. Two feels right for a repo you review often and slow
 for one you touch monthly. It should be revisited with real numbers.
@@ -248,19 +255,24 @@ for one you touch monthly. It should be revisited with real numbers.
 
 ## 8. Open issues
 
-1. **Observations are not tagged by surface.** The counter records that a fact
+1. **A departed teammate's evidence keeps counting.** Pool entries are pruned by
+   their owner, on share or forget. gitdashy has no concept of membership — a team
+   is a git repo, not a member list — so it cannot know someone left, and their
+   backing lingers. Their observation was real when they made it, so this may be
+   correct; it is at least undecided.
+2. **Observations are not tagged by surface.** The counter records that a fact
    was seen twice, not that a review and a session saw it independently. So
    `gitdashy remember` twice will confirm a fact — a deliberate escape hatch
    (editing `mine/` by hand with `n`/`g` does the same thing more directly), but
    it means "confirmed across surfaces" is a hope, not a guarantee. Tagging each
    observation would make it one.
-2. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
+3. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
    Wants either an age cap or inclusion in the dream (as drafts, clearly marked).
    The pool self-prunes on share and forget, so only drafts grow unboundedly.
-3. **`PROMOTE_AT` is unvalidated.** No data yet.
-4. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
+4. **`PROMOTE_AT` is unvalidated.** No data yet.
+5. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
    yours. You can still edit the team checkout directly with git.
-5. **Nothing here has met a real review yet.** The whole path is test-verified
+6. **Nothing here has met a real review yet.** The whole path is test-verified
    only. Numbers from real use should settle issues 1-3.
 
 ---

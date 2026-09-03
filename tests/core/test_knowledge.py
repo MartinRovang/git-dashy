@@ -61,12 +61,13 @@ def test_leave_goes_back_to_the_solo_locations(monkeypatch, tmp_path):
 	monkeypatch.setattr(team, "on", lambda: True)
 	monkeypatch.setattr(team, "NAME", "org/t")
 	monkeypatch.setattr(config, "TEAM", str(store))
-	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "solo-mem"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	monkeypatch.setattr(config, "LOCAL_LOG", str(tmp_path / "solo.jsonl"))
 	monkeypatch.setattr(knowledge, "unpushed", lambda: 0)
 	assert knowledge.leave() == ""
 	assert not store.exists()
-	assert config.MEMORY_DIR == str(tmp_path / "solo-mem") and log.LOG == str(tmp_path / "solo.jsonl")
+	assert log.LOG == str(tmp_path / "solo.jsonl")  # the log lived in the checkout, so it comes back
+	assert config.MEMORY_DIR == str(tmp_path / "mine")  # memory never moved there, so nothing to move back
 	assert team.NAME == ""
 
 

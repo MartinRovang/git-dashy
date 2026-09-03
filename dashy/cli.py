@@ -1,9 +1,10 @@
 """Argument parsing and the curses entry point. ponytail: sys.argv scan, argparse would be more code than this."""
 import curses
+import os
 import sys
 
 from . import VERSION, config, demo
-from .core import memory, mirror, team
+from .core import memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -11,6 +12,7 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy self-check [--model NAME]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -31,6 +33,10 @@ remember files a fact you learned while working, into the same drafts a review w
   review and a coding session found independently is confirmed by their agreement. --repo defaults to this
   directory's origin; --general is for something true of every repo.
 
+self-check makes one real claude call and proves the three things every review depends on: that the
+  appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
+  under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
+
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
@@ -47,10 +53,10 @@ def arg(flag, default=None, cast=str, argv=None):
 
 def sync_memory(argv):
 	"""Mirror the shared memory into --into, for an agent session in that repo to read."""
-	into = arg("--into", "", str, argv)
+	into = os.path.expanduser(arg("--into", "", str, argv))  # a quoted "~/x" would mirror into a dir named ~
 	if not into:
 		raise SystemExit("gitdashy: sync-memory needs --into PATH")
-	team.activate()  # ponytail: points MEMORY_DIR at the team checkout before we read it
+	team.activate()  # ponytail: names the team and points LOG at its checkout; memory.sources() needs it
 	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."),
 	                         "--no-pull" not in argv, "--general" in argv))
 
@@ -68,7 +74,7 @@ def remember(argv):
 	fact = " ".join(rest).strip()
 	if not fact:
 		raise SystemExit("gitdashy: remember needs a fact to remember")
-	team.activate()
+	team.activate()  # so memory.sources() sees the team as a second source
 	general = "--general" in argv
 	repo = "" if general else (arg("--repo", "", str, argv) or team.origin_slug("."))
 	if not general and not repo:
@@ -94,6 +100,11 @@ def run(argv=None):
 		return sync_memory(argv)
 	if len(argv) > 1 and argv[1] == "remember":
 		return remember(argv)
+	if len(argv) > 1 and argv[1] == "self-check":
+		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
+		for name, ok, detail in rows:
+			print(f"{'ok  ' if ok else 'FAIL'}  {name}" + ("" if ok else f"  ({detail})"))
+		raise SystemExit(0 if all(ok for _, ok, _ in rows) else 1)
 	if "--demo" in argv:
 		demo.install()
 	config.EFFORT = arg("--effort", config.EFFORT, str, argv)

@@ -48,10 +48,22 @@ def sync(into, repo="", pull=True, general=False):
 	"""
 	if pull:
 		team.pull()  # newest shared memory first; a no-op when team mode is off
-	os.makedirs(into, exist_ok=True)
-	if tracked(into):
-		return f"gitdashy: refused — git would commit {into}; ignore that path before mirroring team memory there"
+	# ponytail: ask BEFORE creating anything, or a refusal leaves the tree it refused to write in. And a
+	# SessionStart hook calls this: an exception there is a broken hook, so failures come back as the report.
+	try:
+		if tracked(into):
+			return f"gitdashy: refused — git would commit {into}; ignore that path before mirroring team memory there"
+		os.makedirs(into, exist_ok=True)
+	except OSError as e:
+		return f"gitdashy: refused — {e}"
 	at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+	try:
+		return _write(into, repo, general, at)
+	except OSError as e:
+		return f"gitdashy: refused — {e}"
+
+
+def _write(into, repo, general, at):
 	src = " + ".join(label for label, _ in memory.sources())  # ponytail: the mirror shows what a review sees
 	wrote = []
 	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):

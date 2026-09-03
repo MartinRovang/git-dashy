@@ -69,3 +69,18 @@ def test_setup_keeps_a_users_own_ssh_command(monkeypatch, tmp_path):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	team.setup("git@github.com:org/review-team.git")
 	assert seen["env"]["GIT_SSH_COMMAND"] == "ssh -i /keys/mine"
+
+
+def test_every_git_call_is_bounded_and_never_prompts(monkeypatch, tmp_path):
+	"""pull/push run on every refresh tick from a daemon thread — a credential prompt there hangs the TUI."""
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "t"))
+	(tmp_path / "t" / ".git").mkdir(parents=True)
+	seen = []
+	def fake_run(cmd, **kw):
+		seen.append((cmd[:2], kw.get("env", {}).get("GIT_TERMINAL_PROMPT"), kw.get("timeout")))
+		raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	monkeypatch.setattr(team, "ERROR", "")
+	team.pull()  # must not raise out of the refresh thread
+	assert seen and seen[0][1] == "0" and seen[0][2] == 120
+	assert team.ERROR.startswith("sync: timed out")

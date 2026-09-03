@@ -64,3 +64,24 @@ def test_version_and_help_do_not_start_curses(capsys):
 	cli.run(["gitdashy", "--help"])
 	out = capsys.readouterr().out
 	assert "sync-memory" in out and "remember" in out
+
+
+def test_sync_memory_expands_a_tilde_in_into(monkeypatch, tmp_path):
+	home = tmp_path / "home"
+	home.mkdir()
+	monkeypatch.setenv("HOME", str(home))
+	got = []
+	monkeypatch.setattr("dashy.core.mirror.sync", lambda into, *a: got.append(into) or "ok")
+	monkeypatch.setattr(team, "origin_slug", lambda p: "a/b")
+	cli.run(["gitdashy", "sync-memory", "--into", "~/mem"])
+	assert got == [str(home / "mem")]  # not a directory literally named ~
+
+
+def test_self_check_reports_and_exits_nonzero_on_failure(monkeypatch, capsys):
+	monkeypatch.setattr("dashy.core.review.self_check",
+	                    lambda m: [("flag arrives", True, ""), ("safe-mode hides CLAUDE.md", False, "leaked")])
+	with pytest.raises(SystemExit) as e:
+		cli.run(["gitdashy", "self-check"])
+	assert e.value.code == 1
+	out = capsys.readouterr().out
+	assert "ok    flag arrives" in out and "FAIL  safe-mode hides CLAUDE.md  (leaked)" in out

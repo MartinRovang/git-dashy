@@ -220,3 +220,64 @@ def test_a_general_fact_always_pools_since_it_names_no_repo(monkeypatch, tmp_pat
 def test_nothing_pools_when_you_are_not_in_a_team(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert not memory.team_visible(None) and not memory.team_visible("a/b")
+
+
+def test_one_review_cannot_confirm_its_own_fact(monkeypatch, tmp_path):
+	"""Two wordings of one thing in a single call must count once, or the gate gates nothing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	assert memory.append("a/b", "- the API owns all validation\n- The API owns all validation.") == []
+	assert memory.drafts("a/b") == [(1, "the API owns all validation")]
+	assert not os.path.exists(memory.path("a/b"))
+	assert memory.append("a/b", "the API owns all validation") == ["the API owns all validation"]
+
+
+def test_one_review_repeating_itself_pools_nothing(monkeypatch, tmp_path):
+	in_a_team(monkeypatch, tmp_path)
+	logged(tmp_path, "a/b")
+	memory.append("a/b", "- CI skips the DB tests\n- ci skips the db tests\n- CI skips the DB tests!")
+	assert not os.path.exists(memory.pool_path(memory.whoami(), "a/b"))  # nothing corroborated anything
+
+
+def test_one_wrong_word_is_a_different_fact(monkeypatch, tmp_path):
+	"""Character similarity called these the same at 0.886. On tokens they are not."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "CI reports skipping for format-check")
+	memory.append("a/b", "CI reports skipping for type-check")
+	assert sorted(t for _, t in memory.drafts("a/b")) == [
+		"CI reports skipping for format-check", "CI reports skipping for type-check"]
+	assert not os.path.exists(memory.path("a/b"))  # neither confirmed the other
+	memory.append("a/b", "Tests live in tests/core")
+	memory.append("a/b", "Tests live in tests/ui")
+	assert len(memory.drafts("a/b")) == 4
+
+
+def test_a_refinement_is_a_new_fact_but_a_rewording_is_not(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "The auth module owns session state")
+	memory.append("a/b", "The auth module owns session state, not the API layer")
+	assert len(memory.drafts("a/b")) == 2  # a refinement says more; it is not the same claim
+	memory.append("c/d", "neoservo owns training dispatch")
+	memory.append("c/d", "Neoservo owns the training dispatch.")
+	assert facts(memory.path("c/d")) == ["- neoservo owns training dispatch"]  # a rewording still matches
+
+
+def test_forget_removes_exactly_one_line_not_its_neighbour(monkeypatch, tmp_path):
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- CI reports skipping for format-check\n- CI reports skipping for type-check\n")
+	memory.forget("a/b", "CI reports skipping for format-check")
+	assert facts(mine / "a__b.md") == ["- CI reports skipping for type-check"]
+
+
+def test_an_unreadable_memory_file_is_not_silently_empty(monkeypatch, tmp_path):
+	"""A review with no memory at all, because of a permission error, must not look like a review with none."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	p = tmp_path / "general.md"
+	p.write_text("- a fact\n")
+	os.chmod(p, 0o000)
+	try:
+		if os.access(p, os.R_OK):
+			pytest.skip("running as root; permissions are not enforced")
+		with pytest.raises(PermissionError):
+			memory.read("a/b")
+	finally:
+		os.chmod(p, 0o644)

@@ -118,3 +118,33 @@ def test_sync_no_pull_skips_the_team_fetch(monkeypatch, tmp_path):
 	assert pulls == []
 	mirror.sync(str(tmp_path / "b"), "")
 	assert pulls == [1]
+
+
+def test_a_refused_mirror_leaves_no_directory_behind(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	seed("a/b", "uses tabs")
+	repo = tmp_path / "repo"
+	repo.mkdir()
+	subprocess.run(["git", "init", "-q", str(repo)], check=True)
+	into = repo / "deep" / "dir"
+	assert "refused" in mirror.sync(str(into), "a/b")
+	assert not into.exists() and not (repo / "deep").exists()  # it refused, so it built nothing
+
+
+def test_sync_reports_a_path_it_cannot_create_instead_of_raising(monkeypatch, tmp_path):
+	"""A SessionStart hook calls this; a traceback there is a broken hook, not a message."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	seed("a/b", "uses tabs")
+	blocker = tmp_path / "afile"
+	blocker.write_text("not a directory\n")
+	report = mirror.sync(str(blocker / "under" / "a" / "file"), "a/b")
+	assert report.startswith("gitdashy: refused")
+
+
+def test_sync_survives_git_being_missing(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	seed("a/b", "uses tabs")
+	def no_git(*a, **kw):
+		raise FileNotFoundError(2, "No such file or directory: 'git'")
+	monkeypatch.setattr(subprocess, "run", no_git)
+	assert "refused" in mirror.sync(str(tmp_path / "out"), "a/b")  # fail safe, not fail loud

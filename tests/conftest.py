@@ -21,6 +21,7 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
 	monkeypatch.setattr(team, "NAME", "")
 	monkeypatch.setattr(team, "ERROR", "")
+	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
 	monkeypatch.setattr(github, "fetch", github.fetch)

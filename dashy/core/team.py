@@ -14,18 +14,19 @@ _lock = threading.Lock()  # review threads push concurrently; git wants one writ
 CLONE = 300  # seconds a clone or repo-create may take before we give up on it
 
 
-def _remote(cmd):
+def _remote(cmd, timeout=None):
 	"""Run a command that talks to a remote, and never let it wait on a human.
 
 	ponytail: a URL to a private repo makes git ask for a password. Inside curses that prompt is invisible
 	and blocks the whole dashboard forever, so prompts are off and the call is bounded — fail, don't hang.
 	"""
+	timeout = CLONE if timeout is None else timeout
 	env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
 	env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")  # keeps a user's own setting if they have one
 	try:
-		return subprocess.run(cmd, capture_output=True, text=True, timeout=CLONE, env=env)
+		return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 	except subprocess.TimeoutExpired:  # ponytail: reason first — _note keeps the first 60 chars for the header
-		return subprocess.CompletedProcess(cmd, 1, "", f"timed out after {CLONE}s waiting on the remote")
+		return subprocess.CompletedProcess(cmd, 1, "", f"timed out after {timeout}s waiting on the remote")
 	except OSError as e:
 		return subprocess.CompletedProcess(cmd, 1, "", f"{e.strerror or e}: {cmd[0]}")
 
@@ -39,7 +40,10 @@ def on():
 
 
 def _git(*args, cwd=None):
-	return subprocess.run(["git", "-C", cwd or config.TEAM, *args], capture_output=True, text=True, timeout=120)
+	"""ponytail: same protection as a clone. These are the calls that run on every refresh tick, from the
+	daemon thread — a pull that stops to ask for a credential would hang the dashboard with nothing on
+	screen to say why, which is the whole reason _remote exists."""
+	return _remote(["git", "-C", cwd or config.TEAM, *args], timeout=120)
 
 
 def _note(r, label="sync"):

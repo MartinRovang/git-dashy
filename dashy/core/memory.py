@@ -16,7 +16,7 @@ from . import log, team
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
-NEAR = 0.82  # difflib ratio above which two wordings count as the same fact
+NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
 
 
 def slug(repo):
@@ -40,9 +40,11 @@ def sources():
 
 
 def _read(p):
+	# ponytail: only a missing file reads as empty. A permission error or a dangling symlink must raise —
+	# repoint() makes memory a symlink, so silently reviewing with no memory at all is a real outcome.
 	try:
 		return open(p).read().strip()
-	except OSError:
+	except FileNotFoundError:
 		return ""
 
 
@@ -62,8 +64,26 @@ def _norm(s):
 	return " ".join(s.lower().replace("`", "").split())
 
 
+def _toks(s):
+	"""Words, lowercased, punctuation dropped.
+
+	ponytail: compare tokens, not characters. These lines are short, so one wrong word leaves a character
+	ratio high enough to pass — "format-check" against "type-check" scored 0.886, above any threshold
+	loose enough to still match a real rewording. On tokens the two populations separate: measured
+	rewordings bottom out at 0.889, different facts top out at 0.857. The margin is thin and this still
+	wants a number from real use.
+	"""
+	words = re.sub(r"[^\w/.\-]+", " ", s.lower().replace("`", "")).split()
+	return [w for w in (t.strip(".,;:") for t in words) if w]
+
+
 def _same(a, b):
-	return difflib.SequenceMatcher(None, _norm(a), _norm(b)).ratio() >= NEAR
+	return difflib.SequenceMatcher(None, _toks(a), _toks(b)).ratio() >= NEAR
+
+
+def _is(a, b):
+	"""The same line, ignoring spacing. ponytail: removal must be exact — _same would take a neighbour."""
+	return _norm(a) == _norm(b)
 
 
 def _parse(line):
@@ -100,8 +120,8 @@ def logged_repos():
 					out.add(json.loads(line)["pr"]["repository"]["nameWithOwner"])
 				except (ValueError, KeyError, TypeError):
 					continue
-	except OSError:
-		pass
+	except FileNotFoundError:
+		pass  # no log yet; anything else is worth raising, or evidence silently stops being published
 	return out
 
 
@@ -184,8 +204,14 @@ def append(repo, text):
 	proposed = [l.strip().lstrip("-• ").strip() for l in (text or "").splitlines() if l.strip()]
 	if not proposed:
 		return []
-	items, settled = drafts(repo), known(repo)
+	# ponytail: one review contributes at most +1 to a fact. Without this, a reviewer that words the same
+	# thing twice in one call clears the gate by itself — and pools the result as corroborated evidence.
+	fresh = []
 	for fact in proposed:
+		if not any(_same(fact, t) for t in fresh):
+			fresh.append(fact)
+	items, settled = drafts(repo), known(repo)
+	for fact in fresh:
 		if any(_same(fact, t) for t in settled):
 			continue  # already approved somewhere: proposing it again says nothing new
 		for i, (n, t) in enumerate(items):
@@ -227,7 +253,7 @@ def share(repo, fact):
 
 def _unpool(repo, fact):
 	p = pool_path(whoami(), repo)
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _same(_parse(l)[1], fact)]
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
 	if kept:
 		with open(p, "w") as f:
 			f.write("\n".join(kept) + "\n")
@@ -239,7 +265,7 @@ def forget(repo, fact):
 	"""Drop one fact from your own memory, and withdraw it as evidence."""
 	_unpool(repo, fact)
 	p = path(repo)
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _same(_parse(l)[1], fact)]
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
 	if kept:
 		with open(p, "w") as f:
 			f.write("\n".join(kept) + "\n")

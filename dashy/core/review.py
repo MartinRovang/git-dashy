@@ -1,5 +1,6 @@
 """Run Claude headless on a PR and post its verdict."""
 import json
+import os
 import pathlib
 import random
 import subprocess
@@ -58,6 +59,37 @@ def sprite():
 	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
 	paths = [p.relative_to(SPRITE_DIR).as_posix() for p in SPRITE_DIR.rglob("*.png")]
 	return f'<img src="{SPRITE_URL + quote(random.choice(paths))}" width="120">\n\n' if paths else ""
+
+
+MARKER = "GITDASHY_SELFCHECK_MARKER"
+
+
+def self_check(model):
+	"""Prove the three things a review depends on. Returns [(name, ok, detail)].
+
+	ponytail: unit tests assert the flags are passed; only a real call proves claude honours them. If
+	--safe-mode stopped suppressing CLAUDE.md the reviews would not fail, they would just quietly inherit
+	whatever is on the machine — so nothing else would ever tell us.
+	"""
+	import tempfile
+	out = []
+	with tempfile.TemporaryDirectory() as d:
+		with open(os.path.join(d, "CLAUDE.md"), "w") as f:
+			f.write(f"# local\n\nThe marker is {MARKER}.\n")
+		cmd = ["claude", "-p", f"Run the bash command: echo TOOLOK\nThen reply with exactly three words: "
+		                        f"your codename, then YES or NO for whether your instructions mention {MARKER}, "
+		                        f"then the command's output. Nothing else.",
+		       "--output-format", "json", SAFE, "--append-system-prompt", "Your codename is SCOPED.",
+		       "--allowedTools", "Bash(echo:*)", "--model", model]
+		try:
+			raw = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300, cwd=d).stdout
+			said = json.loads(raw)["result"].strip()
+		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, OSError) as e:
+			return [("could not run claude", False, (getattr(e, "stderr", None) or str(e)).strip()[:120])]
+	out.append(("--append-system-prompt reaches the model", "SCOPED" in said, said[:80]))
+	out.append(("--safe-mode hides the local CLAUDE.md", MARKER not in said and " NO " in f" {said} ", said[:80]))
+	out.append(("--allowedTools still runs tools", "TOOLOK" in said, said[:80]))
+	return out
 
 
 def review(pr, model):
