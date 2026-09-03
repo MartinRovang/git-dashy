@@ -101,6 +101,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
+| `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 
 Reviews are unaffected by all of it: they run `--safe-mode` and read memory through the prompt.
 [`docs/install.md`](docs/install.md) is the full account — every file it writes, why a symlink and not a

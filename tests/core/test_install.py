@@ -125,3 +125,70 @@ def test_explain_names_real_paths_and_the_state_of_each(monkeypatch, tmp_path):
 	(cfg / "prs-memory").unlink()
 	(cfg / "prs-memory").mkdir()
 	assert "EXISTS, will be left alone" in "\n".join(install.explain())
+
+
+def full_env(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(install, "CORPUS_HOME", str(tmp_path / "corpus-home"))
+	return cfg, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "corpus")
+
+
+def test_full_install_is_surgical_about_settings_json(monkeypatch, tmp_path):
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "settings.json").write_text(
+		'{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}')
+	install.full_apply(corpus)
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	assert got["model"] == "opus"  # someone else's settings are not ours to rewrite
+	assert got["hooks"]["Stop"][0]["hooks"][0]["command"] == "mine"
+	assert len(got["hooks"]["SessionStart"]) == 1
+	install.full_apply(corpus)  # again
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	assert len(got["hooks"]["SessionStart"]) == 1  # never doubled
+	install.full_remove()
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	assert got["hooks"]["Stop"][0]["hooks"][0]["command"] == "mine"  # still theirs
+	assert "SessionStart" not in got["hooks"]
+
+
+def test_full_install_seeds_user_md_and_never_ships_a_real_one(monkeypatch, tmp_path):
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	assert not os.path.exists(os.path.join(corpus, "identity", "USER.md")), \
+		"a filled-in USER.md must never be committed to the repo"
+	install.full_apply(corpus)
+	seeded = os.path.join(str(tmp_path / "corpus-home"), "identity", "USER.md")
+	assert os.path.exists(seeded) and "Fill this in" in open(seeded).read()
+	open(seeded, "w").write("# me\n")
+	install.full_apply(corpus)
+	assert open(seeded).read() == "# me\n"  # what you wrote is never overwritten
+
+
+def test_full_uninstall_leaves_the_corpus_and_removes_only_its_own_block(monkeypatch, tmp_path):
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "CLAUDE.md").write_text("# my own rules\n\nkeep me\n")
+	install.full_apply(corpus)
+	text = (cfg / "CLAUDE.md").read_text()
+	assert install.CBEGIN in text and install.BEGIN in text  # two independent blocks
+	install.full_remove()
+	text = (cfg / "CLAUDE.md").read_text()
+	assert "keep me" in text and install.CBEGIN not in text and install.BEGIN not in text
+	assert os.path.isdir(tmp_path / "corpus-home")  # you may have edited it, so it stays
+
+
+def test_full_install_refuses_a_broken_settings_file(monkeypatch, tmp_path):
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "settings.json").write_text("{not json")
+	out = install.full_apply(corpus)
+	assert any(l.startswith("FAIL") and "valid JSON" in l for l in out)
+
+
+def test_the_shipped_corpus_is_generic(monkeypatch, tmp_path):
+	"""It goes to strangers, so nothing personal or project-specific may be in it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	blob = ""
+	for root, _, fs in os.walk(corpus):
+		for f in fs:
+			blob += open(os.path.join(root, f)).read().lower()
+	for word in ("neomedsys", "nils", "pontus", "phi", "medquery", "neo-api", "nms-platform"):
+		assert word not in blob, f"the shipped corpus mentions {word!r}"
+	assert install.corpus_files(corpus)  # and it actually has identity files to import

@@ -4,13 +4,17 @@ ponytail: reviews read and write memory with no setup at all — that half needs
 installing is the half that reaches a regular coding session, which until now lived in one person's private
 agent corpus, and so was unreachable for everyone else.
 """
+import json
 import os
+import shutil
 import subprocess
 
 from .. import config
 from . import knowledge, mirror
 
 BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
+CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->"  # a separate block: one can go without the other
+CORPUS_HOME = os.path.expanduser("~/.agent-corpus")  # where an installed corpus lives, independent of gitdashy
 IMPORT = "@prs-memory/general.md"  # the line that says the wiring is already there, block or not
 REGISTRY = os.path.expanduser("~/.prs_mirrors")  # "<into>\t<repo>" per line; the filesystem keeps the setting
 BLOCK = f"""{BEGIN}
@@ -214,3 +218,170 @@ def wire_repo(into, loader, repo):
 	           else f"ok    {knowledge.tilde(into)} is already refreshed every tick")
 	out.append("      " + mirror.sync(into, repo, pull=False))
 	return out
+
+
+def corpus_files(corpus):
+	"""The identity markdown a corpus offers, sorted, or [] when it has none."""
+	d = os.path.join(corpus, "identity")
+	return sorted(f for f in os.listdir(d) if f.endswith(".md") and not f.endswith(".template")) \
+		if os.path.isdir(d) else []
+
+
+def corpus_block(corpus):
+	names = corpus_files(corpus)
+	body = "\n".join(f"@identity/{n}" for n in names)
+	return f"""{CBEGIN}
+# Agent corpus
+
+How this machine's agent works: what to establish before changing code, when to stop and ask,
+and who it is working with. Installed by `gitdashy install --full` from {os.path.basename(corpus)}.
+
+{body}
+{CEND}
+"""
+
+
+def full_explain(corpus, url=""):
+	"""What a full install changes. Returns report lines."""
+	d, out = claude_dir(), []
+	names = corpus_files(corpus)
+	words = sum(len(open(os.path.join(corpus, "identity", n)).read().split()) for n in names)
+	out.append("gitdashy install --full puts an agent corpus on this machine, so every coding session")
+	out.append("works to the same discipline — and adds the review-memory wiring `install` does.")
+	out.append("")
+	out.append("This is the big one. Read it before agreeing.")
+	out.append("")
+	out.append("It will:")
+	out.append(f"  · {'clone ' + url if url else 'copy the corpus gitdashy ships'} to {knowledge.tilde(CORPUS_HOME)}"
+	           + ("   [EXISTS, will be left alone]" if os.path.isdir(CORPUS_HOME) else "   [new]"))
+	out.append(f"  · symlink {knowledge.tilde(os.path.join(d, 'identity'))} -> that corpus's identity/")
+	out.append(f"  · import {len(names)} files into {knowledge.tilde(os.path.join(d, 'CLAUDE.md'))}: {', '.join(names)}")
+	out.append(f"  · seed USER.md from the template, for you to fill in, if it is not there already")
+	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
+	out.append("  · everything plain `gitdashy install` does, for review memory")
+	out.append("")
+	out.append(f"What that costs, every session on this machine, permanently:")
+	out.append(f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
+	out.append(f"  · one hook running at the start of every session, in every repo")
+	out.append("")
+	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
+	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
+	out.append("that git can see, and exits quietly if it is not in a repo.")
+	out.append("")
+	out.append("`gitdashy install --full --uninstall` reverses all of it. The corpus is left on disk,")
+	out.append("because by then you may have edited it.")
+	return out
+
+
+HOOK = "session-start.sh"
+
+
+def _hooks(settings, script):
+	"""SessionStart entries that are not ours. ponytail: match on the script, so a re-install never doubles."""
+	out = []
+	for group in settings.get("hooks", {}).get("SessionStart", []):
+		kept = [h for h in group.get("hooks", []) if script not in str(h.get("command", ""))]
+		if kept:
+			out.append({**group, "hooks": kept})
+	return out
+
+
+def full_apply(corpus, url="", dry=False):
+	"""Install a corpus and its hook, then the memory wiring. Returns report lines."""
+	d, out, did = claude_dir(), [], "would " if dry else ""
+	if not os.path.isdir(d):
+		return [f"FAIL  no agent config directory at {knowledge.tilde(d)} — is claude installed?"]
+	if os.path.isdir(CORPUS_HOME):
+		out.append(f"ok    {knowledge.tilde(CORPUS_HOME)} is already there — left as it is")
+	else:
+		out.append(f"{did}install  the corpus into {knowledge.tilde(CORPUS_HOME)}")
+		if not dry:
+			from . import team
+			err = team.clone(url, CORPUS_HOME) if url else ""
+			if url and err:
+				return out[:-1] + [f"FAIL  {err}"]
+			if not url:
+				shutil.copytree(corpus, CORPUS_HOME)
+	home = CORPUS_HOME if not dry or os.path.isdir(CORPUS_HOME) else corpus
+	link = os.path.join(d, "identity")
+	ident = os.path.join(home, "identity")
+	if _ours(link, ident):
+		out.append(f"ok    {knowledge.tilde(link)} already points at the corpus")
+	elif os.path.lexists(link):
+		out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone, so nothing is imported")
+	else:
+		out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(ident)}")
+		if not dry:
+			os.symlink(ident, link)
+	user, tmpl = os.path.join(ident, "USER.md"), os.path.join(ident, "USER.md.template")
+	if os.path.exists(user):
+		out.append("ok    USER.md is already filled in")
+	elif os.path.exists(tmpl):
+		out.append(f"{did}seed  USER.md from the template — fill it in, it is the highest-value file here")
+		if not dry:
+			shutil.copy(tmpl, user)
+	md = os.path.join(d, "CLAUDE.md")
+	text = _read(md)
+	if CBEGIN in text:
+		out.append(f"ok    {knowledge.tilde(md)} already imports the corpus")
+	else:
+		out.append(f"{did}add   the corpus imports to {knowledge.tilde(md)}")
+		if not dry:
+			with open(md, "a") as f:
+				f.write(("\n" if text and not text.endswith("\n") else "") + "\n" + corpus_block(home))
+	script = os.path.join(home, "bin", HOOK)
+	sp = os.path.join(d, "settings.json")
+	try:
+		settings = json.loads(_read(sp) or "{}")
+	except ValueError:
+		return out + [f"FAIL  {knowledge.tilde(sp)} is not valid JSON — fix it first, nothing was changed"]
+	if len(_hooks(settings, HOOK)) != len(settings.get("hooks", {}).get("SessionStart", [])):
+		out.append("ok    the SessionStart hook is already registered")
+	else:
+		out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
+		if not dry:
+			settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
+				{"hooks": [{"type": "command", "command": f'"{script}"', "timeout": 10,
+				            "statusMessage": "Preparing repo notes"}]})
+			with open(sp, "w") as f:
+				json.dump(settings, f, indent=2)
+	return out + [""] + (apply(dry) if not dry else [f"{did}do    everything plain `install` does"])
+
+
+def full_remove(dry=False):
+	"""Reverse a full install. The corpus itself stays: by now you may have edited it."""
+	d, out, did = claude_dir(), [], "would " if dry else ""
+	link, ident = os.path.join(d, "identity"), os.path.join(CORPUS_HOME, "identity")
+	if _ours(link, ident):
+		out.append(f"{did}remove  {knowledge.tilde(link)}")
+		if not dry:
+			os.remove(link)
+	elif os.path.lexists(link):
+		out.append(f"SKIP    {knowledge.tilde(link)} is not the link we made — left alone")
+	md = os.path.join(d, "CLAUDE.md")
+	text = _read(md)
+	if CBEGIN in text and CEND in text:
+		out.append(f"{did}remove  the corpus imports from {knowledge.tilde(md)}")
+		if not dry:
+			head, _, rest = text.partition(CBEGIN)
+			_, _, tail = rest.partition(CEND)
+			with open(md, "w") as f:
+				f.write(head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n"))
+	sp = os.path.join(d, "settings.json")
+	try:
+		settings = json.loads(_read(sp) or "{}")
+	except ValueError:
+		out.append(f"SKIP    {knowledge.tilde(sp)} is not valid JSON — remove the hook by hand")
+		settings = None
+	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
+		kept = _hooks(settings, HOOK)
+		if len(kept) != len(settings["hooks"]["SessionStart"]):
+			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
+			if not dry:
+				settings["hooks"]["SessionStart"] = kept
+				if not kept:
+					settings["hooks"].pop("SessionStart")
+				with open(sp, "w") as f:
+					json.dump(settings, f, indent=2)
+	out.append(f"note    {knowledge.tilde(CORPUS_HOME)} is left on disk — you may have edited it")
+	return out + [""] + remove(dry)
