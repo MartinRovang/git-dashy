@@ -54,7 +54,8 @@ init wires one repo, so a session there also reads that repo's own facts: it exc
 
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
-  one, and every review reads the brief. Re-runnable, and every question is skippable.
+  one, and every review reads the brief. Re-runnable: a blank answer KEEPS what is already there rather
+  than clearing it, the prompt shows you what that is, and sections you added by hand are left alone.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -114,7 +115,8 @@ def install(argv):
 
 def setup(argv):
 	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for."""
-	print("Two short briefs. Leave any line blank to skip it, and edit the files later — nothing is final.\n")
+	print("Two short briefs. Blank keeps what is already there — the prompt shows you what. "
+	      "Edit the files later; nothing here is final.\n")
 	def ask(prompt):
 		try:
 			return input(f"  {prompt}\n  > ").strip()

@@ -232,6 +232,15 @@ Removes the symlink, the corpus import block and the hook — leaving your other
 your other hooks and anything you wrote in `CLAUDE.md` untouched. **The corpus itself stays
 on disk**, because by then it is yours and may not look like what was installed.
 
+### When it stops
+
+A corpus with no `identity/` directory is refused: there is nothing to import, and a
+dangling symlink in the agent config is worse than an install that stopped. Anything the
+run had already done — the clone, the symlink, the imports — is undone before it reports,
+so a failed install never leaves a half-wired machine and never blocks the next attempt.
+`--dry-run` reports the same refusal, since that is the command you reach for to find out
+why the real one failed.
+
 ### The shipped corpus
 
 `corpus/` in this repository: about 1,200 words of engineering discipline and a blank

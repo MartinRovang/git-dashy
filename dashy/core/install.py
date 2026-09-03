@@ -374,8 +374,24 @@ def _hooks(settings, script):
 
 
 def full_apply(corpus, url="", dry=False):
-	"""Install a corpus and its hook, then the memory wiring. Returns report lines."""
+	"""Install a corpus and its hook, then the memory wiring. Returns report lines.
+
+	ponytail: every failure below unwinds what this run had already done. Returning halfway used to
+	leave the clone, the symlink or the imports in place — and the worst of those poisoned the command
+	for good, because the next run short-circuits on CORPUS_HOME existing and fails identically forever,
+	naming no directory to delete. A half-install that reports FAIL is not a safe state to leave.
+	"""
 	d, out, did = claude_dir(), [], "would " if dry else ""
+	undo = []
+
+	def fail(msg):
+		for what, act in reversed(undo):
+			try:
+				act()
+			except OSError:
+				pass
+		return out + [f"FAIL  {msg}"] + ([f"      undone: {', '.join(w for w, _ in undo)}"] if undo else [])
+
 	if not os.path.isdir(d):
 		return [f"FAIL  no agent config directory at {knowledge.tilde(d)} — is claude installed?"]
 	if os.path.isdir(CORPUS_HOME):
@@ -388,8 +404,10 @@ def full_apply(corpus, url="", dry=False):
 				err = team.clone(url, CORPUS_HOME) if url else (shutil.copytree(corpus, CORPUS_HOME) and "")
 			except OSError as e:  # ponytail: the clone path checked its error; the copy path did not, and
 				err = str(e)      # then symlinked, imported and hooked a directory that was never there
+			if os.path.isdir(CORPUS_HOME):
+				undo.append((knowledge.tilde(CORPUS_HOME), lambda: shutil.rmtree(CORPUS_HOME, ignore_errors=True)))
 			if err:
-				return out[:-1] + [f"FAIL  {err}"]
+				return fail(err)
 	home = CORPUS_HOME if not dry or os.path.isdir(CORPUS_HOME) else corpus
 	link = os.path.join(d, "identity")
 	ident = os.path.join(home, "identity")
@@ -397,14 +415,17 @@ def full_apply(corpus, url="", dry=False):
 		out.append(f"ok    {knowledge.tilde(link)} already points at the corpus")
 	elif os.path.lexists(link):
 		out.append(f"SKIP  {knowledge.tilde(link)} exists and is not ours — left alone, so nothing is imported")
-	elif not dry and not os.path.isdir(ident):
+	elif not os.path.isdir(ident):
 		# ponytail: refuse rather than leave a link to nothing. An identity that is not there imports
 		# nothing, and a dangling symlink in the agent config is worse than an install that stopped.
-		return out + [f"FAIL  {knowledge.tilde(ident)} has no identity/ — nothing to install"]
+		# ponytail: checked on a dry run too — --dry-run is what you reach for to find out why the real
+		# one failed, and it used to answer with a clean plan in exactly the state that had broken it.
+		return fail(f"{knowledge.tilde(ident)} has no identity/ — nothing to install")
 	else:
 		out.append(f"{did}link  {knowledge.tilde(link)} -> {knowledge.tilde(ident)}")
 		if not dry:
 			os.symlink(ident, link)
+			undo.append((knowledge.tilde(link), lambda: os.remove(link)))
 	user, tmpl = os.path.join(ident, "USER.md"), os.path.join(ident, "USER.md.template")
 	if os.path.exists(user):
 		out.append("ok    USER.md is already filled in")
@@ -421,12 +442,14 @@ def full_apply(corpus, url="", dry=False):
 		if not dry:
 			with open(md, "a") as f:
 				f.write(("\n" if text and not text.endswith("\n") else "") + "\n" + corpus_block(home))
+			undo.append((f"the imports in {knowledge.tilde(md)}",
+			             lambda: open(md, "w").write(_strip_blocks(_read(md), CBEGIN, CEND))))
 	script = HOOK
 	sp = os.path.join(d, "settings.json")
 	try:
 		settings = json.loads(_read(sp) or "{}")
 	except ValueError:
-		return out + [f"FAIL  {knowledge.tilde(sp)} is not valid JSON — fix it first, nothing was changed"]
+		return fail(f"{knowledge.tilde(sp)} is not valid JSON — fix it first")
 	script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
 	if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
 		out.append("ok    the SessionStart hook is already registered")
@@ -503,6 +526,12 @@ ASK_PROJECT = (("The project", "what it is, and who uses it"),
 SETUP_MARK = "<!-- written by gitdashy setup -->"
 
 
+def _add(out, key, buf):
+	"""ponytail: a heading twice APPENDS. Overwriting meant a rewrite deleted the first one silently."""
+	body = _unescape("\n".join(buf)).strip()
+	out[key] = (out[key] + "\n\n" + body).strip() if key in out else body
+
+
 def sections(text):
 	"""{heading: body} from a brief, in file order. Anything above the first `## ` is not a section.
 
@@ -516,22 +545,40 @@ def sections(text):
 			fence = not fence
 		if line.startswith("## ") and not fence:
 			if key is not None:
-				out[key] = _unescape("\n".join(buf)).strip()
+				_add(out, key, buf)
 			key, buf = line[3:].strip(), []
 		elif key is not None:
 			buf.append(line)
 	if key is not None:
-		out[key] = _unescape("\n".join(buf)).strip()
+		_add(out, key, buf)
 	return out
 
 
 def _escape(body):
-	"""Keep an answer from becoming structure. A line starting with # is text, so it is written as text."""
-	return "\n".join(("\\" + l) if l.startswith("#") else l for l in body.splitlines())
+	"""Keep an answer from becoming structure, without touching what is inside a fence.
+
+	ponytail: the reader learned about fences and the writer did not, so a hand-written code block
+	containing `# a comment` was written back as `\\# a comment` — round-tripping through sections()
+	while rendering a literal backslash on disk, and USER.md is read by the agent as-is, not through
+	sections(). A guard only half of a round trip knows about corrupts the other half.
+	"""
+	out, fence = [], False
+	for l in body.splitlines():
+		if l.lstrip().startswith("```"):
+			fence = not fence
+		out.append(("\\" + l) if l.startswith("#") and not fence else l)
+	return "\n".join(out)
 
 
 def _unescape(body):
-	return "\n".join(l[1:] if l.startswith("\\#") else l for l in body.splitlines())
+	# ponytail: a literal "\#" somebody typed comes back as "#". Lossy, and rarer than the corruption
+	# escaping prevents — but it is a real edit to their text, so it is written down rather than assumed.
+	out, fence = [], False
+	for l in body.splitlines():
+		if l.lstrip().startswith("```"):
+			fence = not fence
+		out.append(l[1:] if l.startswith("\\#") and not fence else l)
+	return "\n".join(out)
 
 
 def compose(title, lead, answers, extra=()):
@@ -573,9 +620,12 @@ def setup(ask, corpus_home=None):
 			now = have.get(k, "")
 			said = ask(f"{k} — {hint}" + (f"\n  [now: {now.splitlines()[0][:60]}]" if now else ""))
 			got.append((k, said or now))
-		asked = {k for k, _ in ASK_YOU}
-		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", got,
-		               [(k, v) for k, v in have.items() if k not in asked])
+		# ponytail: the file's own order, then anything new. Appending the unasked ones moved a section
+		# written above ## Name to the bottom on every single run — the file never settled.
+		said = dict(got)
+		order = list(have) + [k for k, _ in ASK_YOU if k not in have]
+		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.",
+		               [(k, said.get(k, have.get(k, ""))) for k in order])
 		if text:
 			with open(user, "w") as f:
 				f.write(text)

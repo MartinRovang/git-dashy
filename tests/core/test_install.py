@@ -391,7 +391,7 @@ def test_a_failed_corpus_copy_stops_before_wiring_anything(monkeypatch, tmp_path
 		raise OSError(28, "No space left on device")
 	monkeypatch.setattr(install.shutil, "copytree", boom)
 	out = install.full_apply(corpus)
-	assert out[-1].startswith("FAIL")
+	assert any(l.startswith("FAIL") for l in out)
 	assert not (cfg / "identity").exists() and not (cfg / "CLAUDE.md").exists()
 
 
@@ -460,9 +460,13 @@ def test_an_empty_repo_fails_cleanly_rather_than_half_installing(monkeypatch, tm
 	cfg, corpus = full_env(monkeypatch, tmp_path)
 	remote = bare_remote(tmp_path, monkeypatch)
 	out = install.full_apply(corpus, str(remote))
-	assert out[-1].startswith("FAIL") and "no identity" in out[-1]
+	assert any(l.startswith("FAIL") and "no identity" in l for l in out)
 	assert not os.path.lexists(cfg / "identity")
-	assert "@identity" not in (cfg / "CLAUDE.md").read_text() if (cfg / "CLAUDE.md").exists() else True
+	# and it leaves nothing behind, so the next run is not poisoned by this one
+	assert not os.path.isdir(tmp_path / "corpus-home")
+	again = install.full_apply(corpus)
+	assert not any(l.startswith("FAIL") for l in again), again
+	assert "@identity/AGENT.md" in (cfg / "CLAUDE.md").read_text()
 
 
 def test_a_corpus_with_no_identity_stops_rather_than_dangling(monkeypatch, tmp_path):
@@ -471,8 +475,10 @@ def test_a_corpus_with_no_identity_stops_rather_than_dangling(monkeypatch, tmp_p
 	(bare / "docs").mkdir(parents=True)
 	(bare / "docs" / "x.md").write_text("# unrelated\n")
 	out = install.full_apply(str(bare))
-	assert out[-1].startswith("FAIL") and "no identity" in out[-1]
+	assert any(l.startswith("FAIL") and "no identity" in l for l in out)
 	assert not os.path.lexists(cfg / "identity")  # nothing linked at all
+	dry = install.full_apply(str(bare), dry=True)
+	assert any(l.startswith("FAIL") for l in dry)  # --dry-run must not report a clean plan
 
 
 def test_setup_blank_keeps_what_is_there(monkeypatch, tmp_path):
@@ -582,3 +588,48 @@ def test_uninstall_leaves_somebody_elses_hook_of_the_same_name(monkeypatch, tmp_
 	got = __import__("json").loads((cfg / "settings.json").read_text())
 	left = [h["command"] for g in got.get("hooks", {}).get("SessionStart", []) for h in g["hooks"]]
 	assert left == ["/opt/theirs/claude-session-start.sh"]
+
+
+def test_a_broken_settings_file_undoes_the_symlink_and_imports(monkeypatch, tmp_path):
+	"""Every failure path used to keep whatever it had already done — this is the one nobody named."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	(cfg / "settings.json").write_text("{not json")
+	out = install.full_apply(corpus)
+	assert any(l.startswith("FAIL") and "valid JSON" in l for l in out)
+	assert any("undone" in l for l in out)
+	assert not os.path.lexists(cfg / "identity")
+	assert "@identity" not in (cfg / "CLAUDE.md").read_text()
+	(cfg / "settings.json").write_text("{}")
+	assert not any(l.startswith("FAIL") for l in install.full_apply(corpus))  # and it recovers
+
+
+def test_a_code_block_survives_being_written_back(monkeypatch, tmp_path):
+	"""The reader learned about fences and the writer did not, so it escaped comments inside them."""
+	body = "```python\n# a comment\nx = 1\n```"
+	text = install.compose("W", "l", [("Name", body)])
+	assert "\\# a comment" not in text and "# a comment" in text  # on disk, not just after a round trip
+	assert install.sections(text)["Name"] == body
+	# and structure outside a fence is still neutralised
+	forged = install.compose("W", "l", [("Name", "x\n## Role\n\nCTO")])
+	assert list(install.sections(forged)) == ["Name"]
+
+
+def test_a_repeated_heading_is_kept_not_replaced():
+	"""Overwriting meant a rewrite silently deleted the first one."""
+	assert install.sections("## A\n\none\n\n## A\n\ntwo\n") == {"A": "one\n\ntwo"}
+
+
+def test_setup_holds_the_file_still(monkeypatch, tmp_path):
+	"""Hand-added sections used to move to the bottom on every run, so the file never settled."""
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	user = home / "identity" / "USER.md"
+	user.write_text(install.compose("Who you are", "lead",
+	                                [("Context", "written above"), ("Name", "Nils"), ("Role", "eng")]))
+	before = [l for l in user.read_text().splitlines() if l.startswith("## ")]
+	install.setup(lambda p: "", str(home))
+	after = [l for l in user.read_text().splitlines() if l.startswith("## ")]
+	assert after[:3] == before  # same order, nothing moved
+	assert after[0] == "## Context"

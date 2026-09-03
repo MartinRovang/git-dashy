@@ -15,6 +15,7 @@ from . import log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
+SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
@@ -47,7 +48,7 @@ def project():
 	# a reviewer has no use for it, and everything else in this prompt is there to be read.
 	parts = [f"### {label}\n{t}" for label, base in sources()
 	         if (t := "\n".join(l for l in _read(os.path.join(base, PROJECT)).splitlines()
-	                             if not l.startswith("<!--")).strip())]
+	                             if l.strip() != SETUP_MARK).strip())]
 	return "\n\n".join(parts)
 
 
