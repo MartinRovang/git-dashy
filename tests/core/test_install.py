@@ -65,7 +65,7 @@ def test_registry_round_trip(monkeypatch, tmp_path):
 	assert install.registered() == []
 	assert install.register(str(tmp_path / "a"), "o/n") is True
 	assert install.register(str(tmp_path / "a"), "o/n") is False  # already known
-	assert install.registered() == [(str(tmp_path / "a"), "o/n")]
+	assert [(i, r) for i, r, *_ in install.registered()] == [(str(tmp_path / "a"), "o/n")]
 	assert install.unregister(str(tmp_path / "a")) is True
 	assert install.unregister(str(tmp_path / "a")) is False
 	assert install.registered() == []
@@ -84,7 +84,9 @@ def test_wire_repo_excludes_imports_registers_and_mirrors(monkeypatch, tmp_path)
 	out = install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
 	assert ".agent/team/" in (repo / ".git" / "info" / "exclude").read_text()
 	assert "@.agent/team/repo.md" in loader.read_text()
-	assert install.registered() == [(str(repo / ".agent" / "team"), "o/n")]
+	entry = install.registered()[0]
+	assert entry[:2] == (str(repo / ".agent" / "team"), "o/n")
+	assert entry[2] == str(repo) and entry[3] == str(loader)  # root and loader, so uninstall can undo
 	assert "a fact about o/n" in (repo / ".agent" / "team" / "repo.md").read_text()
 	assert not subprocess.run(["git", "-C", str(repo), "status", "--porcelain", ".agent"],
 	                          capture_output=True, text=True).stdout.strip()  # git cannot see it
@@ -97,6 +99,8 @@ def test_refresh_mirrors_resyncs_and_survives_a_bad_entry(monkeypatch, tmp_path)
 	fresh(monkeypatch, tmp_path)
 	calls = []
 	monkeypatch.setattr(mirror, "sync", lambda into, repo, pull=True: calls.append((into, repo, pull)))
+	(tmp_path / "a").mkdir()   # a mirror that is still there
+	(tmp_path / "b").mkdir()
 	install.register(str(tmp_path / "a"), "o/n")
 	install.register(str(tmp_path / "b"), "o/m")
 	state.refresh_mirrors()
@@ -317,14 +321,25 @@ def test_setup_writes_only_what_was_answered(monkeypatch, tmp_path):
 	assert any("wrote" in l and "USER.md" in l for l in out)
 
 
+def test_setup_never_touches_a_user_md_you_wrote(monkeypatch, tmp_path):
+	"""Re-running setup to change one line must not destroy the rest of the file."""
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	(home / "identity" / "USER.md").write_text("# mine\n\n## Name\n\nwritten by hand\n")
+	out = install.setup(lambda p: "an answer", str(home))
+	assert "written by hand" in (home / "identity" / "USER.md").read_text()
+	assert any("is yours already" in l for l in out)
+
+
 def test_setup_answering_nothing_writes_nothing(monkeypatch, tmp_path):
 	fresh(monkeypatch, tmp_path)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	home = tmp_path / "corpus"
 	(home / "identity").mkdir(parents=True)
-	(home / "identity" / "USER.md").write_text("# mine\n")
 	out = install.setup(lambda p: "", str(home))
-	assert (home / "identity" / "USER.md").read_text() == "# mine\n"  # never clobbered by a skipped run
+	assert not (home / "identity" / "USER.md").exists()
 	assert not (tmp_path / "mem" / "project.md").exists()
 	assert any("nothing answered" in l for l in out) and any("no brief written" in l for l in out)
 
@@ -346,3 +361,43 @@ def test_setup_says_so_with_no_corpus_installed(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	out = install.setup(lambda p: "x", str(tmp_path / "nope"))
 	assert any("SKIP" in l and "install --full" in l for l in out)
+
+
+def test_uninstall_makes_a_mirror_inert_without_deleting_the_facts(monkeypatch, tmp_path):
+	"""Deleting them reaches outside the agent config; leaving them live means sessions read frozen memory."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	os.makedirs(tmp_path / "mem")
+	(tmp_path / "mem" / "o__n.md").write_text("- a fact\n")
+	repo = tmp_path / "proj"
+	repo.mkdir()
+	subprocess.run(["git", "init", "-q", str(repo)], check=True)
+	loader = repo / "NOTES.md"
+	loader.write_text("# my notes\n")
+	install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
+	assert "@.agent/team/repo.md" in loader.read_text()
+	install.full_apply(corpus)
+	install.full_remove()
+	assert loader.read_text() == "# my notes\n"        # the import it added, and nothing else
+	assert (repo / ".agent" / "team" / "repo.md").exists()  # the facts stay, as a snapshot
+	assert install.registered() == []
+
+
+def test_a_failed_corpus_copy_stops_before_wiring_anything(monkeypatch, tmp_path):
+	"""It used to report success, then symlink and import a directory that was never created."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	def boom(*a, **k):
+		raise OSError(28, "No space left on device")
+	monkeypatch.setattr(install.shutil, "copytree", boom)
+	out = install.full_apply(corpus)
+	assert out[-1].startswith("FAIL")
+	assert not (cfg / "identity").exists() and not (cfg / "CLAUDE.md").exists()
+
+
+def test_refresh_skips_a_mirror_whose_directory_is_gone(monkeypatch, tmp_path):
+	"""No recorded root needed: init creates the mirror, so a refresh never has cause to make one."""
+	fresh(monkeypatch, tmp_path)
+	gone = tmp_path / "deleted" / "deep" / "mirror"
+	install.register(str(gone), "o/n")  # an old entry, with no root recorded
+	state.refresh_mirrors()
+	assert not gone.exists() and install.registered() == []

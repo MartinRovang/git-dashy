@@ -142,23 +142,27 @@ def remove(dry=False):
 
 
 def registered():
-	"""[(into, repo)] for every repo mirror this machine keeps fresh."""
-	out = []
+	"""[(into, repo, root, loader)] for every mirror this machine refreshes, newest entry per path.
+
+	ponytail: deduplicated on READ, so register can append without a lock. The hook runs at every
+	session start, and two starting together would otherwise interleave a read-modify-write and drop one.
+	ponytail: root and loader may be "" — entries written before they were recorded.
+	"""
+	seen = {}
 	for line in _read(REGISTRY).splitlines():
-		into, _, repo = line.partition("\t")
-		if into.strip():
-			out.append((into.strip(), repo.strip()))
-	return out
+		parts = (line.split("\t") + ["", "", ""])[:4]
+		if parts[0].strip():
+			seen[parts[0].strip()] = tuple(p.strip() for p in parts)
+	return list(seen.values())
 
 
-def register(into, repo):
+def register(into, repo, root="", loader=""):
 	"""Remember to refresh this mirror. Returns True when it was not already known."""
 	into = os.path.abspath(os.path.expanduser(into))
-	known = registered()
-	if any(i == into for i, _ in known):
+	if any(i == into for i, *_ in registered()):
 		return False
-	with open(REGISTRY, "a") as f:
-		f.write(f"{into}\t{repo}\n")
+	with open(REGISTRY, "a") as f:  # ponytail: one append, atomic enough; duplicates die on read
+		f.write(f"{into}\t{repo}\t{root}\t{loader}\n")
 	return True
 
 
@@ -166,11 +170,11 @@ def unregister(into):
 	"""Stop refreshing this mirror. Returns True when it was known."""
 	into = os.path.abspath(os.path.expanduser(into))
 	known = registered()
-	kept = [(i, r) for i, r in known if i != into]
+	kept = [e for e in known if e[0] != into]
 	if len(kept) == len(known):
 		return False
 	with open(REGISTRY, "w") as f:
-		f.write("".join(f"{i}\t{r}\n" for i, r in kept))
+		f.write("".join("\t".join(e) + "\n" for e in kept))
 	return True
 
 
@@ -226,16 +230,36 @@ def _import(loader, line):
 	return f"added {line} to {knowledge.tilde(loader)}"
 
 
+def _unimport(loader, into):
+	"""Take out the import line we added, and the comment above it. The mirror files stay.
+
+	ponytail: what makes a mirror live is the import, not the file. Removing that leaves readable facts
+	behind rather than reaching outside the agent config to delete data — while making sure no session
+	goes on reading memory that nothing refreshes any more.
+	"""
+	line = "@" + os.path.relpath(into, os.path.dirname(loader)) + "/repo.md"
+	kept, text = [], _read(loader)
+	for l in text.splitlines():
+		if l.strip() == line or l.strip() == "# gitdashy: this repo's review memory (read-only mirror)":
+			continue
+		kept.append(l)
+	if kept != text.splitlines():
+		with open(loader, "w") as f:
+			f.write("\n".join(kept).rstrip("\n") + "\n" if any(k.strip() for k in kept) else "")
+
+
 def wire_repo(into, loader, repo):
 	"""Wire one repo: ignore the mirror, import it, keep it fresh, write it now. Returns report lines."""
 	out = []
 	into = os.path.abspath(os.path.expanduser(into))
 	loader = os.path.abspath(os.path.expanduser(loader))
 	root = _toplevel(into)
+	loader_abs = loader  # ponytail: recorded, so uninstall can undo the import without touching the facts
 	out.append(_exclude(root, os.path.relpath(into, root)) if root else
 	           f"note  {knowledge.tilde(into)} is not inside a git repo — nothing to exclude")
 	out.append(_import(loader, "@" + os.path.relpath(into, os.path.dirname(loader)) + "/repo.md"))
-	out.append(f"added {knowledge.tilde(into)} to the refresh list, as {repo}" if register(into, repo)
+	out.append(f"added {knowledge.tilde(into)} to the refresh list, as {repo}"
+	           if register(into, repo, root, loader)
 	           else f"ok    {knowledge.tilde(into)} is already refreshed every tick")
 	out.append("      " + mirror.sync(into, repo, pull=False))
 	return out
@@ -330,11 +354,12 @@ def full_apply(corpus, url="", dry=False):
 		out.append(f"{did}install  the corpus into {knowledge.tilde(CORPUS_HOME)}")
 		if not dry:
 			from . import team
-			err = team.clone(url, CORPUS_HOME) if url else ""
-			if url and err:
+			try:
+				err = team.clone(url, CORPUS_HOME) if url else (shutil.copytree(corpus, CORPUS_HOME) and "")
+			except OSError as e:  # ponytail: the clone path checked its error; the copy path did not, and
+				err = str(e)      # then symlinked, imported and hooked a directory that was never there
+			if err:
 				return out[:-1] + [f"FAIL  {err}"]
-			if not url:
-				shutil.copytree(corpus, CORPUS_HOME)
 	home = CORPUS_HOME if not dry or os.path.isdir(CORPUS_HOME) else corpus
 	link = os.path.join(d, "identity")
 	ident = os.path.join(home, "identity")
@@ -422,10 +447,12 @@ def full_remove(dry=False):
 					json.dump(settings, f, indent=2)
 	known = registered()
 	if known:
-		out.append(f"{did}forget  {len(known)} registered mirror{'s' if len(known) > 1 else ''}"
-		           f" — the files stay, they simply stop being refreshed")
+		out.append(f"{did}forget  {len(known)} mirror{'s' if len(known) > 1 else ''} — the import each repo"
+		           f" uses is removed, the facts themselves are left as a snapshot you can read or delete")
 		if not dry:
-			for into, _ in known:
+			for into, _repo, _root, loader in known:
+				if loader and os.path.exists(loader):
+					_unimport(loader, into)
 				unregister(into)
 	out.append(f"note    {knowledge.tilde(CORPUS_HOME)} is left on disk — you may have edited it")
 	return out + [""] + remove(dry)
@@ -457,7 +484,11 @@ def setup(ask, corpus_home=None):
 	out = []
 	home = corpus_home or CORPUS_HOME
 	user = os.path.join(home, "identity", "USER.md")
-	if os.path.isdir(os.path.dirname(user)):
+	if os.path.exists(user) and _read(user).strip() and "gitdashy setup" not in _read(user):
+		# ponytail: the brief refuses when it exists; this file must too, or re-running to change one
+		# line destroys the rest. Only a file setup itself wrote is safe to rewrite.
+		out.append(f"ok     {knowledge.tilde(user)} is yours already — edit it directly to change it")
+	elif os.path.isdir(os.path.dirname(user)):
 		got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_YOU]
 		text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", got)
 		if text:

@@ -102,14 +102,24 @@ def _is(a, b):
 	return _norm(a) == _norm(b)
 
 
+def _plain(line):
+	""""- a fact" -> "a fact". No counter is read here: only a drafts file has one."""
+	return line.strip().lstrip("-• ").strip()
+
+
 def _parse(line):
-	""""- (2) a fact" -> (2, "a fact"). A line with no counter has been seen once."""
+	""""- (2) a fact" -> (2, "a fact"). A line with no counter has been seen once.
+
+	ponytail: for drafts only. A confirmed fact may legitimately begin "(2) ..." — "- (2) space indexes
+	are 1-based" would otherwise read back without its first two characters, quietly changing what it says.
+	"""
 	m = re.match(r"^-\s*\((\d+)\)\s*(.*)$", line.strip())
-	return (int(m.group(1)), m.group(2).strip()) if m else (1, line.strip().lstrip("-• ").strip())
+	return (int(m.group(1)), m.group(2).strip()) if m else (1, _plain(line))
 
 
 def _facts(p):
-	return [_parse(l)[1] for l in _read(p).splitlines() if l.strip()]
+	"""Facts from a confirmed file or a pool file — never a drafts file, so never a counter."""
+	return [_plain(l) for l in _read(p).splitlines() if l.strip()]
 
 
 def _append_line(p, fact):
@@ -241,11 +251,13 @@ def append(repo, text):
 				break
 		else:
 			items.append((1, fact))
-	_write_drafts(repo, [(n, t) for n, t in items if n < PROMOTE_AT])
 	promoted = [t for n, t in items if n >= PROMOTE_AT]
+	# ponytail: facts first, drafts after. The other order loses the observation outright if the second
+	# write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
 	for t in promoted:
 		_append_line(path(repo), t)
 		_pool(repo, t)
+	_write_drafts(repo, [(n, t) for n, t in items if n < PROMOTE_AT])
 	return promoted
 
 
@@ -274,7 +286,7 @@ def share(repo, fact):
 
 def _unpool(repo, fact):
 	p = pool_path(whoami(), repo)
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
 	if kept:
 		with open(p, "w") as f:
 			f.write("\n".join(kept) + "\n")
