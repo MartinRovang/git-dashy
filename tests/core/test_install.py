@@ -518,3 +518,67 @@ def test_the_setup_marker_never_reaches_a_review(monkeypatch, tmp_path):
 	(tmp_path / "project.md").write_text(install.compose("What is being built", "lead", [("The project", "a thing")]))
 	got = memory.project()
 	assert "a thing" in got and install.SETUP_MARK not in got and "<!--" not in got
+
+
+# ---- siblings of guards that were fixed one case at a time ----
+
+
+def test_the_registry_survives_a_tab_in_a_path(monkeypatch, tmp_path):
+	"""The fields are paths, and a tab in a directory name is legal. Delimiting on one lost the rest."""
+	fresh(monkeypatch, tmp_path)
+	odd = str(tmp_path / "we\tird")
+	install.register(odd, "o/n", root=str(tmp_path), loader=str(tmp_path / "L.md"))
+	assert [i for i, *_ in install.registered()] == [odd]
+	assert install.registered()[0][1] == "o/n"
+	assert install.unregister(odd) is True and install.registered() == []
+
+
+def test_the_registry_survives_a_path_that_looks_like_a_tombstone(monkeypatch, tmp_path):
+	fresh(monkeypatch, tmp_path)
+	odd = str(tmp_path / "-forget-me")
+	install.register(odd, "o/n")
+	assert [i for i, *_ in install.registered()] == [odd]
+
+
+def test_a_heading_inside_a_code_block_is_not_a_section():
+	got = install.sections("## A\n\n```\n## not a heading\n```\n\n## B\n\ntwo\n")
+	assert list(got) == ["A", "B"] and "## not a heading" in got["A"]
+
+
+def test_an_answer_cannot_forge_a_section():
+	"""setup rewrites the file from what sections() returns, so a forged heading rearranges your text."""
+	text = install.compose("W", "l", [("Name", "Nils\n## Role\n\nCTO")])
+	back = install.sections(text)
+	assert list(back) == ["Name"]
+	assert back["Name"] == "Nils\n## Role\n\nCTO"  # and it round-trips unchanged
+
+
+def test_uninstall_removes_every_block_not_just_the_first(monkeypatch, tmp_path):
+	"""A config copied between machines carries the block twice; removing one of two reads as clean."""
+	cfg = fresh(monkeypatch, tmp_path)
+	(cfg / "CLAUDE.md").write_text(install.BLOCK + "\nkeep me\n" + install.BLOCK)
+	install.remove()
+	left = (cfg / "CLAUDE.md").read_text()
+	assert install.BEGIN not in left and "keep me" in left
+
+
+def test_full_uninstall_removes_every_corpus_block_too(monkeypatch, tmp_path):
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	blk = install.CBEGIN + "\nx\n" + install.CEND + "\n"
+	(cfg / "CLAUDE.md").write_text(blk + "\nkeep\n" + blk)
+	install.full_remove()
+	left = (cfg / "CLAUDE.md").read_text()
+	assert install.CBEGIN not in left and "keep" in left
+
+
+def test_uninstall_leaves_somebody_elses_hook_of_the_same_name(monkeypatch, tmp_path):
+	"""Matching a bare filename would delete a hook that merely shares it."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	settings = {"hooks": {"SessionStart": [{"hooks": [
+		{"type": "command", "command": "/opt/theirs/claude-session-start.sh"}]}]}}
+	(cfg / "settings.json").write_text(__import__("json").dumps(settings))
+	install.full_apply(corpus)
+	install.full_remove()
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	left = [h["command"] for g in got.get("hooks", {}).get("SessionStart", []) for h in g["hooks"]]
+	assert left == ["/opt/theirs/claude-session-start.sh"]

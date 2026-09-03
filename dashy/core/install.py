@@ -17,7 +17,7 @@ BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
 CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->"  # a separate block: one can go without the other
 CORPUS_HOME = os.path.expanduser("~/.agent-corpus")  # where an installed corpus lives, independent of gitdashy
 IMPORT = "@prs-memory/general.md"  # the line that says the wiring is already there, block or not
-REGISTRY = os.path.expanduser("~/.prs_mirrors")  # "<into>\t<repo>" per line; the filesystem keeps the setting
+REGISTRY = os.path.expanduser("~/.prs_mirrors")  # one JSON object per line; the filesystem keeps the setting
 BLOCK = f"""{BEGIN}
 # Review memory
 
@@ -43,6 +43,19 @@ def links():
 	d = claude_dir()
 	return [(os.path.join(d, "prs-memory"), config.LOCAL_MEMORY),
 	        (os.path.join(d, "prs-team"), os.path.join(config.TEAM, "memory"))]
+
+
+def _strip_blocks(text, begin, end):
+	"""Every begin..end block gone, not just the first.
+
+	ponytail: a config copied between machines, or two installs racing, leaves the block twice —
+	and removing one of two is worse than removing none, because it reads as a clean uninstall.
+	"""
+	while begin in text and end in text.partition(begin)[2]:
+		head, _, rest = text.partition(begin)
+		_, _, tail = rest.partition(end)
+		text = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n")
+	return text
 
 
 def _read(p):
@@ -131,10 +144,8 @@ def remove(dry=False):
 	if BEGIN in text and END in text:
 		out.append(f"{did}remove  the import block from {knowledge.tilde(md)}")
 		if not dry:
-			head, _, rest = text.partition(BEGIN)
-			_, _, tail = rest.partition(END)
 			with open(md, "w") as f:
-				f.write(head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n"))
+				f.write(_strip_blocks(text, BEGIN, END))
 	elif IMPORT in text:
 		out.append(f"SKIP    {knowledge.tilde(md)} imports the memory but not in a block we wrote — remove it by hand")
 	else:
@@ -154,12 +165,19 @@ def registered():
 	"""
 	seen = {}
 	for line in _read(REGISTRY).splitlines():
-		parts = (line.split("\t") + ["", "", ""])[:4]
-		into = parts[0].strip()
-		if into.startswith("-"):  # a tombstone: this mirror was forgotten
-			seen.pop(into[1:].strip(), None)
-		elif into:
-			seen[into] = tuple(p.strip() for p in parts)
+		if not line.strip():
+			continue
+		try:
+			e = json.loads(line)
+		except ValueError:
+			continue  # a line we cannot read is not a reason to lose the rest
+		into = e.get("into") or e.get("forget")
+		if not isinstance(into, str) or not into:
+			continue
+		if "forget" in e:
+			seen.pop(into, None)
+		else:
+			seen[into] = (into, e.get("repo", ""), e.get("root", ""), e.get("loader", ""))
 	return list(seen.values())
 
 
@@ -168,8 +186,10 @@ def register(into, repo, root="", loader=""):
 	into = os.path.abspath(os.path.expanduser(into))
 	if any(i == into for i, *_ in registered()):
 		return False
-	with open(REGISTRY, "a") as f:  # ponytail: one append, atomic enough; duplicates die on read
-		f.write(f"{into}\t{repo}\t{root}\t{loader}\n")
+	# ponytail: JSON, because the fields are PATHS. A tab in a directory name is legal and split a
+	# delimited line into the wrong fields silently; a quote or a newline would have been worse.
+	with open(REGISTRY, "a") as f:  # one append, atomic enough; duplicates die on read
+		f.write(json.dumps({"into": into, "repo": repo, "root": root, "loader": loader}) + "\n")
 	return True
 
 
@@ -182,7 +202,7 @@ def unregister(into):
 	# ponytail: append a tombstone rather than rewrite. register() appends without a lock because the
 	# hook runs at every session start; a truncating rewrite here would drop an entry appended during it.
 	with open(REGISTRY, "a") as f:
-		f.write(f"-{into}\n")
+		f.write(json.dumps({"forget": into}) + "\n")
 	return True
 
 
@@ -328,6 +348,9 @@ def full_explain(corpus, url=""):
 # ponytail: gitdashy's own, not the corpus's. Pointing at <corpus>/bin/ meant any corpus that did not
 # happen to ship this exact file registered a hook to a missing command — in every session, everywhere.
 HOOK = os.path.join(HERE, "dashy", "hooks", "claude-session-start.sh")
+# ponytail: enough path to be ours. A bare filename would match — and uninstall would delete —
+# somebody else's hook that happened to be called the same thing.
+HOOK_MATCH = os.path.join("dashy", "hooks", "claude-session-start.sh")
 
 
 def _count(settings):
@@ -405,7 +428,7 @@ def full_apply(corpus, url="", dry=False):
 	except ValueError:
 		return out + [f"FAIL  {knowledge.tilde(sp)} is not valid JSON — fix it first, nothing was changed"]
 	script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
-	if _count({"hooks": {"SessionStart": _hooks(settings, os.path.basename(HOOK))}}) != _count(settings):
+	if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
 		out.append("ok    the SessionStart hook is already registered")
 	elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
 		out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
@@ -436,10 +459,8 @@ def full_remove(dry=False):
 	if CBEGIN in text and CEND in text:
 		out.append(f"{did}remove  the corpus imports from {knowledge.tilde(md)}")
 		if not dry:
-			head, _, rest = text.partition(CBEGIN)
-			_, _, tail = rest.partition(CEND)
 			with open(md, "w") as f:
-				f.write(head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n"))
+				f.write(_strip_blocks(text, CBEGIN, CEND))
 	sp = os.path.join(d, "settings.json")
 	try:
 		settings = json.loads(_read(sp) or "{}")
@@ -447,7 +468,7 @@ def full_remove(dry=False):
 		out.append(f"SKIP    {knowledge.tilde(sp)} is not valid JSON — remove the hook by hand")
 		settings = None
 	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
-		kept = _hooks(settings, os.path.basename(HOOK))
+		kept = _hooks(settings, HOOK_MATCH)
 		if _count({"hooks": {"SessionStart": kept}}) != _count(settings):
 			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
 			if not dry:
@@ -483,18 +504,34 @@ SETUP_MARK = "<!-- written by gitdashy setup -->"
 
 
 def sections(text):
-	"""{heading: body} from a brief, in file order. Anything above the first `## ` is not a section."""
-	out, key, buf = {}, None, []
+	"""{heading: body} from a brief, in file order. Anything above the first `## ` is not a section.
+
+	ponytail: fences and escapes both matter, because the bodies are text somebody typed. A "## " inside
+	a code block is not a heading, and one that compose() escaped was never a heading — miss either and
+	setup, which rewrites the file from what this returns, silently rearranges what you wrote.
+	"""
+	out, key, buf, fence = {}, None, [], False
 	for line in text.splitlines():
-		if line.startswith("## "):
+		if line.lstrip().startswith("```"):
+			fence = not fence
+		if line.startswith("## ") and not fence:
 			if key is not None:
-				out[key] = "\n".join(buf).strip()
+				out[key] = _unescape("\n".join(buf)).strip()
 			key, buf = line[3:].strip(), []
 		elif key is not None:
 			buf.append(line)
 	if key is not None:
-		out[key] = "\n".join(buf).strip()
+		out[key] = _unescape("\n".join(buf)).strip()
 	return out
+
+
+def _escape(body):
+	"""Keep an answer from becoming structure. A line starting with # is text, so it is written as text."""
+	return "\n".join(("\\" + l) if l.startswith("#") else l for l in body.splitlines())
+
+
+def _unescape(body):
+	return "\n".join(l[1:] if l.startswith("\\#") else l for l in body.splitlines())
 
 
 def compose(title, lead, answers, extra=()):
@@ -503,7 +540,9 @@ def compose(title, lead, answers, extra=()):
 	ponytail: `extra` carries sections nobody asked about — added by hand, or by an older version that
 	asked different questions. A rewrite that only knew its own questions would delete them.
 	"""
-	body = "".join(f"## {k}\n\n{v}\n\n" for k, v in list(answers) + list(extra) if v)
+	# ponytail: escaped, so an answer containing "## Role" is a line of prose and not a second section.
+	# Without it a typed answer could forge headings that the next read would hand back as real ones.
+	body = "".join(f"## {k}\n\n{_escape(v)}\n\n" for k, v in list(answers) + list(extra) if v)
 	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
