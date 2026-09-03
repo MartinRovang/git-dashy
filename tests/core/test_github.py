@@ -48,3 +48,14 @@ def test_fetch_handles_bad_json(monkeypatch):
 
 
 # ---- review ----
+
+
+def test_copy_uses_first_clipboard_tool_on_path(monkeypatch):
+	from dashy.core import github
+	ran = []
+	monkeypatch.setattr(github.shutil, "which", lambda c: c == "xclip")
+	monkeypatch.setattr(github.subprocess, "run", lambda cmd, **kw: ran.append((cmd, kw["input"])))
+	assert github.copy("https://x/pr/1") == "xclip"
+	assert ran == [(["xclip", "-selection", "clipboard"], "https://x/pr/1")]
+	monkeypatch.setattr(github.shutil, "which", lambda c: None)
+	assert github.copy("u") is None and len(ran) == 1

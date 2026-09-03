@@ -1,5 +1,6 @@
 """Everything that shells out to `gh`."""
 import json
+import shutil
 import subprocess
 
 from . import log
@@ -70,3 +71,15 @@ def comment(repo, number, body):
 
 def open_in_browser(url):
 	subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+CLIPBOARDS = (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"], ["pbcopy"])
+
+
+def copy(text):
+	"""Put text on the clipboard with the first tool on PATH; the tool's name, or None if there is none."""
+	for cmd in CLIPBOARDS:  # ponytail: shell out, no clipboard library
+		if shutil.which(cmd[0]):
+			subprocess.run(cmd, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+			return cmd[0]
+	return None

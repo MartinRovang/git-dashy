@@ -452,7 +452,7 @@ def test_marquee_scrolls_only_when_overflowing():
 	from dashy.ui import art
 	assert art.marquee("short", 10, 0.0) == "short"
 	assert art.marquee("x", 0, 0.0) == ""
-	frames = [art.marquee("abcdefghij", 4, t / 6) for t in range(20)]
+	frames = [art.marquee("abcdefghij", 4, t, cps=1) for t in range(20)]  # integer ticks, no float rounding
 	assert frames[0] == "abcd" and frames[1] == "bcde" and all(len(f) == 4 for f in frames)
 	assert "j   ·   " [:4] in frames and frames[17] == frames[0]  # wraps: 10 chars + 7-char gap
 
