@@ -62,7 +62,8 @@ def dream(model):
 	if not before:
 		raise ValueError("no memory to dream about")
 	prompt = DREAM.format(files="\n\n".join(f"### {n}\n{t}" for n, t in before.items()))
-	out = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--model", model]
+	# ponytail: --safe-mode for the same reason as a review — this call has a JSON contract, not a conversation
+	out = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--safe-mode", "--model", model]
 	                     + (["--effort", config.EFFORT] if config.EFFORT else []),
 	                     capture_output=True, text=True, check=True, timeout=TIMEOUT).stdout
 	text = json.loads(out)["result"].strip()

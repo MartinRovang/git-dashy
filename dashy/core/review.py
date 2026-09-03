@@ -37,6 +37,20 @@ SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/spri
 HELLO = """{sprite}**Dashy is on its way!** {what} with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+# ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
+# CLAUDE.md is a dialogue protocol, and this call has no dialogue — it has a JSON contract it can break by
+# answering in prose. And without it the prompt would depend on which directory gitdashy was launched from.
+SAFE = "--safe-mode"
+LENS = """You are reviewing a pull request. Reason about structure before style.
+
+For every change ask: where does the state live and who owns it; where does feedback or observability live;
+what breaks if this is deleted; and when does the timing work — ordering, async boundaries, races. Danger
+concentrates in the seams: between services, across process and async boundaries, at database calls, wherever
+two systems agree on a contract. Read the definition of a thing, not just the code that uses it — inferring a
+type or a contract from a call site is how real defects survive review. Before flagging a deviation, check
+whether it is already the established pattern in this codebase; an intentional oddity is not a defect.
+Security is structural, not a checklist appended at the end. Watch for duplicated or doubled logic, and say
+plainly what you verified first-hand and what you took on trust."""
 TIMEOUT = 900
 
 
@@ -61,7 +75,7 @@ def review(pr, model):
 		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
-			["claude", "-p", prompt, "--output-format", "json",
+			["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
 			 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
 			capture_output=True, text=True, check=True, timeout=TIMEOUT,
 		).stdout

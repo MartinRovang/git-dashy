@@ -21,6 +21,7 @@ def test_dream_returns_cleaned_files_and_write_applies(monkeypatch, tmp_path):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	summary, new = memory.dream("sonnet")
 	assert calls[0][:2] == ["claude", "-p"] and "### general.md" in calls[0][2] and "--model" in calls[0]
+	assert "--safe-mode" in calls[0]  # dream has a JSON contract too, no ambient CLAUDE.md
 	assert summary.startswith("merged") and set(new) == {"general.md", "a__b.md", "c__d.md"}
 	assert new["general.md"] == "- run make lint\n"  # untouched files keep their content
 	memory.write(new)

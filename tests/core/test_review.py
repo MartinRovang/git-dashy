@@ -161,3 +161,17 @@ def test_rereview_prompt_includes_earlier_review(monkeypatch):
 	assert "**Dashy is on its way!** Re-reviewing (was ✗ changes requested on 2026-01-02) with model" in calls[0]
 	assert "RE-REVIEW: you already reviewed this PR on 2026-01-02 with verdict request_changes" in prompts[1]
 	assert "- cache never invalidated" in prompts[1]
+
+
+def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
+	"""The corpus/CLAUDE.md of whatever dir gitdashy was launched from must not reach the reviewer."""
+	calls = []
+	def fake_run(cmd, **kw):
+		calls.append(cmd)
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	cmd = calls[1]
+	assert "--safe-mode" in cmd
+	assert cmd[cmd.index("--append-system-prompt") + 1] == review_mod.LENS
+	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt

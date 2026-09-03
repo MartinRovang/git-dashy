@@ -102,6 +102,14 @@ rules, things to always check, what to ignore. It is read fresh for every review
 while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
 without it.
 
+Reviews run with `--safe-mode`, so the reviewer sees no `CLAUDE.md`, skills, hooks or MCP servers from
+your machine — only the prompt, the `gh` commands it is allowed, and a short built-in review lens: state
+ownership, observability, blast radius, timing, and the seams between systems. Without it a review would
+inherit whatever instruction files sit in the directory gitdashy was launched from, so the same PR could
+be reviewed differently depending on where you started the dashboard. Your own house rules are unaffected
+— they go through `--instructions`, which is read per review. The memory cleanup behind `Z` is scoped the
+same way.
+
 Every REVIEWED row carries a small `depth/effort` tag showing what the review ran with.
 
 ### Memory
