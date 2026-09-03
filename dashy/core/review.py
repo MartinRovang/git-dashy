@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import random
+import tempfile
 import subprocess
 from urllib.parse import quote
 
@@ -71,7 +72,6 @@ def self_check(model):
 	--safe-mode stopped suppressing CLAUDE.md the reviews would not fail, they would just quietly inherit
 	whatever is on the machine — so nothing else would ever tell us.
 	"""
-	import tempfile
 	out = []
 	with tempfile.TemporaryDirectory() as d:
 		with open(os.path.join(d, "CLAUDE.md"), "w") as f:
@@ -108,11 +108,17 @@ def review(pr, model):
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
 		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
-		out = subprocess.run(
-			["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
-			 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
-			capture_output=True, text=True, check=True, timeout=TIMEOUT,
-		).stdout
+		with tempfile.TemporaryDirectory() as here:
+			# ponytail: run from a directory of our own. A review reads the PR through gh and nothing from
+			# disk, so the launch directory is not merely irrelevant — inheriting it is a liability. It can
+			# have been DELETED since (a checkout in that tree is enough), and claude then refuses to start
+			# at all: "the current working directory was deleted", every review failing for no visible
+			# reason. --safe-mode already ignores what is in it; this stops it mattering that it exists.
+			out = subprocess.run(
+				["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
+				 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
+				capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here,
+			).stdout
 		text = json.loads(out)["result"].strip()
 		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 		if config.DEPTH == "adaptive" and verdict.get("depth_used"):

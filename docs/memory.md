@@ -81,11 +81,12 @@ could correct it will ever see it happen.
   └───────────────────────────────────────────────────────────────┘
 
   ┌─ project brief (declared, not learned) ───────────────────────┐
-  │  <team>/memory/project.md                                     │
-  │  What the team is building, for whom, under what constraints. │
-  │  Written by people, once. Read by every session and every     │
-  │  review — so a reviewer knows what the code is FOR before it  │
-  │  judges whether a change serves it.                           │
+  │  <private>/project.md   and   <team>/memory/project.md        │
+  │  What is being built, for whom, under what constraints.       │
+  │  Two sources like everything else: on your own it is yours,   │
+  │  in a team theirs joins it. Written by people, once. Read by  │
+  │  every session and every review — so a reviewer knows what    │
+  │  the code is FOR before judging whether a change serves it.   │
   │  The promotion pipeline never touches it: not dreamt over,    │
   │  not promoted into, never offered for sharing.                │
   └───────────────────────────────────────────────────────────────┘
@@ -191,7 +192,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 
 | reader | sees | never sees |
 |---|---|---|
-| review prompt | the team's `project.md`, then `mine` + `team` facts, labelled by source | drafts |
+| review prompt | `project.md` (yours, then the team's), then the facts — every block labelled by source | drafts |
 | agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
 | agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |

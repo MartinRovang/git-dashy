@@ -1,4 +1,5 @@
 import os
+import pathlib
 import subprocess
 
 from dashy import config
@@ -401,3 +402,45 @@ def test_refresh_skips_a_mirror_whose_directory_is_gone(monkeypatch, tmp_path):
 	install.register(str(gone), "o/n")  # an old entry, with no root recorded
 	state.refresh_mirrors()
 	assert not gone.exists() and install.registered() == []
+
+
+def test_setup_will_not_eat_a_template_you_filled_in(monkeypatch, tmp_path):
+	"""install --full seeds USER.md FROM the template, and the template says the words 'gitdashy setup'."""
+	fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	home = tmp_path / "corpus"
+	(home / "identity").mkdir(parents=True)
+	tmpl = pathlib.Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "corpus" / "identity" / "USER.md.template"
+	seeded = home / "identity" / "USER.md"
+	seeded.write_text(tmpl.read_text() + "\n**Name:** filled in by hand\n")
+	out = install.setup(lambda p: "an answer", str(home))
+	assert "filled in by hand" in seeded.read_text()
+	assert any("is yours already" in l for l in out)
+	# and a file setup itself wrote IS rewritable
+	seeded.write_text(install.compose("t", "l", [("Name", "old")]))
+	install.setup(lambda p: "new", str(home))
+	assert "new" in seeded.read_text() and "old" not in seeded.read_text()
+
+
+def test_a_solo_brief_is_imported_too(monkeypatch, tmp_path):
+	"""setup writes ~/.prs_memory/project.md; without this import a session never sees it."""
+	cfg = fresh(monkeypatch, tmp_path)
+	install.apply()
+	block = (cfg / "CLAUDE.md").read_text()
+	assert "@prs-memory/project.md" in block and "@prs-team/project.md" in block
+	assert block.index("prs-memory/project") < block.index("prs-team/project")  # yours first, as everywhere
+
+
+def test_forgetting_a_mirror_does_not_rewrite_the_registry(monkeypatch, tmp_path):
+	"""register appends without a lock; a truncating rewrite here would drop a concurrent append."""
+	fresh(monkeypatch, tmp_path)
+	for n in ("a", "b"):
+		(tmp_path / n).mkdir()
+		install.register(str(tmp_path / n), f"o/{n}")
+	before = open(install.REGISTRY).read()
+	assert install.unregister(str(tmp_path / "a")) is True
+	assert open(install.REGISTRY).read().startswith(before)  # appended to, never truncated
+	assert [i for i, *_ in install.registered()] == [str(tmp_path / "b")]
+	assert install.unregister(str(tmp_path / "a")) is False  # already gone
+	install.register(str(tmp_path / "a"), "o/a")  # and it can come back
+	assert sorted(i for i, *_ in install.registered()) == [str(tmp_path / "a"), str(tmp_path / "b")]

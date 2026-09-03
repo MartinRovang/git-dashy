@@ -51,7 +51,8 @@ the team link is left pointing at nothing until you join one, and a missing impo
 ~/.claude/prs-team    ->  ~/.prs_team/memory      (harmless before you have a team)
 
 ~/.claude/CLAUDE.md   +=  <!-- gitdashy:begin -->
-                          … @prs-team/project.md     what the team is building
+                          … @prs-memory/project.md   what YOU are building
+                          … @prs-team/project.md     what the TEAM is, once you join one
                           … @prs-memory/general.md   your cross-repo facts
                           … @prs-team/general.md     the team's
                           <!-- gitdashy:end -->
@@ -75,6 +76,13 @@ stale. Fix a wrong fact with `g` and every later session is corrected immediatel
 ```sh
 gitdashy install --uninstall
 ```
+
+Two limits worth stating rather than discovering. `--uninstall` on a **full** install
+clears the whole mirror registry, including repos you wired with a bare `gitdashy init`
+that the corpus install never touched — the files stay, they simply stop refreshing.
+And `--corpus URL` seeds `USER.md` inside what is a **git clone**, so your own corpus
+will show it as untracked; commit it, ignore it, or keep the corpus somewhere it does
+not matter.
 
 Removes only what it wrote. If it finds the imports outside its marked block — because
 you added them by hand — it says so and leaves them, rather than deleting your lines.

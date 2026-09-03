@@ -26,6 +26,7 @@ independent observations agreed, so trust them — but they are what the code tu
 The team file does not exist until you are in a team, and a missing import is simply skipped. Facts about
 one repo arrive separately, through that repo's own mirror.
 
+@prs-memory/project.md
 @prs-team/project.md
 {IMPORT}
 @prs-team/general.md
@@ -69,7 +70,7 @@ def explain():
 		         else "EXISTS, will be left alone" if os.path.lexists(link) else "new")
 		out.append(f"  · symlink {knowledge.tilde(link)} -> {knowledge.tilde(target)}   [{state}]")
 	md = os.path.join(d, "CLAUDE.md")
-	out.append(f"  · append three imports to {knowledge.tilde(md)}, inside a marked block"
+	out.append(f"  · append four imports to {knowledge.tilde(md)}, inside a marked block"
 	           + ("   [already there]" if IMPORT in _read(md) else "   [new]"))
 	out.append("")
 	out.append("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.")
@@ -151,8 +152,11 @@ def registered():
 	seen = {}
 	for line in _read(REGISTRY).splitlines():
 		parts = (line.split("\t") + ["", "", ""])[:4]
-		if parts[0].strip():
-			seen[parts[0].strip()] = tuple(p.strip() for p in parts)
+		into = parts[0].strip()
+		if into.startswith("-"):  # a tombstone: this mirror was forgotten
+			seen.pop(into[1:].strip(), None)
+		elif into:
+			seen[into] = tuple(p.strip() for p in parts)
 	return list(seen.values())
 
 
@@ -170,11 +174,12 @@ def unregister(into):
 	"""Stop refreshing this mirror. Returns True when it was known."""
 	into = os.path.abspath(os.path.expanduser(into))
 	known = registered()
-	kept = [e for e in known if e[0] != into]
-	if len(kept) == len(known):
+	if not any(e[0] == into for e in known):
 		return False
-	with open(REGISTRY, "w") as f:
-		f.write("".join("\t".join(e) + "\n" for e in kept))
+	# ponytail: append a tombstone rather than rewrite. register() appends without a lock because the
+	# hook runs at every session start; a truncating rewrite here would drop an entry appended during it.
+	with open(REGISTRY, "a") as f:
+		f.write(f"-{into}\n")
 	return True
 
 
@@ -254,7 +259,6 @@ def wire_repo(into, loader, repo):
 	into = os.path.abspath(os.path.expanduser(into))
 	loader = os.path.abspath(os.path.expanduser(loader))
 	root = _toplevel(into)
-	loader_abs = loader  # ponytail: recorded, so uninstall can undo the import without touching the facts
 	out.append(_exclude(root, os.path.relpath(into, root)) if root else
 	           f"note  {knowledge.tilde(into)} is not inside a git repo — nothing to exclude")
 	out.append(_import(loader, "@" + os.path.relpath(into, os.path.dirname(loader)) + "/repo.md"))
@@ -468,10 +472,13 @@ ASK_PROJECT = (("The project", "what it is, and who uses it"),
                ("How the code is shaped", "what a newcomer would otherwise learn the hard way"))
 
 
+SETUP_MARK = "<!-- written by gitdashy setup -->"
+
+
 def compose(title, lead, answers):
 	"""A markdown brief from (heading, answer) pairs, skipping the ones left blank."""
 	body = "".join(f"## {k}\n\n{v}\n\n" for k, v in answers if v)
-	return f"# {title}\n\n{lead}\n\n{body}" if body else ""
+	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
 def setup(ask, corpus_home=None):
@@ -484,7 +491,10 @@ def setup(ask, corpus_home=None):
 	out = []
 	home = corpus_home or CORPUS_HOME
 	user = os.path.join(home, "identity", "USER.md")
-	if os.path.exists(user) and _read(user).strip() and "gitdashy setup" not in _read(user):
+	# ponytail: a marker only compose() writes. Sniffing for the words "gitdashy setup" matched the
+	# shipped TEMPLATE, which says them in prose — so the file install --full seeds looked like one
+	# setup had written, and editing its blanks in place then lost everything on the next run.
+	if os.path.exists(user) and _read(user).strip() and SETUP_MARK not in _read(user):
 		# ponytail: the brief refuses when it exists; this file must too, or re-running to change one
 		# line destroys the rest. Only a file setup itself wrote is safe to rewrite.
 		out.append(f"ok     {knowledge.tilde(user)} is yours already — edit it directly to change it")

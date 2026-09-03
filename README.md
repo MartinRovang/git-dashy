@@ -210,9 +210,9 @@ The whole model — every store, promotion rule and discard rule — is written 
 
 ### What the team is building
 
-A team repo also carries `memory/project.md` — the team's own statement of what is being built, for
-whom, and under what constraints. gitdashy seeds it with a template when the repo is created; you fill
-it in once, together.
+`project.md` says what is being built, for whom, and under what constraints. It has two sources like
+everything else: on your own it is yours, in a team theirs joins it — seeded with a template when a team
+repo is created, and `gitdashy setup` will ask you for either.
 
 It goes into **every review** and every session, ahead of the learned facts, so a reviewer knows what
 the code is *for* before judging whether a change serves it. It is declared, not learned — the
