@@ -311,7 +311,7 @@ def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monke
 	(tmp_path / "a__b.md").write_text("- x\n- x\n")  # confirmed facts; drafts are not dreamt about
 	def slow_dream(model):
 		time.sleep(0.3)
-		return "merged dupes", {"mine/a__b.md": "- x"}
+		return "merged dupes", {"mine/a__b.md": "- x\n- x\n"}, {"mine/a__b.md": "- x"}
 	monkeypatch.setattr(ui.memory, "dream", slow_dream)
 	seen = []
 	def getch():
@@ -327,7 +327,7 @@ def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monke
 def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "a__b.md").write_text("- x\n")
-	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"mine/a__b.md": "- changed"}))
+	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"mine/a__b.md": "- x\n"}, {"mine/a__b.md": "- changed"}))
 	screen.getch, screen.timeout = _keys(ord("j"), ui.curses.KEY_DOWN, ord(" "), 27), lambda t: None  # stray keys ignored
 	ui.dream_screen(screen, st, 0)
 	assert open(ui.memory.path("a/b")).read() == "- x\n"

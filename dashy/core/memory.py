@@ -311,7 +311,12 @@ def _base(key):
 
 
 def dream(model):
-	"""Ask Claude to clean up all memory files. Returns (summary, {file key: new content}); raises on failure."""
+	"""Ask Claude to tidy every memory file. Returns (summary, before, after); raises on failure.
+
+	ponytail: `before` comes back with the result rather than being re-read afterwards. A review can
+	promote a fact during the ten minutes this may take, and re-reading would then diff against a file
+	the model never saw — showing wrong line counts and, on accept, overwriting the new fact.
+	"""
 	import json
 	import subprocess
 	before = files()
@@ -329,7 +334,8 @@ def dream(model):
 	# ponytail: say when the model answered with names we never sent. Those edits are dropped, and a
 	# silent drop after you press y looks exactly like a dream that decided to change nothing.
 	stray = sorted(k for k in sent if k not in before)
-	return str(got["summary"]) + ("\n\n(ignored " + ", ".join(stray) + " — not files I sent)" if stray else ""), new
+	summary = str(got["summary"]) + ("\n\n(ignored " + ", ".join(stray) + " — not files I sent)" if stray else "")
+	return summary, before, new
 
 
 def write(new):

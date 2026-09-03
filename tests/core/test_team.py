@@ -84,3 +84,28 @@ def test_every_git_call_is_bounded_and_never_prompts(monkeypatch, tmp_path):
 	team.pull()  # must not raise out of the refresh thread
 	assert seen and seen[0][1] == "0" and seen[0][2] == 120
 	assert team.ERROR.startswith("sync: timed out")
+
+
+def test_same_remote_does_not_ignore_the_host():
+	assert team.same_remote("git@github.com:org/mem.git", "https://github.com/org/mem")
+	assert team.same_remote("ssh://git@github.com/org/mem", "git@github.com:org/mem.git")
+	assert not team.same_remote("git@gitlab.com:org/mem.git", "https://github.com/org/mem")
+	assert team.same_remote("org/mem", "https://github.com/org/mem")  # a bare name names no host
+	assert not team.same_remote("other/mem", "https://github.com/org/mem")
+	assert not team.same_remote("", "https://github.com/org/mem")
+
+
+def test_joining_a_team_refuses_your_own_memory_from_either_side(monkeypatch, tmp_path):
+	"""adopt() guards one direction; this is the other. Whichever you set up second must refuse."""
+	mem = tmp_path / "mem"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	assert team.is_own_memory(str(mem))  # the same directory, by path
+	assert "your own memory directory" in team.setup(str(mem))
+	subprocess.run(["git", "init", "-q", str(mem)], check=True)
+	subprocess.run(["git", "-C", str(mem), "remote", "add", "origin",
+	                "git@github.com:org/mine.git"], check=True)
+	assert team.is_own_memory("https://github.com/org/mine")  # or by the remote it pushes to
+	assert not team.is_own_memory("https://gitlab.com/org/mine")  # a different host is a different repo
+	assert not (tmp_path / "team").exists()

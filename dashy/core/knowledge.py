@@ -112,7 +112,7 @@ def adopt(url, dest=None):
 		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
 	# ponytail: your memory dir gets pushed, and it holds drafts/. Making it the TEAM repo would publish
 	# every unconfirmed guess to everyone — the one thing the whole design promises never happens.
-	if url and team.on() and team.slug_of(url) and team.slug_of(url) == team.origin_slug(config.TEAM):
+	if url and team.on() and team.same_remote(url, team._url(config.TEAM)):
 		return "that is the team repo — your memory holds drafts, which are yours alone. Use a different one."
 	keep = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
 	tmp = dest + ".incoming"

@@ -102,7 +102,7 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 		return claude_out(summary="tidied", files={"mine/a__b.md": "- uses tabs", "team/general.md": "",
 		                                           "bogus.md": "- nope"})
 	monkeypatch.setattr(subprocess, "run", fake_run)
-	summary, new = memory.dream("sonnet")
+	summary, _before, new = memory.dream("sonnet")
 	assert calls[0][:2] == ["claude", "-p"] and "--model" in calls[0]
 	assert "--safe-mode" in calls[0]  # dream has a JSON contract too, no ambient CLAUDE.md
 	assert "### mine/general.md" in calls[0][2] and "### team/general.md" in calls[0][2]
@@ -290,7 +290,7 @@ def test_a_dream_that_forgets_the_prefix_changes_nothing_and_says_so(monkeypatch
 	(mine / "general.md").write_text("- one\n- two\n")
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(
 		summary="merged", files={"general.md": "- one"}))  # no prefix: the pre-PR format
-	summary, new = memory.dream("sonnet")
+	summary, _before, new = memory.dream("sonnet")
 	assert new == {"mine/general.md": "- one\n- two\n"}  # unchanged, not applied
 	assert "ignored general.md" in summary
 	memory.write(new)
@@ -303,3 +303,16 @@ def test_a_dream_cannot_write_outside_the_memory_dir(monkeypatch, tmp_path):
 	memory.write({"mine/../../escaped.md": "- nope"})
 	assert not (tmp_path / "escaped.md").exists()
 	assert not (tmp_path.parent / "escaped.md").exists()
+
+
+def test_dream_hands_back_what_it_saw(monkeypatch, tmp_path):
+	"""A review can promote a fact during a ten-minute dream; the diff must be against what it read."""
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	(mine / "general.md").write_text("- one\n")
+	def fake_run(cmd, **kw):
+		(mine / "general.md").write_text("- one\n- promoted while dreaming\n")  # a review lands mid-dream
+		return claude_out(summary="tidied", files={"mine/general.md": "- one"})
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	summary, before, new = memory.dream("sonnet")
+	assert before == {"mine/general.md": "- one\n"}  # what the model actually read, not what is there now
+	assert new == {"mine/general.md": "- one"}

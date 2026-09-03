@@ -451,7 +451,7 @@ def edit_memory(scr, repo):
 	"""Open general (repo=None) or per-repo memory in $EDITOR. Reviews read it back next run."""
 	path = memory.path(repo)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
-	team.pull()
+	team.pull_dir(config.MEMORY_DIR, "mine")  # ponytail: n/g edit YOUR memory; pulling the team's did nothing
 	curses.endwin()
 	subprocess.run([os.environ.get("EDITOR", "nano"), path])
 	scr.refresh()
@@ -596,8 +596,7 @@ def dream_screen(scr, state, sel):
 			scr.timeout(-1)
 			scr.getch()
 			return
-		summary, new = box[0]
-		before = memory.files()
+		summary, before, new = box[0]  # what the dream saw, not what is on disk now
 		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
 		lines += [(n[:-3].replace("__", "/"), f"{len(before[n].splitlines())} → {len(t.splitlines())}") for n, t in new.items()]
 		scr.timeout(-1)
@@ -612,6 +611,7 @@ def dream_screen(scr, state, sel):
 				               input=dream_detail(summary, before, new), text=True)
 				scr.refresh()
 		if k == ord("y"):
+			team.pull_dir(config.MEMORY_DIR, "mine")  # a dream rewrites both sources, so both are pulled
 			team.pull()
 			memory.write(new)
 			team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")  # a dream rewrites both sources

@@ -86,10 +86,39 @@ def slug_of(url):
 	return "/".join(u.split("/")[-2:]) if u else ""
 
 
+def host_of(url):
+	"""The host a remote URL names, "" for a bare owner/name or a local path."""
+	u = (url or "").strip().removeprefix("ssh://").removeprefix("https://").removeprefix("http://")
+	u = u.split("@")[-1]
+	head = u.replace(":", "/").split("/")[0]
+	return head.lower() if "." in head else ""
+
+
+def same_remote(a, b):
+	"""Whether two remotes name the same repository.
+
+	ponytail: owner/name alone is not enough — gitlab.com/org/mem and github.com/org/mem share it. Hosts
+	are compared when both carry one, so an ssh URL still matches its own https form.
+	"""
+	if not slug_of(a) or slug_of(a) != slug_of(b):
+		return False
+	ha, hb = host_of(a), host_of(b)
+	return not ha or not hb or ha == hb
+
+
+def _url(path):
+	"""The origin URL at `path`, "" when there is none. ponytail: asked in passing, so it never raises."""
+	try:
+		r = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"],
+		                   capture_output=True, text=True, timeout=60)
+	except (subprocess.TimeoutExpired, OSError):
+		return ""
+	return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def origin_slug(path):
 	"""owner/name from the git remote at `path`, "" when there is no repo or no origin."""
-	r = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=60)
-	return slug_of(r.stdout) if r.returncode == 0 else ""
+	return slug_of(_url(path))
 
 
 def activate():
@@ -116,10 +145,23 @@ def union_attrs(dest):
 			f.write("*.jsonl merge=union\n*.md merge=union\n")
 
 
+def is_own_memory(repo):
+	"""Whether `repo` names the directory your memory lives in, or the remote it pushes to.
+
+	ponytail: the mirror of knowledge.adopt's guard — the two must never be the same place, whichever
+	you happen to set up second. Your memory holds drafts and is pushed; the team must never receive them.
+	"""
+	if os.path.isdir(repo) and os.path.realpath(repo) == os.path.realpath(config.MEMORY_DIR):
+		return True
+	return is_repo(config.MEMORY_DIR) and same_remote(repo, _url(config.MEMORY_DIR))
+
+
 def setup(repo, create=False):
 	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
 	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
 		return ERROR
+	if is_own_memory(repo):
+		return "that is your own memory directory, which holds drafts — use a different repo for the team"
 	err = clone(repo, config.TEAM)
 	if err:
 		return err
