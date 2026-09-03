@@ -121,16 +121,32 @@ def adopt(url, dest=None):
 	if err:
 		shutil.rmtree(tmp, ignore_errors=True)
 		return err
+	# ponytail: EVERY collision is found before ANYTHING moves. Checking inside the move loop meant a
+	# clash on the third name rmtree'd a tmp that already held the first two — your facts and your
+	# drafts/, deleted, while the message said "merge it by hand" as though nothing had happened.
+	# Sorted order made it the likely path, not an exotic one: a memory repo has a general.md, and
+	# "general.md" sorts after "acme__api.md" and "drafts".
+	clash = [n for n in keep if os.path.lexists(os.path.join(tmp, n))]
+	if clash:
+		shutil.rmtree(tmp, ignore_errors=True)  # safe here, and only here: nothing of yours is in it yet
+		return f"{', '.join(clash)} exists in both {tilde(dest)} and the repo; merge it by hand"
+	moved = []
 	try:
 		for name in keep:
-			if os.path.lexists(os.path.join(tmp, name)):  # ponytail: refuse rather than pick a winner
-				shutil.rmtree(tmp, ignore_errors=True)
-				return f"{name} exists in both {tilde(dest)} and the repo; merge it by hand"
 			shutil.move(os.path.join(dest, name), os.path.join(tmp, name))
+			moved.append(name)
 		if os.path.isdir(dest):
 			os.rmdir(dest)
 		os.rename(tmp, dest)
 	except OSError as e:
+		# ponytail: put back what moved. A half-moved memory dir is the same loss by a slower route —
+		# the files exist, but nothing reads them from there and nothing says where they went.
+		os.makedirs(dest, exist_ok=True)
+		for name in reversed(moved):
+			try:
+				shutil.move(os.path.join(tmp, name), os.path.join(dest, name))
+			except OSError:
+				pass
 		return str(e)
 	team.union_attrs(dest)
 	team.push_dir(dest, "gitdashy: memory from " + os.uname().nodename, "mine")

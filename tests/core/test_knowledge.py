@@ -213,3 +213,70 @@ def test_adopt_refuses_to_make_your_memory_the_team_repo(monkeypatch, tmp_path):
 	            "org/review-team"):
 		assert "that is the team repo" in knowledge.adopt(url), url
 	assert not (tmp_path / "mine").exists()
+
+
+def _memory_repo(tmp_path, *names):
+	"""A pushable repo holding `names`, to adopt from."""
+	import subprocess
+	remote, work = tmp_path / "remote.git", tmp_path / "work"
+	work.mkdir()
+	for n in names:
+		(work / n).write_text("- theirs\n")
+	env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+	       "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+	subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+	for c in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "x"],
+	          ["git", "remote", "add", "origin", str(remote)],
+	          ["git", "push", "-q", "origin", "HEAD:refs/heads/main"]):
+		subprocess.run(c, cwd=work, env=env, check=True)
+	return str(remote)
+
+
+def test_adopt_refusing_a_collision_keeps_every_file_it_had_not_reached(monkeypatch, tmp_path):
+	"""The refusal used to rmtree a tmp that already held files MOVED out of the memory dir.
+
+	Sorted order made it the likely path: a memory repo has general.md, and it sorts after
+	acme__api.md and drafts/ — so the two that had already moved were the ones destroyed, under
+	a message saying "merge it by hand".
+	"""
+	mem = tmp_path / "prs_memory"
+	(mem / "drafts").mkdir(parents=True)
+	(mem / "acme__api.md").write_text("- the api repo owns no DDL\n")
+	(mem / "drafts" / "acme__api.md").write_text("- (1) unconfirmed\n")
+	(mem / "general.md").write_text("- two years of facts\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+
+	err = knowledge.adopt(_memory_repo(tmp_path, "general.md"))
+
+	assert "general.md exists in both" in err
+	assert (mem / "acme__api.md").read_text() == "- the api repo owns no DDL\n"
+	assert (mem / "drafts" / "acme__api.md").exists()
+	assert (mem / "general.md").read_text() == "- two years of facts\n"
+
+
+def test_adopt_names_every_collision_not_just_the_first(monkeypatch, tmp_path):
+	"""Refusing one at a time means fixing them one round trip at a time."""
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	(mem / "general.md").write_text("- mine\n")
+	(mem / "acme__api.md").write_text("- mine\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	err = knowledge.adopt(_memory_repo(tmp_path, "general.md", "acme__api.md"))
+	assert "acme__api.md" in err and "general.md" in err
+
+
+def test_adopt_that_succeeds_still_keeps_everything(monkeypatch, tmp_path):
+	"""The happy path, so the guard above cannot pass by refusing everything."""
+	mem = tmp_path / "prs_memory"
+	(mem / "drafts").mkdir(parents=True)
+	(mem / "acme__api.md").write_text("- mine\n")
+	(mem / "drafts" / "x.md").write_text("- (1) draft\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	assert knowledge.adopt(_memory_repo(tmp_path, "general.md")) == ""
+	assert (mem / "acme__api.md").read_text() == "- mine\n"   # kept
+	assert (mem / "drafts" / "x.md").exists()                  # drafts came across too
+	assert (mem / "general.md").read_text() == "- theirs\n"    # and theirs arrived
+	assert team.is_repo(str(mem))                              # it is a checkout now
