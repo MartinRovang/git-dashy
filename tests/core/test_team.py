@@ -38,3 +38,30 @@ def test_off_is_a_noop(tmp_path, monkeypatch):
 	monkeypatch.setattr(team, "ERROR", "")
 	team.pull(); team.push("x")
 	assert not team.on() and team.ERROR == ""
+
+
+def test_setup_accepts_a_url_and_never_waits_on_a_prompt(monkeypatch, tmp_path):
+	"""A https/ssh URL clones with git, not gh — and a remote that asks for a password must fail, not hang."""
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen["cmd"], seen["env"], seen["timeout"] = cmd, kw.get("env", {}), kw.get("timeout")
+		raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	err = team.setup("https://github.com/org/review-team.git")
+	assert seen["cmd"][:2] == ["git", "clone"]  # a URL is not an owner/name, so gh is not involved
+	assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and "BatchMode=yes" in seen["env"]["GIT_SSH_COMMAND"]
+	assert seen["timeout"] == team.CLONE and err.startswith("sync: timed out after")  # reason first, not a clipped URL
+	assert not team.on()
+
+
+def test_setup_keeps_a_users_own_ssh_command(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /keys/mine")
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen["env"] = kw["env"]
+		return subprocess.CompletedProcess(cmd, 1, "", "nope")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	team.setup("git@github.com:org/review-team.git")
+	assert seen["env"]["GIT_SSH_COMMAND"] == "ssh -i /keys/mine"

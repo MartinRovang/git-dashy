@@ -11,6 +11,9 @@ INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to t
 TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # git checkout shared with the team; T sets it up
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # jsonl, one review per line
+# ponytail: joining a team moves MEMORY_DIR and LOG into the checkout. These two keep the solo locations,
+# so K can show where memory lives and leaving a team has somewhere to go back to.
+LOCAL_MEMORY, LOCAL_LOG = MEMORY_DIR, LOG
 INTERVALS = [60, 120, 300, 600, 900]  # i cycles
 INTERVAL = 300  # seconds between refreshes, --interval overrides
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast

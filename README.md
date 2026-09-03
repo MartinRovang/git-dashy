@@ -73,15 +73,19 @@ again but the reviewer has not looked yet.
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
-| `T` | team setup: share log + memory through a git repo (see Team) |
+| `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
+| `L` | point the local memory directory somewhere else |
+| `C` | point the team checkout somewhere else (only while you are not in a team) |
+| `T` | team setup: share log + memory through a git repo, or leave the team you are in (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `r` | refresh now |
 | `q` | quit |
 
 `m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` (or `q`) keeps.
-`R` and `V` open the Reviewer and View groups as a menu: `Enter` on a row opens that setting, `Esc` (or `q`) steps back.
-`S` opens both groups under one Settings menu. On a narrow terminal the header tightens, then folds the groups
+`R`, `V` and `K` open the Reviewer, View and Knowledge groups as a menu: `Enter` on a row opens that setting, `Esc` (or `q`) steps back.
+`S` opens all three under one Settings menu. On a narrow terminal the header tightens, then folds the groups
 into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
+Knowledge folds first, being the group you touch least.
 
 ## The review
 
@@ -133,6 +137,25 @@ driver, so two people reviewing at once do not conflict. Everyone on the team se
 history, re-review detection works across people, and each teammate's agent learns from everyone's
 reviews. The header's `reviewer` group shows `team org/review-team`, or the last git error in red. To leave, delete
 the folder.
+
+The `T` prompt takes `owner/name` (cloned with `gh`, and offered for creation if it does not exist), a
+**local path**, or a **git URL** — `https://…` and `git@…` both clone with plain `git`. Remote prompts are
+disabled and the clone is bounded, so a repo your credentials cannot reach fails with an error on the header
+instead of hanging the dashboard on an invisible password prompt. Pressing `T` while already in a team offers
+to leave it, which refuses while the checkout still holds reviews it has not pushed.
+
+### Where knowledge lives
+
+`K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
+solo directory when you are on your own and the team's when you are in a team, `Team` is the repo or `off`, and
+`Store` appears only once the checkout sits somewhere other than its default.
+
+`L` and `C` point the memory directory and the team checkout somewhere else. There is no config file — the old
+location becomes a symlink to the new one and whatever was there moves across, so the setting survives a restart
+the same way team mode does, by being a fact about the filesystem. Nothing is overwritten: if both sides hold a
+file of the same name, the move stops and says so. `PRS_MEMORY` and `PRS_TEAM` still win when they are set, and
+the keys say so rather than pretending to work. A target inside a git repo that does not ignore it asks first,
+since memory is usually not yours alone to commit.
 
 Auto mode (`a` or `--auto`) does the same thing unattended for every review request that appears
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include

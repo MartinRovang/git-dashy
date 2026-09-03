@@ -11,6 +11,23 @@ from . import log
 ERROR = ""  # last git failure, shown in the header until the next success
 NAME = ""  # owner/name of the team repo, for the stats strip
 _lock = threading.Lock()  # review threads push concurrently; git wants one writer
+CLONE = 300  # seconds a clone or repo-create may take before we give up on it
+
+
+def _remote(cmd):
+	"""Run a command that talks to a remote, and never let it wait on a human.
+
+	ponytail: a URL to a private repo makes git ask for a password. Inside curses that prompt is invisible
+	and blocks the whole dashboard forever, so prompts are off and the call is bounded — fail, don't hang.
+	"""
+	env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+	env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")  # keeps a user's own setting if they have one
+	try:
+		return subprocess.run(cmd, capture_output=True, text=True, timeout=CLONE, env=env)
+	except subprocess.TimeoutExpired:  # ponytail: reason first — _note keeps the first 60 chars for the header
+		return subprocess.CompletedProcess(cmd, 1, "", f"timed out after {CLONE}s waiting on the remote")
+	except OSError as e:
+		return subprocess.CompletedProcess(cmd, 1, "", f"{e.strerror or e}: {cmd[0]}")
 
 
 def on():
@@ -65,11 +82,11 @@ def activate():
 
 def setup(repo, create=False):
 	"""Clone (or create private + clone) the team repo, seed it with local log/memory. Returns '' or an error."""
-	if create and not _note(subprocess.run(["gh", "repo", "create", repo, "--private"], capture_output=True, text=True)):
+	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
 		return ERROR
 	local = os.path.isdir(repo) or "://" in repo or "@" in repo
 	cmd = ["git", "clone", "-q", repo, config.TEAM] if local else ["gh", "repo", "clone", repo, config.TEAM]
-	if not _note(subprocess.run(cmd, capture_output=True, text=True)):
+	if not _note(_remote(cmd)):
 		return ERROR
 	with open(os.path.join(config.TEAM, ".gitattributes"), "a+") as f:
 		f.seek(0)

@@ -22,13 +22,17 @@ HEADER = """> **Shared team memory — read-only mirror.** PR reviews write thes
 def tracked(path):
 	"""True when git would commit a file written at `path`: inside a repo and not ignored.
 
-	ponytail: fail-safe — anything but a clean "ignored" answer counts as tracked, so a broken
-	git call refuses the mirror rather than leaking team memory into someone's history.
+	ponytail: `path` need not exist — check-ignore is pure path matching, so we ask about the real target
+	but run git from the nearest directory that does exist. Fail-safe: anything but a clean "ignored"
+	answer counts as tracked, so a broken git call refuses rather than leaking memory into someone's history.
 	"""
-	if subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+	base = os.path.abspath(path)
+	while not os.path.isdir(base) and os.path.dirname(base) != base:
+		base = os.path.dirname(base)
+	if subprocess.run(["git", "-C", base, "rev-parse", "--show-toplevel"],
 	                  capture_output=True, timeout=60).returncode != 0:
 		return False  # not a git repo: nothing to leak into
-	return subprocess.run(["git", "-C", path, "check-ignore", "-q", os.path.join(path, NAMES[0])],
+	return subprocess.run(["git", "-C", base, "check-ignore", "-q", os.path.join(os.path.abspath(path), NAMES[0])],
 	                      capture_output=True, timeout=60).returncode != 0
 
 

@@ -163,26 +163,32 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 	assert "refreshing" in screen.text() and "next refresh" not in screen.text()
 
 
-def test_strip_collapses_groups_to_chips_on_narrow_screens(screen):
+def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)  # conftest moves TEAM; pin the optional row off
+	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
 	def row1(w):
 		screen.w = w
 		ui.draw(screen, st, 0)
 		return screen.line(1)
-	out = row1(200)
+	out = row1(240)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
-	assert out.rstrip().endswith("History 4h") and out.index("Reviewer") < out.index("View") and "☰" not in out
-	out = row1(175)
-	assert "History 4h" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
-	out = row1(150)
-	assert "Effort medium" in out and out.rstrip().endswith("☰ View")  # then View folds first
-	out = row1(100)
-	assert "☰ Reviewer" in out and "☰ View" in out and "Model" not in out
+	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
+	assert out.index("Reviewer") < out.index("View") < out.index("Knowledge")
+	out = row1(225)
+	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
+	out = row1(200)
+	assert "History 4h" in out and out.rstrip().endswith("☰ Knowledge")  # Knowledge folds first, it is the least-touched
+	out = row1(160)
+	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
+	out = row1(120)
+	assert "☰ Reviewer" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
-	out = row1(70)
-	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # both nested under one chip
-	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
+	assert ui.ANCHORS["L"] == ui.ANCHORS["T"] == ui.ANCHORS["K"]
+	out = row1(80)
+	assert "☰ Settings" in out and "Reviewer" not in out and "View" not in out  # all three nested under one chip
+	assert ui.ANCHORS["R"] == ui.ANCHORS["V"] == ui.ANCHORS["K"] == ui.ANCHORS["m"] == ui.ANCHORS["S"]
 	out = row1(55)
 	assert "Session" in out and "Settings" not in out
 
@@ -230,21 +236,23 @@ def test_group_menu_toggles_drafts(screen):
 def test_group_menu_index_survives_a_row_disappearing(screen, monkeypatch):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
-	on = [True]
-	monkeypatch.setattr(ui.team, "on", lambda: on[0])
-	monkeypatch.setattr(ui.team, "NAME", "org/team")
+	moved = [True]
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: moved[0])
 	monkeypatch.setattr(ui.team, "ERROR", "")
-	keys = iter([ord("j"), ord("j"), ord("j"), 10, 27, 27])
+	keys = iter([ord("j"), ord("j"), 10, 27, 27])
 	seen = []
 	def getch():
 		seen.append(screen.text())
 		k = next(keys)
-		if len(seen) == 3:
-			on[0] = False  # the Team row vanishes while the cursor sits on it
+		if len(seen) == 2:
+			moved[0] = False  # the Store row vanishes while the cursor sits on it
 		return k
 	screen.getch, screen.timeout = getch, lambda t: None
-	ui.group_menu(screen, st, 0, "R")  # Enter with idx past the end must clamp to the last row, not raise
-	assert "Team" in seen[2] and "Team" not in seen[3] and "Effort:  j/k or e move" in seen[4]
+	opened = []
+	monkeypatch.setattr(ui, "team_setup", lambda *a: opened.append("T"))
+	ui.group_menu(screen, st, 0, "K")  # Enter with idx past the end must clamp to the last row, not raise
+	assert "Store" in seen[1] and "Store" not in seen[2]
+	assert opened == ["T"]  # clamped onto the last surviving row, which is Team
 
 
 def test_dropdown_anchor_is_fresh_each_draw(screen):
@@ -282,14 +290,17 @@ def test_strip_shows_update_and_auto_badges(screen):
 	assert "update to v9.9.9 · u" in out  # when even the badge and the prompt cannot share the row, the prompt wins
 
 
-def test_hints_show_each_settings_key(screen):
-	screen.w = 190
+def test_hints_show_each_settings_key(screen, monkeypatch):
+	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)
+	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
+	screen.w = 250  # three groups, each key spelled out: nothing folds only well past 200
 	st = State(60)
 	st.sections, st.fetched_at, st.hints = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
 	out = screen.text()
 	assert "m Model " + st.model in out and "d Depth" in out and "e Effort" in out
 	assert "s Summaries" in out and "D Drafts" in out and "t History" in out and "i next refresh" in out and "r updated" in out
+	assert "L Memory ~/.prs_memory" in out and "T Team off" in out
 	st.hints = False
 	ui.draw(screen, st, 0)
 	assert "m Model" not in screen.text() and "i next refresh" not in screen.text()

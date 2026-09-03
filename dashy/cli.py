@@ -27,8 +27,9 @@ sync-memory copies the shared review memory into PATH as read-only mirrors (gene
 Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
-S/R/V settings menus (all / Reviewer / View), ? show each setting's key in the header, n repo memory, g general memory ($EDITOR),
-Z dream (Claude tidies all memory, you approve), T team repo setup, u install the newest release, r refresh, q quit."""
+S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
+L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
+Z dream (Claude tidies all memory, you approve), T team repo setup or leave, u install the newest release, r refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):

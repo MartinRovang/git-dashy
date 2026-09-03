@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, log, memory, team, update
+from ..core import github, knowledge, log, memory, team, update
 from ..core.state import State
 from . import art
 from .rows import age, rows
@@ -70,10 +70,14 @@ def header_groups(state):
 		label, _, current, _, show = st[k]
 		return (k, label, show(current), None)
 	reviewer = [row("m"), row("d"), row("e")]
-	if team.on():
-		reviewer.append(("T", "Team", team.ERROR[:40] if team.ERROR else team.NAME, "err" if team.ERROR else None))  # ponytail: clipped, T shows the whole error
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
-	return [("Reviewer", "R", reviewer), ("View", "V", view)]
+	# Memory is the dir reviews actually read and write: the team checkout when in a team, the solo dir otherwise
+	know = [("L", "Memory", knowledge.show(knowledge.effective()), "on" if team.on() else None),
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (team.NAME or "off"),  # ponytail: clipped, T shows it whole
+	         "err" if team.ERROR else ("on" if team.on() else None))]
+	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
+		know.append(("C", "Store", knowledge.show(config.TEAM), None))
+	return [("Reviewer", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
 def init_colors():
@@ -204,7 +208,7 @@ def draw(scr, state, sel, prompt=None):
 	groups = header_groups(state)
 	levels = {key: "full" for _, key, _ in groups}
 	levels["space"], levels["nest"] = 0, "no"
-	steps = [("space", 1), ("space", 2), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
+	steps = [("space", 1), ("space", 2), ("K", "chip"), ("V", "chip"), ("R", "chip"), ("nest", "chip"), ("nest", "off")]
 	def stack():
 		if levels["nest"] == "chip":  # both groups under one chip; it anchors every key so S/R/V and the settings all hang from it
 			keys = "S" + "".join(key + "".join(k for k, *_ in rows) for _, key, rows in groups)
@@ -407,6 +411,8 @@ def group_menu(scr, state, sel, key):
 				state.drafts = not state.drafts
 			elif sk == "T":
 				team_setup(scr, state, sel)
+			elif sk in ("L", "C"):
+				set_path(scr, state, sel, sk)
 		elif k in (27, ord("q")):
 			return
 
@@ -465,11 +471,37 @@ def ask(scr, state, sel, question):
 		scr.timeout(500)
 
 
+def set_path(scr, state, sel, which):
+	"""Point Memory (L) or Store (C) at another directory.
+
+	ponytail: the filesystem keeps the setting — the old location becomes a symlink to the new one, so it
+	survives a restart without a config file, the same way team mode persists as a .git in a known folder.
+	"""
+	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAM, False)
+	note = "  (the team's memory is in use; this applies when you leave)" if live else ""
+	new = ask(scr, state, sel, f" {what} directory [{knowledge.tilde(cur)}]{note}:")
+	if not new:
+		return
+	if knowledge.inside_git(new) and not confirm(
+			scr, state, sel, f" {new} sits in a git repo that does not ignore it — memory could be committed. continue? [y/n]"):
+		return
+	err = knowledge.set_local(new) if which == "L" else knowledge.set_store(new)
+	if err:
+		confirm(scr, state, sel, f" {err}  [any key]")
+
+
 def team_setup(scr, state, sel):
 	if team.on():
-		confirm(scr, state, sel, f" team {team.NAME} · files in {config.TEAM} · remove that folder to leave  [any key]")
+		name = team.NAME
+		if not confirm(scr, state, sel, f" team {name} · files in {config.TEAM} · leave and go back to local memory? [y/n]"):
+			return
+		err = knowledge.leave()
+		if err:
+			confirm(scr, state, sel, f" {err}  [any key]")
+		else:
+			state.wake.set()  # ponytail: REVIEWED must reload from the solo log, the team one is gone
 		return
-	repo = ask(scr, state, sel, " Team repo (owner/name, private recommended; created if missing):")
+	repo = ask(scr, state, sel, " Team repo (owner/name, a local path, or a git URL; owner/name is created if missing):")
 	if not repo:
 		return
 	err = team.setup(repo)
@@ -579,8 +611,10 @@ def main(scr, interval, auto, model):
 			state.expanded ^= {current["url"]}
 		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
 			dropdown(scr, state, sel, chr(k))
-		elif k in (ord("R"), ord("V")):
+		elif k in (ord("R"), ord("V"), ord("K")):
 			group_menu(scr, state, sel, chr(k))
+		elif k in (ord("L"), ord("C")):
+			set_path(scr, state, sel, chr(k))
 		elif k == ord("S"):
 			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
