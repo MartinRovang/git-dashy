@@ -152,7 +152,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 |---|---|---|
 | review prompt | `mine` + `team`, general + repo, each block labelled by source | drafts |
 | agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
-| agent session, one repo | `.agent/team/{general,repo}.md` — the merged text, mirrored | drafts |
+| agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
 
@@ -162,6 +162,10 @@ out of its tree — that is how an identity corpus loads — so one symlink and 
 `@` line make `general.md` live everywhere with nothing to sync. Per-repo facts
 cannot ride that route: a session in one repo has no business loading facts about
 ten others, so they arrive through the mirror, scoped to the repo they describe.
+
+So the mirror writes the repo file only. Mirroring general as well would put every
+cross-repo fact in context twice, once by each route. `--general` opts back in, for
+anyone who has not wired the user-level import.
 
 A project-level import refuses a symlink, whether it points at a file or a
 directory. Both were tested. That asymmetry is the whole reason the mirror copies.

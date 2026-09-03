@@ -9,7 +9,7 @@ from .ui import screen
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
-       gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull]
+       gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
@@ -20,8 +20,10 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
-sync-memory copies the shared review memory into PATH as read-only mirrors (general.md, repo.md), so an
-  agent session in that repo reads what the reviews learned. --repo defaults to this directory's origin.
+sync-memory copies this repo's review memory into PATH as a read-only mirror, so an agent session there
+  reads what the reviews learned. --repo defaults to this directory's origin. Cross-repo facts are left out:
+  put `@prs-memory/general.md` in ~/.claude/CLAUDE.md (via a symlink) and they load everywhere, live, with
+  nothing to sync. --general mirrors them in here as well, for anyone not doing that.
   Refuses to write anywhere git would commit it. --no-pull skips the team fetch, for callers on a
   timeout: it mirrors whatever the last refresh pulled.
 
@@ -49,7 +51,8 @@ def sync_memory(argv):
 	if not into:
 		raise SystemExit("gitdashy: sync-memory needs --into PATH")
 	team.activate()  # ponytail: points MEMORY_DIR at the team checkout before we read it
-	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."), "--no-pull" not in argv))
+	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."),
+	                         "--no-pull" not in argv, "--general" in argv))
 
 
 def remember(argv):

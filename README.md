@@ -222,21 +222,32 @@ cd ~/src/my-repo
 gitdashy sync-memory --into .agent/team    # --repo defaults to this directory's origin
 ```
 
-Point your agent's instruction file at them (for Claude Code, a `CLAUDE.local.md` holding
-`@.agent/team/general.md` and `@.agent/team/repo.md`) and every session starts knowing the
-conventions, pitfalls and cross-repo effects the reviews have accumulated.
+Point your agent's instruction file at it (for Claude Code, a `CLAUDE.local.md` holding
+`@.agent/team/repo.md`) and every session in that repo starts knowing its conventions, its pitfalls and
+what it does to the repos around it.
 
-Cross-repo facts can skip the mirror entirely. A **user-level** `CLAUDE.md` import follows a symlink out
-of its own tree, where a project-level one refuses to, so:
+**Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
+symlink out of its own tree, where a project-level one refuses to — so:
 
 ```sh
-ln -s ~/.prs_memory ~/.claude/prs-memory        # then add to ~/.claude/CLAUDE.md:
-                                                #   @prs-memory/general.md
+ln -s ~/.prs_memory       ~/.claude/prs-memory
+ln -s ~/.prs_team/memory  ~/.claude/prs-team     # harmless before you have a team
 ```
 
-puts `general.md` into every session everywhere, live, with nothing to sync. Per-repo facts still want the
-mirror — a session in one repo should not load facts about ten others. Reviews are unaffected either way:
-they run `--safe-mode`, so memory reaches them only through the prompt, never twice.
+then in `~/.claude/CLAUDE.md`:
+
+```
+@prs-memory/general.md
+@prs-team/general.md
+```
+
+That puts every general fact into every session, everywhere, live — nothing to sync, nothing to expire, and
+it starts carrying the team's the moment you have one. A missing file is simply skipped.
+
+Which is why `sync-memory` mirrors the **repo** file only: general facts arriving by both routes would sit
+in context twice. `--general` mirrors them in as well, for anyone not wiring the global route. And reviews
+are untouched by either, because `--safe-mode` drops `CLAUDE.md` — memory reaches a review through the
+prompt and never twice.
 
 ### Feeding memory from the other side
 

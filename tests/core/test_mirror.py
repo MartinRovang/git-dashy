@@ -13,16 +13,29 @@ def seed(repo, text, base=None):
 		f.write(f"- {text}\n")
 
 
-def test_sync_writes_both_mirrors_with_a_header(monkeypatch, tmp_path):
+def test_sync_mirrors_the_repo_only_and_leaves_general_to_the_global_route(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	seed(None, "run make lint")
 	seed("a/b", "uses tabs")
 	into = tmp_path / "out"
 	report = mirror.sync(str(into), "a/b")
-	general, repo = (into / "general.md").read_text(), (into / "repo.md").read_text()
-	assert general.startswith("> **Shared team memory — read-only mirror.**") and "- run make lint" in general
+	repo = (into / "repo.md").read_text()
+	assert repo.startswith("> **Shared team memory — read-only mirror.**")
 	assert "### mine" in repo and "- uses tabs" in repo  # the mirror says whose fact each one is
-	assert "general.md, repo.md" in report and "a/b" in report
+	assert not (into / "general.md").exists()  # a user-level import loads those, live; twice is waste
+	assert "repo.md" in report and "a/b" in report
+
+
+def test_sync_general_mirrors_the_cross_repo_facts_too(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	seed(None, "run make lint")
+	seed("a/b", "uses tabs")
+	into = tmp_path / "out"
+	report = mirror.sync(str(into), "a/b", general=True)
+	assert "- run make lint" in (into / "general.md").read_text()
+	assert "general.md, repo.md" in report
+	mirror.sync(str(into), "a/b")  # switching back cleans up rather than leaving a stale copy
+	assert not (into / "general.md").exists()
 
 
 def test_sync_mirrors_what_a_review_sees_from_both_sources(monkeypatch, tmp_path):
@@ -49,11 +62,13 @@ def test_sync_never_mirrors_a_draft(monkeypatch, tmp_path):
 	assert not (into / "repo.md").exists() and "nothing" in report
 
 
-def test_sync_without_a_repo_mirrors_general_only(monkeypatch, tmp_path):
+def test_sync_without_a_repo_writes_nothing_unless_general_is_asked_for(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	seed(None, "run make lint")
 	into = tmp_path / "out"
-	mirror.sync(str(into), "")
+	assert "nothing" in mirror.sync(str(into), "")
+	assert not (into / "general.md").exists() and not (into / "repo.md").exists()
+	mirror.sync(str(into), "", general=True)
 	assert (into / "general.md").exists() and not (into / "repo.md").exists()
 
 
@@ -75,11 +90,11 @@ def test_sync_refuses_a_path_git_would_commit(monkeypatch, tmp_path):
 	repo.mkdir()
 	subprocess.run(["git", "init", "-q", str(repo)], check=True)
 	into = repo / ".agent" / "team"
-	assert "refused" in mirror.sync(str(into), "")
+	assert "refused" in mirror.sync(str(into), "", general=True)
 	assert not (into / "general.md").exists()
 	(repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
 	(repo / ".git" / "info" / "exclude").write_text(".agent/\n")
-	assert "refused" not in mirror.sync(str(into), "")
+	assert "refused" not in mirror.sync(str(into), "", general=True)
 	assert (into / "general.md").exists()
 
 

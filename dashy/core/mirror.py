@@ -36,8 +36,12 @@ def tracked(path):
 	                      capture_output=True, timeout=60).returncode != 0
 
 
-def sync(into, repo="", pull=True):
-	"""Copy general + `repo` memory into `into` as read-only mirrors. Returns a one-line report.
+def sync(into, repo="", pull=True, general=False):
+	"""Mirror `repo`'s memory into `into`, and the general file too when asked. One-line report.
+
+	ponytail: per-repo only by default. Cross-repo facts belong in a user-level instruction file, which
+	loads them live everywhere; mirroring them per repo as well would put every general fact in context
+	twice. general=True is for anyone who has not wired that route and wants it all in the repo.
 
 	ponytail: pull=False for callers on a clock (a SessionStart hook) — mirrors whatever the last
 	gitdashy refresh pulled, instead of risking a network round trip inside their timeout.
@@ -50,7 +54,7 @@ def sync(into, repo="", pull=True):
 	at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 	src = " + ".join(label for label, _ in memory.sources())  # ponytail: the mirror shows what a review sees
 	wrote = []
-	for name, scope in zip(NAMES, (None, repo if repo else "")):
+	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):
 		dst = os.path.join(into, name)
 		text = memory.scope_text(scope) if scope is None or scope else ""
 		if text:
