@@ -767,3 +767,22 @@ def test_stripping_a_block_keeps_the_files_last_newline():
 	text = f"# mine\n\n{install.CBEGIN}\nx\n{install.CEND}\n\nmore\n"
 	assert install._strip_blocks(text, install.CBEGIN, install.CEND) == "# mine\nmore\n"
 	assert install._strip_blocks("# mine\nmore", install.CBEGIN, install.CEND) == "# mine\nmore"
+
+
+def test_the_temp_file_is_never_wider_than_its_target(monkeypatch, tmp_path):
+	"""settings.json holds env blocks with API keys; 0644 for the length of a write is still a leak."""
+	target = tmp_path / "settings.json"
+	target.write_text("{}")
+	os.chmod(target, 0o600)
+	seen = []
+	real_open = os.open
+
+	def spy(path, flags, mode=0o777, **kw):
+		if str(path).endswith(".gitdashy.tmp"):
+			seen.append(mode)
+		return real_open(path, flags, mode, **kw)
+
+	monkeypatch.setattr(os, "open", spy)
+	install._write_text(str(target), '{"a": 1}')
+	assert seen and all(m <= 0o600 for m in seen)          # narrow while being written
+	assert oct(os.stat(target).st_mode)[-3:] == "600"      # and the target's own mode afterwards

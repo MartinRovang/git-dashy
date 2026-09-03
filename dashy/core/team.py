@@ -72,6 +72,34 @@ def has_remote(d):
 	return bool(_url(d)) if os.path.exists(g) else False
 
 
+def _ident(d):
+	"""The `-c` identity pair, and ONLY when the machine has none of its own.
+
+	ponytail: command-line -c has the highest precedence in git, so passing it unconditionally did not
+	fall back to the user's identity, it REPLACED it. push_dir is how the shared team repo commits, so
+	every shared fact and every reviewed.jsonl append landed as "gitdashy" for every member — pushed,
+	and not rewritable afterwards. Attribution there is the whole point: who wrote a fact is who you go
+	and ask about it.
+	ponytail: `git config user.email` reads config files. Local, bounded, and it cannot prompt.
+	"""
+	r = _git("config", "user.email", cwd=d)
+	if r.returncode == 0 and r.stdout.strip():
+		return []
+	return ["-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost"]
+
+
+def inside_other_repo(d):
+	"""True when `d` sits inside a git repo that is not `d` itself.
+
+	ponytail: `git init` there would nest a repo inside someone's notes or dotfiles checkout, which
+	surprises their tooling and is not ours to do. is_repo only looks for .git in the directory itself,
+	so it cannot see this.
+	"""
+	r = _git("rev-parse", "--show-toplevel", cwd=d)
+	top = r.stdout.strip()
+	return r.returncode == 0 and bool(top) and os.path.realpath(top) != os.path.realpath(d)
+
+
 def init_history(d):
 	"""Give `d` local git history, no remote needed. True when it has one. Never raises.
 
@@ -84,14 +112,13 @@ def init_history(d):
 	"""
 	if is_repo(d):
 		return True
-	if not d or not os.path.isdir(d):
+	if not d or not os.path.isdir(d) or inside_other_repo(d):
 		return False
 	with _lock:
 		if _git("init", "-q", cwd=d).returncode != 0:
 			return False
 		_git("add", "-A", cwd=d)
-		_git("-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost",
-		     "commit", "-qm", "gitdashy: memory as it was before this was tracked", cwd=d)
+		_git(*_ident(d), "commit", "-qm", "gitdashy: memory as it was before this was tracked", cwd=d)
 	return is_repo(d)
 
 
@@ -115,8 +142,7 @@ def push_dir(d, msg, label="sync"):
 		_git("add", "-A", cwd=d)
 		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
 			return  # nothing new
-		if not _note(_git("-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost",
-		                  "commit", "-qm", msg, cwd=d), label):
+		if not _note(_git(*_ident(d), "commit", "-qm", msg, cwd=d), label):
 			return
 	if not has_remote(d):
 		return  # ponytail: committed, which is the half that protects you. Nothing to push to.

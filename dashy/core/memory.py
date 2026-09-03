@@ -59,6 +59,27 @@ BACKUPS = os.path.expanduser("~/.prs_backups")  # ponytail: outside every synced
 KEEP_BACKUPS = 30
 
 
+def _rewrite(p, text):
+	"""Replace one memory file, or delete it when nothing is left. Every rewrite goes through here.
+
+	ponytail: _history() used to hang off three named callers, so `forget` and the pool rewrite — which
+	do not use any of them — wrote with no history behind them, and the docs said otherwise. Enumerating
+	callers is what produced that gap and would produce the next one; the call belongs on the write.
+	"""
+	_history()
+	if text:
+		os.makedirs(os.path.dirname(p), exist_ok=True)
+		with open(p, "w") as f:
+			f.write(text)
+	elif os.path.exists(p):
+		os.remove(p)
+
+
+def history():
+	"""Start tracking the memory dir now, committing what is there. For writers we do not control."""
+	_history()
+
+
 def _history():
 	"""Give the memory dir git history the first time anything writes to it. Cheap when it already has.
 
@@ -74,7 +95,9 @@ def _everything():
 	out = []
 	for label, base in [("mine", config.MEMORY_DIR)] + ([("team", os.path.join(config.TEAM, "memory"))]
 	                                                    if team.on() else []):
-		for root, dirs, names in os.walk(base or "."):
+		if not base:
+			continue  # ponytail: PRS_MEMORY= (set but empty) once made os.walk(".") tar up the cwd
+		for root, dirs, names in os.walk(base):
 			dirs[:] = [d for d in dirs if d != ".git"]  # ponytail: history, not content; and it is huge
 			for n in sorted(names):
 				if n.endswith(".md"):
@@ -118,6 +141,10 @@ def backup(reason="tick"):
 			os.remove(os.path.join(BACKUPS, old))
 		return dest
 	except (OSError, tarfile.TarError):
+		try:
+			os.remove(dest + ".part")  # ponytail: prune only sees .tar.gz, so a stray .part stays forever
+		except (OSError, NameError, UnboundLocalError):
+			pass
 		return ""
 
 
@@ -292,13 +319,7 @@ def drafts(repo):
 def _write_drafts(repo, items):
 	_history()
 	p = queue_path(repo)
-	if not items:
-		if os.path.exists(p):
-			os.remove(p)
-		return
-	os.makedirs(os.path.dirname(p), exist_ok=True)
-	with open(p, "w") as f:
-		f.write("".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
 
 
 def append(repo, text):
@@ -363,11 +384,7 @@ def share(repo, fact):
 def _unpool(repo, fact):
 	p = pool_path(whoami(), repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
-	if kept:
-		with open(p, "w") as f:
-			f.write("\n".join(kept) + "\n")
-	elif os.path.exists(p):
-		os.remove(p)
+	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
 def forget(repo, fact):
@@ -375,11 +392,7 @@ def forget(repo, fact):
 	_unpool(repo, fact)
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
-	if kept:
-		with open(p, "w") as f:
-			f.write("\n".join(kept) + "\n")
-	elif os.path.exists(p):
-		os.remove(p)
+	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files: "mine/" are one
@@ -463,9 +476,4 @@ def write(new):
 		if not base:
 			continue
 		p = os.path.join(base, os.path.basename(key.partition("/")[2]))  # ponytail: a name, never a path
-		if t.strip():
-			os.makedirs(base, exist_ok=True)
-			with open(p, "w") as f:
-				f.write(t.strip() + "\n")
-		elif os.path.exists(p):
-			os.remove(p)
+		_rewrite(p, t.strip() + "\n" if t.strip() else "")

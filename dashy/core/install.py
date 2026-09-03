@@ -133,7 +133,11 @@ def _write_text(path, text):
 	"""
 	real = os.path.realpath(path)
 	tmp = real + ".gitdashy.tmp"
-	with open(tmp, "w") as f:
+	# ponytail: created 0600 and widened only to whatever the target already was. Writing at the umask
+	# first put a 0600 settings.json — env blocks, API keys — on disk as 0644 for the length of the
+	# write, in the same directory. Narrow first is free; the other order has a window.
+	fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+	with os.fdopen(fd, "w") as f:
 		f.write(text)
 	if os.path.exists(real):
 		shutil.copymode(real, tmp)

@@ -551,6 +551,9 @@ def edit_memory(scr, repo):
 	path = memory.path(repo)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
 	team.pull_dir(config.MEMORY_DIR, "mine")  # ponytail: n/g edit YOUR memory; pulling the team's did nothing
+	# ponytail: $EDITOR writes the file itself, so no helper of ours sees it. Starting history HERE
+	# commits the state before the edit, which is exactly the version you want back if you regret it.
+	memory.history()
 	curses.endwin()
 	subprocess.run([os.environ.get("EDITOR", "nano"), path])
 	scr.refresh()

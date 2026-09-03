@@ -375,3 +375,71 @@ def test_a_relative_path_is_a_path_not_an_owner_name(tmp_path):
 	assert knowledge.is_remote("owner/name")               # still owner/name, as T reads it
 	assert knowledge.is_remote("git@github.com:o/r.git")
 	assert knowledge.is_remote("https://github.com/o/r.git")
+
+
+def _configured(d, name="Real Person", mail="real@example.com"):
+	import subprocess as sp
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.name", name], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", mail], check=True)
+
+
+def test_a_commit_keeps_the_authors_identity(tmp_path):
+	"""-c has the highest precedence in git, so passing it always REPLACED the author, never fell back.
+
+	push_dir is how the shared team repo commits. Every shared fact and every reviewed.jsonl append was
+	landing as "gitdashy" for every member — pushed, and not rewritable afterwards.
+	"""
+	import subprocess as sp
+	d = tmp_path / "repo"
+	d.mkdir()
+	_configured(d)
+	(d / "general.md").write_text("- a fact\n")
+	team.push_dir(str(d), "memory: test", "mine")
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an <%ae>"], capture_output=True, text=True)
+	assert got.stdout.strip() == "Real Person <real@example.com>"
+
+
+def test_a_machine_with_no_identity_can_still_commit(tmp_path, monkeypatch):
+	"""The fallback is the point — it is exactly the machine with no other backup."""
+	import subprocess as sp
+	monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+	monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+	for v in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+	          "EMAIL", "GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+		monkeypatch.delenv(v, raising=False)
+	d = tmp_path / "mem"
+	d.mkdir()
+	(d / "general.md").write_text("- a fact\n")
+	assert team.init_history(str(d))
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an"], capture_output=True, text=True)
+	assert got.returncode == 0 and got.stdout.strip() == "gitdashy"
+
+
+def test_history_is_not_started_inside_someone_elses_repo(tmp_path):
+	"""PRS_MEMORY pointing into a notes repo must not get an embedded repo nobody asked for."""
+	import subprocess as sp
+	outer = tmp_path / "notes"
+	(outer / "memory").mkdir(parents=True)
+	sp.run(["git", "init", "-q", str(outer)], check=True)
+	assert not team.init_history(str(outer / "memory"))
+	assert not (outer / "memory" / ".git").exists()
+	assert team.inside_other_repo(str(outer / "memory"))
+
+
+def test_every_rewrite_of_memory_has_history_behind_it(monkeypatch, tmp_path):
+	"""forget and the pool rewrite went through no helper that started history, and the docs said they did."""
+	from dashy.core import memory
+	import subprocess as sp
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	(mem / "general.md").write_text("- keep me\n- drop me\n")
+
+	memory.forget(None, "drop me")
+
+	assert team.is_repo(str(mem))
+	assert (mem / "general.md").read_text() == "- keep me\n"
+	got = sp.run(["git", "-C", str(mem), "show", "HEAD:general.md"], capture_output=True, text=True)
+	assert "drop me" in got.stdout  # the state before the forget is recoverable

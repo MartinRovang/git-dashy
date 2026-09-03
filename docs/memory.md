@@ -265,9 +265,21 @@ is derived, a clone can be re-cloned — but a fact you lose is gone. Two nets s
 and neither needs any setup.
 
 **Local git history.** The first time anything writes to your memory directory, gitdashy
-runs `git init` in it. No remote is required and none is added; the commit is the point,
-and a missing origin is the normal state of a machine that has not joined a team. Every
-write since then is a commit:
+runs `git init` in it. Every rewrite goes through one function, so this holds for a review,
+`remember`, `forget`, a hand edit through `n`/`g`, and a dream alike — not just the paths
+someone remembered to add it to.
+
+No remote is required and none is added; the commit is the point, and a missing origin is
+the normal state of a machine that has not joined a team. Commits are authored by **your**
+git identity; the fixed `gitdashy` identity is used only when the machine has none
+configured at all, since that is exactly the machine with no other backup.
+
+**One exception**: if `PRS_MEMORY` points inside another git repository — a notes repo, a
+dotfiles checkout — no history is started, because nesting a repo there surprises the
+tooling you already have and is not gitdashy's call to make. The compressed copies below
+still cover you, and the enclosing repo's own history covers whatever it tracks.
+
+Every write is a commit:
 
 ```
 git -C ~/.prs_memory log --oneline
