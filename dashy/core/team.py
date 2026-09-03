@@ -30,37 +30,50 @@ def _remote(cmd):
 		return subprocess.CompletedProcess(cmd, 1, "", f"{e.strerror or e}: {cmd[0]}")
 
 
+def is_repo(d):
+	return bool(d) and os.path.isdir(os.path.join(d, ".git"))  # "" (demo) is never a repo
+
+
 def on():
-	return bool(config.TEAM) and os.path.isdir(os.path.join(config.TEAM, ".git"))  # "" (demo) is never a team
+	return is_repo(config.TEAM)
 
 
 def _git(*args, cwd=None):
 	return subprocess.run(["git", "-C", cwd or config.TEAM, *args], capture_output=True, text=True, timeout=120)
 
 
-def _note(r):
+def _note(r, label="sync"):
 	global ERROR
-	ERROR = "" if r.returncode == 0 else "sync: " + ((r.stderr or r.stdout).strip().splitlines() or ["git failed"])[-1][:60]
+	ERROR = "" if r.returncode == 0 else f"{label}: " + ((r.stderr or r.stdout).strip().splitlines() or ["git failed"])[-1][:60]
 	return r.returncode == 0
 
 
-def pull():
-	if on():
+def pull_dir(d, label="sync"):
+	"""ponytail: git is the sync server for any checkout, not just the team's — the private one uses it too."""
+	if is_repo(d):
 		with _lock:
-			_note(_git("pull", "--rebase", "-q"))
+			_note(_git("pull", "--rebase", "-q", cwd=d), label)
+
+
+def push_dir(d, msg, label="sync"):
+	if not is_repo(d):
+		return
+	with _lock:
+		_git("add", "-A", cwd=d)
+		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
+			return  # nothing new
+		if not _note(_git("commit", "-qm", msg, cwd=d), label):
+			return
+		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
+			_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)
+
+
+def pull():
+	pull_dir(config.TEAM)
 
 
 def push(msg):
-	if not on():
-		return
-	with _lock:
-		_git("add", "-A")
-		if _git("diff", "--cached", "--quiet").returncode == 0:
-			return  # nothing new
-		if not _note(_git("commit", "-qm", msg)):
-			return
-		if not _note(_git("push", "-q", "-u", "origin", "HEAD")):  # rejected: someone pushed first, merge and retry
-			_note(_git("pull", "--rebase", "-q")) and _note(_git("push", "-q"))
+	push_dir(config.TEAM, msg)
 
 
 def origin_slug(path):
@@ -75,9 +88,8 @@ def activate():
 	global NAME
 	if not on():
 		return
-	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")
-	config.MEMORY_DIR = os.path.join(config.TEAM, "memory")
-	NAME = origin_slug(config.TEAM)
+	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")  # the review log really is shared
+	NAME = origin_slug(config.TEAM)  # ponytail: MEMORY_DIR stays yours — memory.sources() reads both
 
 
 def setup(repo, create=False):
@@ -92,11 +104,10 @@ def setup(repo, create=False):
 		f.seek(0)
 		if "merge=union" not in f.read():
 			f.write("*.jsonl merge=union\n*.md merge=union\n")
-	old_log, old_mem = log.LOG, config.MEMORY_DIR
+	old_log = log.LOG
 	activate()
+	os.makedirs(os.path.join(config.TEAM, "memory"), exist_ok=True)
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
-		shutil.copy(old_log, config.LOG)
-	if os.path.isdir(old_mem) and not os.path.exists(config.MEMORY_DIR):
-		shutil.copytree(old_mem, config.MEMORY_DIR)
+		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))
 	return ERROR

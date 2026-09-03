@@ -84,9 +84,10 @@ def review(pr, model):
 		if config.DEPTH == "adaptive" and verdict.get("depth_used"):
 			verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
-		memory.append(repo, verdict.get("memory"))
+		promoted = memory.append(repo, verdict.get("memory"))  # drafts, and whatever a second review confirmed
 		status = log.log_review(pr, model, verdict)
 		team.push(f"review {repo}#{n}: {verdict['verdict']}")
+		team.push_dir(config.MEMORY_DIR, f"memory: {repo}#{n}" + (f", {len(promoted)} confirmed" if promoted else ""), "mine")
 		return status
 	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as e:
 		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80]

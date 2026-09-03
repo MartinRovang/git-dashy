@@ -4,6 +4,7 @@ import difflib
 import os
 import subprocess
 import random
+import textwrap
 import threading
 import time
 from datetime import datetime, timezone
@@ -471,6 +472,40 @@ def ask(scr, state, sel, question):
 		scr.timeout(500)
 
 
+def share_screen(scr, state, sel):
+	"""Facts of yours the team does not have yet: t shares one, x forgets it.
+
+	ponytail: one at a time, not a list. A fact is a sentence you have to actually read to judge, and a
+	column of clipped sentences is exactly how something wrong gets waved through into everyone's context.
+	"""
+	i = 0
+	while True:
+		items = memory.shareable()
+		if not items:
+			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
+			return
+		i %= len(items)
+		repo, fact = items[i]
+		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"share with {team.NAME or 'the team'}  ·  {i + 1}/{len(items)}",
+		      [(repo or "general", "yours"), ("", ""), *body],
+		      "[t] share   [x] forget   [j/k] move   [esc] close")
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			i += 1
+		elif k in (ord("k"), curses.KEY_UP):
+			i -= 1
+		elif k == ord("t"):
+			memory.share(repo, fact)
+			team.push(f"memory: share {repo or 'general'}")
+		elif k == ord("x"):
+			memory.forget(repo, fact)
+			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
+		elif k in (27, ord("q")):
+			return
+
+
 def set_path(scr, state, sel, which):
 	"""Point Memory (L) or Store (C) at another directory.
 
@@ -623,6 +658,8 @@ def main(scr, interval, auto, model):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
 			dream_screen(scr, state, sel)
+		elif k == ord("P"):
+			share_screen(scr, state, sel)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

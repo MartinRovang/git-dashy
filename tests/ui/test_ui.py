@@ -308,10 +308,10 @@ def test_hints_show_each_settings_key(screen, monkeypatch):
 
 def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	ui.memory.append("a/b", "x\nx")
+	(tmp_path / "a__b.md").write_text("- x\n- x\n")  # confirmed facts; drafts are not dreamt about
 	def slow_dream(model):
 		time.sleep(0.3)
-		return "merged dupes", {"a__b.md": "- x"}
+		return "merged dupes", {"mine/a__b.md": "- x"}
 	monkeypatch.setattr(ui.memory, "dream", slow_dream)
 	seen = []
 	def getch():
@@ -326,8 +326,8 @@ def test_dream_screen_shows_animation_then_summary_and_writes_on_y(screen, monke
 
 def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	ui.memory.append("a/b", "x")
-	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"a__b.md": "- changed"}))
+	(tmp_path / "a__b.md").write_text("- x\n")
+	monkeypatch.setattr(ui.memory, "dream", lambda m: ("s", {"mine/a__b.md": "- changed"}))
 	screen.getch, screen.timeout = _keys(ord("j"), ui.curses.KEY_DOWN, ord(" "), 27), lambda t: None  # stray keys ignored
 	ui.dream_screen(screen, st, 0)
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
@@ -342,3 +342,50 @@ def test_dream_screen_discard_and_error(screen, monkeypatch, st, tmp_path):
 def test_dream_detail_diffs_changed_files_only():
 	out = ui.dream_detail("merged\ndupes", {"a__b.md": "- x\n- x\n", "general.md": "- g\n"}, {"a__b.md": "- x", "general.md": "- g\n"})
 	assert out.startswith("merged\ndupes\n") and "--- a/b" in out and "-- x" in out and "general" not in out
+
+
+def _team(monkeypatch, tmp_path):
+	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine.mkdir(parents=True)
+	shared.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(ui.team, "on", lambda: True)
+	monkeypatch.setattr(ui.team, "NAME", "org/t")
+	return mine, shared
+
+
+def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- worth sharing\n- keep to myself\n")
+	pushes = []
+	monkeypatch.setattr(ui.team, "push", lambda m: pushes.append(("team", m)))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushes.append(("mine", m)))
+	seen = []
+	def getch():
+		seen.append(screen.text())
+		return next(keys)
+	keys = iter([ord("t"), ord("x"), 27])
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "share with org/t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
+	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
+	assert [w for w, _ in pushes] == ["team", "mine"]  # each side pushed its own repo
+
+
+def test_share_screen_says_so_when_there_is_nothing_to_share(screen, monkeypatch, st, tmp_path):
+	mine, shared = _team(monkeypatch, tmp_path)
+	(mine / "a__b.md").write_text("- already theirs\n")
+	(shared / "a__b.md").write_text("- already theirs\n")
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "nothing of yours the team is missing" in screen.text()
+
+
+def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
+	mine, _ = _team(monkeypatch, tmp_path)
+	ui.memory.append("a/b", "one review said so")  # a draft is not yours to share
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.share_screen(screen, st, 0)
+	assert "nothing of yours the team is missing" in screen.text()

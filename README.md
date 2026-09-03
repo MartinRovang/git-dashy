@@ -72,6 +72,7 @@ again but the reviewer has not looked yet.
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
+| `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else |
@@ -118,25 +119,57 @@ Every REVIEWED row carries a small `depth/effort` tag showing what the review ra
 
 ### Memory
 
-Reviews remember. Each review may return up to three durable facts about the repo (conventions,
-recurring pitfalls, intentional oddities); they are appended to `~/.prs_memory/<owner>__<repo>.md`
-and fed back into the prompt for every later review of that repo. `~/.prs_memory/general.md` goes
-into every review regardless of repo. Both are plain markdown bullet lists — `n` opens the selected
-PR's repo memory and `g` the general one in `$EDITOR`, so you can add, prune or correct freely.
-`Z` dreams: Claude reads every memory file, merges duplicates, drops stale or contradictory lines and
-moves repo-independent facts to general, then shows a summary and per-file line counts; `v` opens the full summary and diff in `less`. Nothing is
+Reviews remember, but not immediately. Each review may return up to three durable facts about the repo
+(conventions, recurring pitfalls, intentional oddities). A fact is not a fact because a model wrote it —
+it is a fact because it **recurred**, so the first review to mention something only writes a *draft*:
+
+```
+~/.prs_memory/drafts/<owner>__<repo>.md
+  - (1) CI reports "skipping" for format-check
+         ↑ how many independent reviews landed on this
+```
+
+A second review arriving at the same thing (matched loosely, so rewording still counts) promotes it into
+`~/.prs_memory/<owner>__<repo>.md`, where later reviews read it. That promotion is automatic: being wrong
+in your own memory costs only you, and you will meet the line again.
+
+**Drafts are never fed back into a prompt.** If they were, a reviewer would meet its own earlier guess as
+evidence and agree with itself, and the count would measure repetition instead of durability. The signal
+is rediscovery, so the reviewer has to arrive at it again blind.
+
+`~/.prs_memory/general.md` goes into every review regardless of repo. All of these are plain markdown
+bullet lists — `n` opens the selected PR's repo memory and `g` the general one in `$EDITOR`, so you can add,
+prune or correct freely.
+`Z` dreams: Claude reads every memory file — yours and the team's, each labelled — merges duplicates, drops
+stale or contradictory lines and moves repo-independent facts to that source's general file. It is told never
+to move a line from yours into the team's; sharing is your call, not its. It shows a summary and per-file line
+counts; `v` opens the full summary and diff in `less`. Nothing is
 written until you press `y`.
 
 ### Team
 
 Press `T` and give a repo (`org/review-team`, private recommended). gitdashy clones it with `gh` into
-`~/.prs_team` (`PRS_TEAM` overrides), offers to create it if it does not exist, and copies your current
-log and memory in. From then on the review log and all memory files live there: every refresh pulls,
-every review or memory edit commits and pushes. Files are appended only and merge with git's union
-driver, so two people reviewing at once do not conflict. Everyone on the team sees the same REVIEWED
-history, re-review detection works across people, and each teammate's agent learns from everyone's
-reviews. The header's `reviewer` group shows `team org/review-team`, or the last git error in red. To leave, delete
-the folder.
+`~/.prs_team` (`PRS_TEAM` overrides) and offers to create it if it does not exist. The **review log** moves
+there — that is shared history, a record of what happened rather than a claim about the world, so every
+refresh pulls it and every review pushes it. Everyone sees the same REVIEWED section and re-review detection
+works across people. Files are appended only and merge with git's union driver, so two people reviewing at
+once do not conflict.
+
+**Your memory does not move there, and joining does not publish it.** Team memory is a separate, second
+source that reviews read *alongside* yours, and a fact only reaches it when you send it:
+
+```
+P  →  the facts of yours the team does not have, one at a time
+      t  share this one       x  forget it       esc  leave it
+```
+
+Nothing reaches team memory automatically. A wrong fact in your own memory you meet again tomorrow and
+fix; a wrong fact in the team's lands in contexts where nobody who could correct it will ever see it
+happen. So promotion into your own memory is automatic, and promotion out of it is one keypress.
+
+If your own memory directory is itself a git repo, gitdashy pushes it too — so your facts and drafts follow
+you between machines without ever passing through the team. The header's `Knowledge` group shows
+`team org/review-team`, or the last git error in red.
 
 The `T` prompt takes `owner/name` (cloned with `gh`, and offered for creation if it does not exist), a
 **local path**, or a **git URL** — `https://…` and `git@…` both clone with plain `git`. Remote prompts are

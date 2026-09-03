@@ -29,7 +29,8 @@ Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEW
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
-Z dream (Claude tidies all memory, you approve), T team repo setup or leave, u install the newest release, r refresh, q quit."""
+P share your facts with the team (t share, x forget), Z dream (Claude tidies all memory, you approve),
+T team repo setup or leave, u install the newest release, r refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):

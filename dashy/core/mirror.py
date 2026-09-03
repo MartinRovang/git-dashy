@@ -48,13 +48,11 @@ def sync(into, repo="", pull=True):
 	if tracked(into):
 		return f"gitdashy: refused — git would commit {into}; ignore that path before mirroring team memory there"
 	at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+	src = " + ".join(label for label, _ in memory.sources())  # ponytail: the mirror shows what a review sees
 	wrote = []
-	for name, src in zip(NAMES, (memory.path(), memory.path(repo) if repo else "")):
+	for name, scope in zip(NAMES, (None, repo if repo else "")):
 		dst = os.path.join(into, name)
-		try:
-			text = open(src).read().strip() if src else ""
-		except OSError:
-			text = ""
+		text = memory.scope_text(scope) if scope is None or scope else ""
 		if text:
 			with open(dst, "w") as f:
 				f.write(HEADER.format(src=src, at=at) + text + "\n")
