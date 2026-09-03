@@ -185,6 +185,9 @@ disabled and the clone is bounded, so a repo your credentials cannot reach fails
 instead of hanging the dashboard on an invisible password prompt. Pressing `T` while already in a team offers
 to leave it, which refuses while the checkout still holds reviews it has not pushed.
 
+The whole model — every store, promotion rule and discard rule — is written up in
+[`docs/memory.md`](docs/memory.md).
+
 ### Where knowledge lives
 
 `K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
