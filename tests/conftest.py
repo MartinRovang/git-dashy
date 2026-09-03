@@ -30,8 +30,8 @@ def isolated(monkeypatch, tmp_path):
 
 
 class Result:
-	def __init__(self, stdout=""):
-		self.stdout = stdout
+	def __init__(self, stdout="", returncode=0, stderr=""):
+		self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
 
 
 def claude_out(**fields):
@@ -47,6 +47,7 @@ class FakeScr:
 		self.cells = {}
 	def refresh(self):
 		pass
+	noutrefresh = refresh
 	def addnstr(self, y, x, s, n, attr=0):
 		assert 0 <= y < self.h and 0 <= x < self.w and n >= 1, (y, x, n)
 		for i, ch in enumerate(s[:n]):

@@ -16,7 +16,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  y copy url  + reviewer  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -44,6 +44,7 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
+SCROLLING = [False]  # draw() sets it when the selected title is a marquee; main() ticks faster while it is
 
 
 def C(n):
@@ -103,9 +104,15 @@ def splash(scr, h, w, spin):
 		mid(y0 + 5 + i, line, C(5) | curses.A_BOLD)
 
 
+REVIEWER_COLOR = {}  # glyph -> colour pair, filled after init_colors: ✓ green, ✗ red, · pending yellow, ~ dim
+
+
 def draw(scr, state, sel, prompt=None):
+	if not REVIEWER_COLOR:
+		REVIEWER_COLOR.update({"✓": C(4), "✗": C(3), "·": C(5), "~": C(1)})
 	scr.erase()
 	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
+	SCROLLING[0] = False
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
@@ -123,7 +130,7 @@ def draw(scr, state, sel, prompt=None):
 	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
 
 	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
-		scr.refresh()
+		scr.noutrefresh()
 		return sel, (rs[cur][1] if cur >= 0 else None)
 
 	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
@@ -273,11 +280,19 @@ def draw(scr, state, sel, prompt=None):
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
 			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
+			revs = p.get("reviewers", "").split()  # "✓bob ·alice": one token per reviewer, coloured by its glyph
+			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0)
 			t = p["title"]
-			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
+			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
+				SCROLLING[0] = True
+				put(art.marquee(t, title_w, time.time()), curses.A_BOLD, title_w)
+			else:
+				put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
 			put(p.get("author", {}).get("login", ""), C(1), auth_w)
+			for r in revs:
+				put(" ")
+				put(r, REVIEWER_COLOR.get(r[0], C(1)) | curses.A_BOLD)
 			if tag:
 				put("  ")
 				put(tag, C(1))
@@ -288,7 +303,9 @@ def draw(scr, state, sel, prompt=None):
 	foot = prompt or FOOTER
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
-	scr.refresh()
+	# ponytail: no refresh here — getch() flushes the frame, and a popup/panel drawn on top flushes once with it.
+	# refreshing here too pushed a popup-less frame every tick, which is what stuttered the dropdowns.
+	scr.noutrefresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
 
@@ -438,9 +455,45 @@ def settings_menu(scr, state, sel):
 			return
 
 
+def add_reviewer(scr, state, sel, pr):
+	"""Pick a collaborator of the PR's repo (or type a login when gh cannot list them) and request their review."""
+	repo, number = pr["repository"]["nameWithOwner"], pr["number"]
+	draw(scr, state, sel, prompt=f" {art.SPINNER[0]} fetching collaborators of {repo}…")
+	scr.refresh()  # show the prompt before blocking on gh
+	me = pr.get("author", {}).get("login")
+	options = [c for c in github.collaborators(repo) if c != me]
+	if not options:
+		login = ask(scr, state, sel, f" reviewer login for #{number}: ")
+	else:
+		idx = 0
+		while True:
+			draw(scr, state, sel, prompt=f" reviewer for #{number}:  j/k move   ⏎ request   esc cancel")
+			popup(scr, 4, 3, f"request review · {repo}#{number}", options, idx)
+			k = scr.getch()
+			if k in (ord("j"), curses.KEY_DOWN):
+				idx = (idx + 1) % len(options)
+			elif k in (ord("k"), curses.KEY_UP):
+				idx = (idx - 1) % len(options)
+			elif k in (10, 13, curses.KEY_ENTER):
+				login = options[idx]
+				break
+			elif k in (27, ord("q")):
+				return
+	if not login:
+		return
+	err = github.request_review(repo, number, login)
+	draw(scr, state, sel, prompt=f" ✓ asked {login} to review #{number}" if not err else f" ✗ {err}"[:200])
+	scr.refresh()
+	curses.napms(900)
+	curses.flushinp()  # keys mashed during the flash would each fire another request
+	if not err:
+		state.wake.set()  # refetch so the new reviewer shows on the row
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	scr.timeout(-1)
 	yes = scr.getch() == ord("y")
 	scr.timeout(500)
@@ -462,6 +515,7 @@ def edit_memory(scr, repo):
 def ask(scr, state, sel, question):
 	"""Footer text input. Returns '' on empty/escape."""
 	draw(scr, state, sel, prompt=question)
+	scr.refresh()
 	curses.echo()
 	scr.timeout(-1)
 	try:
@@ -642,8 +696,9 @@ def main(scr, interval, auto, model):
 	sel, current = 0, None
 	while True:
 		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
-		scr.timeout(50 if spinning else 500)  # spin smoothly while fetching, refreshing or reviewing
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
+		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
+		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
 		k = scr.getch()
 		if k in (ord("q"), 27):
 			return
@@ -673,6 +728,15 @@ def main(scr, interval, auto, model):
 			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
+		elif k == ord("+") and current and current["section"] == "MINE":
+			add_reviewer(scr, state, sel, current)
+		elif k == ord("y") and current:
+			tool = github.copy(current["url"])
+			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
+			     f" sent {current['url']} to the terminal (OSC 52) — if nothing landed, install wl-clipboard or xclip")
+			scr.refresh()
+			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
+			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
 			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
