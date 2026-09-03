@@ -54,7 +54,7 @@ self-check makes one real claude call and proves the three things every review d
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
-Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED),
+Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED), p detail pane,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,

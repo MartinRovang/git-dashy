@@ -50,6 +50,11 @@ gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agen
 gitdashy remember "the viewer owns mask state"   # file what a coding session learned
 ```
 
+The list is a table — `age · repo · pr · title · author · state` — with your own PRs in their own
+section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `p`
+opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
+found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
+
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
 again but the reviewer has not looked yet.
@@ -65,6 +70,7 @@ again but the reviewer has not looked yet.
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
+| `p` | show / hide the detail pane for the selected PR |
 | `?` | show each setting's key next to it in the header |
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |

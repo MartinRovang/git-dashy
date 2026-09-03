@@ -15,8 +15,11 @@ PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>",
+ "findings": [{{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}}],
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}}
+"findings" is the same review as "body", one line each, so a dashboard can list them: every blocking
+finding must appear there. Empty list when there is nothing to report.
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
 PREV = """
 

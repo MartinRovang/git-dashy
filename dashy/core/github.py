@@ -56,6 +56,35 @@ def fetch():
 	return out
 
 
+DETAIL = "headRefName,additions,deletions,changedFiles,statusCheckRollup"
+CHECK = {"SUCCESS": "ok", "COMPLETED": "ok", "NEUTRAL": "ok", "SKIPPED": "skip",
+         "FAILURE": "fail", "ERROR": "fail", "TIMED_OUT": "fail", "CANCELLED": "fail",
+         "IN_PROGRESS": "run", "QUEUED": "run", "PENDING": "run", "WAITING": "run", "EXPECTED": "run"}
+
+
+def detail(repo, number):
+	"""Branch, diff size and CI checks for ONE pr. {} on any failure.
+
+	ponytail: only ever for the selected row. Each of these is a separate gh call, so asking for the
+	whole list every refresh would make the dashboard slower than the thing it is showing. And a pane
+	is decoration: if it cannot be had, the row is still right, so nothing here raises.
+	"""
+	try:
+		raw = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", DETAIL],
+		                     capture_output=True, text=True, check=True, timeout=30).stdout
+		d = json.loads(raw)
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
+		return {}
+	checks = []
+	for c in d.get("statusCheckRollup") or []:
+		name = c.get("name") or c.get("context") or ""
+		raw_state = (c.get("conclusion") or c.get("state") or c.get("status") or "").upper()
+		if name:
+			checks.append({"name": name, "state": CHECK.get(raw_state, "run")})
+	return {"branch": d.get("headRefName") or "", "add": d.get("additions"), "del": d.get("deletions"),
+	        "files": d.get("changedFiles"), "checks": checks[:8]}
+
+
 def post_review(repo, number, verdict, body):
 	"""Post the verdict on the PR. Raises CalledProcessError / TimeoutExpired on failure."""
 	subprocess.run(["gh", "pr", "review", str(number), "--repo", repo, VERDICT_FLAG[verdict], "--body", body],

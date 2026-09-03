@@ -16,7 +16,6 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -40,7 +39,21 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(20, 255, curses.COLOR_BLACK, 240, curses.COLOR_WHITE),  # group label chip on bar 2: light grey, so it does not compete with the app badge
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
+	(23, 176, curses.COLOR_MAGENTA, -1, -1),       # the agent itself: its role, and the keys that drive it
+	(24, 73, curses.COLOR_CYAN, -1, -1),           # a PR number
+	(25, 238, curses.COLOR_BLACK, -1, -1),         # rules and separators, one step above the background
+	(26, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # the selected row: a tint, not reverse video
+	(27, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # dim on the selected row
 ]
+# age, repo, pr, author and state are fixed; the title takes what is left. Mirrors the design's grid.
+COLS = ((4, "age"), (18, "repo"), (5, "pr"), (0, "title"), (12, "author"), (20, "state"))
+PANE = 62  # columns the detail pane wants
+PANE_MIN = 150  # total width below which there is no room for it and the list gets everything
+# ponytail: the design labels these ⏎ pane / r review / D draft-comment. Left as they are: ⏎ has meant
+# review since the first version, r has meant refresh, and silently swapping them would break the hands
+# of everyone already using it. p opens the pane instead. Worth revisiting deliberately, not by redraw.
+KEYS = (("nav", "j/k move · o open · ⏎ review · p pane · ␣ fold"), ("run", "r review · a auto · Z dream · T team"),
+        ("config", "m model · d depth · e effort · i interval"), ("app", "u update · n/g memory · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -70,6 +83,9 @@ def header_groups(state):
 	def row(k):
 		label, _, current, _, show = st[k]
 		return (k, label, show(current), None)
+	# ponytail: "Agent" rather than "Reviewer" — the group is what drives the model, and reviewing is
+	# only what it happens to be doing. The design's "role reviewer" is left out on purpose: there is
+	# one role, so it would be a label dressed as a control.
 	reviewer = [row("m"), row("d"), row("e")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
@@ -78,7 +94,7 @@ def header_groups(state):
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
 		know.append(("C", "Store", knowledge.show(config.TEAM), None))
-	return [("Reviewer", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
+	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
 def init_colors():
@@ -110,17 +126,19 @@ def draw(scr, state, sel, prompt=None):
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
 	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
+	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
+		rs = [r for r in rs if r[0] != "cols"]
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
 	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 2)
-	all_prs = [p for k, p in rs if k == "pr"]
-	one_owner = len({p["repository"]["nameWithOwner"].split("/")[0] for p in all_prs}) == 1
-	def refof(p):  # ponytail: hide the org when every PR shares it
-		return f"{p['repository']['name'] if one_owner else p['repository']['nameWithOwner']}#{p['number']}"
-	ref_w = max([len(refof(p)) for p in all_prs] + [10])
-	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
+	current = rs[cur][1] if cur >= 0 else None
+	# ponytail: the pane only exists where there is room for it AND the list still. Below that the list
+	# wins, because a dashboard you cannot read the rows of is not improved by a panel beside them.
+	pane_w = PANE if getattr(state, "pane", True) and w >= PANE_MIN else 0
+	lw = w - pane_w
+	title_w = max(12, lw - 2 - sum(c for c, _ in COLS if c) - len(COLS))
 
 	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
 		scr.refresh()
@@ -232,64 +250,190 @@ def draw(scr, state, sel, prompt=None):
 
 	for y, (kind, payload) in enumerate(rs[top:top + max(0, h - 5)], start=4):
 		i = top + y - 4
-		if kind == "head":
-			name, count = payload.rsplit(" (", 1)
-			scr.addnstr(y, 1, name, w - 2, C(2) | curses.A_BOLD)
-			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", max(1, w - 2 - len(name)), C(1))
+		if kind == "cols":
+			x = 1
+			for width_, name in COLS:
+				room = title_w if width_ == 0 else width_
+				if x + room > lw:
+					break
+				scr.addnstr(y, x, name.upper()[:room], room, C(25))
+				x += room + 1
+		elif kind == "head":
+			label, count, right = payload
+			scr.addnstr(y, 1, label, lw - 2, C(2) | curses.A_BOLD)
+			x = min(lw - 2, 2 + len(label))
+			if count:
+				scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
+				x += len(count) + 1
+			# ponytail: a rule to the right edge, so a heading reads as a band and not a floating word
+			rule = lw - 2 - x - (len(right) + 1 if right else 0)
+			if rule > 2:
+				scr.addnstr(y, x, "─" * rule, rule, C(25))
+			if right and lw - 2 - len(right) > x:
+				scr.addnstr(y, lw - 2 - len(right), right, len(right), C(1))
+		elif kind == "queue":
+			label, count, note_ = payload
+			scr.addnstr(y, 3, label, lw - 4, C(1))
+			x = min(lw - 2, 4 + len(label))
+			scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
+			if lw - 2 > x + 3:
+				scr.addnstr(y, x + 3, note_, lw - 3 - x, C(25))
 		elif kind == "err":
-			scr.addnstr(y, 3, payload, w - 4, C(3))
+			scr.addnstr(y, 3, payload, lw - 4, C(3))
 		elif kind == "empty":
-			scr.addnstr(y, 3, "none", w - 4, C(1))
+			scr.addnstr(y, 3, "none", lw - 4, C(1))
 		elif kind == "sub":
-			x = 11 + ref_w
+			x = 3 + COLS[0][0] + COLS[1][0] + COLS[2][0]
 			t = " ".join(payload.split())
-			room = min(70, w - 1 - x - 2)  # ponytail: hard cap so a wordy model can't clog the list
+			room = min(70, lw - 1 - x - 2)  # ponytail: hard cap so a wordy model can't clog the list
 			if room > 4:
 				scr.addnstr(y, x, "↳ ", 2, C(5))
 				scr.addnstr(y, x + 2, t if len(t) <= room else t[:room - 1] + "…", room, C(1) | curses.A_ITALIC)
 		elif kind == "pr":
 			p = payload
 			is_cur = i == cur
-			base = curses.A_REVERSE if is_cur else 0  # ponytail: reverse video works on any theme
-			ref = refof(p)
+			# ponytail: a tint plus a left marker, not reverse video — reverse repaints the whole row and
+			# throws away every colour in it, which is most of what tells you what a row is.
+			base, dim = (C(26), C(27)) if is_cur else (0, C(1))
+			if is_cur:
+				scr.addnstr(y, 0, " " * (lw - 1), lw - 1, C(26))
+				scr.addnstr(y, 0, "▌", 1, C(2) | curses.A_BOLD)
 			st = p.get("status") or reviews.get(p["url"]) or p.get("prev", "")
 			if st == "reviewing...":
 				st = f"{spin} reviewing…"  # ponytail: same clock-driven frame as the header
-			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
+			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else \
+				C(3) if st.startswith("✗") else C(5)
+			tag = ("▸+" + str(p["more"])) if p.get("more") else "▾" if p.get("open") else ""
+			cells = [(age(p["updatedAt"]).rjust(COLS[0][0]), dim),
+			         (p["repository"]["name"], dim),
+			         (("#" + str(p["number"])).rjust(COLS[2][0]), C(24)),
+			         (("└ " if p.get("child") else "") + ("draft " if p.get("isDraft") else "") + p["title"],
+			          base | curses.A_BOLD if is_cur else 0),
+			         (p.get("author", {}).get("login", ""), dim),
+			         ((st + ("  " + tag if tag else "")) if st else tag, st_attr | curses.A_BOLD)]
 			x = 1
-			def put(text, attr=0, pad=0):
-				nonlocal x
-				if x < w - 1:
-					scr.addnstr(y, x, text.ljust(pad), w - 1 - x, base if is_cur else attr)  # colour pairs don't OR
-				x += max(len(text), pad)
-			if is_cur:
-				scr.addnstr(y, 0, " " * (w - 1), w - 1, base)
-			put("▸ " if is_cur else "  ", C(5) | curses.A_BOLD)
-			if p.get("child"):
-				put("    └ ", C(1))  # ponytail: fixed indent, tree is only ever one level deep
-			put(age(p["updatedAt"]).rjust(4), C(1))
-			put("  ")
-			put(ref, C(6), ref_w)
-			put("  ")
-			put("draft " if p.get("isDraft") else "", C(5))
-			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
-			t = p["title"]
-			put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
-			put("  ")
-			put(p.get("author", {}).get("login", ""), C(1), auth_w)
-			if tag:
-				put("  ")
-				put(tag, C(1))
-			if st:
-				put("  ")
-				put(st, st_attr | curses.A_BOLD)
+			for (width_, _), (text, attr) in zip(COLS, cells):
+				room = title_w if width_ == 0 else width_
+				if x >= lw - 1 or room < 1:
+					break
+				t = text if len(text) <= room else text[:max(0, room - 1)] + "…"
+				scr.addnstr(y, x, t.ljust(min(room, lw - 1 - x)), min(room, lw - 1 - x), base if is_cur else attr)
+				x += room + 1
 
-	foot = prompt or FOOTER
+	if pane_w:
+		detail(scr, state, h, w - pane_w, pane_w, current)
+
 	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
-	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
+	if prompt:
+		scr.addnstr(h - 1, 0, prompt, w - 1, C(8) | curses.A_BOLD)
+	else:
+		# ponytail: keys grouped by what they do to. Dropped whole from the right when the row runs out,
+		# so what remains always reads as complete groups rather than a sentence cut mid-word.
+		x = 1
+		for label, keys in KEYS:
+			if x + len(label) + len(keys) + 4 > w - 12:
+				break
+			scr.addnstr(h - 1, x, label.upper(), w - 1 - x, C(9))
+			scr.addnstr(h - 1, x + len(label) + 1, keys, w - 1 - x - len(label) - 1, C(7))
+			x += len(label) + len(keys) + 4
+		if w > 14:
+			scr.addnstr(h - 1, w - 11, "? all keys", 10, C(9))
 	scr.refresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
+
+
+TONE = {"ok": (4, "✓"), "fail": (3, "✗"), "run": (5, "~"), "skip": (1, "·")}
+FIND = {"blocking": 3, "note": 5, "nit": 1}
+
+
+def detail(scr, state, h, x0, width, pr):
+	"""The selected PR, beside the list: what it is, what CI thinks, what the review found, what you can do.
+
+	ponytail: draws only what it has. Branch and checks arrive from a background fetch, findings only
+	from a review that ran — every section is skipped rather than shown empty, so the pane never pads
+	itself out with rows that say nothing.
+	"""
+	def line(y, cells):
+		x = x0 + 2
+		for text, attr in cells:
+			if not text or x >= x0 + width - 1:
+				continue
+			scr.addnstr(y, x, text, x0 + width - 1 - x, attr)
+			x += len(text) + 1
+	for y in range(4, h - 1):  # ponytail: from the first list row, not through the header's breathing space
+		scr.addnstr(y, x0, "│", 1, C(25))
+	if pr is None:
+		scr.addnstr(4, x0 + 2, "no row selected", width - 3, C(1))
+		return
+	y = 4
+	line(y, [("SELECTED PR", C(25)), ("", 0)])
+	if width > 34:
+		scr.addnstr(y, x0 + width - 15, "⏎ pane · esc", 13, C(25))
+	y += 2
+	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
+	         ("· " + age(pr["updatedAt"]), C(1))])
+	y += 1
+	title = pr["title"]
+	for chunk in textwrap.wrap(title, max(10, width - 4))[:2]:
+		scr.addnstr(y, x0 + 2, chunk, width - 3, 0)
+		y += 1
+	d = state.want_detail(pr) or {}
+	who = pr.get("author", {}).get("login", "")
+	stats = []
+	if d.get("add") is not None:
+		stats = [("+" + str(d["add"]), C(4)), ("−" + str(d["del"]), C(3)), (str(d["files"]) + " files", C(1))]
+	line(y, [(who, C(1))] + ([(d["branch"], C(23))] if d.get("branch") else []) + stats)
+	y += 2
+	if d.get("checks"):
+		line(y, [("CHECKS", C(25))])
+		y += 1
+		cells = []
+		for c in d["checks"][:4]:
+			pair, mark = TONE.get(c["state"], TONE["run"])
+			cells += [(mark, C(pair)), (c["name"], C(1))]
+		line(y, cells)
+		y += 2
+	rev = pr.get("review") or {}
+	if not rev:
+		from ..core import log as log_mod
+		rev = log_mod.last(pr["url"]) or {}
+	if rev:
+		line(y, [("AI REVIEW", C(25))])
+		if width > 30:
+			scr.addnstr(y, x0 + width - 2 - len(t := f"{rev.get('model', '')} {log.tag(rev)}".strip()), t,
+			            len(t), C(25))
+		y += 1
+		verdict = config.STATUS.get(rev.get("verdict"), "")
+		line(y, [(verdict, C(4) if verdict.startswith("✓") else C(3) if verdict.startswith("✗") else C(5))])
+		y += 1
+		found = log.findings(rev)
+		if found:
+			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", C(FIND[k]))
+			          for k in ("blocking", "note", "nit") if any(f["kind"] == k for f in found)]
+			line(y, counts)
+			y += 1
+			for f in found:
+				if y >= h - 6:
+					break
+				scr.addnstr(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
+				room = width - 13
+				txt = (f["loc"] + " " if f["loc"] else "") + f["text"]
+				scr.addnstr(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
+				y += 1
+		elif rev.get("summary"):
+			for chunk in textwrap.wrap(rev["summary"], max(10, width - 4))[:2]:
+				scr.addnstr(y, x0 + 2, chunk, width - 3, C(1))
+				y += 1
+		y += 1
+	if y < h - 5:
+		line(y, [("ACTIONS", C(25))])
+		y += 1
+		for key, what in (("⏎", "review this PR"), ("o", "open in browser"), ("a", "auto mode"), ("Z", "dream")):
+			if y >= h - 1:
+				break
+			scr.addnstr(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
+			scr.addnstr(y, x0 + 5, what, width - 6, C(1))
+			y += 1
 
 
 def panel(scr, title, lines, footer, accent=4):
@@ -679,6 +823,8 @@ def main(scr, interval, auto, model):
 			dream_screen(scr, state, sel)
 		elif k == ord("P"):
 			share_screen(scr, state, sel)
+		elif k == ord("p"):
+			state.pane = not state.pane
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

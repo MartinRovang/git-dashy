@@ -22,12 +22,14 @@ def test_draw_renders_sections_status_and_selection(screen):
 	sel, cur = ui.draw(screen, st, 1)
 	out = screen.text()
 	assert sel == 1 and cur["url"] == "r"
-	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
-	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
+	assert "2 PRs" in out and "MINE" in out and "1 open" in out and "assigned" in out and "boom" in out
+	assert "AGE" in out and "REPO" in out and "TITLE" in out and "STATE" in out  # the column header
+	assert "▌" in out and "#8" in out and "draft" in out and "✓ approved" in out
 	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
-	assert "Reviewer   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
+	assert "Agent   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
 	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
-	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() == "" and "MINE (1)" in screen.line(4)
+	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() in ("", "│")
+	assert "AGE" in screen.line(4) and "MINE" in screen.line(5)
 
 
 def test_draw_clamps_selection_and_handles_empty(screen):
@@ -51,7 +53,8 @@ def test_draw_survives_tiny_terminals(screen):
 			assert sel == 0 and cur["url"] == "u"
 	screen.h, screen.w = 6, 120
 	ui.draw(screen, st, 0)
-	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
+	# a short terminal drops the column header rather than the row it describes
+	assert "▌" in screen.text() and "b" in screen.line(4) and "AGE" not in screen.text()
 
 
 def test_draw_prompt_replaces_footer(screen):
@@ -175,7 +178,8 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 	out = row1(240)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
 	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
-	assert out.index("Reviewer") < out.index("View") < out.index("Knowledge")
+	assert "Agent" in out
+	assert out.index("Agent") < out.index("View") < out.index("Knowledge")
 	out = row1(225)
 	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
 	out = row1(200)
@@ -183,7 +187,7 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 	out = row1(160)
 	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
 	out = row1(120)
-	assert "☰ Reviewer" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
+	assert "☰ Agent" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
 	assert ui.ANCHORS["L"] == ui.ANCHORS["T"] == ui.ANCHORS["K"]
 	out = row1(80)
@@ -203,7 +207,7 @@ def test_settings_menu_opens_a_group(screen):
 		return [ord("j"), 10, 27, 27][len(seen) - 1]  # to View, open it, back to Settings, close
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.settings_menu(screen, st, 0)
-	assert "▸ Reviewer ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
+	assert "▸ Agent ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
 	assert "Summaries   all" in seen[2] and "View:  j/k move" in seen[2]
 	assert "▸ View ▸" in seen[3] and "Settings:  j/k move" in seen[3]
 
@@ -220,9 +224,9 @@ def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.group_menu(screen, st, 0, "R")
 	assert config.DEPTH == "low"
-	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Reviewer:  j/k move" in seen[0]
+	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
 	assert "▸ adaptive" in seen[2] and "Depth:  j/k or d move" in seen[2]
-	assert "Depth    low" in seen[4] and "Reviewer:  j/k move" in seen[4]  # back in the group with the new value
+	assert "Depth    low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
 
 
 def test_group_menu_toggles_drafts(screen):
@@ -445,3 +449,53 @@ def test_set_path_reports_a_broken_path_instead_of_crashing(screen, monkeypatch,
 	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
 	ui.set_path(screen, st, 0, "L")  # must not unwind out of curses
 	assert "No such file or directory" in screen.text()
+
+
+def test_the_pane_shows_the_selected_pr_and_folds_away(screen, monkeypatch):
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	pr = dict(PR, number=949, title="feat(viewer): user-customisable keyboard shortcuts", url="u949")
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details["u949"] = {"branch": "feat/kb", "add": 412, "del": 96, "files": 14,
+	                      "checks": [{"name": "ci", "state": "ok"}, {"name": "e2e", "state": "run"}]}
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "SELECTED PR" in out and "#949" in out and "feat/kb" in out
+	assert "+412" in out and "−96" in out and "14 files" in out
+	assert "CHECKS" in out and "✓ ci" in out and "~ e2e" in out
+	assert "ACTIONS" in out and "open in browser" in out
+	st.pane = False
+	ui.draw(screen, st, 0)
+	assert "SELECTED PR" not in screen.text()  # p folds it away and the list takes the width
+
+
+def test_the_pane_never_appears_on_a_narrow_terminal(screen):
+	screen.w, screen.h = 120, 26
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None)], time.time()
+	ui.draw(screen, st, 0)
+	assert "SELECTED PR" not in screen.text()  # the list wins where there is not room for both
+
+
+def test_the_pane_draws_a_review_it_has_findings_for(screen):
+	screen.w, screen.h = 190, 30
+	st = State(60)
+	pr = dict(PR, url="u1", review={"verdict": "request_changes", "model": "opus", "depth": "high",
+	                                "summary": "adds a retry loop",
+	                                "findings": [{"kind": "blocking", "loc": "keymap.ts:88", "text": "duplicate binding"},
+	                                             {"kind": "nit", "loc": "", "text": "table misaligned"}]})
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details["u1"] = {}
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "AI REVIEW" in out and "changes requested" in out
+	assert "1 blocking" in out and "1 nit" in out
+	assert "keymap.ts:88 duplicate binding" in out
+
+
+def test_the_pane_says_so_when_nothing_is_selected(screen):
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	ui.draw(screen, st, 0)
+	assert "no row selected" in screen.text()

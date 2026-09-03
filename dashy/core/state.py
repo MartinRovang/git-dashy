@@ -22,10 +22,35 @@ class State:
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs, self.drafts = 4, "all", False  # drafts: show draft PRs (hidden by default)
+		self.details, self.detailing = {}, set()  # url -> detail dict, and the ones in flight
+		self.pane = True  # the detail pane, toggled with ⏎
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False
+
+	def want_detail(self, pr):
+		"""The selected PR's detail, or None while it is being fetched.
+
+		ponytail: fetched once per PR, off the draw thread. draw() runs 20 times a second — anything that
+		talks to the network from there would stutter the whole dashboard on every keypress.
+		"""
+		if pr is None:
+			return None
+		url = pr["url"]
+		with self.lock:
+			if url in self.details:
+				return self.details[url]
+			if url in self.detailing:
+				return None
+			self.detailing.add(url)
+		def run():
+			got = github.detail(pr["repository"]["nameWithOwner"], pr["number"])
+			with self.lock:
+				self.details[url] = got
+				self.detailing.discard(url)
+		threading.Thread(target=run, daemon=True).start()
+		return None
 
 	def set_auto(self, on, include_existing=False):
 		"""include_existing: review what is already listed too, not just what shows up later."""
