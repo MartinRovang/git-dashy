@@ -345,6 +345,25 @@ def test_dream_detail_diffs_changed_files_only():
 	assert out.startswith("merged\ndupes\n") and "--- a/b" in out and "-- x" in out and "general" not in out
 
 
+def test_esc_menu_theme_notify_refresh_quit(screen, monkeypatch):
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(config, "THEME", "dashy")
+	monkeypatch.setattr(config, "NOTIFY", True)
+	# Enter cycles the theme, j+Enter toggles notify, j+Enter refreshes and closes
+	screen.getch, screen.timeout = _keys(10, ord("j"), 10, ord("j"), 10), lambda t: None
+	assert ui.esc_menu(screen, st, 0) is False and st.wake.is_set()
+	assert config.THEME == "dracula" and config.NOTIFY is False
+	assert "▸ Refresh" in screen.text() and "Theme    dracula" in screen.text() and "Notify   off" in screen.text()
+	row = next(y for y in range(screen.h) if "gitdashy" in screen.line(y) and "╭" in screen.line(y))
+	assert abs(row - screen.h // 2) <= 3 and abs(screen.line(row).index("╭") - screen.w // 2) <= 12  # mid-screen, not on the header
+	screen.getch = _keys(27)
+	assert ui.esc_menu(screen, st, 0) is False  # esc closes without quitting
+	screen.getch = _keys(ord("k"), 10)
+	assert ui.esc_menu(screen, st, 0) is True  # k wraps to Quit
+
+
 def _team(monkeypatch, tmp_path):
 	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
 	mine.mkdir(parents=True)

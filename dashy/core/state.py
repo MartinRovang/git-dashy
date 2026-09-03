@@ -1,4 +1,6 @@
 """Background refresh loop and everything the UI reads."""
+import pathlib
+import subprocess
 import threading
 import time
 
@@ -12,11 +14,12 @@ class State:
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
-		self.window, self.subs, self.drafts = 4, "all", False  # drafts: show draft PRs (hidden by default)
+		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False
+		self.known = None  # urls wanted from me at the last fetch; None until the first fetch lands
 
 	def set_auto(self, on, include_existing=False):
 		"""include_existing: review what is already listed too, not just what shows up later."""
@@ -63,6 +66,32 @@ class State:
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
 			for p in new:
 				self.start_review(p)
+			asks = [(name, prs, err) for name, prs, err in data if name in ("REVIEW REQUESTED", "ASSIGNED")]
+			if not any(err for _, _, err in asks):  # a failed section would look like every PR left, then came back
+				wanted = {p["url"]: (p, name) for name, prs, _ in asks for p in prs}
+				if self.known is not None and config.NOTIFY:
+					for u in wanted.keys() - self.known:
+						notify(*wanted[u])
+				self.known = set(wanted)
 			while not self.wake.wait(1) and time.time() < self.fetched_at + self.interval:
 				pass  # 1s slices so an interval change via i takes effect now
 			self.wake.clear()
+
+
+def notify_cmd(pr, section):
+	"""The notify-send argv for a PR that just asked for me. Raises on a payload missing a field."""
+	what = "wants a review" if section == "REVIEW REQUESTED" else "assigned you"
+	return ["notify-send", "-a", "gitdashy", "-u", "normal", "-c", "im.received", "-A", "open=Open PR",
+	        "-i", str(pathlib.Path(__file__).parents[1] / "notify.png"),
+	        f'#{pr["number"]} {pr["title"]}', f'<b>{pr["repository"]["name"]}</b> · {pr["author"]["login"]} {what}']
+
+
+def notify(pr, section):
+	"""Desktop popup with an Open button. Silent if notify-send is missing or the payload is odd (deleted author)."""
+	def run():  # ponytail: -A blocks until dismissed, so wait in a thread; notify-send only (Linux)
+		try:
+			if subprocess.run(notify_cmd(pr, section), capture_output=True, text=True).stdout.strip() == "open":
+				github.open_in_browser(pr["url"])
+		except (OSError, KeyError, TypeError):
+			pass  # a popup is decoration; the refresh loop must outlive it
+	threading.Thread(target=run, daemon=True).start()

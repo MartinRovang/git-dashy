@@ -1,4 +1,5 @@
 """Tunables and env overrides. ponytail: module-level constants, no config file."""
+import json
 import os
 
 MODELS = ["opus", "sonnet", "fable"]  # cycle list, pass any name via --model
@@ -16,7 +17,36 @@ LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # 
 LOCAL_MEMORY, LOCAL_LOG = MEMORY_DIR, LOG
 INTERVALS = [60, 120, 300, 600, 900]  # i cycles
 INTERVAL = 300  # seconds between refreshes, --interval overrides
+NOTIFY = os.environ.get("PRS_NOTIFY", "1") != "0"  # desktop popup when a PR asks for me; the Esc menu toggles it
+THEME = os.environ.get("PRS_THEME", "dashy")  # colour theme, the Esc menu cycles it; names in ui.screen.THEMES
 SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
 SUBS = ["all", "open", "off"]  # which rows get a summary line under them
+SUB = "all"
 WINDOWS = [1, 4, 6, None]  # hours of REVIEWED history to show, None = all
+WINDOW = 4
+DRAFTS = False  # show draft PRs; D toggles
+SETTINGS = os.environ.get("PRS_SETTINGS", os.path.expanduser("~/.prs_settings.json"))  # runtime picks land here
+SAVED = {"model": "DEFAULT_MODEL", "interval": "INTERVAL", "subs": "SUB", "window": "WINDOW", "drafts": "DRAFTS",
+         "depth": "DEPTH", "effort": "EFFORT", "notify": "NOTIFY", "theme": "THEME"}  # json key -> constant
+ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "notify": "PRS_NOTIFY", "theme": "PRS_THEME"}
+
+
+def load():
+	"""Saved settings override the defaults above; an env var or CLI flag still wins over the file."""
+	try:
+		with open(SETTINGS) as f:
+			saved = json.load(f)
+	except (OSError, ValueError):
+		return
+	for key, name in SAVED.items():
+		if key in saved and ENV.get(key, "") not in os.environ:
+			globals()[name] = saved[key]
+
+
+def save(values):
+	if SETTINGS:  # ponytail: "" (demo) means never write
+		with open(SETTINGS, "w") as f:
+			json.dump(values, f, indent=1)
+
+
 STATUS = {"approve": "✓ approved", "request_changes": "✗ changes requested", "comment": "~ commented"}

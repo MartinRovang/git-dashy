@@ -302,6 +302,9 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 | `PRS_TEAM` | `~/.prs_team` | team checkout; team mode is on when it contains a `.git` |
 | `PRS_MEMORY` | `~/.prs_memory` | memory directory: `general.md` + one file per repo |
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
+| `PRS_SETTINGS` | `~/.prs_settings.json` | where runtime picks (model, depth, theme, notify…) are saved; env vars and flags still win. The file records the effective state, so a value set by a flag is kept once any setting changes |
+| `PRS_NOTIFY` | `1` | desktop popup when a PR asks for your review; `0` turns it off, or toggle it in the Esc menu |
+| `PRS_THEME` | `dashy` | colour theme: dashy, dracula, gruvbox, nord; Esc menu cycles it |
 
 ## Layout
 
