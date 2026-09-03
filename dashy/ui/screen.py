@@ -16,7 +16,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  y copy url  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
+FOOTER = " j/k move  o open  y copy url  + reviewer  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -274,7 +274,7 @@ def draw(scr, state, sel, prompt=None):
 			put(ref, C(6), ref_w)
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
-			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
+			tag = p.get("reviewers", "") + p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
 			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
 			t = p["title"]
 			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
@@ -442,6 +442,38 @@ def settings_menu(scr, state, sel):
 			group_menu(scr, state, sel, groups[idx][1])
 		elif k in (27, ord("q")):
 			return
+
+
+def add_reviewer(scr, state, sel, pr):
+	"""Pick a collaborator of the PR's repo (or type a login when gh cannot list them) and request their review."""
+	repo, number = pr["repository"]["nameWithOwner"], pr["number"]
+	draw(scr, state, sel, prompt=f" {art.SPINNER[0]} fetching collaborators of {repo}…")
+	me = pr.get("author", {}).get("login")
+	options = [c for c in github.collaborators(repo) if c != me]
+	if not options:
+		login = ask(scr, state, sel, f" reviewer login for #{number}: ")
+	else:
+		idx = 0
+		while True:
+			draw(scr, state, sel, prompt=f" reviewer for #{number}:  j/k move   ⏎ request   esc cancel")
+			popup(scr, 4, 3, f"request review · {repo}#{number}", options, idx)
+			k = scr.getch()
+			if k in (ord("j"), curses.KEY_DOWN):
+				idx = (idx + 1) % len(options)
+			elif k in (ord("k"), curses.KEY_UP):
+				idx = (idx - 1) % len(options)
+			elif k in (10, 13, curses.KEY_ENTER):
+				login = options[idx]
+				break
+			elif k in (27, ord("q")):
+				return
+	if not login:
+		return
+	err = github.request_review(repo, number, login)
+	draw(scr, state, sel, prompt=f" ✓ asked {login} to review #{number}" if not err else f" ✗ {err}"[:200])
+	curses.napms(900)
+	if not err:
+		state.wake.set()  # refetch so the new reviewer shows on the row
 
 
 def confirm(scr, state, sel, question):
@@ -679,6 +711,8 @@ def main(scr, interval, auto, model):
 			settings_menu(scr, state, sel)
 		elif k == ord("o") and current:
 			github.open_in_browser(current["url"])
+		elif k == ord("+") and current and current["section"] == "MINE":
+			add_reviewer(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}" if tool else " no clipboard tool found (wl-copy, xclip, xsel or pbcopy)")

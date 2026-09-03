@@ -59,3 +59,28 @@ def test_copy_uses_first_clipboard_tool_on_path(monkeypatch):
 	assert ran == [(["xclip", "-selection", "clipboard"], "https://x/pr/1")]
 	monkeypatch.setattr(github.shutil, "which", lambda c: None)
 	assert github.copy("u") is None and len(ran) == 1
+
+
+def test_reviewers_merges_requests_over_latest_reviews():
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "APPROVED"},
+	                                    {"author": {"login": "carol"}, "state": "CHANGES_REQUESTED"}, None]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "alice"}},
+	                                     {"requestedReviewer": {"login": "carol"}},  # re-requested after her ✗
+	                                     {"requestedReviewer": {"slug": "backend"}}, {"requestedReviewer": None}]}}
+	assert github.reviewers(node) == "✓bob ·carol ·alice ·backend"
+	assert github.reviewers({}) == ""
+
+
+def test_collaborators_and_request_review_shell_out(monkeypatch):
+	calls = []
+	def run(cmd, **kw):
+		calls.append(cmd)
+		return Result(stdout="alice\nbob\n") if cmd[1] == "api" else Result(returncode=1, stderr="nope")
+	monkeypatch.setattr(github.subprocess, "run", run)
+	assert github.collaborators("a/b") == ["alice", "bob"]
+	assert github.request_review("a/b", 7, "alice") == "nope"
+	assert calls[1] == ["gh", "pr", "edit", "7", "--repo", "a/b", "--add-reviewer", "alice"]
+	def boom(cmd, **kw):
+		raise subprocess.CalledProcessError(1, cmd, stderr="")
+	monkeypatch.setattr(github.subprocess, "run", boom)
+	assert github.collaborators("a/b") == []
