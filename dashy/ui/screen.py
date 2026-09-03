@@ -104,7 +104,12 @@ def splash(scr, h, w, spin):
 		mid(y0 + 5 + i, line, C(5) | curses.A_BOLD)
 
 
+REVIEWER_COLOR = {}  # glyph -> colour pair, filled after init_colors: ✓ green, ✗ red, · pending yellow, ~ dim
+
+
 def draw(scr, state, sel, prompt=None):
+	if not REVIEWER_COLOR:
+		REVIEWER_COLOR.update({"✓": C(4), "✗": C(3), "·": C(5), "~": C(1)})
 	scr.erase()
 	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
 	SCROLLING[0] = False
@@ -274,8 +279,9 @@ def draw(scr, state, sel, prompt=None):
 			put(ref, C(6), ref_w)
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
-			tag = p.get("reviewers", "") + p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0)
+			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
+			revs = p.get("reviewers", "").split()  # "✓bob ·alice": one token per reviewer, coloured by its glyph
+			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0)
 			t = p["title"]
 			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
 				SCROLLING[0] = True
@@ -284,6 +290,9 @@ def draw(scr, state, sel, prompt=None):
 				put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
 			put("  ")
 			put(p.get("author", {}).get("login", ""), C(1), auth_w)
+			for r in revs:
+				put(" ")
+				put(r, REVIEWER_COLOR.get(r[0], C(1)) | curses.A_BOLD)
 			if tag:
 				put("  ")
 				put(tag, C(1))
