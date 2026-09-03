@@ -143,3 +143,21 @@ def test_review_reads_and_appends_memory(monkeypatch, tmp_path):
 	assert memory.read("x/y") == "## General\n- always run make lint"
 	e = log.reviewed()[0]
 	assert e["tag"] == "high/max" and "opus high/max" in log.detail(e["review"])
+
+
+def test_rereview_prompt_includes_earlier_review(monkeypatch):
+	prompts = []
+	def fake_run(cmd, **kw):
+		if cmd[0] == "claude":
+			prompts.append(cmd[2])
+		return claude_out(verdict="approve", body="fixed now")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	assert "RE-REVIEW" not in prompts[0]
+	log.log_review(dict(PR), "opus", {"verdict": "request_changes", "body": "- cache never invalidated"}, at="2026-01-02T03:04:05+00:00")
+	calls = []
+	monkeypatch.setattr(github, "comment", lambda repo, n, body: calls.append(body))
+	review(dict(PR), "opus")
+	assert "**Dashy is on its way!** Re-reviewing (was ✗ changes requested on 2026-01-02) with model" in calls[0]
+	assert "RE-REVIEW: you already reviewed this PR on 2026-01-02 with verdict request_changes" in prompts[1]
+	assert "- cache never invalidated" in prompts[1]

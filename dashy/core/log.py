@@ -21,6 +21,11 @@ def reviewed():
 	return out
 
 
+def last(url):
+	"""The newest log entry for this PR url, or None."""
+	return next((p["review"] for p in reviewed() if p["url"] == url), None)
+
+
 def tag(e):
 	"""'adaptive/medium' — depth[/effort] the review ran with, '' for old entries."""
 	return e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")

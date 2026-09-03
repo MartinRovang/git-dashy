@@ -10,13 +10,20 @@ from . import github, log, memory, team
 
 PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
 `gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
-{depth}{memory}
+{depth}{memory}{prev}
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>",
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}}
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."""
+PREV = """
+
+This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}. The PR has been updated since.
+Your earlier review was:
+{body}
+
+Do not treat the PR as new. Say which earlier findings are fixed and which still stand, then review what changed since."""
 DEPTH = {
 	"low": "Depth: minimal. Skim the diff once, flag only obvious defects, keep the body to a few lines.",
 	"medium": "Depth: medium. Read the whole diff carefully, check the changed logic and its tests.",
@@ -27,7 +34,7 @@ DEPTH = {
 }
 SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # any .png in here, at any depth, joins the rotation
 SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/"
-HELLO = """{sprite}**Dashy is on its way!** Reviewing with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
+HELLO = """{sprite}**Dashy is on its way!** {what} with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 TIMEOUT = 900
@@ -43,13 +50,15 @@ def review(pr, model):
 	"""Review the PR, post the verdict, log it. Returns a status string for the row."""
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
 	try:
-		mem = memory.read(repo)
+		mem, prev = memory.read(repo), log.last(pr["url"])
 		prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
-		                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "")
+		                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
+		                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
 		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 			with open(config.INSTRUCTIONS) as f:
 				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-		github.comment(repo, n, HELLO.format(sprite=sprite(), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
+		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		out = subprocess.run(
 			["claude", "-p", prompt, "--output-format", "json",
