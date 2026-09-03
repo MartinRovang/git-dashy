@@ -232,8 +232,7 @@ def test_wiring_a_worktree_still_hides_the_mirror_from_git(monkeypatch, tmp_path
 def test_the_session_hook_seeds_nothing_it_cannot_hide(tmp_path):
 	"""If the ignore cannot be written, the hook must stop rather than create visible files."""
 	wt = worktree(tmp_path)
-	hook = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-	                    "corpus", "bin", "session-start.sh")
+	hook = install.HOOK
 	subprocess.run(["bash", hook], cwd=str(wt), capture_output=True)
 	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
 	assert (wt / ".agent").is_dir() and (wt / "CLAUDE.local.md").exists()
@@ -258,17 +257,30 @@ def test_the_hook_is_registered_once_even_sharing_a_group(monkeypatch, tmp_path)
 	assert [h["command"] for h in left] == ["someone-else"]  # ours gone, theirs untouched
 
 
-def test_a_corpus_without_a_hook_script_registers_none(monkeypatch, tmp_path):
-	"""--corpus URL can fetch anything; a missing hook must not break every session start."""
+def test_any_corpus_gets_the_hook_because_gitdashy_ships_it(monkeypatch, tmp_path):
+	"""A corpus shipping no bin/ used to register a hook to a missing command, in every session."""
 	cfg, _ = full_env(monkeypatch, tmp_path)
 	bare = tmp_path / "bare"
 	(bare / "identity").mkdir(parents=True)
 	(bare / "identity" / "AGENT.md").write_text("# a\n")
 	out = install.full_apply(str(bare))
-	assert any("SKIP" in l and "not executable" in l for l in out)
-	# nothing registered, so there was nothing to write settings.json for either
-	assert not (cfg / "settings.json").exists() or \
-		not __import__("json").loads((cfg / "settings.json").read_text() or "{}").get("hooks")
+	assert not any("SKIP" in l for l in out), out
+	got = __import__("json").loads((cfg / "settings.json").read_text())
+	cmd = got["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+	assert install.HOOK in cmd and os.path.isfile(install.HOOK)  # ours, and it is really there
+	assert str(tmp_path / "corpus-home") in cmd  # told where the corpus is, for its templates
+
+
+def test_the_hook_seeds_nothing_when_a_corpus_has_no_templates(tmp_path):
+	"""A corpus is free to ship none; the hook must still wire the repo rather than fail."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt), capture_output=True)
+	assert (wt / "CLAUDE.local.md").exists() and (wt / ".agent").is_dir()
+	assert not (wt / ".agent" / "STATE.md").exists()  # nothing to copy, and that is fine
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert seen.strip() == ""
 
 
 def test_a_deleted_repo_is_forgotten_not_resurrected(monkeypatch, tmp_path):

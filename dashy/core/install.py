@@ -10,7 +10,7 @@ import shlex
 import shutil
 import subprocess
 
-from .. import config
+from .. import HERE, config
 from . import knowledge, mirror
 
 BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
@@ -294,7 +294,9 @@ def full_explain(corpus, url=""):
 	return out
 
 
-HOOK = "session-start.sh"
+# ponytail: gitdashy's own, not the corpus's. Pointing at <corpus>/bin/ meant any corpus that did not
+# happen to ship this exact file registered a hook to a missing command — in every session, everywhere.
+HOOK = os.path.join(HERE, "dashy", "hooks", "claude-session-start.sh")
 
 
 def _count(settings):
@@ -360,22 +362,23 @@ def full_apply(corpus, url="", dry=False):
 		if not dry:
 			with open(md, "a") as f:
 				f.write(("\n" if text and not text.endswith("\n") else "") + "\n" + corpus_block(home))
-	script = os.path.join(home, "bin", HOOK)
+	script = HOOK
 	sp = os.path.join(d, "settings.json")
 	try:
 		settings = json.loads(_read(sp) or "{}")
 	except ValueError:
 		return out + [f"FAIL  {knowledge.tilde(sp)} is not valid JSON — fix it first, nothing was changed"]
 	script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
-	if _count({"hooks": {"SessionStart": _hooks(settings, HOOK)}}) != _count(settings):
+	if _count({"hooks": {"SessionStart": _hooks(settings, os.path.basename(HOOK))}}) != _count(settings):
 		out.append("ok    the SessionStart hook is already registered")
-	elif not script_ok:  # ponytail: a corpus that ships no hook must not leave every session start failing
+	elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
 		out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
 	else:
 		out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
 		if not dry:
 			settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
-				{"hooks": [{"type": "command", "command": shlex.quote(script), "timeout": 10,
+				{"hooks": [{"type": "command", "command": f"{shlex.quote(script)} {shlex.quote(home)}",
+				            "timeout": 10,
 				            "statusMessage": "Preparing repo notes"}]})
 			with open(sp, "w") as f:
 				json.dump(settings, f, indent=2)
@@ -408,7 +411,7 @@ def full_remove(dry=False):
 		out.append(f"SKIP    {knowledge.tilde(sp)} is not valid JSON — remove the hook by hand")
 		settings = None
 	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
-		kept = _hooks(settings, HOOK)
+		kept = _hooks(settings, os.path.basename(HOOK))
 		if _count({"hooks": {"SessionStart": kept}}) != _count(settings):
 			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
 			if not dry:

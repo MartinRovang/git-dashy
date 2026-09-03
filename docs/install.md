@@ -148,13 +148,36 @@ gitdashy install --full --corpus git@host:you/corpus.git   # or your own
 - imports those files in `~/.claude/CLAUDE.md`, in a block separate from the memory one,
   so either can be removed without the other
 - seeds `USER.md` from `USER.md.template` if absent — and never overwrites what you wrote
-- registers **one** `SessionStart` hook, added surgically: your other settings and other
+- registers **one** `SessionStart` hook, gitdashy's own — so any corpus works, not only one that happens to ship the script, added surgically: your other settings and other
   hooks are preserved, and installing twice never doubles it
 - everything plain `install` does
 
-### The hook
+### The hook — and where the agent-specific line falls
 
-`corpus/bin/session-start.sh`, run at the start of every session in every repo. It seeds
+gitdashy ships the hook; the corpus does not. Three of the four things it does are gitdashy's own
+concern, and only the repo templates belong to the corpus — so pointing at `<corpus>/bin/` meant any
+corpus that did not happen to ship that exact file registered a hook to a missing command, in every
+session on the machine.
+
+It is **Claude Code specific**, and named `claude-session-start.sh` to say so: it knows
+`CLAUDE.local.md` and the `@import` syntax, and it is registered in Claude's `settings.json`. So is
+`gitdashy install` itself, which writes `~/.claude`.
+
+What is *not* agent-specific is everything underneath:
+
+| | assumes an agent? |
+|---|---|
+| `mirror.sync` — writes a markdown file | no |
+| `gitdashy init --into DIR --loader FILE` | no — you name both paths |
+| `claude-session-start.sh` | **yes** — Claude Code's file names and hook system |
+| `gitdashy install` | **yes** — writes `~/.claude` |
+
+Another agent is wired by hand with `gitdashy init`, which assumes nothing and is why it takes explicit
+paths rather than defaulting them.
+
+### What the hook does
+
+`dashy/hooks/claude-session-start.sh`, run at the start of every session in every repo. It seeds
 `.agent/STATE.md` and `.agent/PROJECT-MEMORY.md` if missing, creates a `CLAUDE.local.md`
 that imports them, and calls `gitdashy init` for that repo's review memory.
 

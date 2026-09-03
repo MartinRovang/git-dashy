@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Seed a repo's local agent state and point it at its review memory. Idempotent, quiet, fast.
+# Seed a repo's local notes and point it at its review memory. Idempotent, quiet, fast.
 # Registered as a SessionStart hook by `gitdashy install --full`. Nothing it writes is ever committed.
+#
+# This is CLAUDE CODE SPECIFIC and named so: it knows CLAUDE.local.md and the @import syntax, and it is
+# registered in Claude's settings.json. gitdashy ships it rather than the corpus, because three of the
+# four things it does are gitdashy's own — only the repo templates belong to whichever corpus you
+# installed. Another agent is wired by hand with `gitdashy init --into DIR --loader FILE`, which
+# assumes nothing.
 set -uo pipefail
 
-CORPUS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CORPUS="${1:-$HOME/.agent-corpus}"   # where install --full puts it; only its repo-template/ is used
 git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 0
 
@@ -21,10 +27,11 @@ for p in ".agent/" "CLAUDE.local.md"; do
 done
 grep -qxF ".agent/" "$EX" 2>/dev/null || exit 0  # ponytail: verify, never assume the write landed
 
-# 2. seed this repo's own notes, never overwriting
+# 2. seed this repo's own notes from the installed corpus, if it has any. Never overwriting, and never
+#    a problem when it has none — a corpus is free to ship no templates at all.
 mkdir -p .agent
 for f in STATE.md PROJECT-MEMORY.md; do
-  [ -e ".agent/$f" ] || cp "$CORPUS/repo-template/$f" ".agent/$f" 2>/dev/null || true
+  [ -e ".agent/$f" ] || [ ! -f "$CORPUS/repo-template/$f" ] || cp "$CORPUS/repo-template/$f" ".agent/$f" 2>/dev/null || true
 done
 
 # 3. the loader. CLAUDE.local.md is local scope; CLAUDE.md is checked in - never use it here.
