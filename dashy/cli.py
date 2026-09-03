@@ -48,7 +48,12 @@ T team repo setup or leave, u install the newest release, r refresh, q quit."""
 
 def arg(flag, default=None, cast=str, argv=None):
 	argv = sys.argv if argv is None else argv
-	return cast(argv[argv.index(flag) + 1]) if flag in argv else default
+	if flag not in argv:
+		return default
+	i = argv.index(flag) + 1
+	if i >= len(argv):  # ponytail: a flag with nothing after it is a typo, not a traceback
+		raise SystemExit(f"gitdashy: {flag} needs a value")
+	return cast(argv[i])
 
 
 def sync_memory(argv):

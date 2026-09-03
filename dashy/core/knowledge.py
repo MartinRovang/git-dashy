@@ -110,6 +110,10 @@ def adopt(url, dest=None):
 		return f"{tilde(dest)} is already a git checkout"
 	if os.path.islink(dest):
 		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
+	# ponytail: your memory dir gets pushed, and it holds drafts/. Making it the TEAM repo would publish
+	# every unconfirmed guess to everyone — the one thing the whole design promises never happens.
+	if url and team.on() and team.slug_of(url) and team.slug_of(url) == team.origin_slug(config.TEAM):
+		return "that is the team repo — your memory holds drafts, which are yours alone. Use a different one."
 	keep = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
 	tmp = dest + ".incoming"
 	shutil.rmtree(tmp, ignore_errors=True)
@@ -149,10 +153,22 @@ def set_store(new):
 
 
 def unpushed():
-	"""How many commits the team checkout has that its remote does not. -1 when that cannot be told."""
+	"""Work in the team checkout the remote does not have. -1 when that cannot be told.
+
+	ponytail: commits ahead AND a dirty tree. A push that failed earlier — no git identity configured,
+	say — leaves files staged but uncommitted, which is zero commits ahead and still someone's work.
+	leave() deletes this directory, so the question has to be "is anything here unsaved", not "how many
+	commits".
+	"""
 	r = subprocess.run(["git", "-C", config.TEAM, "log", "--oneline", "@{u}..HEAD"],
 	                   capture_output=True, text=True, timeout=60)
-	return len(r.stdout.strip().splitlines()) if r.returncode == 0 else -1
+	if r.returncode != 0:
+		return -1
+	dirty = subprocess.run(["git", "-C", config.TEAM, "status", "--porcelain"],
+	                       capture_output=True, text=True, timeout=60)
+	if dirty.returncode != 0 or dirty.stdout.strip():
+		return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
+	return len(r.stdout.strip().splitlines())
 
 
 def leave():

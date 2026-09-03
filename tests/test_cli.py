@@ -85,3 +85,8 @@ def test_self_check_reports_and_exits_nonzero_on_failure(monkeypatch, capsys):
 	assert e.value.code == 1
 	out = capsys.readouterr().out
 	assert "ok    flag arrives" in out and "FAIL  safe-mode hides CLAUDE.md  (leaked)" in out
+
+
+def test_a_flag_with_no_value_is_a_message_not_a_traceback():
+	with pytest.raises(SystemExit, match="--repo needs a value"):
+		cli.run(["gitdashy", "remember", "a fact", "--repo"])

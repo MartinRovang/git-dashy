@@ -183,3 +183,33 @@ def test_adopt_defers_to_the_env_var(monkeypatch, tmp_path):
 	monkeypatch.setenv("PRS_MEMORY", str(tmp_path / "env"))
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
 	assert "PRS_MEMORY" in knowledge.adopt("git@github.com:org/mem.git")
+
+
+def test_leave_refuses_a_dirty_tree_even_with_nothing_unpushed(monkeypatch, tmp_path):
+	"""A push that failed earlier leaves work staged but uncommitted: zero commits ahead, still someone's."""
+	store = tmp_path / "team"
+	store.mkdir()
+	subprocess.run(["git", "init", "-q", str(store)], check=True)
+	(store / "reviewed.jsonl").write_text('{"x":1}\n')
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(config, "TEAM", str(store))
+	assert knowledge.unpushed() == -1  # no upstream AND dirty
+	assert "unpushed" in knowledge.leave()
+	assert store.exists() and (store / "reviewed.jsonl").exists()
+
+
+def test_adopt_refuses_to_make_your_memory_the_team_repo(monkeypatch, tmp_path):
+	"""Your memory dir is pushed and holds drafts/. Pointing it at the team repo would publish them."""
+	store = tmp_path / "team"
+	store.mkdir()
+	subprocess.run(["git", "init", "-q", str(store)], check=True)
+	subprocess.run(["git", "-C", str(store), "remote", "add", "origin",
+	                "git@github.com:org/review-team.git"], check=True)
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(config, "TEAM", str(store))
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	for url in ("git@github.com:org/review-team.git", "https://github.com/org/review-team",
+	            "org/review-team"):
+		assert "that is the team repo" in knowledge.adopt(url), url
+	assert not (tmp_path / "mine").exists()

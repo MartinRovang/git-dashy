@@ -107,7 +107,8 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 	assert "--safe-mode" in calls[0]  # dream has a JSON contract too, no ambient CLAUDE.md
 	assert "### mine/general.md" in calls[0][2] and "### team/general.md" in calls[0][2]
 	assert "never move a line from mine/ into team/" in calls[0][2].lower() or "never move" in calls[0][2]
-	assert summary == "tidied"
+	assert summary.startswith("tidied")
+	assert "ignored bogus.md" in summary  # a dropped edit is reported, not silently discarded
 	assert set(new) == {"mine/general.md", "mine/a__b.md", "team/general.md"}
 	assert new["mine/general.md"] == "- run make lint\n"  # untouched files keep what they had
 	memory.write(new)
@@ -281,3 +282,24 @@ def test_an_unreadable_memory_file_is_not_silently_empty(monkeypatch, tmp_path):
 			memory.read("a/b")
 	finally:
 		os.chmod(p, 0o644)
+
+
+def test_a_dream_that_forgets_the_prefix_changes_nothing_and_says_so(monkeypatch, tmp_path):
+	"""The model must echo mine/ or team/ back. Without it we cannot tell which file it meant."""
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	(mine / "general.md").write_text("- one\n- two\n")
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(
+		summary="merged", files={"general.md": "- one"}))  # no prefix: the pre-PR format
+	summary, new = memory.dream("sonnet")
+	assert new == {"mine/general.md": "- one\n- two\n"}  # unchanged, not applied
+	assert "ignored general.md" in summary
+	memory.write(new)
+	assert facts(mine / "general.md") == ["- one", "- two"]
+	assert "mine/<file>" in memory.DREAM or 'mine/general.md' in memory.DREAM  # and the prompt says so
+
+
+def test_a_dream_cannot_write_outside_the_memory_dir(monkeypatch, tmp_path):
+	mine, _ = in_a_team(monkeypatch, tmp_path)
+	memory.write({"mine/../../escaped.md": "- nope"})
+	assert not (tmp_path / "escaped.md").exists()
+	assert not (tmp_path.parent / "escaped.md").exists()

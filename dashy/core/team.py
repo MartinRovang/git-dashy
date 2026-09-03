@@ -80,11 +80,16 @@ def push(msg):
 	push_dir(config.TEAM, msg)
 
 
+def slug_of(url):
+	"""owner/name from a remote URL, path or owner/name. "" when there is nothing to read."""
+	u = (url or "").strip().rstrip("/").removesuffix(".git").replace(":", "/")
+	return "/".join(u.split("/")[-2:]) if u else ""
+
+
 def origin_slug(path):
 	"""owner/name from the git remote at `path`, "" when there is no repo or no origin."""
 	r = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=60)
-	url = r.stdout.strip().rstrip("/").removesuffix(".git").replace(":", "/")
-	return "/".join(url.split("/")[-2:]) if r.returncode == 0 and url else ""
+	return slug_of(r.stdout) if r.returncode == 0 else ""
 
 
 def activate():

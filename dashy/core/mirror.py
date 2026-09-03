@@ -32,8 +32,10 @@ def tracked(path):
 	if subprocess.run(["git", "-C", base, "rev-parse", "--show-toplevel"],
 	                  capture_output=True, timeout=60).returncode != 0:
 		return False  # not a git repo: nothing to leak into
-	return subprocess.run(["git", "-C", base, "check-ignore", "-q", os.path.join(os.path.abspath(path), NAMES[0])],
-	                      capture_output=True, timeout=60).returncode != 0
+	# ponytail: EVERY name we write, not just the first. An ignore rule matching general.md but not
+	# repo.md would answer "ignored" and we would then commit the other one — the exact leak this prevents.
+	return any(subprocess.run(["git", "-C", base, "check-ignore", "-q", os.path.join(os.path.abspath(path), n)],
+	                          capture_output=True, timeout=60).returncode != 0 for n in NAMES)
 
 
 def sync(into, repo="", pull=True, general=False):

@@ -148,3 +148,17 @@ def test_sync_survives_git_being_missing(monkeypatch, tmp_path):
 		raise FileNotFoundError(2, "No such file or directory: 'git'")
 	monkeypatch.setattr(subprocess, "run", no_git)
 	assert "refused" in mirror.sync(str(tmp_path / "out"), "a/b")  # fail safe, not fail loud
+
+
+def test_sync_refuses_when_only_one_of_the_names_is_ignored(monkeypatch, tmp_path):
+	"""An ignore rule covering general.md but not repo.md would let the mirror commit the other one."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	seed("a/b", "uses tabs")
+	repo = tmp_path / "repo"
+	repo.mkdir()
+	subprocess.run(["git", "init", "-q", str(repo)], check=True)
+	(repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+	(repo / ".git" / "info" / "exclude").write_text("mirror/general.md\n")  # only one of the two
+	assert "refused" in mirror.sync(str(repo / "mirror"), "a/b")
+	(repo / ".git" / "info" / "exclude").write_text("mirror/\n")  # now both
+	assert "refused" not in mirror.sync(str(repo / "mirror"), "a/b")

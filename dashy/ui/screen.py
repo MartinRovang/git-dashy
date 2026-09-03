@@ -455,7 +455,8 @@ def edit_memory(scr, repo):
 	curses.endwin()
 	subprocess.run([os.environ.get("EDITOR", "nano"), path])
 	scr.refresh()
-	team.push(f"memory: {repo or 'general'} edited")
+	# ponytail: n/g edit YOUR memory, which is no longer inside the team checkout — push the one we wrote
+	team.push_dir(config.MEMORY_DIR, f"memory: {repo or 'general'} edited", "mine")
 
 
 def ask(scr, state, sel, question):
@@ -613,6 +614,7 @@ def dream_screen(scr, state, sel):
 		if k == ord("y"):
 			team.pull()
 			memory.write(new)
+			team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")  # a dream rewrites both sources
 			team.push("memory: dream cleanup")
 	finally:
 		scr.timeout(500)

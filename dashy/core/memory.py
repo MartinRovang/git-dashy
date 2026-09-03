@@ -284,8 +284,10 @@ style, one fact per line. Files not listed below must not be invented; return a 
 
 {files}
 
-Respond with ONLY a JSON object, no prose, no code fences:
-{{"summary": "<2-5 short lines: what you merged, dropped or moved>", "files": {{"<file name>": "<new content>", ...}}}}"""
+Respond with ONLY a JSON object, no prose, no code fences. Every key must be a file name exactly as
+listed above, including its "mine/" or "team/" prefix — a key without one names no file and is ignored:
+{{"summary": "<2-5 short lines: what you merged, dropped or moved>",
+ "files": {{"mine/general.md": "<new content>", "team/<owner>__<repo>.md": "<new content>", ...}}}}"""
 TIMEOUT = 600
 
 
@@ -322,8 +324,12 @@ def dream(model):
 	                     capture_output=True, text=True, check=True, timeout=TIMEOUT).stdout
 	text = json.loads(out)["result"].strip()
 	got = json.loads(text[text.index("{"):text.rindex("}") + 1])
-	new = {n: str(got["files"].get(n, t)) for n, t in before.items()}  # ponytail: unknown names dropped, missing kept
-	return str(got["summary"]), new
+	sent = got.get("files") or {}
+	new = {n: str(sent.get(n, t)) for n, t in before.items()}  # a name we did not list keeps what it had
+	# ponytail: say when the model answered with names we never sent. Those edits are dropped, and a
+	# silent drop after you press y looks exactly like a dream that decided to change nothing.
+	stray = sorted(k for k in sent if k not in before)
+	return str(got["summary"]) + ("\n\n(ignored " + ", ".join(stray) + " — not files I sent)" if stray else ""), new
 
 
 def write(new):
@@ -332,7 +338,7 @@ def write(new):
 		base = _base(key)
 		if not base:
 			continue
-		p = os.path.join(base, key.partition("/")[2])
+		p = os.path.join(base, os.path.basename(key.partition("/")[2]))  # ponytail: a name, never a path
 		if t.strip():
 			os.makedirs(base, exist_ok=True)
 			with open(p, "w") as f:
