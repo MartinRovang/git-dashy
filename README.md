@@ -73,6 +73,10 @@ review that lands on the same fact by itself confirms one — the pre-review and
 same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
 than whether the fact recurred.
 
+The key hints sit on **two rows** at the bottom, grouped by what they act on, with a rule between
+groups. Each group wraps within its own column; when the terminal is too narrow, keys drop whole rather
+than being cut — a truncated key name still reads as an instruction, which is worse than a missing one.
+
 ## Keys
 
 | key | what |

@@ -51,7 +51,9 @@ def test_draw_survives_tiny_terminals(screen):
 			screen.h, screen.w = h, w
 			sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
 			assert sel == 0 and cur["url"] == "u"
-	screen.h, screen.w = 6, 120
+	# ponytail: 7, not 6 — the footer is two rows now, so the shortest terminal that still shows a row
+	# is one taller than it was. Below h=5 draw() bails entirely rather than fault.
+	screen.h, screen.w = 7, 120
 	ui.draw(screen, st, 0)
 	# a short terminal drops the column header rather than the row it describes
 	assert "▌" in screen.text() and "b" in screen.line(4) and "AGE" not in screen.text()
@@ -626,24 +628,35 @@ def test_the_footer_tells_you_the_keys_that_moved(screen):
 	Behavioural rather than a getsource check: what matters is that a user reads the new binding, not
 	that the handler is spelled a particular way. A source assertion passes on code that never runs.
 	"""
-	screen.w = 200  # ponytail: wide enough for every group — the footer drops them from the right
 	st = State(60)
 	st.sections = [("MINE", [dict(PR)], None)]
 	ui.draw(screen, st, 0)
-	foot = screen.line(screen.h - 1)
+	foot = screen.line(screen.h - 2) + " " + screen.line(screen.h - 1)  # two rows, as the design draws it
 	assert "⏎ pane" in foot and "r review" in foot and "f refresh" in foot
 	assert "⏎ review" not in foot and "r refresh" not in foot   # the old meanings are gone from the footer
 
 
-def test_the_footer_drops_whole_groups_when_it_runs_out(screen):
-	"""Groups are dropped from the right, so what remains reads as complete groups, never a cut sentence."""
+def test_the_footer_wraps_into_two_rows_and_never_cuts_a_key(screen):
+	"""The design puts the keys on two rows in columns. Wrapping keeps them all on screen; the earlier
+	one-row version dropped whole groups, so `f refresh` and `q quit` were invisible at any normal width.
+
+	A key that fits on neither line is dropped WHOLE — a truncated key name is worse than a missing one,
+	because it still reads as an instruction.
+	"""
 	st = State(60)
 	st.sections = [("MINE", [dict(PR)], None)]
-	ui.draw(screen, st, 0)
-	wide = screen.line(screen.h - 1)
-	screen.w = 46
-	ui.draw(screen, st, 0)
-	narrow = screen.line(screen.h - 1)
-	assert len(narrow) < len(wide)
-	assert "NAV" in narrow and narrow.count("·") >= 1
-	assert not narrow.rstrip().endswith("·")  # never mid-list
+	for w in (165, 120, 100, 80, 60):
+		screen.w = w
+		ui.draw(screen, st, 0, now=1000.0)
+		rows = [screen.line(screen.h - 2).replace("│", " "), screen.line(screen.h - 1).replace("│", " ")]
+		for r in rows:
+			assert not r.rstrip().endswith("·"), f"w={w}: ends mid-list"
+			for frag in ("pre-rev", "refres", "interva", "updat"):
+				bad = [t for t in r.split() if t.startswith(frag) and t not in ("pre-review", "refresh", "interval", "update")]
+				assert not bad, f"w={w}: key cut mid-word: {bad}"
+		assert "NAV" in rows[0]
+	screen.w = 165
+	ui.draw(screen, st, 0, now=1000.0)
+	both = screen.line(screen.h - 2) + " " + screen.line(screen.h - 1)
+	assert all(g in both for g in ("NAV", "RUN", "CONFIG", "APP"))  # nothing dropped when there is room
+	assert "│" in screen.line(screen.h - 2)                          # a rule between columns

@@ -62,7 +62,7 @@ PANE_MIN = 150  # total width below which there is no room for it and the list g
 # review since the first version, r has meant refresh, and silently swapping them would break the hands
 # of everyone already using it. p opens the pane instead. Worth revisiting deliberately, not by redraw.
 KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · a auto · Z dream"),
-        ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · q quit"))
+        ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -125,7 +125,7 @@ def init_colors():
 def splash(scr, h, w, spin):
 	"""ponytail: centred one-liners, clipped by addnstr — no layout engine."""
 	def mid(y, t, attr):
-		if 4 <= y < h - 1:
+		if 4 <= y < h - 2:
 			scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
 	logo = w >= art.LOGO_W + 2 and h >= 8 + len(art.LOGO)
 	y0 = h // 2 - (4 + (len(art.LOGO) + 1 if logo else 0)) // 2
@@ -137,6 +137,30 @@ def splash(scr, h, w, spin):
 
 
 REVIEWER_COLOR = {}  # glyph -> colour pair, filled after init_colors: ✓ green, ✗ red, · pending yellow, ~ dim
+
+
+def _wrap_keys(keys, room):
+	"""Fit "a · b · c" into two lines of `room`, breaking only at a separator. Returns (first, second).
+
+	ponytail: BOTH lines are fitted here. Slicing the second one at the call site cut it mid-key —
+	"p pre-review · a au" — which is the specific thing wrapping instead of dropping was meant to avoid.
+	A key that fits on neither line is dropped whole; a truncated key name is worse than a missing one,
+	because it still looks like an instruction.
+	"""
+	parts = [p for p in keys.split(" · ") if p]
+	lines, line = [], ""
+	for part in parts:
+		nxt = part if not line else f"{line} · {part}"
+		if len(nxt) <= room:
+			line = nxt
+			continue
+		lines.append(line)
+		line = part if len(part) <= room else ""
+		if len(lines) == 2:
+			break
+	if line and len(lines) < 2:
+		lines.append(line)
+	return (lines + ["", ""])[:2]
 
 
 def draw(scr, state, sel, prompt=None, now=None):
@@ -160,7 +184,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
-	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 2)
+	top = max(0, cur - max(0, h - 8)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 3)
 	current = rs[cur][1] if cur >= 0 else None
 	# ponytail: the pane only exists where there is room for it AND the list still. Below that the list
 	# wins, because a dashboard you cannot read the rows of is not improved by a panel beside them.
@@ -168,7 +192,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	lw = w - pane_w
 	title_w = max(12, lw - 2 - sum(c for c, _ in COLS if c) - len(COLS))
 
-	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
+	if h < 5 or w < 8:  # ponytail: three header rows plus a TWO-row footer; draw nothing rather than fault
 		scr.noutrefresh()
 		return sel, (rs[cur][1] if cur >= 0 else None)
 
@@ -368,24 +392,32 @@ def draw(scr, state, sel, prompt=None, now=None):
 	if pane_w:
 		detail(scr, state, h, w - pane_w, pane_w, current)
 
-	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
+	for fy in (h - 2, h - 1):
+		scr.addnstr(fy, 0, " " * (w - 1), w - 1, C(7))
 	if prompt:
 		scr.addnstr(h - 1, 0, prompt, w - 1, C(8) | curses.A_BOLD)
 	else:
-		# ponytail: keys grouped by what they do to. Dropped whole from the right when the row runs out,
-		# so what remains always reads as complete groups rather than a sentence cut mid-word.
+		# ponytail: TWO rows, in columns, wrapping — the design's shape. One row meant dropping whole
+		# groups from the right, so `f refresh` and `q quit` were invisible on any normal terminal.
+		# Wrapping keeps every key on screen; a column too narrow for its own label is what gets dropped.
+		col = max(18, (w - 2) // len(KEYS))
 		x = 1
-		for label, keys in KEYS:
-			if x + len(label) + len(keys) + 4 > w - 2:
+		for i, (label, keys) in enumerate(KEYS):
+			if x + col > w - 1:
 				break
-			scr.addnstr(h - 1, x, label.upper(), w - 1 - x, C(9))
-			scr.addnstr(h - 1, x + len(label) + 1, keys, w - 1 - x - len(label) - 1, C(7))
-			x += len(label) + len(keys) + 4
+			if i:  # ponytail: a rule between columns, spanning both rows, as the design draws it
+				for fy in (h - 2, h - 1):
+					scr.addnstr(fy, x - 1, "│", 1, C(25))
+			scr.addnstr(h - 2, x, label.upper(), min(len(label), w - 1 - x), C(9))
+			room = col - len(label) - 3  # ponytail: -3 not -2, so a full-width cell keeps a gap before the rule
+			line, rest = _wrap_keys(keys, room)
+			scr.addnstr(h - 2, x + len(label) + 1, line, max(1, min(len(line), w - 1 - x - len(label) - 1)), C(7))
+			if rest:
+				scr.addnstr(h - 1, x + len(label) + 1, rest, max(1, min(len(rest), w - 1 - x - len(label) - 1)), C(7))
+			x += col
 	# ponytail: noutrefresh, from main and NOT the branch's scr.refresh(). getch() flushes the frame, and
 	# a popup drawn on top flushes once with it; refreshing here too pushed a popup-less frame every tick,
 	# which is what stuttered the dropdowns. Taking the branch's footer wholesale would have put it back.
-	# ponytail: the branch also printed "? all keys" here. ? toggles per-setting hints; there is no
-	# all-keys panel, and a footer that names one is a promise the app does not keep.
 	scr.noutrefresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
 
@@ -408,7 +440,7 @@ def detail(scr, state, h, x0, width, pr):
 				continue
 			scr.addnstr(y, x, text, x0 + width - 1 - x, attr)
 			x += len(text) + 1
-	for y in range(4, h - 1):  # ponytail: from the first list row, not through the header's breathing space
+	for y in range(4, h - 2):  # ponytail: from the first list row, not through the header's breathing space
 		scr.addnstr(y, x0, "│", 1, C(25))
 	if pr is None:
 		scr.addnstr(4, x0 + 2, "no row selected", width - 3, C(1))
@@ -477,7 +509,7 @@ def detail(scr, state, h, x0, width, pr):
 		line(y, [("ACTIONS", C(25))])
 		y += 1
 		for key, what in (("⏎", "review this PR"), ("o", "open in browser"), ("a", "auto mode"), ("Z", "dream")):
-			if y >= h - 1:
+			if y >= h - 2:
 				break
 			scr.addnstr(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
 			scr.addnstr(y, x0 + 5, what, width - 6, C(1))
@@ -543,10 +575,10 @@ def popup(scr, y, x, title, lines, idx, marked=None):
 	inner = max([len(l) for l in lines] + [len(title)]) + 6  # "│ ▸ text │"
 	x = max(0, min(x, w - inner - 1))
 	def put(row, text, attr):
-		if row < h - 1:
+		if row < h - 2:
 			scr.addnstr(row, x, text, inner, attr)
 	put(y + 1, "╭" + "─" * (inner - 2) + "╮", C(6))
-	if y + 1 < h - 1:
+	if y + 1 < h - 2:
 		scr.addnstr(y + 1, x + 2, f" {title} ", inner - 4, C(6) | curses.A_BOLD)
 	for i, line in enumerate(lines):
 		body = f" {'▸' if i == idx else ' '} {line}".ljust(inner - 2)
