@@ -1,3 +1,5 @@
+import os
+import re
 import time
 
 import pytest
@@ -660,3 +662,43 @@ def test_the_footer_wraps_into_two_rows_and_never_cuts_a_key(screen):
 	both = screen.line(screen.h - 2) + " " + screen.line(screen.h - 1)
 	assert all(g in both for g in ("NAV", "RUN", "CONFIG", "APP"))  # nothing dropped when there is room
 	assert "│" in screen.line(screen.h - 2)                          # a rule between columns
+
+
+def _pr_at(iso="2026-09-04T09:00:00Z", **kw):
+	return dict(PR, updatedAt=iso, repository={"nameWithOwner": "acme/api", "name": "api"}, number=7, **kw)
+
+
+def test_pre_review_offers_reads_and_reruns(monkeypatch, screen, tmp_path):
+	"""This handler shipped calling a module screen.py does not import and crashed on the first keypress.
+
+	It was eight lines inside main()'s key loop, where no test could reach it — which is exactly what
+	#8's review said about it. It is a function now, and this drives all four of its paths.
+	"""
+	from dashy.core import review as review_mod
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
+	st = State(60)
+	started, paged, asked = [], [], []
+	monkeypatch.setattr(State, "start_self_review", lambda self, pr: started.append(pr["number"]))
+	monkeypatch.setattr(ui, "page", lambda *a: paged.append((a[3], a[4])))  # (path, label)
+	monkeypatch.setattr(ui, "confirm", lambda s, st_, sel, msg: asked.append(msg) or True)
+
+	# 1. nothing on disk -> offers, and running is what happens
+	ui.pre_review(screen, st, 0, _pr_at())
+	assert started == [7] and paged == [] and "Nothing is posted" in asked[0]
+
+	# 2. a pre-review that still describes this diff -> read it back, do not re-run
+	path = review_mod.self_review_path("acme/api", 7)
+	open(path, "w").write("# pre-review\n")
+	os.utime(path, (4e9, 4e9))  # ponytail: mtime AFTER the PR's updatedAt, or it reads as stale
+	ui.pre_review(screen, st, 0, _pr_at("2026-09-04T09:00:00Z"))
+	assert started == [7] and len(paged) == 1
+	assert paged[0] == (path, "pre-review of #7")   # the file it wrote, found again by name
+
+	# 3. the PR moved since -> offer a fresh one, and say why
+	ui.pre_review(screen, st, 0, _pr_at("2099-01-01T00:00:00Z"))
+	assert started == [7, 7] and "changed since its pre-review" in asked[-1]
+
+	# 4. already in flight -> do nothing at all
+	st.reviews[_pr_at()["url"]] = "pre-reviewing..."
+	ui.pre_review(screen, st, 0, _pr_at())
+	assert started == [7, 7] and len(paged) == 1

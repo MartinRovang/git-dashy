@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, knowledge, log, memory, team, update
+from ..core import github, knowledge, log, memory, review as review_mod, team, update
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
@@ -852,6 +852,30 @@ def page(scr, state, sel, path, label):
 	scr.refresh()
 
 
+def pre_review(scr, state, sel, pr):
+	"""`p` on one of your own rows: read the pre-review if it still fits the diff, else offer a fresh one.
+
+	ponytail: a function, not eight lines inside main()'s key loop. It shipped referring to a module
+	screen.py does not import and crashed the moment anyone pressed p — no test could reach it where it
+	was, which is exactly what the review of #8 said about this handler and about cli.self_review.
+	ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone else's
+	work that is never posted helps nobody — this is a pass before you ask a person.
+	"""
+	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+	at = review_mod.self_review_at(repo, n)
+	# ponytail: the PR moving is what makes a pre-review stale, so compare the file against updatedAt
+	# rather than keeping a flag. Read it back while it still describes this diff; offer a fresh one the
+	# moment it does not. Nothing to remember across a restart.
+	moved = bool(at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > at
+	if in_flight(state.reviews.get(pr["url"], "")):
+		return
+	if at and not moved:
+		return page(scr, state, sel, review_mod.self_review_path(repo, n), f"pre-review of #{n}")
+	if confirm(scr, state, sel, (f" #{n} changed since its pre-review. Run again? [y/n]" if moved
+	                             else f" Pre-review #{n}? Nothing is posted. [y/n]")):
+		state.start_self_review(pr)
+
+
 def team_setup(scr, state, sel):
 	if team.on():
 		name = team.NAME
@@ -1001,21 +1025,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("+") and current and current["section"] == "MINE":
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("p") and current and current["section"] == "MINE":
-			# ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone
-			# else's work that is never posted helps nobody — this is a pass before you ask a person.
-			repo_, n_ = current["repository"]["nameWithOwner"], current["number"]
-			at = review_mod.self_review_at(repo_, n_)
-			# ponytail: the PR moving is what makes a pre-review stale, so compare the file against
-			# updatedAt rather than keeping a flag. Read it back when it still describes this diff;
-			# offer a fresh one the moment it does not. Nothing to remember across a restart.
-			moved = at and datetime.fromisoformat(current["updatedAt"].replace("Z", "+00:00")).timestamp() > at
-			if in_flight(state.reviews.get(current["url"], "")):
-				pass  # already in flight
-			elif at and not moved:
-				page(scr, state, sel, review_mod.self_review_path(repo_, n_), f"pre-review of #{n_}")
-			elif confirm(scr, state, sel, (f" #{n_} changed since its pre-review. Run again? [y/n]" if moved
-			                               else f" Pre-review #{n_}? Nothing is posted. [y/n]")):
-				state.start_self_review(current)
+			pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
