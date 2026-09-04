@@ -15,6 +15,7 @@ def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
 	log.log_review(dict(PR, url="b"), "opus", {"verdict": "approve", "body": ""}, at="2020-01-01T00:00:00+00:00")
 	st = State(0)
 	st.reviews = {"a": "✓ approved", "b": "reviewing..."}
+	st.running.add("b")   # ponytail: in-flight is the SET now, not the "..." on the status string
 	rr = [dict(PR, url="a", updatedAt="2021-01-01T00:00:00Z"), dict(PR, url="b", updatedAt="2021-01-01T00:00:00Z")]
 	one_loop(st, monkeypatch, [("REVIEW REQUESTED", rr, None), ("REVIEWED", log.reviewed(), None)])
 	assert st.reviews == {"b": "reviewing..."}
@@ -241,3 +242,55 @@ def test_pane_detail_is_refetched_when_the_pr_moves(monkeypatch):
 	assert st.want_detail(moved) == {"branch": "head-2"}
 	assert len(calls) == 2
 	assert len(st.details) == 1                              # and the stale revision is not kept
+
+
+def test_a_finished_verdict_stops_masking_once_the_pr_moves(monkeypatch):
+	"""`stale` comes from log.mark_rereviews, which only ever names REVIEW REQUESTED urls — so a
+	finished pre-review masked GitHub's decision on a MINE row until restart, and a colleague
+	approving your PR never showed there.
+
+	Baselined on the FIRST fetch after the work finishes, not when it finishes: posting a review bumps
+	updatedAt itself, so comparing against the value we held would sweep our own verdict a tick later.
+	"""
+	st = State(0)
+	st.reviews["m"] = "✗ changes requested (not posted)"      # a finished pre-review
+	same = [("MINE", [dict(PR, url="m", updatedAt="2026-01-01T00:00:00Z")], None)]
+	one_loop(st, monkeypatch, same)
+	assert st.reviews == {"m": "✗ changes requested (not posted)"}, "unchanged PR keeps the verdict"
+	assert st.seen_at["m"] == "2026-01-01T00:00:00Z"           # baselined, not swept
+
+	st.wake = __import__("threading").Event()
+	moved = [("MINE", [dict(PR, url="m", updatedAt="2026-06-06T00:00:00Z")], None)]
+	one_loop(st, monkeypatch, moved)
+	assert st.reviews == {} and "m" not in st.seen_at, "the PR moved, so the verdict is stale"
+
+
+def test_an_in_flight_run_is_never_swept(monkeypatch):
+	"""It is the set that says in-flight, so a status string is not consulted at all."""
+	st = State(0)
+	st.reviews["m"] = "pre-reviewing..."
+	st.running.add("m")
+	one_loop(st, monkeypatch, [("MINE", [dict(PR, url="m", updatedAt="2026-01-01T00:00:00Z")], None)])
+	assert st.reviews == {"m": "pre-reviewing..."} and "m" not in st.seen_at
+
+
+def test_an_error_that_ends_in_dots_is_not_an_agent(monkeypatch):
+	"""in_flight sniffed a suffix on a channel that also carries a truncated stderr line, so an error
+	whose wording happened to end in "..." pinned the UI, counted as running, and blocked a retry —
+	permanently, on text nobody controls.
+	"""
+	from dashy.core.state import in_flight
+	st = State(0)
+	st.reviews["m"] = "error: could not resolve host github.com..."
+	assert not in_flight(st, "m")
+	one_loop(st, monkeypatch, [("MINE", [dict(PR, url="m", updatedAt="2026-01-01T00:00:00Z")], None)])
+	assert st.seen_at.get("m") == "2026-01-01T00:00:00Z"   # treated as finished, so it can go stale
+
+
+def test_a_pr_without_updatedAt_does_not_kill_the_refresh_thread(monkeypatch):
+	"""A KeyError here runs on the refresh thread and takes the whole loop down with it."""
+	st = State(0)
+	st.reviews["m"] = "✓ approved"
+	one_loop(st, monkeypatch, [("MINE", [{"url": "m", "number": 1, "title": "t",
+	                                      "repository": {"nameWithOwner": "a/b", "name": "b"}}], None)])
+	assert st.reviews == {"m": "✓ approved"}     # no field, so it simply never goes stale

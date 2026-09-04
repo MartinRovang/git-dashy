@@ -535,6 +535,7 @@ def test_a_live_status_wins_over_the_fetched_one(monkeypatch):
 	pr["status"] = "· awaiting review"
 	st.sections = [("MINE", [pr], None)]
 	st.reviews["u"] = "pre-reviewing..."
+	st.running.add("u")
 	scr = FakeScr()
 	ui.C = lambda n: 0
 	ui.draw(scr, st, 0)
@@ -550,8 +551,13 @@ def test_any_in_flight_verb_counts_as_running(monkeypatch):
 	and broke on a refactor that was correct, which is the failure mode of pinning wording.
 	"""
 	from dashy.core.state import in_flight
-	assert in_flight("reviewing...") and in_flight("pre-reviewing...") and in_flight("dreaming...")
-	assert not in_flight("") and not in_flight("✓ approved") and not in_flight("error: boom")
+	# ponytail: membership, not a suffix. The status channel also carries a truncated stderr line, so
+	# an error ending in "..." used to count as a running agent — permanently, on wording nobody owns.
+	probe = State(60)
+	probe.running.add("u")
+	assert in_flight(probe, "u") and not in_flight(probe, "other")
+	probe.reviews["other"] = "error: connection reset by peer..."
+	assert not in_flight(probe, "other"), "an error is not an agent, whatever it ends with"
 
 	st = State(0)
 	pr = dict(PR, url="u", section="MINE")
@@ -718,6 +724,7 @@ def test_pre_review_offers_reads_and_reruns(monkeypatch, screen, tmp_path):
 
 	# 4. already in flight -> do nothing at all
 	st.reviews[_pr_at()["url"]] = "pre-reviewing..."
+	st.running.add(_pr_at()["url"])
 	ui.pre_review(screen, st, 0, _pr_at())
 	assert started == [7, 7] and len(paged) == 1
 
