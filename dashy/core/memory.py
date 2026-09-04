@@ -6,15 +6,20 @@ the team's memory is never automatic — that lands in contexts where nobody who
 it happen — so it takes one keypress from you.
 """
 import difflib
+import hashlib
 import json
 import os
 import re
+import tarfile
+import time
 
 from .. import config
 from . import log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
+SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
+PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
 
@@ -29,6 +34,118 @@ def path(repo=None, base=None):
 
 def queue_path(repo):
 	return os.path.join(config.MEMORY_DIR, QUEUE, slug(repo))
+
+
+def project():
+	"""What the work is for — yours, then the team's. "" when neither has been written.
+
+	ponytail: two sources, like everything else. It used to be the team's alone, which left anyone
+	working on their own with nowhere to put it — and a USER.md template pointing them at a file that
+	could not exist.
+
+	ponytail: declared, not learned. Nothing in the promotion pipeline may touch it: it is not a fact
+	someone's reviewer noticed twice, it is what somebody says the work is for. So it is excluded from
+	the dream, from sharing, and from ever being read as a repo's facts.
+	"""
+	# ponytail: strip gitdashy's own marker line. It exists so setup can tell its output from yours;
+	# a reviewer has no use for it, and everything else in this prompt is there to be read.
+	parts = [f"### {label}\n{t}" for label, base in sources()
+	         if (t := "\n".join(l for l in _read(os.path.join(base, PROJECT)).splitlines()
+	                             if l.strip() != SETUP_MARK).strip())]
+	return "\n\n".join(parts)
+
+
+BACKUPS = os.path.expanduser("~/.prs_backups")  # ponytail: outside every synced tree, so it is never pushed
+KEEP_BACKUPS = 30
+
+
+def _rewrite(p, text):
+	"""Replace one memory file, or delete it when nothing is left. Every rewrite goes through here.
+
+	ponytail: _history() used to hang off three named callers, so `forget` and the pool rewrite — which
+	do not use any of them — wrote with no history behind them, and the docs said otherwise. Enumerating
+	callers is what produced that gap and would produce the next one; the call belongs on the write.
+	"""
+	_history()
+	if text:
+		os.makedirs(os.path.dirname(p), exist_ok=True)
+		with open(p, "w") as f:
+			f.write(text)
+	elif os.path.exists(p):
+		os.remove(p)
+
+
+def history():
+	"""Start tracking the memory dir now, committing what is there. For writers we do not control."""
+	_history()
+
+
+def _history():
+	"""Give the memory dir git history the first time anything writes to it. Cheap when it already has.
+
+	ponytail: skipped in demo mode, which shells out to nothing by design — the demo writes to a throwaway
+	memory dir and a `git init` there would be a subprocess the demo promises never to run.
+	"""
+	if config.MEMORY_DIR and config.SETTINGS:
+		team.init_history(config.MEMORY_DIR)
+
+
+def _everything():
+	"""[(arcname, path)] for every file worth keeping a copy of — facts, drafts, both sources."""
+	out = []
+	for label, base in [("mine", config.MEMORY_DIR)] + ([("team", os.path.join(config.TEAM, "memory"))]
+	                                                    if team.on() else []):
+		if not base:
+			continue  # ponytail: PRS_MEMORY= (set but empty) once made os.walk(".") tar up the cwd
+		for root, dirs, names in os.walk(base):
+			dirs[:] = [d for d in dirs if d != ".git"]  # ponytail: history, not content; and it is huge
+			for n in sorted(names):
+				if n.endswith(".md"):
+					full = os.path.join(root, n)
+					out.append((os.path.join(label, os.path.relpath(full, base)), full))
+	return sorted(out)
+
+
+def backup(reason="tick"):
+	"""Keep a compressed copy of every memory file. Returns the archive path, or "" when nothing changed.
+
+	ponytail: memory is the one thing in this system that cannot be recreated — a review can be run
+	again, a mirror is derived, a clone can be re-cloned. Markdown is tiny and gzip flattens it, so the
+	cost of keeping thirty of these is nothing next to the cost of losing one file once.
+	ponytail: skipped when the content hashes the same as the newest archive, or a refresh tick would
+	write an identical tarball every minute forever and push the real ones out of the window.
+	ponytail: never raises. It runs on the refresh tick and before a dream — a backup that fails must
+	not be the thing that stops either of them.
+	"""
+	try:
+		files = _everything() if config.SETTINGS else []  # ponytail: demo memory is throwaway by design
+		if not files:
+			return ""
+		h = hashlib.sha256()
+		for arc, full in files:
+			h.update(arc.encode() + b"\0")
+			with open(full, "rb") as f:
+				h.update(f.read() + b"\0")
+		digest = h.hexdigest()[:12]
+		os.makedirs(BACKUPS, exist_ok=True)
+		have = sorted(n for n in os.listdir(BACKUPS) if n.endswith(".tar.gz"))
+		if have and have[-1].endswith(f"-{digest}.tar.gz"):
+			return ""  # ponytail: identical to the newest one; keeping it twice buys nothing
+		name = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{reason}-{digest}.tar.gz"
+		dest = os.path.join(BACKUPS, name)
+		with tarfile.open(dest + ".part", "w:gz") as t:
+			for arc, full in files:
+				t.add(full, arcname=arc)
+		os.replace(dest + ".part", dest)  # ponytail: named only once complete, so a half-write is never found
+		for old in sorted(n for n in os.listdir(BACKUPS) if n.endswith(".tar.gz"))[:-KEEP_BACKUPS]:
+			os.remove(os.path.join(BACKUPS, old))
+		return dest
+	except (OSError, tarfile.TarError):
+		try:
+			os.remove(dest + ".part")  # ponytail: prune only sees .tar.gz, so a stray .part stays forever
+		except (OSError, NameError, UnboundLocalError):
+			pass
+		return ""
 
 
 def sources():
@@ -86,17 +203,28 @@ def _is(a, b):
 	return _norm(a) == _norm(b)
 
 
+def _plain(line):
+	""""- a fact" -> "a fact". No counter is read here: only a drafts file has one."""
+	return line.strip().lstrip("-• ").strip()
+
+
 def _parse(line):
-	""""- (2) a fact" -> (2, "a fact"). A line with no counter has been seen once."""
+	""""- (2) a fact" -> (2, "a fact"). A line with no counter has been seen once.
+
+	ponytail: for drafts only. A confirmed fact may legitimately begin "(2) ..." — "- (2) space indexes
+	are 1-based" would otherwise read back without its first two characters, quietly changing what it says.
+	"""
 	m = re.match(r"^-\s*\((\d+)\)\s*(.*)$", line.strip())
-	return (int(m.group(1)), m.group(2).strip()) if m else (1, line.strip().lstrip("-• ").strip())
+	return (int(m.group(1)), m.group(2).strip()) if m else (1, _plain(line))
 
 
 def _facts(p):
-	return [_parse(l)[1] for l in _read(p).splitlines() if l.strip()]
+	"""Facts from a confirmed file or a pool file — never a drafts file, so never a counter."""
+	return [_plain(l) for l in _read(p).splitlines() if l.strip()]
 
 
 def _append_line(p, fact):
+	_history()
 	os.makedirs(os.path.dirname(p), exist_ok=True)
 	with open(p, "a") as f:
 		f.write(f"- {fact}\n")
@@ -137,6 +265,11 @@ def team_visible(repo):
 	if repo is None:
 		return True  # a general fact names no repo, so there is nothing to disclose
 	return os.path.exists(path(repo, os.path.join(config.TEAM, "memory"))) or repo in logged_repos()
+
+
+def project_path(mine=True):
+	"""Where a project brief is written: yours, or the team's."""
+	return os.path.join(config.MEMORY_DIR if mine else os.path.join(config.TEAM, "memory"), PROJECT)
 
 
 def _pool(repo, fact):
@@ -184,14 +317,9 @@ def drafts(repo):
 
 
 def _write_drafts(repo, items):
+	_history()
 	p = queue_path(repo)
-	if not items:
-		if os.path.exists(p):
-			os.remove(p)
-		return
-	os.makedirs(os.path.dirname(p), exist_ok=True)
-	with open(p, "w") as f:
-		f.write("".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
 
 
 def append(repo, text):
@@ -220,11 +348,13 @@ def append(repo, text):
 				break
 		else:
 			items.append((1, fact))
-	_write_drafts(repo, [(n, t) for n, t in items if n < PROMOTE_AT])
 	promoted = [t for n, t in items if n >= PROMOTE_AT]
+	# ponytail: facts first, drafts after. The other order loses the observation outright if the second
+	# write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
 	for t in promoted:
 		_append_line(path(repo), t)
 		_pool(repo, t)
+	_write_drafts(repo, [(n, t) for n, t in items if n < PROMOTE_AT])
 	return promoted
 
 
@@ -235,7 +365,7 @@ def shareable():
 	base = os.path.join(config.TEAM, "memory")
 	out = []
 	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
-		if not name.endswith(".md"):
+		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = None if name == "general.md" else name[:-3].replace("__", "/")
 		theirs = _facts(path(repo, base))
@@ -253,12 +383,8 @@ def share(repo, fact):
 
 def _unpool(repo, fact):
 	p = pool_path(whoami(), repo)
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
-	if kept:
-		with open(p, "w") as f:
-			f.write("\n".join(kept) + "\n")
-	elif os.path.exists(p):
-		os.remove(p)
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
+	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
 def forget(repo, fact):
@@ -266,11 +392,7 @@ def forget(repo, fact):
 	_unpool(repo, fact)
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
-	if kept:
-		with open(p, "w") as f:
-			f.write("\n".join(kept) + "\n")
-	elif os.path.exists(p):
-		os.remove(p)
+	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files: "mine/" are one
@@ -297,7 +419,7 @@ def files():
 	for label, base in sources():
 		key = "mine" if label == "mine" else "team"
 		for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-			if n.endswith(".md"):
+			if n.endswith(".md") and n != PROJECT:  # the dream tidies learned facts, not a stated brief
 				out[f"{key}/{n}"] = open(os.path.join(base, n)).read()
 	return dict(sorted(out.items(), key=lambda kv: (not kv[0].endswith("general.md"), kv[0])))
 
@@ -319,14 +441,16 @@ def dream(model):
 	"""
 	import json
 	import subprocess
+	import tempfile
 	before = files()
 	if not before:
 		raise ValueError("no memory to dream about")
 	prompt = DREAM.format(files="\n\n".join(f"### {n}\n{t}" for n, t in before.items()))
 	# ponytail: --safe-mode for the same reason as a review — this call has a JSON contract, not a conversation
-	out = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--safe-mode", "--model", model]
-	                     + (["--effort", config.EFFORT] if config.EFFORT else []),
-	                     capture_output=True, text=True, check=True, timeout=TIMEOUT).stdout
+	with tempfile.TemporaryDirectory() as here:  # ponytail: same reason as a review — see review.review
+		out = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--safe-mode", "--model", model]
+		                     + (["--effort", config.EFFORT] if config.EFFORT else []),
+		                     capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here).stdout
 	text = json.loads(out)["result"].strip()
 	got = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	sent = got.get("files") or {}
@@ -339,15 +463,17 @@ def dream(model):
 
 
 def write(new):
-	"""Overwrite memory files from a dream(); empty content deletes the file. You approved this, so it lands."""
+	"""Overwrite memory files from a dream(); empty content deletes the file. You approved this, so it lands.
+
+	ponytail: a keypress here rewrites every file and DELETES any the model returned empty. Both nets go
+	down first — a compressed copy outside every synced tree, and a commit — so "you approved this" means
+	a decision you can walk back, not one that is final because a model was confident.
+	"""
+	_history()
+	backup("dream")
 	for key, t in new.items():
 		base = _base(key)
 		if not base:
 			continue
 		p = os.path.join(base, os.path.basename(key.partition("/")[2]))  # ponytail: a name, never a path
-		if t.strip():
-			os.makedirs(base, exist_ok=True)
-			with open(p, "w") as f:
-				f.write(t.strip() + "\n")
-		elif os.path.exists(p):
-			os.remove(p)
+		_rewrite(p, t.strip() + "\n" if t.strip() else "")

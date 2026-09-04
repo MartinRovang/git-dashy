@@ -3,8 +3,8 @@ import curses
 import os
 import sys
 
-from . import VERSION, config, demo
-from .core import memory, mirror, review as review_mod, team
+from . import HERE, VERSION, config, demo
+from .core import install as install_mod, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -12,7 +12,10 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy setup
        gitdashy self-check [--model NAME]
+       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
+       gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -32,6 +35,27 @@ sync-memory copies this repo's review memory into PATH as a read-only mirror, so
 remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
   review and a coding session found independently is confirmed by their agreement. --repo defaults to this
   directory's origin; --general is for something true of every repo.
+
+install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
+  directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
+  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. Reviews need
+  none of this — they read memory through the prompt and always have.
+
+install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
+  it installs the small one gitdashy ships (or --corpus URL for your own), imports it, seeds a USER.md for
+  you to fill in, and registers one SessionStart hook that seeds a repo's local notes. It says what that
+  costs in tokens and asks separately, because it is a much bigger commitment than the line above. See
+  docs/install.md.
+
+init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
+  (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
+  path so the running dashboard re-mirrors it on every refresh. No hooks. --into DIR --forget stops
+  refreshing one; the files stay, they just go still.
+
+setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
+  for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
+  one, and every review reads the brief. Re-runnable: a blank answer KEEPS what is already there rather
+  than clearing it, the prompt shows you what that is, and sections you added by hand are left alone.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -64,6 +88,57 @@ def sync_memory(argv):
 	team.activate()  # ponytail: names the team and points LOG at its checkout; memory.sources() needs it
 	return print(mirror.sync(into, arg("--repo", "", str, argv) or team.origin_slug("."),
 	                         "--no-pull" not in argv, "--general" in argv))
+
+
+def install(argv):
+	"""Wire this machine, after saying what that means and being told to go ahead."""
+	full, dry = "--full" in argv, "--dry-run" in argv
+	corpus, url = os.path.join(HERE, "corpus"), arg("--corpus", "", str, argv)
+	if "--uninstall" in argv:
+		return print("\n".join((install_mod.full_remove if full else install_mod.remove)(dry)))
+	print("\n".join(install_mod.full_explain(corpus, url) if full else install_mod.explain()))
+	if dry:
+		print("")
+		print("\n".join(install_mod.full_apply(corpus, url, dry=True) if full else install_mod.apply(dry=True)))
+		return print("\n--dry-run, so nothing was changed. Without it you are asked first.")
+	if "--yes" not in argv:
+		if not sys.stdin.isatty():  # ponytail: never write global config from a script that cannot be asked
+			raise SystemExit("\ngitdashy: not a terminal — pass --yes if you meant to install unattended")
+		try:
+			if input("\nGo ahead? [y/N] ").strip().lower() not in ("y", "yes"):
+				return print("nothing changed")
+		except (EOFError, KeyboardInterrupt):
+			return print("\nnothing changed")
+	print("")
+	print("\n".join(install_mod.full_apply(corpus, url) if full else install_mod.apply()))
+
+
+def setup(argv):
+	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for."""
+	print("Two short briefs. Blank keeps what is already there — the prompt shows you what. "
+	      "Edit the files later; nothing here is final.\n")
+	def ask(prompt):
+		try:
+			return input(f"  {prompt}\n  > ").strip()
+		except (EOFError, KeyboardInterrupt):
+			raise SystemExit("\nnothing written")
+	team.activate()
+	print("\n" + "\n".join(install_mod.setup(ask)))
+
+
+def init(argv):
+	"""Wire one repo so a session there reads its review memory."""
+	into, loader = arg("--into", "", str, argv), arg("--loader", "", str, argv)
+	if into and "--forget" in argv:  # ponytail: the registry grows on its own, so it needs a way out
+		return print(f"gitdashy: {'no longer refreshing' if install_mod.unregister(into) else 'was not refreshing'} {into}")
+	if not into or not loader:
+		raise SystemExit("gitdashy: init needs --into DIR (where the mirror goes) and --loader FILE "
+		                 "(the instruction file that should import it)")
+	team.activate()
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not repo:
+		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name")
+	print("\n".join(install_mod.wire_repo(into, loader, repo)))
 
 
 def remember(argv):
@@ -105,6 +180,12 @@ def run(argv=None):
 		return sync_memory(argv)
 	if len(argv) > 1 and argv[1] == "remember":
 		return remember(argv)
+	if len(argv) > 1 and argv[1] == "install":
+		return install(argv)
+	if len(argv) > 1 and argv[1] == "setup":
+		return setup(argv)
+	if len(argv) > 1 and argv[1] == "init":
+		return init(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:

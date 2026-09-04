@@ -5,6 +5,26 @@ anything under `dashy/core/memory.py`, read this first.
 
 ---
 
+## 0. What needs installing
+
+Reviews read and write memory with **no setup at all**: the memory directory
+appears on first use and every review reads it back. That half is just gitdashy.
+
+The half that reaches a regular coding session is what installs — and until now it
+lived in one contributor's private agent corpus, so nobody else could reach it.
+
+| | scope |
+|---|---|
+| `gitdashy install` | machine — two symlinks and two imports in the agent config |
+| `gitdashy init --into DIR --loader FILE` | repo — the mirror, its ignore rule, its import, and the refresh |
+
+`init` registers the path in `~/.prs_mirrors`, and the running dashboard re-mirrors
+each entry on the refresh tick it already uses to pull the team. No session hook:
+that would mean editing global settings and living inside a start-up timeout, and
+the mirror only has to be as fresh as the facts, which change slowly.
+
+---
+
 ## 1. The one rule
 
 > A fact is not a fact because a model wrote it. It is a fact because it recurred.
@@ -18,7 +38,7 @@ could correct it will ever see it happen.
 
 ---
 
-## 2. The six stores
+## 2. The seven stores
 
 ```
   ┌─ drafts ──────────────────────────────────────────────────────┐
@@ -60,6 +80,17 @@ could correct it will ever see it happen.
   │  Only for repos already named in the shared review log.       │
   └───────────────────────────────────────────────────────────────┘
 
+  ┌─ project brief (declared, not learned) ───────────────────────┐
+  │  <private>/project.md   and   <team>/memory/project.md        │
+  │  What is being built, for whom, under what constraints.       │
+  │  Two sources like everything else: on your own it is yours,   │
+  │  in a team theirs joins it. Written by people, once. Read by  │
+  │  every session and every review — so a reviewer knows what    │
+  │  the code is FOR before judging whether a change serves it.   │
+  │  The promotion pipeline never touches it: not dreamt over,    │
+  │  not promoted into, never offered for sharing.                │
+  └───────────────────────────────────────────────────────────────┘
+
   ┌─ log (separate axis) ─────────────────────────────────────────┐
   │  <team>/reviewed.jsonl  in a team  ·  ~/.prs_reviewed.jsonl   │
   │  Review history. Genuinely shared — it is what happened, not  │
@@ -80,6 +111,20 @@ you are trying to keep.
 ---
 
 ## 3. How a fact travels
+
+### 3.0 Where a claim comes from
+
+Two surfaces propose facts, and until recently only one of them ever did:
+
+| surface | how |
+|---|---|
+| a review | automatic — the `memory` field of every review |
+| a coding session | `gitdashy remember`, which the shipped corpus now instructs the agent to use |
+
+The second was built and then nothing called it, so every fact in the store came from a
+review. That made the loop one-way: reviews learned, sessions only read. A session's
+claim is a single claim, which is precisely what the gate below is for — it drafts, and
+something else has to arrive at the same thing independently before it counts.
 
 ### 3.1 Arrival
 
@@ -161,7 +206,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 
 | reader | sees | never sees |
 |---|---|---|
-| review prompt | `mine` + `team`, general + repo, each block labelled by source | drafts |
+| review prompt | `project.md` (yours, then the team's), then the facts — every block labelled by source | drafts |
 | agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
 | agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
@@ -212,6 +257,62 @@ a diff and waits for `y`. It is explicitly told never to move a line from `mine/
 into `team/`: sharing is your decision, not the model's.
 
 ---
+
+## 5b. Getting it back
+
+Memory is the only thing here that cannot be recreated. A review can be run again, a mirror
+is derived, a clone can be re-cloned — but a fact you lose is gone. Two nets sit under it,
+and neither needs any setup.
+
+**Local git history.** The first time anything writes to your memory directory, gitdashy
+runs `git init` in it. Every rewrite goes through one function, so this holds for a review,
+`remember`, `forget`, a hand edit through `n`/`g`, and a dream alike — not just the paths
+someone remembered to add it to.
+
+No remote is required and none is added; the commit is the point, and a missing origin is
+the normal state of a machine that has not joined a team. Commits are authored by **your**
+git identity; the fixed `gitdashy` identity is used only when the machine has none
+configured at all, since that is exactly the machine with no other backup.
+
+**One exception**: if the memory directory sits inside another git repository, no history is
+started — nesting a repo there surprises the tooling you already have and is not gitdashy's
+call to make. This is not only a `PRS_MEMORY` choice: `git init ~` is a normal dotfiles
+setup, and it makes the *default* `~/.prs_memory` nested too. So the dashboard says so, on
+the Memory row under `K`:
+
+```
+L  Memory   ~/.prs_memory · no history (inside another git repo)
+```
+
+The compressed copies below still cover you, and the enclosing repo's own history covers
+whatever it tracks. To get git history as well, move memory somewhere outside that repo
+with `L`.
+
+Every write is a commit:
+
+```
+git -C ~/.prs_memory log --oneline
+git -C ~/.prs_memory show HEAD~1:general.md      # read it as it was
+git -C ~/.prs_memory checkout HEAD~1 -- general.md   # put it back
+```
+
+Joining a team later still works: a checkout with **local-only history** is not "already a
+checkout", so `L` with a URL adopts it as before. The old history is not merged — it has a
+different root — but it is not deleted either. It moves to `~/.prs_memory.local-history-<n>`
+beside the directory and stays there until you remove it. `git --git-dir <that> log` reads it.
+
+**Compressed copies.** Every `.md` across both sources is tarred into
+`~/.prs_backups/<utc>-<reason>-<hash>.tar.gz` — on each refresh tick, and always immediately
+before a dream rewrites anything. The newest 30 are kept. An archive is written only when the
+content hash differs from the newest one, so an idle dashboard does not fill the directory
+with identical tarballs. Restore with `tar xzf`; the paths inside are `mine/` and `team/`.
+
+The directory is outside every synced tree, so backups are never pushed anywhere.
+
+The one that most needs this: `Z` (dream) applies a model's output verbatim and **deletes any
+file it returned empty**. It is one keypress, and before this it was unrecoverable on a default
+install. It now takes a backup and a commit first, so accepting a bad dream is a decision you
+can walk back.
 
 ## 6. What is deliberately *not* done
 

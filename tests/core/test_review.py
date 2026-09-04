@@ -192,3 +192,49 @@ def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
 	assert "--safe-mode" in cmd
 	assert cmd[cmd.index("--append-system-prompt") + 1] == review_mod.LENS
 	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt
+
+
+def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
+	from dashy.core import memory, team
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	(tmp_path / "team" / "memory").mkdir(parents=True)
+	(tmp_path / "team" / "memory" / "project.md").write_text("We build X for surgeons.\n")
+	monkeypatch.setattr(team, "on", lambda: True)
+	prompts = []
+	def fake_run(cmd, **kw):
+		if cmd[0] == "claude":
+			prompts.append(cmd[2])
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	assert "What this is being built for, and for whom:" in prompts[0]
+	assert "### team" in prompts[0] and "We build X for surgeons." in prompts[0]  # labelled, like any source
+	assert prompts[0].index("being built for") < prompts[0].index("Respond with ONLY")
+
+
+def test_a_review_does_not_care_where_the_dashboard_was_started(monkeypatch, tmp_path):
+	"""Launched from a directory that has since been deleted, every review failed to start at all."""
+	import os
+	seen = {}
+	def fake_run(cmd, **kw):
+		if cmd and cmd[0] == "claude":  # gh calls come after and would overwrite it
+			seen["cwd"] = kw.get("cwd")
+		return claude_out(verdict="approve", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	review(dict(PR), "opus")
+	assert seen["cwd"] and os.path.isabs(seen["cwd"])  # ours, not inherited
+	assert seen["cwd"] != os.getcwd()
+
+
+def test_a_dream_does_not_either(monkeypatch, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("- a fact\n")
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen["cwd"] = kw.get("cwd")
+		return claude_out(summary="s", files={})
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	memory.dream("opus")
+	assert seen["cwd"] and seen["cwd"] != __import__("os").getcwd()

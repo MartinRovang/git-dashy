@@ -52,22 +52,125 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+def has_remote(d):
+	"""True when the checkout at `d` has an origin.
+
+	ponytail: reads .git/config rather than spawning git. This is on the refresh tick now, and a
+	subprocess per tick to learn something that changes about once in a checkout's life is waste —
+	and `git remote get-url` does not go through _remote, so putting it on the tick path would have
+	quietly broken the invariant that every git call there is bounded and cannot prompt.
+	ponytail: a .git that is a FILE is a worktree or a submodule; fall back to asking git rather than
+	guessing from a path that does not exist.
+	"""
+	g = os.path.join(d, ".git")
+	if os.path.isdir(g):
+		try:
+			with open(os.path.join(g, "config")) as f:
+				return '[remote "origin"]' in f.read()
+		except OSError:
+			return False  # a .git with no readable config is not something we can push to
+	return bool(_url(d)) if os.path.exists(g) else False
+
+
+def _ident(d):
+	"""The `-c` identity pair, and ONLY when the machine has none of its own.
+
+	ponytail: command-line -c has the highest precedence in git, so passing it unconditionally did not
+	fall back to the user's identity, it REPLACED it. push_dir is how the shared team repo commits, so
+	every shared fact and every reviewed.jsonl append landed as "gitdashy" for every member — pushed,
+	and not rewritable afterwards. Attribution there is the whole point: who wrote a fact is who you go
+	and ask about it.
+	ponytail: each half is asked for SEPARATELY and only the missing one is supplied. Checking email
+	alone meant a config with an email and no name — user.useConfigOnly, or an empty gecos field —
+	got nothing, and the commit failed where the unconditional pair had worked. A fallback that only
+	fires all-or-nothing is not a fallback for a half-configured machine.
+	ponytail: `git config` reads config files. Local, bounded, and it cannot prompt.
+	"""
+	out = []
+	for key, val in (("user.name", "gitdashy"), ("user.email", "gitdashy@localhost")):
+		r = _git("config", key, cwd=d)
+		if r.returncode != 0 or not r.stdout.strip():
+			out += ["-c", f"{key}={val}"]
+	return out
+
+
+def inside_other_repo(d):
+	"""True when `d` sits inside a git repo that is not `d` itself.
+
+	ponytail: `git init` there would nest a repo inside someone's notes or dotfiles checkout, which
+	surprises their tooling and is not ours to do. is_repo only looks for .git in the directory itself,
+	so it cannot see this.
+	"""
+	r = _git("rev-parse", "--show-toplevel", cwd=d)
+	top = r.stdout.strip()
+	return r.returncode == 0 and bool(top) and os.path.realpath(top) != os.path.realpath(d)
+
+
+_NO_HISTORY = {}  # d -> why. ponytail: cached, or every write pays a rev-parse forever — is_repo can
+                  # never become true for a directory we have decided not to initialise.
+
+
+def no_history(d):
+	"""Why `d` has no history and will not get any, or "" when it has some or has not been tried."""
+	return "" if is_repo(d) else _NO_HISTORY.get(d, "")
+
+
+def init_history(d):
+	"""Give `d` local git history, no remote needed. True when it has one. Never raises.
+
+	ponytail: memory is the one thing here that cannot be recreated — a dream rewrites every file and
+	deletes any the model returned empty, and on a default install ~/.prs_memory was a plain directory
+	with no history, no remote and no snapshot. `git init` costs nothing and makes every write in the
+	system undoable with commands the user already knows.
+	ponytail: identity comes from -c, not from their global config. A machine that has never set
+	user.email would otherwise fail to commit, which is exactly the machine with no other backup.
+	"""
+	if is_repo(d):
+		return True
+	if not d or not os.path.isdir(d):
+		return False
+	if d in _NO_HISTORY:
+		return False
+	if inside_other_repo(d):
+		# ponytail: `git init ~` is a normal dotfiles setup, which makes the DEFAULT ~/.prs_memory
+		# nested — so this is not the exotic case the docs framed it as. Recorded rather than
+		# discarded, so the Memory row can say the net is off instead of it being silently absent.
+		_NO_HISTORY[d] = "inside another git repo"
+		return False
+	with _lock:
+		if _git("init", "-q", cwd=d).returncode != 0:
+			_NO_HISTORY[d] = "git init failed"
+			return False
+		_git("add", "-A", cwd=d)
+		_git(*_ident(d), "commit", "-qm", "gitdashy: memory as it was before this was tracked", cwd=d)
+	return is_repo(d)
+
+
 def pull_dir(d, label="sync"):
 	"""ponytail: git is the sync server for any checkout, not just the team's — the private one uses it too."""
-	if is_repo(d):
+	if is_repo(d) and has_remote(d):  # ponytail: local-only history has nothing to pull and no error to show
 		with _lock:
 			_note(_git("pull", "--rebase", "-q", cwd=d), label)
 
 
 def push_dir(d, msg, label="sync"):
+	"""Commit, and push when there is somewhere to push to.
+
+	ponytail: the commit is the point, not the push. A memory dir with local-only history must record
+	every change — that is what makes a bad dream recoverable — and a missing origin is not an error to
+	put on the header, it is the normal state of a machine that has not joined anything.
+	"""
 	if not is_repo(d):
 		return
 	with _lock:
 		_git("add", "-A", cwd=d)
 		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
 			return  # nothing new
-		if not _note(_git("commit", "-qm", msg, cwd=d), label):
+		if not _note(_git(*_ident(d), "commit", "-qm", msg, cwd=d), label):
 			return
+	if not has_remote(d):
+		return  # ponytail: committed, which is the half that protects you. Nothing to push to.
+	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
 			_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)
 
@@ -155,6 +258,38 @@ def is_own_memory(repo):
 		return True
 	return is_repo(config.MEMORY_DIR) and same_remote(repo, _url(config.MEMORY_DIR))
 
+PROJECT_TEMPLATE = """# What we are building
+
+Fill this in once, together. Everyone who joins this team reads it, and so does every review —
+so a reviewer knows what the code is for before it judges whether a change serves it.
+
+Keep it short. This is intent, not documentation: the things that would change a verdict.
+
+## The project
+
+What it is, and who uses it.
+
+## Why it matters
+
+The outcome that makes the work worth doing.
+
+## Constraints that change decisions
+
+Regulatory, contractual, performance, compatibility — anything with real consequences for
+what is acceptable, not just what is tidy.
+
+## How this codebase is shaped
+
+The handful of structural facts a newcomer would otherwise learn the hard way.
+"""
+
+
+def seed_project(path):
+	"""Give a new team repo a brief to fill in. ponytail: never overwrite — theirs is the real one."""
+	if not os.path.exists(path):
+		with open(path, "w") as f:
+			f.write(PROJECT_TEMPLATE)
+
 
 def setup(repo, create=False):
 	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
@@ -169,6 +304,7 @@ def setup(repo, create=False):
 	old_log = log.LOG
 	activate()
 	os.makedirs(os.path.join(config.TEAM, "memory"), exist_ok=True)
+	seed_project(os.path.join(config.TEAM, "memory", "project.md"))
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
 		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))

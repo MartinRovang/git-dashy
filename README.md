@@ -92,6 +92,25 @@ again but the reviewer has not looked yet. Next to it, one chip per reviewer: `�
 into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
 Knowledge folds first, being the group you touch least.
 
+## Installing
+
+Reviews remember with **no setup at all** — `~/.prs_memory` appears on first use, and every review reads it
+back. That half needs nothing.
+
+What needs installing is the other half: making a regular coding session read the same knowledge.
+
+| | what it does |
+|---|---|
+| `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
+| `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
+| `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
+| `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
+| `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
+
+Reviews are unaffected by all of it: they run `--safe-mode` and read memory through the prompt.
+[`docs/install.md`](docs/install.md) is the full account — every file it writes, why a symlink and not a
+copy, and how to undo it.
+
 ## The review
 
 `Enter` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
@@ -192,6 +211,19 @@ to leave it, which refuses while the checkout still holds reviews it has not pus
 The whole model — every store, promotion rule and discard rule — is written up in
 [`docs/memory.md`](docs/memory.md).
 
+### What the team is building
+
+`project.md` says what is being built, for whom, and under what constraints. It has two sources like
+everything else: on your own it is yours, in a team theirs joins it — seeded with a template when a team
+repo is created, and `gitdashy setup` will ask you for either.
+
+It goes into **every review** and every session, ahead of the learned facts, so a reviewer knows what
+the code is *for* before judging whether a change serves it. It is declared, not learned — the
+promotion pipeline never touches it, the dream never rewrites it, and it is never offered for sharing.
+
+That split keeps two things apart: `project.md` is what the team is doing, and a corpus's `USER.md` is
+who *you* are. Nobody should have to restate the project in their own file.
+
 ### Where knowledge lives
 
 `K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
@@ -225,27 +257,30 @@ cd ~/src/my-repo
 gitdashy sync-memory --into .agent/team    # --repo defaults to this directory's origin
 ```
 
-Point your agent's instruction file at it (for Claude Code, a `CLAUDE.local.md` holding
-`@.agent/team/repo.md`) and every session in that repo starts knowing its conventions, its pitfalls and
-what it does to the repos around it.
-
-**Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
-symlink out of its own tree, where a project-level one refuses to — so:
+You normally never do this by hand — `install --full`'s hook does it in every repo you open. The command
+exists for wiring an agent that is not Claude Code, and looks like this:
 
 ```sh
-ln -s ~/.prs_memory       ~/.claude/prs-memory
-ln -s ~/.prs_team/memory  ~/.claude/prs-team     # harmless before you have a team
+cd ~/src/my-repo
+gitdashy init --into .agent/team --loader CLAUDE.local.md
 ```
 
-then in `~/.claude/CLAUDE.md`:
+which excludes the mirror from git (through `.git/info/exclude` — never the tracked `.gitignore`, which is
+the team's), adds the import to whichever instruction file you name, writes the mirror, and registers the
+path. The running dashboard then re-mirrors it on every refresh, so there are no hooks to install and
+nothing on a session-start timeout budget. It goes stale only while gitdashy is not running.
 
-```
-@prs-memory/general.md
-@prs-team/general.md
+**Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
+symlink out of its own tree, where a project-level one refuses to — so one command wires it:
+
+```sh
+gitdashy install            # explains itself and asks; --dry-run to look, --uninstall to reverse
 ```
 
-That puts every general fact into every session, everywhere, live — nothing to sync, nothing to expire, and
-it starts carrying the team's the moment you have one. A missing file is simply skipped.
+That symlinks your memory (and the team's) into the agent config directory and adds three imports, putting
+every general fact into every session, everywhere, live — nothing to sync, nothing to expire, and it starts
+carrying the team's the moment you have one. It is idempotent, it never replaces anything it did not
+create, and `--uninstall` removes exactly what it wrote.
 
 Which is why `sync-memory` mirrors the **repo** file only: general facts arriving by both routes would sit
 in context twice. `--general` mirrors them in as well, for anyone not wiring the global route. And reviews

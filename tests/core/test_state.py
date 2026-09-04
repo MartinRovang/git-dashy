@@ -1,7 +1,9 @@
+import os
+
 import pytest
 
 from dashy import config
-from dashy.core import github, log, review as review_mod, state, update
+from dashy.core import github, log, review as review_mod, state, team, update
 from dashy.core.state import State
 
 from conftest import PR
@@ -165,3 +167,46 @@ def test_notify_off_stays_quiet(monkeypatch):
 	one_loop(st, monkeypatch, [("ASSIGNED", [], None)])
 	one_loop(st, monkeypatch, [("ASSIGNED", [{"url": "new"}], None)])
 	assert sent == [] and st.known == {"new"}
+
+
+def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
+	"""Memory is the one thing here that cannot be recreated, so a copy rides the normal refresh."""
+	from dashy.core import memory
+	order = []
+	monkeypatch.setattr(team, "pull", lambda: order.append("pull"))
+	monkeypatch.setattr(memory, "backup", lambda reason="tick": order.append(f"backup:{reason}"))
+	st = State(0)
+	one_loop(st, monkeypatch, [])
+	# ponytail: asserted by RUNNING the loop, not by reading its source. A source check passes on code
+	# that never executes, which is the one thing a test of "does the tick do this" must not do.
+	assert order == ["pull", "backup:tick"]  # and after the pull, so the copy includes what arrived
+
+
+def test_a_failed_backup_leaves_no_orphan_part_file(monkeypatch, tmp_path):
+	"""prune only sees .tar.gz, so a stray .part would sit there forever."""
+	from dashy.core import memory
+	import tarfile
+	mem, backups = tmp_path / "mem", tmp_path / "backups"
+	mem.mkdir()
+	(mem / "general.md").write_text("- a fact\n")
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", str(backups))
+	real_add = tarfile.TarFile.add
+	monkeypatch.setattr(tarfile.TarFile, "add",
+	                    lambda self, *a, **k: (_ for _ in ()).throw(tarfile.TarError("disk")))
+	assert memory.backup("test") == ""
+	monkeypatch.setattr(tarfile.TarFile, "add", real_add)
+	assert os.path.isdir(backups) and os.listdir(backups) == []
+
+
+def test_an_empty_memory_dir_setting_does_not_tar_the_cwd(monkeypatch, tmp_path):
+	"""PRS_MEMORY= (set but empty) made os.walk(".") archive whatever directory you happened to be in."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", "")
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", str(tmp_path / "b"))
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "secret.md").write_text("not memory\n")
+	assert memory.backup("test") == ""
+	assert not os.path.exists(tmp_path / "b")

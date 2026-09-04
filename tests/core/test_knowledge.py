@@ -170,9 +170,12 @@ def test_adopt_refuses_an_existing_checkout_or_a_symlink(monkeypatch, tmp_path):
 	mine = tmp_path / "mine"
 	mine.mkdir()
 	subprocess.run(["git", "init", "-q", str(mine)], check=True)
+	# ponytail: with an ORIGIN. Local-only history is no longer "already a checkout" — every memory dir
+	# has it now, because that is what makes a bad dream recoverable.
+	subprocess.run(["git", "-C", str(mine), "remote", "add", "origin", "git@github.com:org/other.git"], check=True)
 	monkeypatch.delenv("PRS_MEMORY", raising=False)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mine))
-	assert "already a git checkout" in knowledge.adopt("git@github.com:org/mem.git")
+	assert "already a checkout of" in knowledge.adopt("git@github.com:org/mem.git")
 	link = tmp_path / "link"
 	os.symlink(tmp_path / "elsewhere", link)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(link))
@@ -213,3 +216,285 @@ def test_adopt_refuses_to_make_your_memory_the_team_repo(monkeypatch, tmp_path):
 	            "org/review-team"):
 		assert "that is the team repo" in knowledge.adopt(url), url
 	assert not (tmp_path / "mine").exists()
+
+
+def _memory_repo(tmp_path, *names):
+	"""A pushable repo holding `names`, to adopt from."""
+	import subprocess
+	remote, work = tmp_path / "remote.git", tmp_path / "work"
+	work.mkdir()
+	for n in names:
+		(work / n).write_text("- theirs\n")
+	env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+	       "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+	subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+	for c in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "x"],
+	          ["git", "remote", "add", "origin", str(remote)],
+	          ["git", "push", "-q", "origin", "HEAD:refs/heads/main"]):
+		subprocess.run(c, cwd=work, env=env, check=True)
+	# ponytail: point the bare repo's HEAD at the branch we actually pushed. A runner whose
+	# init.defaultBranch is "master" leaves HEAD dangling, and `git clone` of that succeeds with an
+	# EMPTY working tree — so every assertion here passed locally and failed on CI for a reason that
+	# had nothing to do with the code under test.
+	subprocess.run(["git", "-C", str(remote), "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
+	return str(remote)
+
+
+def test_adopt_refusing_a_collision_keeps_every_file_it_had_not_reached(monkeypatch, tmp_path):
+	"""The refusal used to rmtree a tmp that already held files MOVED out of the memory dir.
+
+	Sorted order made it the likely path: a memory repo has general.md, and it sorts after
+	acme__api.md and drafts/ — so the two that had already moved were the ones destroyed, under
+	a message saying "merge it by hand".
+	"""
+	mem = tmp_path / "prs_memory"
+	(mem / "drafts").mkdir(parents=True)
+	(mem / "acme__api.md").write_text("- the api repo owns no DDL\n")
+	(mem / "drafts" / "acme__api.md").write_text("- (1) unconfirmed\n")
+	(mem / "general.md").write_text("- two years of facts\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+
+	err = knowledge.adopt(_memory_repo(tmp_path, "general.md"))
+
+	assert "general.md exists in both" in err
+	assert (mem / "acme__api.md").read_text() == "- the api repo owns no DDL\n"
+	assert (mem / "drafts" / "acme__api.md").exists()
+	assert (mem / "general.md").read_text() == "- two years of facts\n"
+
+
+def test_adopt_names_every_collision_not_just_the_first(monkeypatch, tmp_path):
+	"""Refusing one at a time means fixing them one round trip at a time."""
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	(mem / "general.md").write_text("- mine\n")
+	(mem / "acme__api.md").write_text("- mine\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	err = knowledge.adopt(_memory_repo(tmp_path, "general.md", "acme__api.md"))
+	assert "acme__api.md" in err and "general.md" in err
+
+
+def test_adopt_that_succeeds_still_keeps_everything(monkeypatch, tmp_path):
+	"""The happy path, so the guard above cannot pass by refusing everything."""
+	mem = tmp_path / "prs_memory"
+	(mem / "drafts").mkdir(parents=True)
+	(mem / "acme__api.md").write_text("- mine\n")
+	(mem / "drafts" / "x.md").write_text("- (1) draft\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	assert knowledge.adopt(_memory_repo(tmp_path, "general.md")) == ""
+	assert (mem / "acme__api.md").read_text() == "- mine\n"   # kept
+	assert (mem / "drafts" / "x.md").exists()                  # drafts came across too
+	assert (mem / "general.md").read_text() == "- theirs\n"    # and theirs arrived
+	assert team.is_repo(str(mem))                              # it is a checkout now
+
+
+def test_adopting_over_local_history_keeps_that_history_beside_it(monkeypatch, tmp_path):
+	"""Every memory dir has local history now, so adopt must work through it — and not throw it away."""
+	import subprocess as sp
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	(mem / "acme__api.md").write_text("- mine\n")
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	assert team.init_history(str(mem)) and not team.has_remote(str(mem))
+
+	assert knowledge.adopt(_memory_repo(tmp_path, "general.md")) == ""
+
+	assert (mem / "acme__api.md").read_text() == "- mine\n"      # facts came across
+	assert (mem / "general.md").read_text() == "- theirs\n"      # and theirs arrived
+	assert team.has_remote(str(mem))                              # it is a real checkout now
+	kept = [d for d in os.listdir(tmp_path) if ".local-history-" in d]
+	assert len(kept) == 1                                         # the old history is beside it
+	r = sp.run(["git", "--git-dir", str(tmp_path / kept[0]), "log", "--oneline"], capture_output=True, text=True)
+	assert r.returncode == 0 and r.stdout.strip()                 # and it still reads
+
+
+def test_a_memory_dir_gets_history_on_the_first_write(monkeypatch, tmp_path):
+	"""The net under every rewrite: `git checkout HEAD~1 -- general.md` has to be a thing you can do."""
+	from dashy.core import memory
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	(mem / "general.md").write_text("- two years of facts\n")
+	memory._append_line(str(mem / "general.md"), "one more")
+	assert team.is_repo(str(mem)) and not team.has_remote(str(mem))
+	team.push_dir(str(mem), "memory: test", "mine")   # commits; no remote, and that is not an error
+	assert team.ERROR == ""
+
+	memory.write({"mine/general.md": ""})             # a dream that deletes the file
+	assert not (mem / "general.md").exists()
+	import subprocess as sp
+	got = sp.run(["git", "-C", str(mem), "show", "HEAD:general.md"], capture_output=True, text=True)
+	assert "two years of facts" in got.stdout        # recoverable
+
+
+def test_backups_are_compressed_deduplicated_and_capped(monkeypatch, tmp_path):
+	"""Markdown is tiny; losing one file once is not."""
+	from dashy.core import memory
+	mem, backups = tmp_path / "prs_memory", tmp_path / "backups"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", str(backups))
+	monkeypatch.setattr(memory, "KEEP_BACKUPS", 3)
+	(mem / "general.md").write_text("- a fact\n")
+
+	first = memory.backup("test")
+	assert first.endswith(".tar.gz") and os.path.getsize(first) > 0
+	assert memory.backup("test") == ""               # unchanged content is not stored twice
+	import tarfile
+	with tarfile.open(first) as t:
+		assert t.getnames() == ["mine/general.md"]
+
+	for i in range(5):
+		(mem / "general.md").write_text(f"- fact {i}\n")
+		memory.backup("test")
+	assert len(os.listdir(backups)) == 3             # capped, oldest pruned
+	assert not any(n.endswith(".part") for n in os.listdir(backups))
+
+
+def test_backup_never_raises_and_never_blocks(monkeypatch, tmp_path):
+	"""It runs on the refresh tick and before a dream; failing must not stop either."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "gone"))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(memory, "BACKUPS", "/proc/nope/backups")  # unwritable
+	assert memory.backup("test") == ""
+
+
+def test_a_relative_path_is_a_path_not_an_owner_name(tmp_path):
+	"""The docstring had said the dot made it a path. Nothing implemented that."""
+	assert not knowledge.is_remote("./notes")
+	assert not knowledge.is_remote("../shared/memory")
+	assert not knowledge.is_remote("~/somewhere")
+	assert not knowledge.is_remote(str(tmp_path))          # an existing dir always wins
+	assert knowledge.is_remote("owner/name")               # still owner/name, as T reads it
+	assert knowledge.is_remote("git@github.com:o/r.git")
+	assert knowledge.is_remote("https://github.com/o/r.git")
+
+
+def _configured(d, name="Real Person", mail="real@example.com"):
+	import subprocess as sp
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.name", name], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", mail], check=True)
+
+
+def test_a_commit_keeps_the_authors_identity(tmp_path):
+	"""-c has the highest precedence in git, so passing it always REPLACED the author, never fell back.
+
+	push_dir is how the shared team repo commits. Every shared fact and every reviewed.jsonl append was
+	landing as "gitdashy" for every member — pushed, and not rewritable afterwards.
+	"""
+	import subprocess as sp
+	d = tmp_path / "repo"
+	d.mkdir()
+	_configured(d)
+	(d / "general.md").write_text("- a fact\n")
+	team.push_dir(str(d), "memory: test", "mine")
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an <%ae>"], capture_output=True, text=True)
+	assert got.stdout.strip() == "Real Person <real@example.com>"
+
+
+def test_a_machine_with_no_identity_can_still_commit(tmp_path, monkeypatch):
+	"""The fallback is the point — it is exactly the machine with no other backup."""
+	import subprocess as sp
+	monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+	monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+	for v in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+	          "EMAIL", "GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+		monkeypatch.delenv(v, raising=False)
+	d = tmp_path / "mem"
+	d.mkdir()
+	(d / "general.md").write_text("- a fact\n")
+	assert team.init_history(str(d))
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an"], capture_output=True, text=True)
+	assert got.returncode == 0 and got.stdout.strip() == "gitdashy"
+
+
+def test_history_is_not_started_inside_someone_elses_repo(tmp_path):
+	"""PRS_MEMORY pointing into a notes repo must not get an embedded repo nobody asked for."""
+	import subprocess as sp
+	outer = tmp_path / "notes"
+	(outer / "memory").mkdir(parents=True)
+	sp.run(["git", "init", "-q", str(outer)], check=True)
+	assert not team.init_history(str(outer / "memory"))
+	assert not (outer / "memory" / ".git").exists()
+	assert team.inside_other_repo(str(outer / "memory"))
+
+
+def test_every_rewrite_of_memory_has_history_behind_it(monkeypatch, tmp_path):
+	"""forget and the pool rewrite went through no helper that started history, and the docs said they did."""
+	from dashy.core import memory
+	import subprocess as sp
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	(mem / "general.md").write_text("- keep me\n- drop me\n")
+
+	memory.forget(None, "drop me")
+
+	assert team.is_repo(str(mem))
+	assert (mem / "general.md").read_text() == "- keep me\n"
+	got = sp.run(["git", "-C", str(mem), "show", "HEAD:general.md"], capture_output=True, text=True)
+	assert "drop me" in got.stdout  # the state before the forget is recoverable
+
+
+def test_a_half_configured_identity_gets_only_the_missing_half(tmp_path, monkeypatch):
+	"""Checking user.email alone meant an email with no name got nothing, and the commit failed."""
+	import subprocess as sp
+	# ponytail: the developer's own global user.name would otherwise satisfy the check and the test
+	# would pass while proving nothing — the half-configured machine is the whole point of it.
+	monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+	monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+	for v in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+		monkeypatch.delenv(v, raising=False)
+	d = tmp_path / "repo"
+	d.mkdir()
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", "real@example.com"], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.useConfigOnly", "true"], check=True)
+	(d / "general.md").write_text("- a fact\n")
+
+	team.push_dir(str(d), "memory: test", "mine")
+
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an <%ae>"], capture_output=True, text=True)
+	assert got.returncode == 0, "the commit must not fail on a half-configured identity"
+	assert got.stdout.strip() == "gitdashy <real@example.com>"  # their email kept, only the name supplied
+	assert team.ERROR == ""
+
+
+def test_history_refused_is_said_out_loud_and_asked_once(monkeypatch, tmp_path):
+	"""`git init ~` is a normal dotfiles setup, which makes the DEFAULT memory dir nested."""
+	import subprocess as sp
+	from dashy.core import knowledge as k
+	home = tmp_path / "home"
+	(home / ".prs_memory").mkdir(parents=True)
+	sp.run(["git", "init", "-q", str(home)], check=True)
+	monkeypatch.setattr(team, "_NO_HISTORY", {})
+	monkeypatch.setattr(config, "MEMORY_DIR", str(home / ".prs_memory"))
+
+	calls = []
+	real = team.inside_other_repo
+	monkeypatch.setattr(team, "inside_other_repo", lambda d: (calls.append(d), real(d))[1])
+
+	assert not team.init_history(str(home / ".prs_memory"))
+	assert not team.init_history(str(home / ".prs_memory"))
+	assert len(calls) == 1                       # asked once, not once per write
+	assert "no history" in k.history_note() and "inside another git repo" in k.history_note()
+
+
+def test_the_memory_row_says_nothing_when_history_is_fine(monkeypatch, tmp_path):
+	"""The note must not become decoration that is always there."""
+	from dashy.core import knowledge as k
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(team, "_NO_HISTORY", {})
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	assert team.init_history(str(mem))
+	assert k.history_note() == ""

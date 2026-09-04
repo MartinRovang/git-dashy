@@ -1,11 +1,27 @@
 """Background refresh loop and everything the UI reads."""
+import os
 import pathlib
 import subprocess
 import threading
 import time
 
 from .. import config
-from . import github, log, review as review_mod, team, update
+from . import github, install, log, memory, mirror, review as review_mod, team, update
+
+
+def refresh_mirrors():
+	"""Re-mirror every repo `gitdashy init` registered. Never raises: a bad entry must not stop a refresh."""
+	for into, repo, root, _loader in install.registered():
+		# ponytail: refresh what is THERE. init creates the mirror, so a refresh never has cause to make
+		# one — and makedirs would otherwise rebuild the tree of a repo you deleted and write memory
+		# back into it. Asking about `into` itself needs no recorded root and holds for any --into shape.
+		if not os.path.isdir(into) or (root and not os.path.isdir(root)):
+			install.unregister(into)
+			continue
+		try:
+			mirror.sync(into, repo, pull=False)  # already pulled above; and this must not touch the network
+		except Exception:  # noqa: BLE001 — a stale registry entry is not worth losing the refresh loop over
+			continue
 
 
 class State:
@@ -52,6 +68,9 @@ class State:
 		while True:
 			t0, self.fetching = time.time(), True
 			team.pull()  # newest team log + memory before we read them
+			memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
+			memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
+			refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
 			data = github.fetch()
 			stale = log.mark_rereviews(data)
 			newer = update.update_available()

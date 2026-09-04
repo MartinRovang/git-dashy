@@ -316,3 +316,39 @@ def test_dream_hands_back_what_it_saw(monkeypatch, tmp_path):
 	summary, before, new = memory.dream("sonnet")
 	assert before == {"mine/general.md": "- one\n"}  # what the model actually read, not what is there now
 	assert new == {"mine/general.md": "- one"}
+
+def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
+	"""project.md is what the team says the work is for. The pipeline must never touch it."""
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	(shared / "project.md").write_text("# What we are building\n\nA thing, for someone.\n")
+	(shared / "general.md").write_text("- a learned fact\n")
+	assert "A thing, for someone" in memory.project()
+	assert "A thing" not in memory.read("a/b")          # not a fact, so not in the memory block
+	assert "project.md" not in " ".join(memory.files())  # the dream tidies facts, not a brief
+	assert memory.shareable() == []                     # and it is never offered for sharing
+	memory.append("a/b", "A thing, for someone")
+	memory.append("a/b", "A thing, for someone")
+	assert (shared / "project.md").read_text().startswith("# What we are building")  # untouched
+
+
+def test_no_team_means_no_brief(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	assert memory.project() == ""
+
+
+def test_a_brief_belongs_to_whoever_wrote_it(monkeypatch, tmp_path):
+	"""It used to be the team's alone, which left anyone working solo with nowhere to put it."""
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	(mine / "project.md").write_text("A tool for one person.\n")
+	assert memory.project() == "### mine\nA tool for one person."
+	(shared / "project.md").write_text("What we build together.\n")
+	both = memory.project()
+	assert "### mine" in both and "### team org/t" in both and both.index("mine") < both.index("team")
+	assert memory.shareable() == []          # still never offered for sharing
+	assert not any("project" in k for k in memory.files())  # and still not dreamt over
+
+
+def test_a_solo_brief_reaches_a_review_with_no_team_at_all(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "project.md").write_text("Just me, building a thing.\n")
+	assert memory.project() == "### mine\nJust me, building a thing."
