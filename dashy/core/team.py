@@ -160,19 +160,28 @@ def push_dir(d, msg, label="sync"):
 	every change — that is what makes a bad dream recoverable — and a missing origin is not an error to
 	put on the header, it is the normal state of a machine that has not joined anything.
 	"""
+	# ponytail: returns "" or WHY it did nothing. It used to return None on every path, so a commit that
+	# failed was indistinguishable from one that was not needed. A dream emptied general.md, its commit
+	# did not happen, and the deletion sat uncommitted until an unrelated review's push swept it in under
+	# that review's message — so `git log` blamed a review for a dream's damage. A caller that is about
+	# to destroy something has to be able to ask whether the record of it was actually written.
 	if not is_repo(d):
-		return
+		return "not a git checkout"
 	with _lock:
 		_git("add", "-A", cwd=d)
 		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
-			return  # nothing new
+			return ""  # nothing new
 		if not _note(_git(*_ident(d), "commit", "-qm", msg, cwd=d), label):
-			return
+			return ERROR or "commit failed"
 	if not has_remote(d):
-		return  # ponytail: committed, which is the half that protects you. Nothing to push to.
+		return ""  # ponytail: committed, which is the half that protects you. Nothing to push to.
 	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
-			_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)
+			if not (_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)):
+				# ponytail: names the PUSH, with the last git message after it. ERROR alone was whichever
+				# of the two failed, so a pull that failed reported itself as the push's reason.
+				return f"push failed: {ERROR}" if ERROR else "push failed"  # committed locally, nothing lost
+	return ""
 
 
 def pull():
@@ -180,7 +189,11 @@ def pull():
 
 
 def push(msg):
-	push_dir(config.TEAM, msg)
+	"""ponytail: passes the reason up so a caller that deletes can check it — but NOT being in a team is
+	the normal state, not a failure. Returning "not a git checkout" from here made the dream warn that
+	memory was uncommitted every single time, on a machine with no team, which is a warning nobody would
+	read twice."""
+	return push_dir(config.TEAM, msg) if on() else ""
 
 
 def slug_of(url):
