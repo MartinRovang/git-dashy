@@ -59,7 +59,7 @@ THEMES = {
 # colour, and state is the LAST column — so at any real width they were pushed off the right edge
 # and never appeared at all. zip(COLS, cells) also silently drops a cell when the two disagree.
 COLS = ((4, "age"), (18, "repo"), (5, "pr"), (0, "title"), (12, "author"), (14, "reviewers"),
-        (20, "state"))
+        (4, "ci"), (20, "state"))
 PANE = 62  # columns the detail pane wants
 PANE_MIN = 150  # total width below which there is no room for it and the list gets everything
 PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than the four rows
@@ -374,6 +374,11 @@ def draw(scr, state, sel, prompt=None, now=None):
 			          base | curses.A_BOLD if is_cur else 0),
 			         (p.get("author", {}).get("login", ""), dim),
 			         (p.get("reviewers", ""), dim),   # ponytail: overpainted per chip below, by glyph
+			         # ponytail: CI on the head commit, from #9 — the third feature that landed on main
+			         # while this grid was being rebuilt. A column of its own, like the chips: folding it
+			         # into a neighbour is what made the chips invisible.
+			         (("ci" + p["checks"]) if p.get("checks") else "",
+			          REVIEWER_COLOR.get(p.get("checks", ""), C(5)) | curses.A_BOLD),
 			         (st + ("  " + tag if tag else ""), st_attr | curses.A_BOLD)]
 			assert len(cells) == len(COLS)  # ponytail: zip drops a cell silently when they disagree, and
 			                                # this pair has now been wrong once in each direction

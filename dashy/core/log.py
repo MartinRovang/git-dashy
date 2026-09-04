@@ -27,8 +27,14 @@ def last(url):
 
 
 def tag(e):
-	"""'adaptive/medium' — depth[/effort] the review ran with, '' for old entries."""
-	return e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")
+	"""'adaptive/medium $0.42 3m' — depth[/effort] the review ran with, then what it cost; '' for old entries."""
+	t = e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")
+	if e.get("cost"):  # 0 on a subscription run, not worth a "$0.00"
+		t += f" ${e['cost']:.2f}"
+	if e.get("ms"):
+		s = round(e["ms"] / 1000)
+		t += f" {s // 60}m" if s >= 60 else f" {s}s"
+	return t.strip()
 
 
 KINDS = {"blocking": "err", "note": "warn", "nit": "dim"}  # tone the detail pane colours each by
@@ -49,8 +55,12 @@ def findings(verdict):
 
 
 def log_review(pr, model, verdict, at=None):
-	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
-	         "depth": config.DEPTH, "effort": config.EFFORT,
+	# ponytail: both sides added fields to this entry — findings from the pane, head/cost/ms and the
+	# checks filter from #9. Neither replaces the other.
+	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model,
+	         "pr": {k: v for k, v in pr.items() if k != "checks"},  # CI state at review time is stale by the time anyone reads it
+	         "depth": config.DEPTH, "effort": config.EFFORT, "head": pr.get("head", ""),
+	         "cost": verdict.get("cost"), "ms": verdict.get("ms"),
 	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"],
 	         "findings": findings(verdict)}
 	with open(LOG, "a") as f:
@@ -59,14 +69,22 @@ def log_review(pr, model, verdict, at=None):
 
 
 def mark_rereviews(sections):
-	"""Tag REVIEW REQUESTED rows already in the log and updated since as p['prev']. Returns their urls."""
+	"""Tag REVIEW REQUESTED rows already in the log and pushed to since as p['prev']. Returns their urls.
+	ponytail: by head commit when both sides know it — updatedAt also moves on a comment, which is not a
+	reason to review again. Timestamps only for entries logged before heads were."""
 	last = {}
 	for p in [p for n, prs, _ in sections if n == "REVIEWED" for p in prs or []]:
 		last.setdefault(p["url"], p["review"])  # newest first
 	out = []
 	for p in [p for n, prs, _ in sections if n == "REVIEW REQUESTED" for p in prs or []]:
 		e = last.get(p["url"])
-		if e and datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"]):
+		if not e:
+			continue
+		if e.get("head") and p.get("head"):
+			changed = p["head"] != e["head"]
+		else:
+			changed = datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"])
+		if changed:
 			p["prev"] = f"↻ re-review · was {config.STATUS[e['verdict']]}"
 			out.append(p["url"])
 	return out

@@ -54,3 +54,19 @@ def test_findings_are_kept_but_never_trusted():
 	assert findings({"findings": None}) == []
 	assert findings({"findings": ["a string", {"kind": "bogus", "text": "x"}, {"kind": "nit"}, 7]}) == []
 	assert len(findings({"findings": [{"kind": "nit", "text": f"f{i}"} for i in range(40)]})) == 12
+
+
+def test_mark_rereviews_prefers_the_head_commit_over_the_timestamp():
+	log_review(dict(PR, url="c", head="aaa"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")
+	log_review(dict(PR, url="p", head="aaa"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")
+	commented = dict(PR, url="c", head="aaa", updatedAt="2021-01-01T00:00:00Z")  # newer, but the same commit
+	pushed = dict(PR, url="p", head="bbb", updatedAt="2020-01-01T00:00:00Z")  # same instant, different commit
+	secs = [("REVIEW REQUESTED", [commented, pushed], None), ("REVIEWED", reviewed(), None)]
+	assert mark_rereviews(secs) == ["p"] and "prev" not in commented
+
+
+def test_tag_carries_cost_and_duration():
+	assert log.tag({"depth": "high", "effort": "max", "cost": 0.4171, "ms": 184_000}) == "high/max $0.42 3m"
+	assert log.tag({"depth": "low", "ms": 9_400}) == "low 9s"
+	assert log.tag({"depth": "low", "cost": None, "ms": None}) == "low"
+	assert log.tag({}) == ""

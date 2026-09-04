@@ -16,7 +16,7 @@ from conftest import PR, FakeScr, claude_out
 def test_draw_renders_sections_status_and_selection(screen):
 	screen.w = 210  # ponytail: the stats strip drops trailing items on narrower screens
 	st = State(60)
-	st.sections = [("MINE", [dict(PR, url="m")], None),
+	st.sections = [("MINE", [dict(PR, url="m", checks="✗")], None),
 	               ("REVIEW REQUESTED", [dict(PR, url="r", number=8, title="Needs eyes", isDraft=True)], None),
 	               ("ASSIGNED", None, "boom"), ("REVIEWED", [], None)]
 	st.fetched_at, st.drafts = __import__("time").time(), True
@@ -27,6 +27,11 @@ def test_draw_renders_sections_status_and_selection(screen):
 	assert "2 PRs" in out and "MINE" in out and "1 open" in out and "assigned" in out and "boom" in out
 	assert "AGE" in out and "REPO" in out and "TITLE" in out and "STATE" in out  # the column header
 	assert "▌" in out and "#8" in out and "draft" in out and "✓ approved" in out
+	# ponytail: main's CI chip, kept — it landed in #9 while this grid was being rebuilt. Found by
+	# searching the rendered rows rather than by line number, which the column header shifted.
+	rows = [screen.line(y) for y in range(4, screen.h - 2)]
+	assert any("ci✗" in r for r in rows), "a row with failing checks shows the chip"
+	assert any(r.strip() and "ci" not in r for r in rows), "a row without checks does not"
 	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
 	assert "Agent   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
 	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
@@ -752,7 +757,7 @@ def test_cells_and_cols_stay_the_same_length(screen):
 	st = State(60)
 	st.sections = [("MINE", [dict(PR, reviewers="✓bob")], None)]
 	ui.draw(screen, st, 0, now=1000.0)   # the assert lives in draw(); this fails loudly if they diverge
-	assert len(ui.COLS) == 7
+	assert len(ui.COLS) == 8   # age repo pr title author reviewers ci state
 
 
 def test_a_finding_shows_its_text_not_mostly_its_path(screen):

@@ -14,10 +14,15 @@ SECTIONS = [
 	("ASSIGNED", "--assignee=@me"),
 ]
 DECISION = {"APPROVED": "✓ approved", "CHANGES_REQUESTED": "✗ changes requested", "REVIEW_REQUIRED": "· awaiting review"}
-DECISION_QUERY = """{ search(query: "is:pr is:open author:@me", type: ISSUE, first: 100) {
-  nodes { ... on PullRequest { url reviewDecision
+# ponytail: one graphql call for what `gh search` cannot give — review decision, reviewers, head commit and
+# CI state — over the same three searches, aliased, so the nodes can be joined back to the sections by url.
+NODE = """{ nodes { ... on PullRequest { url headRefOid reviewDecision
+    commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } ... on Team { slug } } } }
-    latestReviews(first: 20) { nodes { author { login } state } } } } } }"""
+    latestReviews(first: 20) { nodes { author { login } state } } } } }"""
+META_QUERY = "{ " + " ".join(f'{a}: search(query: "is:pr is:open {q}", type: ISSUE, first: 100) {NODE}'
+                             for a, q in (("mine", "author:@me"), ("rr", "review-requested:@me"), ("asg", "assignee:@me"))) + " }"
+CHECKS = {"SUCCESS": "✓", "FAILURE": "✗", "ERROR": "✗", "PENDING": "●", "EXPECTED": "●"}
 REVIEW_GLYPH = {"APPROVED": "✓", "CHANGES_REQUESTED": "✗", "COMMENTED": "~", "PENDING": "·"}
 
 
@@ -27,6 +32,13 @@ def own_status(node):
 	if decision == "CHANGES_REQUESTED" and pending:
 		return "↻ re-review requested"  # I pushed and asked again, reviewer has not looked yet
 	return DECISION.get(decision, "")
+
+
+def checks(node):
+	"""CI glyph for the head commit: ✓ green, ✗ failed, ● running, "" when the repo has no checks."""
+	for c in (node.get("commits") or {}).get("nodes") or []:
+		return CHECKS.get(((c.get("commit") or {}).get("statusCheckRollup") or {}).get("state"), "")
+	return ""
 
 
 def reviewers(node):
@@ -84,16 +96,18 @@ def fetch():
 		seen.update(p["url"] for p in prs)
 		prs.sort(key=lambda p: p["updatedAt"], reverse=True)
 		out.append((name, prs, None))
-	mine = out and out[0][1] or []
-	if mine:  # review status of my own PRs: search has no reviewDecision, one graphql call does
+	if any(prs for _, prs, _ in out):  # review decision, CI and head commit: search has none of them, one graphql call does
 		try:
-			raw = subprocess.run(["gh", "api", "graphql", "-f", "query=" + DECISION_QUERY],
+			raw = subprocess.run(["gh", "api", "graphql", "-f", "query=" + META_QUERY],
 			                     capture_output=True, text=True, check=True, timeout=60).stdout
-			nodes = {n["url"]: n for n in json.loads(raw)["data"]["search"]["nodes"] if n}
-			for p in mine:
-				n = nodes.get(p["url"], {})
-				p["status"], p["reviewers"] = own_status(n), reviewers(n)
-		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError):
+			nodes = {n["url"]: n for s in json.loads(raw)["data"].values() for n in s["nodes"] if n}
+			for name, prs, _ in out:
+				for p in prs or []:
+					n = nodes.get(p["url"], {})
+					p["head"], p["checks"] = n.get("headRefOid", ""), checks(n)
+					if name == "MINE":
+						p["status"], p["reviewers"] = own_status(n), reviewers(n)
+		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError, TypeError):
 			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
 	return out
@@ -141,7 +155,7 @@ def comment(repo, number, body):
 
 
 def open_in_browser(url):
-	subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+	subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 CLIPBOARDS = (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"], ["pbcopy"])
