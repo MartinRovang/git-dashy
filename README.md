@@ -69,6 +69,11 @@ that file was written, `p` offers a fresh pre-review instead of handing you one 
 diff. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
 approve your own PR, and a verdict on your own work is a second opinion from the same head.
 
+The pane shows whether a pre-review exists for the selected PR, when it was written, and whether the
+PR has moved since — so a review of a diff you have already pushed over says so rather than reading as
+current. That survives restarting gitdashy: the file's name is derived from owner, repo and number, so
+nothing has to be remembered.
+
 Its findings do not become facts on their own. They wait in a separate pool, and only a later **real**
 review that lands on the same fact by itself confirms one — the pre-review and the real review are the
 same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
@@ -87,6 +92,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in `less`, and offers a fresh one once the PR has changed since |
+| `Y` | copy the path of the selected PR's pre-review to the clipboard |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
 | `v` | read the full review of the selected PR in `less` — any row that has one, not only REVIEWED |

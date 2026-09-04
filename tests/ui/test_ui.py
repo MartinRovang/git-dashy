@@ -908,6 +908,67 @@ def test_every_name_in_the_ui_resolves():
 	assert not bad, "names that resolve to nothing:\n  " + "\n  ".join(bad)
 
 
+def _with_pre_review(monkeypatch, tmp_path, pr, mtime):
+	from dashy.core import review as review_mod
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
+	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
+	os.makedirs(tmp_path, exist_ok=True)
+	open(path, "w").write("# pre-review\n")
+	os.utime(path, (mtime, mtime))
+	return path
+
+
+def test_the_pane_says_a_pre_review_exists_and_whether_it_is_current(monkeypatch, screen, tmp_path):
+	"""They were invisible: you pressed p and hoped, with no way to tell a fresh one from a review of a
+	diff you have since pushed over. Derived from the filesystem, so it survives a restart."""
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	pr = dict(PR, url="uP", number=902, updatedAt="2026-09-04T09:00:00Z")
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+
+	ui.draw(screen, st, 0, now=1000.0)
+	assert "PRE-REVIEW" not in screen.text()          # nothing on disk, nothing claimed
+
+	_with_pre_review(monkeypatch, tmp_path, pr, 4e9)   # written after the PR was updated
+	ui.draw(screen, st, 0, now=1000.0)
+	out = screen.text()
+	assert "PRE-REVIEW" in out and "current" in out and "stale" not in out
+	assert "read the pre-review" in out and "copy the pre-review path" in out
+
+	moved = dict(pr, updatedAt="2099-01-01T00:00:00Z")  # the PR moved after the pre-review
+	st.sections = [("MINE", [moved], None)]
+	ui.draw(screen, st, 0, now=1000.0)
+	out = screen.text()
+	assert "stale, the PR moved since" in out
+	assert "re-run: the PR moved since" in out, "ACTIONS must promise what p actually does"
+
+
+def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, tmp_path):
+	"""The path, not the contents — a file you open or hand on, not something to paste.
+
+	ponytail: this DRIVES the handler. The first version called github.copy itself and pressed nothing,
+	so neither branch ran — which is exactly how the p handler shipped a NameError.
+	"""
+	from dashy.core import review as review_mod
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
+	pr = dict(PR, url="uY", number=903, section="MINE")
+	repo = pr["repository"]["nameWithOwner"]      # ponytail: from the fixture, not assumed
+	copied, said = [], []
+	monkeypatch.setattr(ui.github, "copy", lambda t: copied.append(t) or "xclip")
+	monkeypatch.setattr(ui, "draw", lambda s, st, sl, prompt=None, now=None: said.append(prompt or ""))
+	st = State(60)
+
+	assert ui.copy_pre_review(screen, st, 0, pr) == ""          # none yet: nothing copied
+	assert copied == [] and "no pre-review of #903 yet" in said[-1]
+
+	path = _with_pre_review(monkeypatch, tmp_path, pr, 4e9)
+	assert ui.copy_pre_review(screen, st, 0, pr) == path
+	assert copied == [path] and "✓ copied" in said[-1] and "xclip" in said[-1]
+	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
+	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
+	assert path == review_mod.self_review_path(repo, 903)
+
+
 def test_a_dream_that_deletes_needs_a_second_yes(screen, monkeypatch, st, tmp_path):
 	"""A file going to zero read as one more row of line counts. A dream emptied general.md — eight
 	cross-repo facts — and "8 → 0" scrolled past among the tidies on a single keypress.

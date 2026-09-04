@@ -67,8 +67,8 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · a auto · Z dream"),
-        ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · u update · q quit"))
+KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y copy path · a auto"),
+        ("config", "m model · d depth · e effort · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -549,10 +549,30 @@ def detail(scr, state, h, x0, width, pr):
 				at(y, x0 + 2, chunk, width - 3, C(1))
 				y += 1
 		y += 1
+	# ponytail: pre-reviews live on disk under a derived name, so this survives a restart with nothing
+	# remembered — the pane just asks the filesystem. Before this they were invisible: you had to press
+	# p and hope, with no way to tell a fresh one from a review of a diff you have since pushed over.
+	# ponytail: MINE only, because `p` is bound on MINE only. The pane offered "read the pre-review" for
+	# any section, so a file left beside a non-MINE row promised a key that does nothing there.
+	# ponytail: and `pr` is not None here — the pane returned on that sixty lines up.
+	pre_at, pre_moved = review_mod.self_review_state(pr) if pr.get("section") == "MINE" else (0.0, False)
+	if pre_at and y < h - 6:
+		moved = pre_moved
+		line(y, [("PRE-REVIEW", C(25)),
+		         ("· stale, the PR moved since" if moved else "· current", C(3) if moved else C(1))])
+		y += 1
+		when = datetime.fromtimestamp(pre_at).strftime("%d %b %H:%M")
+		line(y, [(when, C(1)), ("— p to read, Y to copy its path", C(25))])
+		y += 2
 	if y < h - 5:
 		line(y, [("ACTIONS", C(25))])
 		y += 1
-		acts = [("r", "review this PR"), ("p", "pre-review, posting nothing"), ("o", "open in browser")]
+		acts = [("r", "review this PR"),
+		        ("p", "re-run: the PR moved since" if pre_moved else
+		               "read the pre-review" if pre_at else "pre-review, posting nothing"),
+		        ("o", "open in browser")]
+		if pre_at:
+			acts.append(("Y", "copy the pre-review path"))
 		if pr.get("review") or log.last(pr["url"]):
 			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
 		for key, what in acts:
@@ -918,6 +938,28 @@ def page(scr, state, sel, path, label):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
+def copy_pre_review(scr, state, sel, pr):
+	"""`Y`: put the pre-review's PATH on the clipboard. Returns what it copied, or "".
+
+	ponytail: the path, not the contents — it is a file you open in an editor or hand to something
+	else, and a whole review on the clipboard is not what anyone wants to paste.
+	ponytail: a function, not eight lines in the key loop. The test for this pressed nothing and called
+	github.copy itself, so neither branch of the handler ran — which is how the p handler shipped a
+	NameError. A handler that cannot be driven is a handler that is not tested.
+	"""
+	at, _moved = review_mod.self_review_state(pr)
+	if not at:
+		draw(scr, state, sel, prompt=f" no pre-review of #{pr['number']} yet — p runs one")
+		scr.refresh()
+		return ""
+	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
+	tool = github.copy(path)
+	draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
+	     else f" sent {path} to the terminal (OSC 52)")
+	scr.refresh()
+	return path
+
+
 def pre_review(scr, state, sel, pr):
 	"""`p` on one of your own rows: read the pre-review if it still fits the diff, else offer a fresh one.
 
@@ -928,11 +970,8 @@ def pre_review(scr, state, sel, pr):
 	work that is never posted helps nobody — this is a pass before you ask a person.
 	"""
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
-	at = review_mod.self_review_at(repo, n)
-	# ponytail: the PR moving is what makes a pre-review stale, so compare the file against updatedAt
-	# rather than keeping a flag. Read it back while it still describes this diff; offer a fresh one the
-	# moment it does not. Nothing to remember across a restart.
-	moved = bool(at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > at
+	# ponytail: shared with the pane, not repeated — see review.self_review_state
+	at, moved = review_mod.self_review_state(pr)
 	if in_flight(state.reviews.get(pr["url"], "")):
 		return
 	if at and not moved:
@@ -1121,6 +1160,8 @@ def main(scr, interval, auto, model):
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("p") and current and current["section"] == "MINE":
 			pre_review(scr, state, sel, current)
+		elif k == ord("Y") and current:
+			copy_pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else

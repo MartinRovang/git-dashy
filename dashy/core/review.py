@@ -163,6 +163,21 @@ def _verdict(repo, n, model, prev=None):
 	return verdict
 
 
+def self_review_state(pr):
+	"""(written_at, moved_since) for this PR's pre-review. (0.0, False) when there is none.
+
+	ponytail: ONE implementation. The pane and the `p` handler each did this comparison themselves, and
+	a pane that says "read" while the key re-runs is exactly the drift two copies invite — which the
+	comment beside one of them warned about while being the second copy.
+	"""
+	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+	at = self_review_at(repo, n)
+	if not at:
+		return 0.0, False
+	moved = datetime.datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > at
+	return at, moved
+
+
 def self_review(pr, model):
 	"""Pre-review your own PR. Posts NOTHING. Returns (status, path-to-the-written-review).
 
