@@ -466,6 +466,10 @@ def detail(scr, state, h, x0, width, pr):
 		findings — every entry written before the findings field existed — still killed the dashboard.
 		A guarantee that depends on remembering to use it is not one.
 		"""
+		# ponytail: x is clamped to the pane on BOTH sides. Only the model tag is right-aligned, and it
+		# cannot outgrow 62 columns today — but "cannot happen today" is how the last two bounds here
+		# were argued, and both turned out to be reachable.
+		x = max(x0, x)
 		if 4 <= y < h - 2 and x < x0 + width:
 			scr.addnstr(y, x, text, max(1, min(n, x0 + width - x)), attr)
 

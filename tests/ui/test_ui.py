@@ -818,7 +818,7 @@ def test_the_pane_never_writes_over_the_footer_or_off_the_screen(screen):
 	                            "summary": " ".join(["a summary long enough to wrap several times"] * 6)})
 	for h in (16, 17, 18, 20, 24):
 		screen.h, screen.w = h, 190
-		ui.draw(screen, screen and st, 0, now=1000.0)          # must not raise
+		ui.draw(screen, st, 0, now=1000.0)          # must not raise
 		foot = screen.line(h - 2) + screen.line(h - 1)
 		assert "NAV" in foot, f"h={h}: the footer was overwritten by the pane"
 		assert "summary long enough" not in foot, f"h={h}: pane text landed on the footer"
