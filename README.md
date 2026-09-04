@@ -53,7 +53,8 @@ gitdashy remember "the viewer owns mask state"   # file what a coding session le
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
 again but the reviewer has not looked yet. Next to it, one chip per reviewer: `✓bob` approved,
-`✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
+`✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented. Every open row also carries the CI
+state of its head commit: `ci✓` green, `ci✗` failed, `ci●` still running, nothing when the repo has no checks.
 
 ## Keys
 
@@ -116,8 +117,8 @@ copy, and how to undo it.
 `Enter` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
 result with `gh pr review` as an **approve**, **request changes**, or **comment**. Reviews are
 appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in the REVIEWED section,
-where `Enter` opens the summary and full review. A PR that gets a new review request after a verdict
-is flagged `↻ re-review · was <verdict>` and can be reviewed again.
+where `Enter` opens the summary and full review. A PR whose head commit moved since the verdict
+is flagged `↻ re-review · was <verdict>` and can be reviewed again — a new comment alone does not count.
 
 `--depth LEVEL` sets how hard the reviewer looks: `low` skims for obvious defects, `medium` reads the
 whole diff, `high` also reads the surrounding code and traces callers, and `adaptive` (the default)
@@ -138,7 +139,8 @@ be reviewed differently depending on where you started the dashboard. Your own h
 — they go through `--instructions`, which is read per review. The memory cleanup behind `Z` is scoped the
 same way.
 
-Every REVIEWED row carries a small `depth/effort` tag showing what the review ran with.
+Every REVIEWED row carries a small `depth/effort $cost time` tag showing what the review ran with, what claude
+said it cost, and how long it took.
 
 ### Memory
 

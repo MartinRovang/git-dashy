@@ -29,6 +29,16 @@ def test_review_posts_verdict_and_logs(monkeypatch):
 	assert entry["model"] == "sonnet" and entry["pr"]["url"] == "u"
 
 
+def test_review_logs_what_claude_said_it_cost(monkeypatch):
+	out = json.loads(claude_out(verdict="approve", summary="s", body="b").stdout)
+	out.update(total_cost_usd=0.123, duration_ms=61_000)
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(json.dumps(out)))
+	review(dict(PR, head="abc"), "sonnet")
+	entry = json.loads(open(log.LOG).read())
+	assert (entry["cost"], entry["ms"], entry["head"]) == (0.123, 61_000, "abc")
+	assert log.reviewed()[0]["tag"] == "adaptive/medium $0.12 1m"
+
+
 @pytest.mark.parametrize("verdict,flag,status", [
 	("approve", "--approve", "✓ approved"),
 	("comment", "--comment", "~ commented"),

@@ -119,8 +119,10 @@ def review(pr, model):
 				 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
 				capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here,
 			).stdout
-		text = json.loads(out)["result"].strip()
+		result = json.loads(out)
+		text = result["result"].strip()
 		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
+		verdict["cost"], verdict["ms"] = result.get("total_cost_usd"), result.get("duration_ms")  # claude reports both
 		if config.DEPTH == "adaptive" and verdict.get("depth_used"):
 			verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])

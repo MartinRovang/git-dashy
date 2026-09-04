@@ -14,7 +14,7 @@ from conftest import PR, FakeScr, claude_out
 def test_draw_renders_sections_status_and_selection(screen):
 	screen.w = 210  # ponytail: the stats strip drops trailing items on narrower screens
 	st = State(60)
-	st.sections = [("MINE", [dict(PR, url="m")], None),
+	st.sections = [("MINE", [dict(PR, url="m", checks="✗")], None),
 	               ("REVIEW REQUESTED", [dict(PR, url="r", number=8, title="Needs eyes", isDraft=True)], None),
 	               ("ASSIGNED", None, "boom"), ("REVIEWED", [], None)]
 	st.fetched_at, st.drafts = __import__("time").time(), True
@@ -24,6 +24,7 @@ def test_draw_renders_sections_status_and_selection(screen):
 	assert sel == 1 and cur["url"] == "r"
 	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
 	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
+	assert "ci✗" in screen.line(5) and "ci" not in screen.line(8)  # the CI chip only on rows that have checks
 	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
 	assert "Reviewer   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
 	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
