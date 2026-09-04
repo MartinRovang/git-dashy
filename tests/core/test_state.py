@@ -294,3 +294,21 @@ def test_a_pr_without_updatedAt_does_not_kill_the_refresh_thread(monkeypatch):
 	one_loop(st, monkeypatch, [("MINE", [{"url": "m", "number": 1, "title": "t",
 	                                      "repository": {"nameWithOwner": "a/b", "name": "b"}}], None)])
 	assert st.reviews == {"m": "✓ approved"}     # no field, so it simply never goes stale
+
+
+def test_a_fetch_already_running_when_the_verdict_lands_cannot_baseline_it(monkeypatch):
+	"""Posting a review bumps updatedAt, so a fetch that STARTED before the verdict landed carries the
+	pre-post value. Baselining on it would sweep our own verdict on the very next tick — which the
+	comment claimed to avoid by taking "the next fetch", and did not.
+	"""
+	st = State(0)
+	st.reviews["m"] = "✓ approved"
+	st.done_at["m"] = time.time() + 60          # the work finished AFTER this fetch began
+	one_loop(st, monkeypatch, [("MINE", [dict(PR, url="m", updatedAt="pre-post")], None)])
+	assert "m" not in st.seen_at, "a fetch older than the verdict must not become the baseline"
+	assert st.reviews == {"m": "✓ approved"}
+
+	st.done_at["m"] = 0                          # a later fetch, properly after
+	st.wake = __import__("threading").Event()
+	one_loop(st, monkeypatch, [("MINE", [dict(PR, url="m", updatedAt="post")], None)])
+	assert st.seen_at["m"] == "post"

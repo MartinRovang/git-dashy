@@ -45,6 +45,7 @@ class State:
 		# ponytail: the PR's updatedAt when a finished status was last seen. A verdict describes one
 		# revision; once the PR moves, it is stale and must stop masking what GitHub now says.
 		self.seen_at = {}
+		self.done_at = {}  # url -> when a status landed, so an older in-flight fetch cannot baseline it
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		# ponytail: main's persisted settings win over the branch's hardcoded defaults — config.WINDOW
 		# and friends came later and are the whole point of the settings file.
@@ -110,7 +111,8 @@ class State:
 			with self.lock:
 				self.reviews[pr["url"]] = status
 				self.running.discard(pr["url"])
-				self.seen_at.pop(pr["url"], None)  # ponytail: re-baselined on the next fetch, see loop()
+				self.seen_at.pop(pr["url"], None)
+				self.done_at[pr["url"]] = time.time()
 			self.wake.set()  # refetch so an approved PR drops off the list
 		with self.lock:
 			self.reviews[pr["url"]] = "reviewing..."
@@ -126,6 +128,7 @@ class State:
 				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
 				self.running.discard(pr["url"])
 				self.seen_at.pop(pr["url"], None)
+				self.done_at[pr["url"]] = time.time()
 			self.wake.set()
 		with self.lock:
 			self.reviews[pr["url"]] = "pre-reviewing..."
@@ -154,9 +157,10 @@ class State:
 				# log.mark_rereviews, which only ever names REVIEW REQUESTED urls — so a finished
 				# pre-review masked GitHub's decision on a MINE row until restart, and a colleague
 				# approving your PR never showed. One rule for both: a verdict describes one revision.
-				# ponytail: baselined on the FIRST fetch after the work finishes, not when it finishes.
-				# Posting a review bumps updatedAt itself, so comparing against the value we held would
-				# sweep our own verdict one tick later.
+				# ponytail: baselined on the first fetch that STARTED after the work finished. Posting a
+				# review bumps updatedAt itself, so the value we held is already stale — and a fetch that
+				# was in flight when the verdict landed carries the pre-post value, which is why the
+				# start time is compared rather than merely "the next fetch".
 				for _name, prs, _err in data:
 					for p in prs or []:
 						u = p["url"]
@@ -166,6 +170,11 @@ class State:
 						# takes the whole loop down; a PR without the field simply never goes stale.
 						at = p.get("updatedAt")
 						if at is None:
+							continue
+						if self.done_at.get(u, 0) > t0:
+							# ponytail: this fetch STARTED before the work finished, so it carries the
+							# pre-post updatedAt. Baselining on it would sweep our own verdict on the
+							# next tick — which the comment below claimed to avoid and did not.
 							continue
 						if u not in self.seen_at:
 							self.seen_at[u] = at

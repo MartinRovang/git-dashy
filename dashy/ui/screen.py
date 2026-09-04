@@ -364,7 +364,10 @@ def draw(scr, state, sel, prompt=None, now=None):
 			# wins over what was fetched, or a pre-review runs to completion with the row never saying so.
 			st = reviews.get(p["url"]) or p.get("status") or p.get("prev", "")
 			if p["url"] in busy:
-				st = f"{spin} {st[:-3]}…"  # ponytail: same clock-driven frame as the header, any verb
+				# ponytail: removesuffix, not [:-3]. Membership of `busy` is what says in-flight now, so
+				# nothing guarantees the text ends in dots — the two are written under one lock today,
+				# and that is a coupling rather than a rule.
+				st = f"{spin} {st.removesuffix('...')}…"
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else \
 				C(3) if st.startswith("✗") else C(5)
 			tag = ("▸+" + str(p["more"])) if p.get("more") else "▾" if p.get("open") else ""
