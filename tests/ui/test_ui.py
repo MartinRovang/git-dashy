@@ -879,9 +879,15 @@ def test_every_name_in_the_ui_resolves():
 	cannot give you: a name read by a function that is neither local, free from an enclosing scope, a
 	module global, nor a builtin. It costs nothing and it is exactly the class that keeps escaping.
 	"""
-	import symtable, builtins, pathlib
+	import symtable, builtins, pathlib, dashy
+	# ponytail: anchored on the package, not the cwd. Path("dashy") resolves relative to wherever pytest
+	# was started, so from outside the repo root it globbed nothing and the test PASSED — a guard against
+	# vacuous tests that was itself vacuous. The count assert below is the belt to that brace.
+	root = pathlib.Path(dashy.__file__).parent
+	mods = sorted(root.rglob("*.py"))
+	assert len(mods) >= 8, f"found only {len(mods)} modules under {root} — this test cannot pass vacuously"
 	bad = []
-	for mod_path in sorted(pathlib.Path("dashy").rglob("*.py")):
+	for mod_path in mods:
 		src = mod_path.read_text()
 		top = symtable.symtable(src, str(mod_path), "exec")
 		names = {s.get_name() for s in top.get_symbols()}
