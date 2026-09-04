@@ -416,3 +416,51 @@ def test_a_pre_review_does_not_repeat_what_is_already_known(monkeypatch, tmp_pat
 	(d / "acme__api.md").write_text("- the api owns no DDL\n")
 	assert memory.append_self("acme/api", "the api owns no DDL") == []
 	assert memory.self_drafts("acme/api") == []
+
+
+def test_the_dream_prompt_says_what_a_general_file_is_for():
+	"""The ground cause of a real data loss: the keep-list described repo structure, and general.md
+	holds reviewer discipline — a category it never named. The model dropped the file whose contents
+	the prompt failed to describe, using the delete mechanism the same prompt had just taught it.
+	"""
+	d = memory.DREAM
+	assert "how reviews are conducted here" in d          # the category that was missing
+	assert "what blocks and what does not" in d
+	assert "EXPECTED to hold lines that name no repo" in d  # said plainly, not implied
+	# and deletion is described as destructive rather than as a tidy mechanism
+	assert "DELETES it and everything in it" in d
+	assert "never merely because the file does not match a category above" in d
+
+
+def test_push_dir_says_why_it_did_nothing(monkeypatch, tmp_path):
+	"""It returned None on every path, so a failed commit and an unneeded one looked identical.
+
+	That is why a dream's deletion sat uncommitted for two hours and then rode into an unrelated
+	review's commit, under that review's message.
+	"""
+	import subprocess as sp
+	d = tmp_path / "mem"
+	d.mkdir()
+	assert team.push_dir(str(d), "x", "mine") == "not a git checkout"
+
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", "t@t"], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.name", "t"], check=True)
+	assert team.push_dir(str(d), "nothing staged", "mine") == ""     # nothing to do is not an error
+
+	(d / "general.md").write_text("- a fact\n")
+	assert team.push_dir(str(d), "memory: real", "mine") == ""       # committed, no remote, fine
+	got = sp.run(["git", "-C", str(d), "log", "--oneline"], capture_output=True, text=True)
+	assert "memory: real" in got.stdout
+
+	# a commit that cannot happen reports, instead of returning the same None as success
+	(d / "general.md").write_text("- another\n")
+	def fake(*a, **k):
+		# ponytail: "diff --cached --quiet" exits 1 when something IS staged — 0 would mean nothing to
+		# commit and push_dir would return "" for the right reason, testing nothing.
+		if "diff" in a or "commit" in a:
+			return sp.CompletedProcess(a, 1, "", "boom")
+		return sp.CompletedProcess(a, 0, "", "")
+	monkeypatch.setattr(team, "_git", fake)
+	err = team.push_dir(str(d), "memory: doomed", "mine")
+	assert err and err != "", f"a failed commit must explain itself, got {err!r}"

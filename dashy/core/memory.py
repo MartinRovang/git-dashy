@@ -451,10 +451,15 @@ DREAM = """You are tidying the review memory of a code-review bot. Below are its
 reviewer's private notes, "team/" are shared with their whole team, and each source has a general file plus one
 per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
 fact, move repo-independent lines to that source's general file. Keep only overarching knowledge: how a repo is
-structured and why, conventions, how it affects other repos or the database, which authors own which areas. Drop
-per-PR trivia (what one PR changed, one-off bugs, "X is dead after #N") and anything derivable from git history.
+structured and why, conventions, how it affects other repos or the database, which authors own which areas, and —
+in a general file — how reviews are conducted here at all: what blocks and what does not, what must be verified
+rather than assumed, which classes of change get extra scrutiny. Drop per-PR trivia (what one PR changed, one-off
+bugs, "X is dead after #N") and anything derivable from git history.
+A general file is EXPECTED to hold lines that name no repo. That is what it is for, not a sign they are stale.
 Never move a line from mine/ into team/ — sharing is the reviewer's decision, not yours. Keep the "- " bullet
-style, one fact per line. Files not listed below must not be invented; return a file with empty content to delete it.
+style, one fact per line. Files not listed below must not be invented.
+Returning a file with empty content DELETES it and everything in it. Do that only when every line in it is
+genuinely worthless — never merely because the file does not match a category above.
 
 {files}
 

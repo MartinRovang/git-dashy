@@ -160,19 +160,26 @@ def push_dir(d, msg, label="sync"):
 	every change — that is what makes a bad dream recoverable — and a missing origin is not an error to
 	put on the header, it is the normal state of a machine that has not joined anything.
 	"""
+	# ponytail: returns "" or WHY it did nothing. It used to return None on every path, so a commit that
+	# failed was indistinguishable from one that was not needed. A dream emptied general.md, its commit
+	# did not happen, and the deletion sat uncommitted until an unrelated review's push swept it in under
+	# that review's message — so `git log` blamed a review for a dream's damage. A caller that is about
+	# to destroy something has to be able to ask whether the record of it was actually written.
 	if not is_repo(d):
-		return
+		return "not a git checkout"
 	with _lock:
 		_git("add", "-A", cwd=d)
 		if _git("diff", "--cached", "--quiet", cwd=d).returncode == 0:
-			return  # nothing new
+			return ""  # nothing new
 		if not _note(_git(*_ident(d), "commit", "-qm", msg, cwd=d), label):
-			return
+			return ERROR or "commit failed"
 	if not has_remote(d):
-		return  # ponytail: committed, which is the half that protects you. Nothing to push to.
+		return ""  # ponytail: committed, which is the half that protects you. Nothing to push to.
 	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
-			_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)
+			if not (_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)):
+				return ERROR or "push failed"  # ponytail: committed locally, so nothing is lost — but say so
+	return ""
 
 
 def pull():
