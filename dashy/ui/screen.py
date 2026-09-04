@@ -785,7 +785,7 @@ def confirm(scr, state, sel, question):
 	return yes
 
 
-def edit_memory(scr, repo):
+def edit_memory(scr, state, sel, repo):
 	"""Open general (repo=None) or per-repo memory in $EDITOR. Reviews read it back next run."""
 	path = memory.path(repo)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1009,8 +1009,9 @@ def dream_screen(scr, state, sel):
 			panel(scr, "dream over", lines, "[y] accept and rewrite memory   [v] view full   [n/esc] discard", accent=6)
 			k = scr.getch()
 			if k == ord("v"):
-				shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", "the dream")],
-				          dream_detail(summary, before, new))
+				if err := shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", "the dream")],
+				                     dream_detail(summary, before, new)):
+					confirm(scr, state, sel, f" {err}  [any key]")
 		if k == ord("y"):
 			team.pull_dir(config.MEMORY_DIR, "mine")  # a dream rewrites both sources, so both are pulled
 			team.pull()
@@ -1098,7 +1099,7 @@ def main(scr, interval, auto, model):
 			curses.napms(600)  # ponytail: a blocking flash beats a timed footer state
 			curses.flushinp()  # spamming y queues keypresses that would each copy and flash again
 		elif k == ord("g") or (k == ord("n") and current):
-			edit_memory(scr, None if k == ord("g") else current["repository"]["nameWithOwner"])
+			edit_memory(scr, state, sel, None if k == ord("g") else current["repository"]["nameWithOwner"])
 		elif k == ord("Z"):
 			dream_screen(scr, state, sel)
 		elif k == ord("P"):
@@ -1114,8 +1115,9 @@ def main(scr, interval, auto, model):
 			# findings for the selected PR whatever section it is in, so the key that opens the whole
 			# thing has to reach as far as the summary does.
 			rev = current.get("review") or log.last(current["url"])
-			shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
-			          log.detail(rev))
+			if err := shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
+			                     log.detail(rev)):
+				confirm(scr, state, sel, f" {err}  [any key]")
 		elif k == ord("r") and current and current["section"] == "REVIEW REQUESTED":
 			# ponytail: r is REVIEW now, as the design always labelled it. Refresh moved to f. This is a
 			# muscle-memory break on two keys people use constantly, taken deliberately rather than by
