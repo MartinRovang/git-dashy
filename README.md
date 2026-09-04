@@ -57,8 +57,7 @@ again but the reviewer has not looked yet. Next to it, one chip per reviewer: `�
 `✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
 
 `p` on one of your own rows **pre-reviews it**: the same reviewer, the same prompt, the same memory —
-but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/` and `p` again
-reopens it. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
+but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/<owner>__<repo>__<n>.md` and `p` again reopens it there. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
 approve your own PR, and a verdict on your own work is a second opinion from the same head.
 
 Its findings do not become facts on their own. They wait in a separate pool, and only a later **real**

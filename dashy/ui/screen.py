@@ -274,9 +274,12 @@ def draw(scr, state, sel, prompt=None):
 			is_cur = i == cur
 			base = curses.A_REVERSE if is_cur else 0  # ponytail: reverse video works on any theme
 			ref = refof(p)
-			st = p.get("status") or reviews.get(p["url"]) or p.get("prev", "")
-			if st == "reviewing...":
-				st = f"{spin} reviewing…"  # ponytail: same clock-driven frame as the header
+			# ponytail: what THIS session is doing wins over what was fetched. A MINE row always carries a
+			# status from GitHub's review decision, so the old order short-circuited and a pre-review
+			# started, ran and finished without the row ever saying so.
+			st = reviews.get(p["url"]) or p.get("status") or p.get("prev", "")
+			if st.endswith("..."):
+				st = f"{spin} {st[:-3]}…"  # ponytail: same clock-driven frame as the header, any verb
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
 			x = 1
 			def put(text, attr=0, pad=0):
@@ -766,7 +769,8 @@ def main(scr, interval, auto, model):
 	threading.Thread(target=state.loop, daemon=True).start()
 	sel, current, saved = 0, None, snapshot(state)
 	while True:
-		spinning = state.fetched_at is None or state.fetching or "reviewing..." in state.reviews.values()
+		# ponytail: any in-flight verb, not the one literal string — a pre-review spins for the same reason
+		spinning = state.fetched_at is None or state.fetching or any(v.endswith("...") for v in state.reviews.values())
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
 		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle

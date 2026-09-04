@@ -499,3 +499,29 @@ def test_add_reviewer_picks_a_collaborator_and_requests_them(screen, monkeypatch
 	ui.add_reviewer(screen, st, 0, dict(PR))
 	assert asked == [("a/b", 7, "bob")] and "✓ asked bob" in screen.text() and st.wake.is_set()
 
+
+
+def test_a_live_status_wins_over_the_fetched_one(monkeypatch):
+	"""A MINE row always carries GitHub's decision, which used to short-circuit what this session is doing.
+
+	So a pre-review started, ran and finished with the row still reading '· awaiting review'.
+	"""
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	pr["status"] = "· awaiting review"
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "pre-reviewing..."
+	scr = FakeScr()
+	ui.C = lambda n: 0
+	ui.draw(scr, st, 0)
+	painted = "\n".join(scr.line(y) for y in range(scr.h))
+	assert "pre-reviewing" in painted
+	assert "awaiting review" not in painted
+
+
+def test_the_spinner_runs_for_any_in_flight_verb():
+	"""It was an exact match on 'reviewing...', so a pre-review left the UI idle at 500ms."""
+	import inspect
+	src = inspect.getsource(ui.main)
+	assert '"reviewing..." in state.reviews.values()' not in src
+	assert 'endswith("...")' in src
