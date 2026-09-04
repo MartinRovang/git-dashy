@@ -464,3 +464,32 @@ def test_push_dir_says_why_it_did_nothing(monkeypatch, tmp_path):
 	monkeypatch.setattr(team, "_git", fake)
 	err = team.push_dir(str(d), "memory: doomed", "mine")
 	assert err and err != "", f"a failed commit must explain itself, got {err!r}"
+
+
+def test_push_reports_a_team_failure_but_not_the_absence_of_a_team(monkeypatch, tmp_path):
+	"""A dream rewrites both sources, so the team push has to be checked too — and NOT being in a team
+	is the normal state, not a failure. Returning an error there made the dream warn on every run on a
+	machine with no team, which is a warning nobody reads twice.
+	"""
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
+	assert not team.on()
+	assert team.push("x") == "", "no team is not a failure"
+
+	import subprocess as sp
+	d = tmp_path / "team"
+	(d / "memory").mkdir(parents=True)
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", "t@t"], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.name", "t"], check=True)
+	monkeypatch.setattr(config, "TEAM", str(d))
+	assert team.on()
+	(d / "memory" / "general.md").write_text("- shared\n")
+	assert team.push("memory: real") == ""            # a real team commits, and says nothing
+
+	def fake(*a, **k):
+		if "diff" in a or "commit" in a:
+			return sp.CompletedProcess(a, 1, "", "boom")
+		return sp.CompletedProcess(a, 0, "", "")
+	(d / "memory" / "general.md").write_text("- changed\n")
+	monkeypatch.setattr(team, "_git", fake)
+	assert team.push("memory: doomed"), "a team commit that fails must explain itself"

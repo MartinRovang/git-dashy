@@ -178,7 +178,9 @@ def push_dir(d, msg, label="sync"):
 	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
 			if not (_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)):
-				return ERROR or "push failed"  # ponytail: committed locally, so nothing is lost — but say so
+				# ponytail: names the PUSH, with the last git message after it. ERROR alone was whichever
+				# of the two failed, so a pull that failed reported itself as the push's reason.
+				return f"push failed: {ERROR}" if ERROR else "push failed"  # committed locally, nothing lost
 	return ""
 
 
@@ -187,7 +189,11 @@ def pull():
 
 
 def push(msg):
-	push_dir(config.TEAM, msg)
+	"""ponytail: passes the reason up so a caller that deletes can check it — but NOT being in a team is
+	the normal state, not a failure. Returning "not a git checkout" from here made the dream warn that
+	memory was uncommitted every single time, on a machine with no team, which is a warning nobody would
+	read twice."""
+	return push_dir(config.TEAM, msg) if on() else ""
 
 
 def slug_of(url):

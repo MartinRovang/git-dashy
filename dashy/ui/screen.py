@@ -1039,9 +1039,13 @@ def dream_screen(scr, state, sel):
 			# ponytail: a dream is the one write that can DELETE, so it is the one that must confirm its
 			# own record landed. Silently failing here is what left eight facts deleted with no commit
 			# saying so, and the next review's push carrying the blame.
-			err = team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")
-			team.push("memory: dream cleanup")
-			if err:
+			# ponytail: BOTH sources. A dream rewrites mine/ and team/, so checking only mine left a
+			# team file that was emptied and not committed exactly as silent as the bug this fixes.
+			# `or` and not `and`: the first failure is the one worth naming, and both are checked
+			# because push_dir runs either way.
+			mine_err = team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")
+			team_err = team.push("memory: dream cleanup")
+			if err := (mine_err or team_err):
 				confirm(scr, state, sel,
 				        f" memory rewritten, but NOT committed: {err} — a backup is in ~/.prs_backups  [any key]")
 	finally:
