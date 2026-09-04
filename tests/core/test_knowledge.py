@@ -443,3 +443,58 @@ def test_every_rewrite_of_memory_has_history_behind_it(monkeypatch, tmp_path):
 	assert (mem / "general.md").read_text() == "- keep me\n"
 	got = sp.run(["git", "-C", str(mem), "show", "HEAD:general.md"], capture_output=True, text=True)
 	assert "drop me" in got.stdout  # the state before the forget is recoverable
+
+
+def test_a_half_configured_identity_gets_only_the_missing_half(tmp_path, monkeypatch):
+	"""Checking user.email alone meant an email with no name got nothing, and the commit failed."""
+	import subprocess as sp
+	# ponytail: the developer's own global user.name would otherwise satisfy the check and the test
+	# would pass while proving nothing — the half-configured machine is the whole point of it.
+	monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+	monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+	for v in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+		monkeypatch.delenv(v, raising=False)
+	d = tmp_path / "repo"
+	d.mkdir()
+	sp.run(["git", "init", "-q", str(d)], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.email", "real@example.com"], check=True)
+	sp.run(["git", "-C", str(d), "config", "user.useConfigOnly", "true"], check=True)
+	(d / "general.md").write_text("- a fact\n")
+
+	team.push_dir(str(d), "memory: test", "mine")
+
+	got = sp.run(["git", "-C", str(d), "log", "-1", "--format=%an <%ae>"], capture_output=True, text=True)
+	assert got.returncode == 0, "the commit must not fail on a half-configured identity"
+	assert got.stdout.strip() == "gitdashy <real@example.com>"  # their email kept, only the name supplied
+	assert team.ERROR == ""
+
+
+def test_history_refused_is_said_out_loud_and_asked_once(monkeypatch, tmp_path):
+	"""`git init ~` is a normal dotfiles setup, which makes the DEFAULT memory dir nested."""
+	import subprocess as sp
+	from dashy.core import knowledge as k
+	home = tmp_path / "home"
+	(home / ".prs_memory").mkdir(parents=True)
+	sp.run(["git", "init", "-q", str(home)], check=True)
+	monkeypatch.setattr(team, "_NO_HISTORY", {})
+	monkeypatch.setattr(config, "MEMORY_DIR", str(home / ".prs_memory"))
+
+	calls = []
+	real = team.inside_other_repo
+	monkeypatch.setattr(team, "inside_other_repo", lambda d: (calls.append(d), real(d))[1])
+
+	assert not team.init_history(str(home / ".prs_memory"))
+	assert not team.init_history(str(home / ".prs_memory"))
+	assert len(calls) == 1                       # asked once, not once per write
+	assert "no history" in k.history_note() and "inside another git repo" in k.history_note()
+
+
+def test_the_memory_row_says_nothing_when_history_is_fine(monkeypatch, tmp_path):
+	"""The note must not become decoration that is always there."""
+	from dashy.core import knowledge as k
+	mem = tmp_path / "prs_memory"
+	mem.mkdir()
+	monkeypatch.setattr(team, "_NO_HISTORY", {})
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	assert team.init_history(str(mem))
+	assert k.history_note() == ""

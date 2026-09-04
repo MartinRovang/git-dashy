@@ -274,10 +274,19 @@ the normal state of a machine that has not joined a team. Commits are authored b
 git identity; the fixed `gitdashy` identity is used only when the machine has none
 configured at all, since that is exactly the machine with no other backup.
 
-**One exception**: if `PRS_MEMORY` points inside another git repository — a notes repo, a
-dotfiles checkout — no history is started, because nesting a repo there surprises the
-tooling you already have and is not gitdashy's call to make. The compressed copies below
-still cover you, and the enclosing repo's own history covers whatever it tracks.
+**One exception**: if the memory directory sits inside another git repository, no history is
+started — nesting a repo there surprises the tooling you already have and is not gitdashy's
+call to make. This is not only a `PRS_MEMORY` choice: `git init ~` is a normal dotfiles
+setup, and it makes the *default* `~/.prs_memory` nested too. So the dashboard says so, on
+the Memory row under `K`:
+
+```
+L  Memory   ~/.prs_memory · no history (inside another git repo)
+```
+
+The compressed copies below still cover you, and the enclosing repo's own history covers
+whatever it tracks. To get git history as well, move memory somewhere outside that repo
+with `L`.
 
 Every write is a commit:
 

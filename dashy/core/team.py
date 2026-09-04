@@ -80,12 +80,18 @@ def _ident(d):
 	every shared fact and every reviewed.jsonl append landed as "gitdashy" for every member — pushed,
 	and not rewritable afterwards. Attribution there is the whole point: who wrote a fact is who you go
 	and ask about it.
-	ponytail: `git config user.email` reads config files. Local, bounded, and it cannot prompt.
+	ponytail: each half is asked for SEPARATELY and only the missing one is supplied. Checking email
+	alone meant a config with an email and no name — user.useConfigOnly, or an empty gecos field —
+	got nothing, and the commit failed where the unconditional pair had worked. A fallback that only
+	fires all-or-nothing is not a fallback for a half-configured machine.
+	ponytail: `git config` reads config files. Local, bounded, and it cannot prompt.
 	"""
-	r = _git("config", "user.email", cwd=d)
-	if r.returncode == 0 and r.stdout.strip():
-		return []
-	return ["-c", "user.name=gitdashy", "-c", "user.email=gitdashy@localhost"]
+	out = []
+	for key, val in (("user.name", "gitdashy"), ("user.email", "gitdashy@localhost")):
+		r = _git("config", key, cwd=d)
+		if r.returncode != 0 or not r.stdout.strip():
+			out += ["-c", f"{key}={val}"]
+	return out
 
 
 def inside_other_repo(d):
@@ -100,6 +106,15 @@ def inside_other_repo(d):
 	return r.returncode == 0 and bool(top) and os.path.realpath(top) != os.path.realpath(d)
 
 
+_NO_HISTORY = {}  # d -> why. ponytail: cached, or every write pays a rev-parse forever — is_repo can
+                  # never become true for a directory we have decided not to initialise.
+
+
+def no_history(d):
+	"""Why `d` has no history and will not get any, or "" when it has some or has not been tried."""
+	return "" if is_repo(d) else _NO_HISTORY.get(d, "")
+
+
 def init_history(d):
 	"""Give `d` local git history, no remote needed. True when it has one. Never raises.
 
@@ -112,10 +127,19 @@ def init_history(d):
 	"""
 	if is_repo(d):
 		return True
-	if not d or not os.path.isdir(d) or inside_other_repo(d):
+	if not d or not os.path.isdir(d):
+		return False
+	if d in _NO_HISTORY:
+		return False
+	if inside_other_repo(d):
+		# ponytail: `git init ~` is a normal dotfiles setup, which makes the DEFAULT ~/.prs_memory
+		# nested — so this is not the exotic case the docs framed it as. Recorded rather than
+		# discarded, so the Memory row can say the net is off instead of it being silently absent.
+		_NO_HISTORY[d] = "inside another git repo"
 		return False
 	with _lock:
 		if _git("init", "-q", cwd=d).returncode != 0:
+			_NO_HISTORY[d] = "git init failed"
 			return False
 		_git("add", "-A", cwd=d)
 		_git(*_ident(d), "commit", "-qm", "gitdashy: memory as it was before this was tracked", cwd=d)

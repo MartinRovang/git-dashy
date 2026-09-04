@@ -27,6 +27,16 @@ def show(path):
 	return tilde(path) + (f" → {tilde(target)}" if target and target != path else "")
 
 
+def history_note():
+	"""" · no history (why)" for the Memory row, or "".
+
+	ponytail: on the row rather than announced once. A safety net that is OFF should say so every time
+	you look at it — a message you scrolled past is indistinguishable from never having been told.
+	"""
+	why = team.no_history(config.MEMORY_DIR)
+	return f" · no history ({why})" if why else ""
+
+
 def store_moved():
 	"""True when the team checkout is not where it would be by default — only then is it worth a header row."""
 	return os.path.islink(config.TEAM) or config.TEAM != DEFAULT_STORE

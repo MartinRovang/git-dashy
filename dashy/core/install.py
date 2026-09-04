@@ -136,7 +136,15 @@ def _write_text(path, text):
 	# ponytail: created 0600 and widened only to whatever the target already was. Writing at the umask
 	# first put a 0600 settings.json — env blocks, API keys — on disk as 0644 for the length of the
 	# write, in the same directory. Narrow first is free; the other order has a window.
-	fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+	# ponytail: O_CREAT ignores the mode when the file already exists, and a .gitdashy.tmp left by a
+	# crash would then keep whatever mode it had. Removing it first makes the 0600 unconditional.
+	# ponytail: a target that does not exist yet is CREATED 0600 rather than at the umask. These are
+	# one user's own config files and one of them holds API keys, so narrow is the right default.
+	try:
+		os.remove(tmp)
+	except OSError:
+		pass
+	fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 	with os.fdopen(fd, "w") as f:
 		f.write(text)
 	if os.path.exists(real):

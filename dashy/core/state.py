@@ -68,7 +68,8 @@ class State:
 		while True:
 			t0, self.fetching = time.time(), True
 			team.pull()  # newest team log + memory before we read them
-			memory.backup("tick")  # ponytail: after the pull, so the copy includes what just arrived
+			memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
+			memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
 			refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
 			data = github.fetch()
 			stale = log.mark_rereviews(data)
