@@ -786,3 +786,42 @@ def test_the_temp_file_is_never_wider_than_its_target(monkeypatch, tmp_path):
 	install._write_text(str(target), '{"a": 1}')
 	assert seen and all(m <= 0o600 for m in seen)          # narrow while being written
 	assert oct(os.stat(target).st_mode)[-3:] == "600"      # and the target's own mode afterwards
+
+
+def test_setup_can_still_fill_the_file_install_seeded(monkeypatch, tmp_path):
+	"""install --full seeds the shipped template; setup read that as a hand-written file and refused.
+
+	That left the guided path dead in exactly the case it exists for — the offer fires, you say yes,
+	and it declines to ask.
+	"""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	mem = tmp_path / "mem"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	install.full_apply(corpus)
+	assert not install.setup_done()  # a seeded template is not a finished brief
+
+	answers = iter(["Ada", "backend", "ask early", "the API", "a viewer", "clinicians", "CE", "layered"])
+	install.setup(lambda p: next(answers, ""), corpus_home=install.CORPUS_HOME)
+
+	user = pathlib.Path(install.CORPUS_HOME) / "identity" / "USER.md"
+	assert "Ada" in user.read_text() and install.SETUP_MARK in user.read_text()
+	assert install.setup_done()
+
+
+def test_setup_still_refuses_a_file_you_wrote_yourself(monkeypatch, tmp_path):
+	"""The guard that made the above fail is the one protecting hand-written files. Keep it."""
+	cfg, corpus = full_env(monkeypatch, tmp_path)
+	mem = tmp_path / "mem"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	install.full_apply(corpus)
+	user = pathlib.Path(install.CORPUS_HOME) / "identity" / "USER.md"
+	user.write_text("# mine\n\nhand written\n")   # one edit of their own and it is theirs
+
+	out = install.setup(lambda p: "should not be asked", corpus_home=install.CORPUS_HOME)
+
+	assert user.read_text() == "# mine\n\nhand written\n"
+	assert any("is yours already" in l for l in out)

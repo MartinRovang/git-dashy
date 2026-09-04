@@ -19,6 +19,7 @@ from . import log, team
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
+SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
@@ -34,6 +35,54 @@ def path(repo=None, base=None):
 
 def queue_path(repo):
 	return os.path.join(config.MEMORY_DIR, QUEUE, slug(repo))
+
+
+def self_path(repo):
+	"""Where a pre-review's findings wait. Under drafts/, so nothing that reads facts can reach them."""
+	return os.path.join(config.MEMORY_DIR, SELF, slug(repo))
+
+
+def self_drafts(repo):
+	"""[(count, fact)] a pre-review of your own PR proposed and no real review has confirmed."""
+	return [_parse(l) for l in _read(self_path(repo)).splitlines() if l.strip()]
+
+
+def append_self(repo, text):
+	"""Record what a PRE-review found. Never promotes on its own; returns what was kept.
+
+	ponytail: a pre-review and the real review are the same model on the same diff, so counting them as
+	two independent observations would make PROMOTE_AT measure one opinion twice. These wait instead.
+	A later REAL review that lands on the same fact by itself consumes the entry and contributes its +1
+	— two runs, one of which had no idea the other existed, which is the bar the whole gate is for.
+	ponytail: under drafts/, and never read into any prompt. Same rule, same reason.
+	"""
+	proposed = [l.strip().lstrip("-• ").strip() for l in (text or "").splitlines() if l.strip()]
+	fresh, settled = [], known(repo)
+	for fact in proposed:
+		if not any(_same(fact, t) for t in fresh) and not any(_same(fact, t) for t in settled):
+			fresh.append(fact)
+	if not fresh:
+		return []
+	items = self_drafts(repo)
+	for fact in fresh:
+		if not any(_same(t, fact) for _n, t in items):
+			items.append((1, fact))  # ponytail: no count here. One pre-review, or ten, is still one opinion.
+	_history()
+	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in items))
+	return fresh
+
+
+def _consume_self(repo, fact):
+	"""Take a matching pre-review finding out of the pool. True when one was there.
+
+	ponytail: removed once spent, so a single pre-review cannot keep contributing to fact after fact.
+	"""
+	items = self_drafts(repo)
+	kept = [(n, t) for n, t in items if not _same(t, fact)]
+	if len(kept) == len(items):
+		return False
+	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in kept))
+	return True
 
 
 def project():
@@ -342,12 +391,15 @@ def append(repo, text):
 	for fact in fresh:
 		if any(_same(fact, t) for t in settled):
 			continue  # already approved somewhere: proposing it again says nothing new
+		# ponytail: a pre-review of your own PR that found this counts as the other observation — two runs,
+		# one of which did not know the other existed. Consumed, so one pre-review cannot keep paying out.
+		bonus = 1 if _consume_self(repo, fact) else 0
 		for i, (n, t) in enumerate(items):
 			if _same(t, fact):
-				items[i] = (n + 1, t)  # the first wording wins; the count is what carries meaning
+				items[i] = (n + 1 + bonus, t)  # the first wording wins; the count is what carries meaning
 				break
 		else:
-			items.append((1, fact))
+			items.append((1 + bonus, fact))
 	promoted = [t for n, t in items if n >= PROMOTE_AT]
 	# ponytail: facts first, drafts after. The other order loses the observation outright if the second
 	# write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.

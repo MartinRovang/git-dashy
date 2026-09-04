@@ -48,12 +48,22 @@ gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no r
 gitdashy --help
 gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
 gitdashy remember "the viewer owns mask state"   # file what a coding session learned
+gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
 again but the reviewer has not looked yet. Next to it, one chip per reviewer: `✓bob` approved,
 `✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
+
+`p` on one of your own rows **pre-reviews it**: the same reviewer, the same prompt, the same memory —
+but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/<owner>__<repo>__<n>.md` and `p` again reopens it there. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
+approve your own PR, and a verdict on your own work is a second opinion from the same head.
+
+Its findings do not become facts on their own. They wait in a separate pool, and only a later **real**
+review that lands on the same fact by itself confirms one — the pre-review and the real review are the
+same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
+than whether the fact recurred.
 
 ## Keys
 
@@ -63,6 +73,7 @@ again but the reviewer has not looked yet. Next to it, one chip per reviewer: `�
 | `o` | open the PR in your browser |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; press `p` again to reopen it in `less` |
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |

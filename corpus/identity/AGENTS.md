@@ -65,6 +65,14 @@ real means the next review already knows it.
 Do not file what this task did, what one bug was, or anything git already records. The
 test is whether it would help someone opening this repo cold in three months.
 
+**File it there, not wherever is easiest.** Your harness may keep a memory store of its
+own — Claude Code has one at `~/.claude/projects/<slug>/memory/` — and it will offer to
+save things, which is more than this file does. Take the offer and the knowledge lands
+somewhere keyed to one directory, invisible from every other repo, and outside whatever
+you back up. The store that asks tends to win over the store that is right, quietly, and
+the right one then looks empty and healthy. Durable knowledge goes to `gitdashy
+remember` or to this repo's `.agent/`; nowhere else is a home.
+
 ## How to talk
 
 Be concise and concrete. State assumptions. Disagree when you have reason to, and say

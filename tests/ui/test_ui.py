@@ -499,3 +499,42 @@ def test_add_reviewer_picks_a_collaborator_and_requests_them(screen, monkeypatch
 	ui.add_reviewer(screen, st, 0, dict(PR))
 	assert asked == [("a/b", 7, "bob")] and "✓ asked bob" in screen.text() and st.wake.is_set()
 
+
+
+def test_a_live_status_wins_over_the_fetched_one(monkeypatch):
+	"""A MINE row always carries GitHub's decision, which used to short-circuit what this session is doing.
+
+	So a pre-review started, ran and finished with the row still reading '· awaiting review'.
+	"""
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	pr["status"] = "· awaiting review"
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "pre-reviewing..."
+	scr = FakeScr()
+	ui.C = lambda n: 0
+	ui.draw(scr, st, 0)
+	painted = "\n".join(scr.line(y) for y in range(scr.h))
+	assert "pre-reviewing" in painted
+	assert "awaiting review" not in painted
+
+
+def test_any_in_flight_verb_counts_as_running(monkeypatch):
+	"""Four places matched the literal 'reviewing...', so a pre-review was invisible to all of them.
+
+	Behavioural, not a source check: the previous version of this test asserted on inspect.getsource
+	and broke on a refactor that was correct, which is the failure mode of pinning wording.
+	"""
+	from dashy.core.state import in_flight
+	assert in_flight("reviewing...") and in_flight("pre-reviewing...") and in_flight("dreaming...")
+	assert not in_flight("") and not in_flight("✓ approved") and not in_flight("error: boom")
+
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	pr["status"] = "· awaiting review"
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "pre-reviewing..."
+	scr = FakeScr()
+	ui.C = lambda n: 0
+	ui.draw(scr, st, 0)
+	assert "1 agent" in scr.text() or "1 running" in scr.text() or "pre-reviewing" in scr.text()

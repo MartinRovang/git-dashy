@@ -9,6 +9,16 @@ from .. import config
 from . import github, install, log, memory, mirror, review as review_mod, team, update
 
 
+def in_flight(status):
+	"""True while a review or a pre-review is running.
+
+	ponytail: the trailing "..." is the contract, not the verb. Four places matched the literal string
+	"reviewing..." and a pre-review was invisible to every one of them — the row, the spinner, the
+	header count and the stale-verdict sweep. One predicate, so the next verb is covered by writing it.
+	"""
+	return bool(status) and status.endswith("...")
+
+
 def refresh_mirrors():
 	"""Re-mirror every repo `gitdashy init` registered. Never raises: a bad entry must not stop a refresh."""
 	for into, repo, root, _loader in install.registered():
@@ -29,6 +39,7 @@ class State:
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
+		self.self_reviews = {}  # url -> path of a pre-review on disk, so `p` can reopen it
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
@@ -64,6 +75,20 @@ class State:
 			self.reviews[pr["url"]] = "reviewing..."
 		threading.Thread(target=run, daemon=True).start()
 
+	def start_self_review(self, pr):
+		"""Pre-review one of MY PRs. Posts nothing; leaves a path in self_reviews for the UI to open."""
+		model = self.model
+		def run():
+			status, dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
+			with self.lock:
+				self.reviews[pr["url"]] = status
+				if dest:
+					self.self_reviews[pr["url"]] = dest
+			self.wake.set()
+		with self.lock:
+			self.reviews[pr["url"]] = "pre-reviewing..."
+		threading.Thread(target=run, daemon=True).start()
+
 	def loop(self):
 		while True:
 			t0, self.fetching = time.time(), True
@@ -79,7 +104,7 @@ class State:
 			with self.lock:
 				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
-					if self.reviews.get(u) != "reviewing...":
+					if not in_flight(self.reviews.get(u, "")):
 						self.reviews.pop(u, None)
 				new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
