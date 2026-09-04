@@ -319,3 +319,31 @@ def test_both_paths_build_the_prompt_the_same_way(monkeypatch, tmp_path):
 	review_mod.self_review(pr, "opus")
 	assert len(seen) == 2
 	assert seen[0][:3] == seen[1][:3] == ("acme/api", 7, "opus")   # same builder, same inputs
+
+
+def test_a_pre_review_is_found_again_by_name_after_a_restart(monkeypatch, tmp_path):
+	"""It was an in-memory dict, so restarting gitdashy left every file on disk unreachable.
+
+	`p` would then silently run a new one over a review already sitting there.
+	"""
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
+	assert review_mod.self_review_at("acme/api", 7) == 0.0        # nothing yet
+	path = review_mod.self_review_path("acme/api", 7)
+	assert os.path.basename(path) == "acme__api__7.md"            # deterministic, so nothing is remembered
+	os.makedirs(tmp_path, exist_ok=True)
+	open(path, "w").write("# a pre-review\n")
+	assert review_mod.self_review_at("acme/api", 7) > 0           # found with no state at all
+	assert review_mod.self_review_path("acme/api", 7) == path
+
+
+def test_self_review_writes_where_the_lookup_looks(monkeypatch, tmp_path):
+	"""The writer and the finder must agree, or the reopen path silently never fires."""
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path / "out"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(review_mod, "_verdict", lambda repo, n, model, prev=None: {
+		"verdict": "comment", "summary": "s", "body": "b", "memory": ""})
+	_status, dest = review_mod.self_review({"repository": {"nameWithOwner": "acme/api"},
+	                                        "number": 7, "url": "u"}, "opus")
+	assert dest == review_mod.self_review_path("acme/api", 7)
+	assert review_mod.self_review_at("acme/api", 7) > 0

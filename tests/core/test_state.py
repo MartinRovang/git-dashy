@@ -1,3 +1,4 @@
+import time
 import os
 
 import pytest
@@ -210,3 +211,33 @@ def test_an_empty_memory_dir_setting_does_not_tar_the_cwd(monkeypatch, tmp_path)
 	(tmp_path / "secret.md").write_text("not memory\n")
 	assert memory.backup("test") == ""
 	assert not os.path.exists(tmp_path / "b")
+
+
+def test_pane_detail_is_refetched_when_the_pr_moves(monkeypatch):
+	"""Keyed by url alone, the pane kept the old branch head and CI result until a restart."""
+	from dashy.core import github as gh
+	calls = []
+	monkeypatch.setattr(gh, "detail", lambda repo, n: calls.append(n) or {"branch": f"head-{len(calls)}"})
+	st = State(60)
+	pr = {"url": "u", "updatedAt": "2026-09-04T09:00:00Z", "number": 7,
+	      "repository": {"nameWithOwner": "acme/api"}}
+
+	assert st.want_detail(pr) is None                       # first ask starts a fetch
+    # the thread is the only async part; wait for it rather than sleeping a fixed time
+	for _ in range(400):
+		if st.want_detail(pr):
+			break
+		time.sleep(0.005)
+	assert st.want_detail(pr) == {"branch": "head-1"}
+	st.want_detail(pr)
+	assert len(calls) == 1                                   # cached while the PR has not moved
+
+	moved = dict(pr, updatedAt="2026-09-04T10:00:00Z")
+	assert st.want_detail(moved) is None                     # it moved, so it is fetched again
+	for _ in range(400):
+		if st.want_detail(moved):
+			break
+		time.sleep(0.005)
+	assert st.want_detail(moved) == {"branch": "head-2"}
+	assert len(calls) == 2
+	assert len(st.details) == 1                              # and the stale revision is not kept

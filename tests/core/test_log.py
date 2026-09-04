@@ -43,6 +43,19 @@ def test_mark_rereviews_flags_updated_logged_prs_only():
 	assert old["prev"] == "↻ re-review · was ✓ approved" and "prev" not in same and "prev" not in fresh
 
 
+def test_findings_are_kept_but_never_trusted():
+	from dashy.core.log import findings
+	good = {"findings": [{"kind": "Blocking", "loc": "keymap.ts:88", "text": "duplicate  binding\nnot detected"},
+	                     {"kind": "nit", "text": "no loc is fine"}]}
+	assert findings(good) == [
+		{"kind": "blocking", "loc": "keymap.ts:88", "text": "duplicate binding not detected"},
+		{"kind": "nit", "loc": "", "text": "no loc is fine"}]
+	assert findings({}) == []  # a review from before the field existed
+	assert findings({"findings": None}) == []
+	assert findings({"findings": ["a string", {"kind": "bogus", "text": "x"}, {"kind": "nit"}, 7]}) == []
+	assert len(findings({"findings": [{"kind": "nit", "text": f"f{i}"} for i in range(40)]})) == 12
+
+
 def test_mark_rereviews_prefers_the_head_commit_over_the_timestamp():
 	log_review(dict(PR, url="c", head="aaa"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")
 	log_review(dict(PR, url="p", head="aaa"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")

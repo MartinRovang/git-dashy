@@ -97,11 +97,27 @@ def repoint(path, new, env):
 		if os.path.islink(path):
 			os.remove(path)  # only a pointer; there is nothing under it to move
 		elif os.path.isdir(path):
-			for name in os.listdir(path):
-				if not os.path.lexists(os.path.join(new, name)):
+			# ponytail: EVERY collision is found before ANYTHING moves — the same fix adopt() got, and
+			# the same bug. Moving first and refusing after scattered general.md, drafts/ and project.md
+			# into the destination and left this directory a stub, under a message saying to merge them
+			# by hand as though nothing had happened. Pointing memory at an existing repo — a corpus,
+			# a notes repo — is the normal way to hit it, because both ends have a .git.
+			clash = [n for n in sorted(os.listdir(path)) if os.path.lexists(os.path.join(new, n))]
+			if clash:
+				return (f"{', '.join(clash)} exists in both {tilde(path)} and {tilde(new)}; "
+				        f"merge by hand, or pick a directory of its own")
+			moved = []
+			try:
+				for name in sorted(os.listdir(path)):
 					shutil.move(os.path.join(path, name), os.path.join(new, name))
-			if os.listdir(path):  # ponytail: same name on both sides — refuse rather than pick a winner
-				return f"{tilde(path)} still holds files that also exist in {tilde(new)}; merge them by hand"
+					moved.append(name)
+			except OSError as e:
+				for name in reversed(moved):  # ponytail: half-moved is the same loss by a slower route
+					try:
+						shutil.move(os.path.join(new, name), os.path.join(path, name))
+					except OSError:
+						pass
+				return str(e)
 			os.rmdir(path)
 		elif os.path.lexists(path):
 			return f"{tilde(path)} exists and is not a directory"

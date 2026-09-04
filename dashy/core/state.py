@@ -39,14 +39,47 @@ class State:
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
-		self.self_reviews = {}  # url -> path of a pre-review on disk, so `p` can reopen it
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
+		# ponytail: main's persisted settings win over the branch's hardcoded defaults — config.WINDOW
+		# and friends came later and are the whole point of the settings file.
 		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
+		self.details, self.detailing = {}, set()  # url -> detail dict, and the ones in flight
+		self.pane = True  # the detail pane, toggled with ⏎
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False
 		self.known = None  # urls wanted from me at the last fetch; None until the first fetch lands
+
+	def want_detail(self, pr):
+		# ponytail: keyed by (url, updatedAt), not url. A PR that moved has a different branch head, diff
+		# size and CI result, and the pane kept showing the old ones until a restart — the same staleness
+		# the pre-review path had, for the same reason: caching what changes as though it does not.
+		"""The selected PR's detail, or None while it is being fetched.
+
+		ponytail: fetched once per PR, off the draw thread. draw() runs 20 times a second — anything that
+		talks to the network from there would stutter the whole dashboard on every keypress.
+		"""
+		if pr is None:
+			return None
+		key = (pr["url"], pr.get("updatedAt", ""))
+		with self.lock:
+			if key in self.details:
+				return self.details[key]
+			if key in self.detailing:
+				return None
+			self.detailing.add(key)
+		def run():
+			got = github.detail(pr["repository"]["nameWithOwner"], pr["number"])
+			with self.lock:
+				# ponytail: drop what we knew about this PR at any other revision, so the cache cannot
+				# grow one entry per push for a branch someone is iterating on.
+				for k in [k for k in self.details if k[0] == key[0]]:
+					del self.details[k]
+				self.details[key] = got
+				self.detailing.discard(key)
+		threading.Thread(target=run, daemon=True).start()
+		return None
 
 	def set_auto(self, on, include_existing=False):
 		"""include_existing: review what is already listed too, not just what shows up later."""
@@ -76,14 +109,12 @@ class State:
 		threading.Thread(target=run, daemon=True).start()
 
 	def start_self_review(self, pr):
-		"""Pre-review one of MY PRs. Posts nothing; leaves a path in self_reviews for the UI to open."""
+		"""Pre-review one of MY PRs. Posts nothing; the file it writes is found again by its name."""
 		model = self.model
 		def run():
-			status, dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
+			status, _dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
 			with self.lock:
-				self.reviews[pr["url"]] = status
-				if dest:
-					self.self_reviews[pr["url"]] = dest
+				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
 			self.wake.set()
 		with self.lock:
 			self.reviews[pr["url"]] = "pre-reviewing..."

@@ -1,3 +1,5 @@
+import os
+import re
 import time
 
 import pytest
@@ -22,13 +24,19 @@ def test_draw_renders_sections_status_and_selection(screen):
 	sel, cur = ui.draw(screen, st, 1)
 	out = screen.text()
 	assert sel == 1 and cur["url"] == "r"
-	assert "2 PRs" in out and "MINE (1)" in out and "ASSIGNED (!)" in out and "boom" in out
-	assert "▸" in out and "b#8" in out and "draft" in out and "✓ approved" in out
-	assert "ci✗" in screen.line(5) and "ci" not in screen.line(8)  # the CI chip only on rows that have checks
+	assert "2 PRs" in out and "MINE" in out and "1 open" in out and "assigned" in out and "boom" in out
+	assert "AGE" in out and "REPO" in out and "TITLE" in out and "STATE" in out  # the column header
+	assert "▌" in out and "#8" in out and "draft" in out and "✓ approved" in out
+	# ponytail: main's CI chip, kept — it landed in #9 while this grid was being rebuilt. Found by
+	# searching the rendered rows rather than by line number, which the column header shifted.
+	rows = [screen.line(y) for y in range(4, screen.h - 2)]
+	assert any("ci✗" in r for r in rows), "a row with failing checks shows the chip"
+	assert any(r.strip() and "ci" not in r for r in rows), "a row without checks does not"
 	assert "gitdashy v" + ui.VERSION in out and "next refresh" in out
-	assert "Reviewer   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
+	assert "Agent   Model " + st.model in out and "Depth " + config.DEPTH in out and "View   Summaries all" in out and "Drafts shown" in out
 	assert "Session  ✓ 1   ✗ 0   ~ 0   ! 0" in out
-	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() == "" and "MINE (1)" in screen.line(4)
+	assert screen.line(2).startswith("▀▀▀") and screen.line(3).strip() in ("", "│")
+	assert "AGE" in screen.line(4) and "MINE" in screen.line(5)
 
 
 def test_draw_clamps_selection_and_handles_empty(screen):
@@ -45,14 +53,28 @@ def test_draw_clamps_selection_and_handles_empty(screen):
 def test_draw_survives_tiny_terminals(screen):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [dict(PR)], None), ("REVIEWED", [], None)], time.time()
-	for h in range(1, 12):
-		for w in range(1, 40):
+	# ponytail: the sweep stopped at w=40, so it never reached PANE_MIN and never drew the pane at all —
+	# which is why a crash on every terminal under 16 rows wide enough for one got through. It has to
+	# cover the widths where the pane turns on, with a detail and a review present to fill it.
+	st.details[(dict(PR)["url"], dict(PR)["updatedAt"])] = {
+		"branch": "feat/x", "add": 4, "del": 2, "files": 3,
+		"checks": [{"name": f"c{i}", "state": "ok"} for i in range(9)]}
+	# ponytail: a review with a SUMMARY AND NO FINDINGS — every entry written before the findings field
+	# existed, so the common case. The findings loop bounds itself; the summary fallback did not, and a
+	# sweep over a PR with no review at all could never reach either.
+	log.log_review(dict(PR), "opus", {"verdict": "approve", "body": "b",
+	                                  "summary": "a summary long enough to wrap onto a second line here"})
+	for h in range(1, 20):
+		for w in list(range(1, 40)) + list(range(140, 240, 6)):
 			screen.h, screen.w = h, w
 			sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
 			assert sel == 0 and cur["url"] == "u"
-	screen.h, screen.w = 6, 120
+	# ponytail: 7, not 6 — the footer is two rows now, so the shortest terminal that still shows a row
+	# is one taller than it was. Below h=5 draw() bails entirely rather than fault.
+	screen.h, screen.w = 7, 120
 	ui.draw(screen, st, 0)
-	assert "▸" in screen.text() and "b#" in screen.line(4)  # one list row: the selected PR
+	# a short terminal drops the column header rather than the row it describes
+	assert "▌" in screen.text() and "b" in screen.line(4) and "AGE" not in screen.text()
 
 
 def test_draw_prompt_replaces_footer(screen):
@@ -65,7 +87,7 @@ def test_draw_truncates_long_title_on_narrow_screen(screen):
 	screen.w = 40
 	st = State(60)
 	st.sections = [("MINE", [dict(PR, title="x" * 200), dict(PR, url="v", title="y" * 200)], None)]
-	ui.draw(screen, st, 1)  # must not raise; the unselected row clips, the selected one scrolls
+	ui.draw(screen, st, 1, now=1000.0)  # ponytail: a fixed clock — the marquee made this ~1-in-3 flaky
 	out = screen.text()
 	assert "xxxxx…" in out and "yyyyy…" not in out and "yyyyy" in out
 
@@ -177,7 +199,8 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 	out = row1(240)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
 	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
-	assert out.index("Reviewer") < out.index("View") < out.index("Knowledge")
+	assert "Agent" in out
+	assert out.index("Agent") < out.index("View") < out.index("Knowledge")
 	out = row1(225)
 	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
 	out = row1(200)
@@ -185,7 +208,7 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 	out = row1(160)
 	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
 	out = row1(120)
-	assert "☰ Reviewer" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
+	assert "☰ Agent" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
 	assert ui.ANCHORS["m"] == ui.ANCHORS["R"] and ui.ANCHORS["t"] == ui.ANCHORS["V"]  # folded keys hang from the chip
 	assert ui.ANCHORS["L"] == ui.ANCHORS["T"] == ui.ANCHORS["K"]
 	out = row1(80)
@@ -205,7 +228,7 @@ def test_settings_menu_opens_a_group(screen):
 		return [ord("j"), 10, 27, 27][len(seen) - 1]  # to View, open it, back to Settings, close
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.settings_menu(screen, st, 0)
-	assert "▸ Reviewer ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
+	assert "▸ Agent ▸" in seen[0] and "  View ▸" in seen[0] and "Settings:  j/k move" in seen[0]
 	assert "Summaries   all" in seen[2] and "View:  j/k move" in seen[2]
 	assert "▸ View ▸" in seen[3] and "Settings:  j/k move" in seen[3]
 
@@ -222,9 +245,9 @@ def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.group_menu(screen, st, 0, "R")
 	assert config.DEPTH == "low"
-	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Reviewer:  j/k move" in seen[0]
+	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
 	assert "▸ adaptive" in seen[2] and "Depth:  j/k or d move" in seen[2]
-	assert "Depth    low" in seen[4] and "Reviewer:  j/k move" in seen[4]  # back in the group with the new value
+	assert "Depth    low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
 
 
 def test_group_menu_toggles_drafts(screen):
@@ -539,3 +562,263 @@ def test_any_in_flight_verb_counts_as_running(monkeypatch):
 	ui.C = lambda n: 0
 	ui.draw(scr, st, 0)
 	assert "1 agent" in scr.text() or "1 running" in scr.text() or "pre-reviewing" in scr.text()
+
+
+def test_the_pane_shows_the_selected_pr_and_folds_away(screen, monkeypatch):
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	pr = dict(PR, number=949, title="feat(viewer): user-customisable keyboard shortcuts", url="u949")
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	# ponytail: keyed by (url, updatedAt) now — a PR that moved has a different branch head, diff size
+	# and CI result, and keying on the url alone kept showing the old ones until a restart.
+	st.details[("u949", pr["updatedAt"])] = {"branch": "feat/kb", "add": 412, "del": 96, "files": 14,
+	                                         "checks": [{"name": "ci", "state": "ok"}, {"name": "e2e", "state": "run"}]}
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "SELECTED PR" in out and "#949" in out and "feat/kb" in out
+	assert "+412" in out and "−96" in out and "14 files" in out
+	assert "CHECKS" in out and "✓ ci" in out and "~ e2e" in out
+	assert "ACTIONS" in out and "open in browser" in out
+	st.pane = False
+	ui.draw(screen, st, 0)
+	assert "SELECTED PR" not in screen.text()  # ⏎ folds it away and the list takes the width
+
+
+def test_the_pane_never_appears_on_a_narrow_terminal(screen):
+	screen.w, screen.h = 120, 26
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR)], None)], time.time()
+	ui.draw(screen, st, 0)
+	assert "SELECTED PR" not in screen.text()  # the list wins where there is not room for both
+
+
+def test_the_pane_draws_a_review_it_has_findings_for(screen):
+	screen.w, screen.h = 190, 30
+	st = State(60)
+	pr = dict(PR, url="u1", review={"verdict": "request_changes", "model": "opus", "depth": "high",
+	                                "summary": "adds a retry loop",
+	                                "findings": [{"kind": "blocking", "loc": "keymap.ts:88", "text": "duplicate binding"},
+	                                             {"kind": "nit", "loc": "", "text": "table misaligned"}]})
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details["u1"] = {}
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "AI REVIEW" in out and "changes requested" in out
+	assert "1 blocking" in out and "1 nit" in out
+	assert "keymap.ts:88  duplicate binding" in out
+
+
+def test_the_pane_says_so_when_nothing_is_selected(screen):
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	ui.draw(screen, st, 0)
+	assert "no row selected" in screen.text()
+
+
+def test_a_clipped_cell_keeps_its_ellipsis(screen):
+	"""The grid measured the ellipsis against the column's nominal width and clipped the write after.
+
+	So on a narrow terminal the "…" was the character that got cut, and the text ended mid-word with
+	nothing saying it continued.
+	"""
+	screen.w = 40
+	st = State(60)
+	# ponytail: two rows, and the UNSELECTED one is the subject — a selected row marquees rather than
+	# clipping, so asserting on it would be asserting on what time it is.
+	st.sections = [("MINE", [dict(PR, title="x" * 200), dict(PR, url="v", title="y" * 200)], None)]
+	ui.draw(screen, st, 1, now=1000.0)
+	body = "\n".join(screen.line(y) for y in range(screen.h))
+	assert "…" in body, "a truncated cell must say so"
+	assert "xxxxx" in body
+
+
+def test_reviewer_chips_survive_the_grid(screen):
+	"""They arrived after the design was drawn and it has no column for them."""
+	st = State(60)
+	st.sections = [("MINE", [dict(PR, reviewers="✓bob ·alice")], None)]
+	ui.draw(screen, st, 0)
+	body = "\n".join(screen.line(y) for y in range(screen.h))
+	assert "✓bob" in body and "·alice" in body
+
+
+def test_the_footer_tells_you_the_keys_that_moved(screen):
+	"""⏎ is the pane now, r is review, f is refresh. Three keys changed meaning, so the footer must say so.
+
+	Behavioural rather than a getsource check: what matters is that a user reads the new binding, not
+	that the handler is spelled a particular way. A source assertion passes on code that never runs.
+	"""
+	st = State(60)
+	st.sections = [("MINE", [dict(PR)], None)]
+	ui.draw(screen, st, 0)
+	foot = screen.line(screen.h - 2) + " " + screen.line(screen.h - 1)  # two rows, as the design draws it
+	assert "⏎ pane" in foot and "r review" in foot and "f refresh" in foot
+	assert "⏎ review" not in foot and "r refresh" not in foot   # the old meanings are gone from the footer
+
+
+def test_the_footer_wraps_into_two_rows_and_never_cuts_a_key(screen):
+	"""The design puts the keys on two rows in columns. Wrapping keeps them all on screen; the earlier
+	one-row version dropped whole groups, so `f refresh` and `q quit` were invisible at any normal width.
+
+	A key that fits on neither line is dropped WHOLE — a truncated key name is worse than a missing one,
+	because it still reads as an instruction.
+	"""
+	st = State(60)
+	st.sections = [("MINE", [dict(PR)], None)]
+	for w in (165, 120, 100, 80, 60):
+		screen.w = w
+		ui.draw(screen, st, 0, now=1000.0)
+		rows = [screen.line(screen.h - 2).replace("│", " "), screen.line(screen.h - 1).replace("│", " ")]
+		for r in rows:
+			assert not r.rstrip().endswith("·"), f"w={w}: ends mid-list"
+			for frag in ("pre-rev", "refres", "interva", "updat"):
+				bad = [t for t in r.split() if t.startswith(frag) and t not in ("pre-review", "refresh", "interval", "update")]
+				assert not bad, f"w={w}: key cut mid-word: {bad}"
+		assert "NAV" in rows[0]
+	screen.w = 165
+	ui.draw(screen, st, 0, now=1000.0)
+	both = screen.line(screen.h - 2) + " " + screen.line(screen.h - 1)
+	assert all(g in both for g in ("NAV", "RUN", "CONFIG", "APP"))  # nothing dropped when there is room
+	assert "│" in screen.line(screen.h - 2)                          # a rule between columns
+
+
+def _pr_at(iso="2026-09-04T09:00:00Z", **kw):
+	return dict(PR, updatedAt=iso, repository={"nameWithOwner": "acme/api", "name": "api"}, number=7, **kw)
+
+
+def test_pre_review_offers_reads_and_reruns(monkeypatch, screen, tmp_path):
+	"""This handler shipped calling a module screen.py does not import and crashed on the first keypress.
+
+	It was eight lines inside main()'s key loop, where no test could reach it — which is exactly what
+	#8's review said about it. It is a function now, and this drives all four of its paths.
+	"""
+	from dashy.core import review as review_mod
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
+	st = State(60)
+	started, paged, asked = [], [], []
+	monkeypatch.setattr(State, "start_self_review", lambda self, pr: started.append(pr["number"]))
+	monkeypatch.setattr(ui, "page", lambda *a: paged.append((a[3], a[4])))  # (path, label)
+	monkeypatch.setattr(ui, "confirm", lambda s, st_, sel, msg: asked.append(msg) or True)
+
+	# 1. nothing on disk -> offers, and running is what happens
+	ui.pre_review(screen, st, 0, _pr_at())
+	assert started == [7] and paged == [] and "Nothing is posted" in asked[0]
+
+	# 2. a pre-review that still describes this diff -> read it back, do not re-run
+	path = review_mod.self_review_path("acme/api", 7)
+	open(path, "w").write("# pre-review\n")
+	os.utime(path, (4e9, 4e9))  # ponytail: mtime AFTER the PR's updatedAt, or it reads as stale
+	ui.pre_review(screen, st, 0, _pr_at("2026-09-04T09:00:00Z"))
+	assert started == [7] and len(paged) == 1
+	assert paged[0] == (path, "pre-review of #7")   # the file it wrote, found again by name
+
+	# 3. the PR moved since -> offer a fresh one, and say why
+	ui.pre_review(screen, st, 0, _pr_at("2099-01-01T00:00:00Z"))
+	assert started == [7, 7] and "changed since its pre-review" in asked[-1]
+
+	# 4. already in flight -> do nothing at all
+	st.reviews[_pr_at()["url"]] = "pre-reviewing..."
+	ui.pre_review(screen, st, 0, _pr_at())
+	assert started == [7, 7] and len(paged) == 1
+
+
+def test_reviewer_chips_get_their_own_column_and_their_own_colours(screen, monkeypatch):
+	"""Folded into the state cell they took the state's colour — and state is the LAST column, so at any
+	real width they were pushed off the right edge and never appeared at all.
+
+	This also pins COLS against cells: zip() drops a cell silently when the two disagree, and that pair
+	has now been wrong in each direction — 7 cells with 6 columns, then 7 columns with 6 cells.
+	"""
+	painted = []
+	real = screen.addnstr
+	monkeypatch.setattr(screen, "addnstr", lambda y, x, s, n, a=0: painted.append((s.rstrip(), a)) or real(y, x, s, n, a))
+	monkeypatch.setattr(ui, "C", lambda k: k)          # colour pair number, so chips are distinguishable
+	ui.REVIEWER_COLOR.clear()
+	ui.REVIEWER_COLOR.update({"✓": 4, "✗": 3, "·": 5, "~": 1})
+	screen.w = 150
+	st = State(60)
+	# ponytail: two rows, asserting on the UNSELECTED one — a selected row paints everything in the
+	# selection tint on purpose, so its chips share a colour by design rather than by the bug.
+	st.sections = [("MINE", [dict(PR, url="u1"), dict(PR, url="u2", reviewers="✓bob ✗carol",
+	                                                  status="✓ approved")], None)]
+	ui.draw(screen, st, 0, now=1000.0)
+
+	chips = {s: a for s, a in painted if s in ("✓bob", "✗carol")}
+	assert set(chips) == {"✓bob", "✗carol"}, "every chip that fits must be painted"
+	assert len(set(chips.values())) == 2, "each glyph keeps its own colour, not the state's"
+	assert "REVIEWERS" in screen.text()
+
+	# more reviewers than the column holds: the overflow is elided, never half a name
+	painted.clear()
+	st.sections = [("MINE", [dict(PR, url="u1"), dict(PR, url="u3", reviewers="✓bob ✗carol ·dave",
+	                                                  status="✓ approved")], None)]
+	ui.draw(screen, st, 0, now=1000.0)
+	assert "…" in screen.text()
+	assert not [s for s, _ in painted if s.startswith("·dav") and s != "·dave"]
+
+
+def test_cells_and_cols_stay_the_same_length(screen):
+	"""zip() truncates in silence, and that is exactly how the status ended up under REVIEWERS."""
+	st = State(60)
+	st.sections = [("MINE", [dict(PR, reviewers="✓bob")], None)]
+	ui.draw(screen, st, 0, now=1000.0)   # the assert lives in draw(); this fails loudly if they diverge
+	assert len(ui.COLS) == 8   # age repo pr title author reviewers ci state
+
+
+def test_a_finding_shows_its_text_not_mostly_its_path(screen):
+	"""A full path is most of a pane on its own, so the finding itself was the half that got truncated.
+
+	The directory is recoverable from the file name; what the review actually said is not.
+	"""
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	pr = dict(PR, url="u9", number=966)
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details[("u9", pr["updatedAt"])] = {"branch": "feat/library", "add": 214, "del": 138, "files": 25}
+	# ponytail: findings are a structured field, not parsed out of the body prose
+	log.log_review(pr, "opus", {"verdict": "comment", "summary": "s", "body": "b", "findings": [
+		{"kind": "note", "loc": "features/library/ui/LibraryLanding.tsx:19",
+		 "text": "Count is derived on the client and can disagree with the API"}]})
+	ui.draw(screen, st, 0, now=1000.0)
+	out = screen.text()
+
+	assert "LibraryLanding.tsx:19" in out                       # the file, short
+	assert "features/library/ui/LibraryLanding" not in out      # not the whole path
+	assert "Count is derived" in out                            # and the finding itself is readable
+	assert "v read all" in out                                  # with a way to open the whole review
+
+
+def test_v_reads_the_review_from_any_row_that_has_one(screen, monkeypatch):
+	"""The pane summarises findings for the selected PR whatever section it is in, so the key that
+	opens the whole thing has to reach as far as the summary does — it was REVIEWED-only."""
+	pr = dict(PR, url="u10", number=970, section="MINE")
+	log.log_review(pr, "opus", {"verdict": "approve", "summary": "s", "body": "b",
+	                            "findings": [{"kind": "nit", "loc": "a.ts:1", "text": "x"}]})
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	screen.w, screen.h = 190, 26
+	ui.draw(screen, st, 0, now=1000.0)
+	assert "read the full review" in screen.text()   # offered on a MINE row, not just REVIEWED
+
+
+def test_the_pane_never_writes_over_the_footer_or_off_the_screen(screen):
+	"""Two writes bypassed line() — the summary fallback and the model tag — so a review with a summary
+	and NO findings walked past the last list row.
+
+	That is every entry written before the findings field existed, so the common case rather than an
+	edge one. The findings loop bounds itself, which is why the case with findings looked fine.
+	At h=16 the stray write lands ON screen and overprints the footer; taller and it goes off it.
+	"""
+	st = State(60)
+	pr = dict(PR, url="uS")
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details[("uS", pr["updatedAt"])] = {"branch": "feat/x", "add": 4, "del": 2, "files": 3,
+	                                       "checks": [{"name": f"check-{i}", "state": "ok"} for i in range(9)]}
+	log.log_review(pr, "opus", {"verdict": "approve", "body": "b",
+	                            "summary": " ".join(["a summary long enough to wrap several times"] * 6)})
+	for h in (16, 17, 18, 20, 24):
+		screen.h, screen.w = h, 190
+		ui.draw(screen, st, 0, now=1000.0)          # must not raise
+		foot = screen.line(h - 2) + screen.line(h - 1)
+		assert "NAV" in foot, f"h={h}: the footer was overwritten by the pane"
+		assert "summary long enough" not in foot, f"h={h}: pane text landed on the footer"

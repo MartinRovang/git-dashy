@@ -10,13 +10,12 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, knowledge, log, memory, team, update
+from ..core import github, knowledge, log, memory, review as review_mod, team, update
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  y copy url  + reviewer  p pre-review  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  esc menu  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -40,6 +39,11 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(20, 255, curses.COLOR_BLACK, 240, curses.COLOR_WHITE),  # group label chip on bar 2: light grey, so it does not compete with the app badge
 	(21, 233, curses.COLOR_BLACK, -1, -1),         # header fade: ▀ in a darker grey over the terminal bg
 	(22, 75, curses.COLOR_CYAN, 235, curses.COLOR_BLACK),    # cyan on bar 2 (Session label)
+	(23, 176, curses.COLOR_MAGENTA, -1, -1),       # the agent itself: its role, and the keys that drive it
+	(24, 73, curses.COLOR_CYAN, -1, -1),           # a PR number
+	(25, 238, curses.COLOR_BLACK, -1, -1),         # rules and separators, one step above the background
+	(26, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # the selected row: a tint, not reverse video
+	(27, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # dim on the selected row
 ]
 # ponytail: a theme swaps the 256-colour values above, nothing else. Keys are the accents (cyan, red, green, yellow,
 # blue) and the bar greys; anything not listed keeps the default. New theme = one more line.
@@ -49,6 +53,22 @@ THEMES = {
 	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243},
 	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60},
 }
+
+# age, repo, pr, author and state are fixed; the title takes what is left. Mirrors the design's grid.
+# ponytail: reviewers has a column of its own. Folded into the state cell they all took the state's
+# colour, and state is the LAST column — so at any real width they were pushed off the right edge
+# and never appeared at all. zip(COLS, cells) also silently drops a cell when the two disagree.
+COLS = ((4, "age"), (18, "repo"), (5, "pr"), (0, "title"), (12, "author"), (14, "reviewers"),
+        (4, "ci"), (20, "state"))
+PANE = 62  # columns the detail pane wants
+PANE_MIN = 150  # total width below which there is no room for it and the list gets everything
+PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than the four rows
+# ponytail: the design labels these ⏎ pane / r review, and that is now what they do. The branch had
+# declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
+# shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
+# used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
+KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · a auto · Z dream"),
+        ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -84,6 +104,9 @@ def header_groups(state):
 	def row(k):
 		label, _, current, _, show = st[k]
 		return (k, label, show(current), None)
+	# ponytail: "Agent" rather than "Reviewer" — the group is what drives the model, and reviewing is
+	# only what it happens to be doing. The design's "role reviewer" is left out on purpose: there is
+	# one role, so it would be a label dressed as a control.
 	reviewer = [row("m"), row("d"), row("e")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
@@ -92,7 +115,7 @@ def header_groups(state):
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
 		know.append(("C", "Store", knowledge.show(config.TEAM), None))
-	return [("Reviewer", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
+	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
 def init_colors():
@@ -108,7 +131,7 @@ def init_colors():
 def splash(scr, h, w, spin):
 	"""ponytail: centred one-liners, clipped by addnstr — no layout engine."""
 	def mid(y, t, attr):
-		if 4 <= y < h - 1:
+		if 4 <= y < h - 2:
 			scr.addnstr(y, max(0, (w - len(t)) // 2), t, w - 1, attr)
 	logo = w >= art.LOGO_W + 2 and h >= 8 + len(art.LOGO)
 	y0 = h // 2 - (4 + (len(art.LOGO) + 1 if logo else 0)) // 2
@@ -122,41 +145,75 @@ def splash(scr, h, w, spin):
 REVIEWER_COLOR = {}  # glyph -> colour pair, filled after init_colors: ✓ green, ✗ red, · pending yellow, ~ dim
 
 
-def draw(scr, state, sel, prompt=None):
+def _wrap_keys(keys, room):
+	"""Fit "a · b · c" into two lines of `room`, breaking only at a separator. Returns (first, second).
+
+	ponytail: BOTH lines are fitted here. Slicing the second one at the call site cut it mid-key —
+	"p pre-review · a au" — which is the specific thing wrapping instead of dropping was meant to avoid.
+	A key that fits on neither line is dropped whole; a truncated key name is worse than a missing one,
+	because it still looks like an instruction.
+	"""
+	parts = [p for p in keys.split(" · ") if p]
+	lines, line = [], ""
+	for part in parts:
+		nxt = part if not line else f"{line} · {part}"
+		if len(nxt) <= room:
+			line = nxt
+			continue
+		lines.append(line)
+		line = part if len(part) <= room else ""
+		if len(lines) == 2:
+			break
+	if line and len(lines) < 2:
+		lines.append(line)
+	return (lines + ["", ""])[:2]
+
+
+def draw(scr, state, sel, prompt=None, now=None):
+	"""ponytail: `now` is a seam, not a feature. Everything animated here reads the clock — the spinner
+	frame, the refresh countdown, the marquee offset — so a test that asserts on a rendered row is
+	asserting on what time it happens to be. That is why test_draw_truncates_long_title_on_narrow_screen
+	has been failing about one run in three. Pass a fixed `now` and the frame is decided."""
 	if not REVIEWER_COLOR:
 		REVIEWER_COLOR.update({"✓": C(4), "✗": C(3), "·": C(5), "~": C(1)})
 	scr.erase()
 	ANCHORS.clear()  # stale anchors would hang a dropdown from a chip that is no longer drawn
+	now = time.time() if now is None else now
 	SCROLLING[0] = False
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
 	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
+	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
+		rs = [r for r in rs if r[0] != "cols"]
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
 	sel = max(0, min(sel, len(prs) - 1)) if prs else 0
 	cur = prs[sel] if prs else -1
 	# ponytail: naive scroll keeps the selected row on screen, no smooth scrolling
-	top = max(0, cur - max(0, h - 7)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 2)
-	all_prs = [p for k, p in rs if k == "pr"]
-	one_owner = len({p["repository"]["nameWithOwner"].split("/")[0] for p in all_prs}) == 1
-	def refof(p):  # ponytail: hide the org when every PR shares it
-		return f"{p['repository']['name'] if one_owner else p['repository']['nameWithOwner']}#{p['number']}"
-	ref_w = max([len(refof(p)) for p in all_prs] + [10])
-	auth_w = max([len(p.get("author", {}).get("login", "")) for p in all_prs] + [4])
+	top = max(0, cur - max(0, h - 8)) if cur >= 0 else 0  # keeps the selected row one above the last list row (h - 3)
+	current = rs[cur][1] if cur >= 0 else None
+	# ponytail: the pane only exists where there is room for it AND the list still. Below that the list
+	# wins, because a dashboard you cannot read the rows of is not improved by a panel beside them.
+	# ponytail: height as well as width. A pane needs rows to be worth anything, and gating on width
+	# alone put one beside a four-row list. Belt and braces with line()'s own bound: this decides
+	# whether a pane makes sense, that one guarantees it cannot fault if the decision is ever wrong.
+	pane_w = PANE if getattr(state, "pane", True) and w >= PANE_MIN and h >= PANE_MIN_H else 0
+	lw = w - pane_w
+	title_w = max(12, lw - 2 - sum(c for c, _ in COLS if c) - len(COLS))
 
-	if h < 4 or w < 8:  # ponytail: the header alone needs three rows plus the footer; draw nothing rather than fault
+	if h < 5 or w < 8:  # ponytail: three header rows plus a TWO-row footer; draw nothing rather than fault
 		scr.noutrefresh()
 		return sel, (rs[cur][1] if cur >= 0 else None)
 
 	# header: primary row = identity + live state, secondary row = settings grouped by what they steer,
 	# then a half-block fade row and a blank one so the list starts under a soft edge with some air
 	total = sum(len(p) for _, p, _ in sections if p)
-	spin = art.SPINNER[int(time.time() * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
-	rspin = art.REFRESH_SPINNER[int(time.time() * 10) % len(art.REFRESH_SPINNER)]  # 10fps under the 20fps tick: every frame lands on a redraw
+	spin = art.SPINNER[int(now * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
+	rspin = art.REFRESH_SPINNER[int(now * 10) % len(art.REFRESH_SPINNER)]  # 10fps under the 20fps tick: every frame lands on a redraw
 	ago = None if fetched_at is None else age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())
 	status = f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
 	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
-		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
+		f"next refresh {max(0, int(fetched_at + state.interval - now))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
 	running = sum(1 for v in vals if in_flight(v))  # ponytail: any verb, so a pre-review counts
 	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
@@ -254,81 +311,256 @@ def draw(scr, state, sel, prompt=None):
 
 	for y, (kind, payload) in enumerate(rs[top:top + max(0, h - 5)], start=4):
 		i = top + y - 4
-		if kind == "head":
-			name, count = payload.rsplit(" (", 1)
-			scr.addnstr(y, 1, name, w - 2, C(2) | curses.A_BOLD)
-			scr.addnstr(y, min(w - 2, 1 + len(name)), f" ({count}", max(1, w - 2 - len(name)), C(1))
+		if kind == "cols":
+			x = 1
+			for width_, name in COLS:
+				room = title_w if width_ == 0 else width_
+				if x + room > lw:
+					break
+				scr.addnstr(y, x, name.upper()[:room], room, C(25))
+				x += room + 1
+		elif kind == "head":
+			label, count, right = payload
+			scr.addnstr(y, 1, label, lw - 2, C(2) | curses.A_BOLD)
+			x = min(lw - 2, 2 + len(label))
+			if count:
+				scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
+				x += len(count) + 1
+			# ponytail: a rule to the right edge, so a heading reads as a band and not a floating word
+			rule = lw - 2 - x - (len(right) + 1 if right else 0)
+			if rule > 2:
+				scr.addnstr(y, x, "─" * rule, rule, C(25))
+			if right and lw - 2 - len(right) > x:
+				scr.addnstr(y, lw - 2 - len(right), right, len(right), C(1))
+		elif kind == "queue":
+			label, count, note_ = payload
+			scr.addnstr(y, 3, label, lw - 4, C(1))
+			x = min(lw - 2, 4 + len(label))
+			scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
+			if lw - 2 > x + 3:
+				scr.addnstr(y, x + 3, note_, lw - 3 - x, C(25))
 		elif kind == "err":
-			scr.addnstr(y, 3, payload, w - 4, C(3))
+			scr.addnstr(y, 3, payload, lw - 4, C(3))
 		elif kind == "empty":
-			scr.addnstr(y, 3, "none", w - 4, C(1))
+			scr.addnstr(y, 3, "none", lw - 4, C(1))
 		elif kind == "sub":
-			x = 11 + ref_w
+			x = 3 + COLS[0][0] + COLS[1][0] + COLS[2][0]
 			t = " ".join(payload.split())
-			room = min(70, w - 1 - x - 2)  # ponytail: hard cap so a wordy model can't clog the list
+			room = min(70, lw - 1 - x - 2)  # ponytail: hard cap so a wordy model can't clog the list
 			if room > 4:
 				scr.addnstr(y, x, "↳ ", 2, C(5))
 				scr.addnstr(y, x + 2, t if len(t) <= room else t[:room - 1] + "…", room, C(1) | curses.A_ITALIC)
 		elif kind == "pr":
 			p = payload
 			is_cur = i == cur
-			base = curses.A_REVERSE if is_cur else 0  # ponytail: reverse video works on any theme
-			ref = refof(p)
-			# ponytail: what THIS session is doing wins over what was fetched. A MINE row always carries a
-			# status from GitHub's review decision, so the old order short-circuited and a pre-review
-			# started, ran and finished without the row ever saying so.
+			# ponytail: a tint plus a left marker, not reverse video — reverse repaints the whole row and
+			# throws away every colour in it, which is most of what tells you what a row is.
+			base, dim = (C(26), C(27)) if is_cur else (0, C(1))
+			if is_cur:
+				scr.addnstr(y, 0, " " * (lw - 1), lw - 1, C(26))
+				scr.addnstr(y, 0, "▌", 1, C(2) | curses.A_BOLD)
+			# ponytail: carried over from main, not the branch's older order — what THIS session is doing
+			# wins over what was fetched, or a pre-review runs to completion with the row never saying so.
 			st = reviews.get(p["url"]) or p.get("status") or p.get("prev", "")
 			if in_flight(st):
 				st = f"{spin} {st[:-3]}…"  # ponytail: same clock-driven frame as the header, any verb
-			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
+			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else \
+				C(3) if st.startswith("✗") else C(5)
+			tag = ("▸+" + str(p["more"])) if p.get("more") else "▾" if p.get("open") else ""
+			cells = [(age(p["updatedAt"]).rjust(COLS[0][0]), dim),
+			         (p["repository"]["name"], dim),
+			         (("#" + str(p["number"])).rjust(COLS[2][0]), C(24)),
+			         (("└ " if p.get("child") else "") + ("draft " if p.get("isDraft") else "") + p["title"],
+			          base | curses.A_BOLD if is_cur else 0),
+			         (p.get("author", {}).get("login", ""), dim),
+			         (p.get("reviewers", ""), dim),   # ponytail: overpainted per chip below, by glyph
+			         # ponytail: CI on the head commit, from #9 — the third feature that landed on main
+			         # while this grid was being rebuilt. A column of its own, like the chips: folding it
+			         # into a neighbour is what made the chips invisible.
+			         (("ci" + p["checks"]) if p.get("checks") else "",
+			          REVIEWER_COLOR.get(p.get("checks", ""), C(5)) | curses.A_BOLD),
+			         (st + ("  " + tag if tag else ""), st_attr | curses.A_BOLD)]
+			assert len(cells) == len(COLS)  # ponytail: zip drops a cell silently when they disagree, and
+			                                # this pair has now been wrong once in each direction
 			x = 1
-			def put(text, attr=0, pad=0):
-				nonlocal x
-				if x < w - 1:
-					scr.addnstr(y, x, text.ljust(pad), w - 1 - x, base if is_cur else attr)  # colour pairs don't OR
-				x += max(len(text), pad)
-			if is_cur:
-				scr.addnstr(y, 0, " " * (w - 1), w - 1, base)
-			put("▸ " if is_cur else "  ", C(5) | curses.A_BOLD)
-			if p.get("child"):
-				put("    └ ", C(1))  # ponytail: fixed indent, tree is only ever one level deep
-			put(age(p["updatedAt"]).rjust(4), C(1))
-			put("  ")
-			put(ref, C(6), ref_w)
-			put("  ")
-			put("draft " if p.get("isDraft") else "", C(5))
-			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
-			ci = p.get("checks", "")  # CI on the head commit: ✓ ✗ ● or nothing
-			revs = p.get("reviewers", "").split()  # "✓bob ·alice": one token per reviewer, coloured by its glyph
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0) - (5 if ci else 0)
-			t = p["title"]
-			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
-				SCROLLING[0] = True
-				put(art.marquee(t, title_w, time.time()), curses.A_BOLD, title_w)
-			else:
-				put(t if len(t) <= title_w else t[:max(0, title_w - 1)] + "…", curses.A_BOLD if is_cur else 0, title_w)
-			put("  ")
-			put(p.get("author", {}).get("login", ""), C(1), auth_w)
-			for r in revs:
-				put(" ")
-				put(r, REVIEWER_COLOR.get(r[0], C(1)) | curses.A_BOLD)
-			if ci:
-				put("  ")
-				put("ci" + ci, REVIEWER_COLOR.get(ci, C(5)) | curses.A_BOLD)
-			if tag:
-				put("  ")
-				put(tag, C(1))
-			if st:
-				put("  ")
-				put(st, st_attr | curses.A_BOLD)
+			for (width_, name), (text, attr) in zip(COLS, cells):
+				room = title_w if width_ == 0 else width_
+				# ponytail: the ellipsis has to be measured against the space actually left, not the
+				# column's nominal width. They differ on a narrow terminal, and the write was clipped
+				# afterwards — so the "…" was the character that got cut, leaving a hard truncation
+				# with nothing to say the text continues.
+				room = min(room, lw - 1 - x)
+				if x >= lw - 1 or room < 1:
+					break
+				# ponytail: the marquee arrived after this grid was designed, so it is carried in rather
+				# than lost — the selected row scrolls its overflowing title, every other row clips.
+				if name == "title" and is_cur and len(text) > room > 4:
+					SCROLLING[0] = True
+					t = art.marquee(text, room, now)
+				else:
+					t = text if len(text) <= room else text[:max(0, room - 1)] + "…"
+				scr.addnstr(y, x, t.ljust(room), room, base if is_cur else attr)
+				if name == "reviewers" and t.strip():
+					# ponytail: the cell is drawn first so layout is decided in one place, then each chip
+					# is overpainted in its own glyph's colour — ✓ green, ✗ red, · pending. That is what
+					# REVIEWER_COLOR is for, and it sat populated and unused once the chips moved here.
+					cx = x
+					for chip in t.split():
+						if x + room - cx < len(chip):
+							break
+						scr.addnstr(y, cx, chip, len(chip),
+						            base if is_cur else REVIEWER_COLOR.get(chip[0], C(1)) | curses.A_BOLD)
+						cx += len(chip) + 1
+				x += (title_w if width_ == 0 else width_) + 1
 
-	foot = prompt or FOOTER
-	scr.addnstr(h - 1, 0, " " * (w - 1), w - 1, C(7))
-	scr.addnstr(h - 1, 0, foot, w - 1, (C(8) | curses.A_BOLD) if prompt else C(7))
-	# ponytail: no refresh here — getch() flushes the frame, and a popup/panel drawn on top flushes once with it.
-	# refreshing here too pushed a popup-less frame every tick, which is what stuttered the dropdowns.
+	if pane_w:
+		detail(scr, state, h, w - pane_w, pane_w, current)
+
+	for fy in (h - 2, h - 1):
+		scr.addnstr(fy, 0, " " * (w - 1), w - 1, C(7))
+	if prompt:
+		scr.addnstr(h - 1, 0, prompt, w - 1, C(8) | curses.A_BOLD)
+	else:
+		# ponytail: TWO rows, in columns, wrapping — the design's shape. One row meant dropping whole
+		# groups from the right, so `f refresh` and `q quit` were invisible on any normal terminal.
+		# Wrapping keeps every key on screen; a column too narrow for its own label is what gets dropped.
+		col = max(18, (w - 2) // len(KEYS))
+		x = 1
+		for i, (label, keys) in enumerate(KEYS):
+			if x + col > w - 1:
+				break
+			if i:  # ponytail: a rule between columns, spanning both rows, as the design draws it
+				for fy in (h - 2, h - 1):
+					scr.addnstr(fy, x - 1, "│", 1, C(25))
+			scr.addnstr(h - 2, x, label.upper(), min(len(label), w - 1 - x), C(9))
+			room = col - len(label) - 3  # ponytail: -3 not -2, so a full-width cell keeps a gap before the rule
+			line, rest = _wrap_keys(keys, room)
+			scr.addnstr(h - 2, x + len(label) + 1, line, max(1, min(len(line), w - 1 - x - len(label) - 1)), C(7))
+			if rest:
+				scr.addnstr(h - 1, x + len(label) + 1, rest, max(1, min(len(rest), w - 1 - x - len(label) - 1)), C(7))
+			x += col
+	# ponytail: noutrefresh, from main and NOT the branch's scr.refresh(). getch() flushes the frame, and
+	# a popup drawn on top flushes once with it; refreshing here too pushed a popup-less frame every tick,
+	# which is what stuttered the dropdowns. Taking the branch's footer wholesale would have put it back.
 	scr.noutrefresh()
 	return sel, (rs[cur][1] if cur >= 0 else None)
+
+
+TONE = {"ok": (4, "✓"), "fail": (3, "✗"), "run": (5, "~"), "skip": (1, "·")}
+FIND = {"blocking": 3, "note": 5, "nit": 1}
+
+
+def detail(scr, state, h, x0, width, pr):
+	"""The selected PR, beside the list: what it is, what CI thinks, what the review found, what you can do.
+
+	ponytail: draws only what it has. Branch and checks arrive from a background fetch, findings only
+	from a review that ran — every section is skipped rather than shown empty, so the pane never pads
+	itself out with rows that say nothing.
+	"""
+	def at(y, x, text, n, attr=0):
+		"""Every write in this pane, bounded. The ONLY one that touches the screen.
+
+		ponytail: line() bounded the writes that went through it, and nine did not — the model tag, the
+		summary fallback, ACTIONS, the title wrap. The commit that added line() said it "guarantees it
+		cannot fault"; that was true of a third of the pane, and a review of a PR with a summary and no
+		findings — every entry written before the findings field existed — still killed the dashboard.
+		A guarantee that depends on remembering to use it is not one.
+		"""
+		# ponytail: x is clamped to the pane on BOTH sides. Only the model tag is right-aligned, and it
+		# cannot outgrow 62 columns today — but "cannot happen today" is how the last two bounds here
+		# were argued, and both turned out to be reachable.
+		x = max(x0, x)
+		if 4 <= y < h - 2 and x < x0 + width:
+			scr.addnstr(y, x, text, max(1, min(n, x0 + width - x)), attr)
+
+	def line(y, cells):
+		x = x0 + 2
+		for text, attr in cells:
+			if not text or x >= x0 + width - 1:
+				continue
+			at(y, x, text, x0 + width - 1 - x, attr)
+			x += len(text) + 1
+	for y in range(4, h - 2):  # ponytail: from the first list row, not through the header's breathing space
+		at(y, x0, "│", 1, C(25))
+	if pr is None:
+		at(4, x0 + 2, "no row selected", width - 3, C(1))
+		return
+	y = 4
+	line(y, [("SELECTED PR", C(25)), ("", 0)])
+	if width > 34:
+		at(y, x0 + width - 10, "⏎ close", 8, C(25))
+	y += 2
+	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
+	         ("· " + age(pr["updatedAt"]), C(1))])
+	y += 1
+	title = pr["title"]
+	for chunk in textwrap.wrap(title, max(10, width - 4))[:2]:
+		at(y, x0 + 2, chunk, width - 3, 0)
+		y += 1
+	d = state.want_detail(pr) or {}
+	who = pr.get("author", {}).get("login", "")
+	stats = []
+	if d.get("add") is not None:
+		stats = [("+" + str(d["add"]), C(4)), ("−" + str(d["del"]), C(3)), (str(d["files"]) + " files", C(1))]
+	line(y, [(who, C(1))] + ([(d["branch"], C(23))] if d.get("branch") else []) + stats)
+	y += 2
+	if d.get("checks"):
+		line(y, [("CHECKS", C(25))])
+		y += 1
+		cells = []
+		for c in d["checks"][:4]:
+			pair, mark = TONE.get(c["state"], TONE["run"])
+			cells += [(mark, C(pair)), (c["name"], C(1))]
+		line(y, cells)
+		y += 2
+	rev = pr.get("review") or {}
+	if not rev:
+		rev = log.last(pr["url"]) or {}
+	if rev:
+		line(y, [("AI REVIEW", C(25))])
+		if width > 30:
+			at(y, x0 + width - 2 - len(t := f"{rev.get('model', '')} {log.tag(rev)}".strip()), t, len(t), C(25))
+		y += 1
+		verdict = config.STATUS.get(rev.get("verdict"), "")
+		line(y, [(verdict, C(4) if verdict.startswith("✓") else C(3) if verdict.startswith("✗") else C(5))])
+		y += 1
+		found = log.findings(rev)
+		if found:
+			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", C(FIND[k]))
+			          for k in ("blocking", "note", "nit") if any(f["kind"] == k for f in found)]
+			line(y, counts)
+			y += 1
+			for f in found:
+				if y >= h - 6:
+					break
+				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
+				room = width - 13
+				# ponytail: the file's BASENAME, not its path. "features/library/ui/LibraryLanding.tsx:19"
+				# is most of a pane on its own, so the finding itself — the part you actually read — was
+				# always the half that got truncated away. The directory is recoverable; the point is not.
+				loc = f["loc"].rsplit("/", 1)[-1] if f["loc"] else ""
+				txt = (loc + "  " if loc else "") + f["text"]
+				at(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
+				y += 1
+			if len(found) > 0 and width > 26:
+				at(y, x0 + width - 12, "v read all", 10, C(25))
+		elif rev.get("summary"):
+			for chunk in textwrap.wrap(rev["summary"], max(10, width - 4))[:2]:
+				at(y, x0 + 2, chunk, width - 3, C(1))
+				y += 1
+		y += 1
+	if y < h - 5:
+		line(y, [("ACTIONS", C(25))])
+		y += 1
+		acts = [("r", "review this PR"), ("p", "pre-review, posting nothing"), ("o", "open in browser")]
+		if pr.get("review") or log.last(pr["url"]):
+			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
+		for key, what in acts:
+			if y >= h - 3:
+				break
+			at(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
+			at(y, x0 + 5, what, width - 6, C(1))
+			y += 1
 
 
 def panel(scr, title, lines, footer, accent=4):
@@ -390,10 +622,10 @@ def popup(scr, y, x, title, lines, idx, marked=None):
 	inner = max([len(l) for l in lines] + [len(title)]) + 6  # "│ ▸ text │"
 	x = max(0, min(x, w - inner - 1))
 	def put(row, text, attr):
-		if row < h - 1:
+		if row < h - 2:
 			scr.addnstr(row, x, text, inner, attr)
 	put(y + 1, "╭" + "─" * (inner - 2) + "╮", C(6))
-	if y + 1 < h - 1:
+	if y + 1 < h - 2:
 		scr.addnstr(y + 1, x + 2, f" {title} ", inner - 4, C(6) | curses.A_BOLD)
 	for i, line in enumerate(lines):
 		body = f" {'▸' if i == idx else ' '} {line}".ljust(inner - 2)
@@ -667,6 +899,30 @@ def page(scr, state, sel, path, label):
 	scr.refresh()
 
 
+def pre_review(scr, state, sel, pr):
+	"""`p` on one of your own rows: read the pre-review if it still fits the diff, else offer a fresh one.
+
+	ponytail: a function, not eight lines inside main()'s key loop. It shipped referring to a module
+	screen.py does not import and crashed the moment anyone pressed p — no test could reach it where it
+	was, which is exactly what the review of #8 said about this handler and about cli.self_review.
+	ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone else's
+	work that is never posted helps nobody — this is a pass before you ask a person.
+	"""
+	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+	at = review_mod.self_review_at(repo, n)
+	# ponytail: the PR moving is what makes a pre-review stale, so compare the file against updatedAt
+	# rather than keeping a flag. Read it back while it still describes this diff; offer a fresh one the
+	# moment it does not. Nothing to remember across a restart.
+	moved = bool(at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > at
+	if in_flight(state.reviews.get(pr["url"], "")):
+		return
+	if at and not moved:
+		return page(scr, state, sel, review_mod.self_review_path(repo, n), f"pre-review of #{n}")
+	if confirm(scr, state, sel, (f" #{n} changed since its pre-review. Run again? [y/n]" if moved
+	                             else f" Pre-review #{n}? Nothing is posted. [y/n]")):
+		state.start_self_review(pr)
+
+
 def team_setup(scr, state, sel):
 	if team.on():
 		name = team.NAME
@@ -791,8 +1047,8 @@ def main(scr, interval, auto, model):
 			sel += 1
 		elif k in (ord("k"), curses.KEY_UP):
 			sel -= 1
-		elif k == ord("r"):
-			state.wake.set()
+		elif k == ord("f"):
+			state.wake.set()  # ponytail: f for fetch. r became review, and o was already open-in-browser
 		elif k == ord("a"):
 			n = 0 if state.auto else len(state.pending_rr())
 			state.set_auto(not state.auto, include_existing=n > 0 and confirm(
@@ -816,14 +1072,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("+") and current and current["section"] == "MINE":
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("p") and current and current["section"] == "MINE":
-			# ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone
-			# else's work that is never posted helps nobody — this is a pass before you ask a person.
-			if current["url"] in state.self_reviews:
-				page(scr, state, sel, state.self_reviews[current["url"]], f"pre-review of #{current['number']}")
-			elif in_flight(state.reviews.get(current["url"], "")):
-				pass  # already in flight
-			elif confirm(scr, state, sel, f" Pre-review #{current['number']}? Nothing is posted. [y/n]"):
-				state.start_self_review(current)
+			pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
@@ -841,15 +1090,32 @@ def main(scr, interval, auto, model):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
-		elif k in (10, 13, curses.KEY_ENTER) and current:
-			if current["section"] == "REVIEWED":
-				curses.endwin()
-				subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
-				               input=log.detail(current["review"]), text=True)
-				scr.refresh()
-			elif current["section"] != "REVIEW REQUESTED":
-				github.open_in_browser(current["url"])
-			elif current["url"] in state.reviews:
+		elif k == ord("v") and current and (current.get("review") or log.last(current["url"])):
+			# ponytail: reading a past review moved off ⏎ with the rest. `v` because the dream already
+			# uses [v] view full for exactly this — one idiom for "show me the whole thing in less".
+			# ponytail: any row with a review, not only a REVIEWED one. The pane shows a summary of the
+			# findings for the selected PR whatever section it is in, so the key that opens the whole
+			# thing has to reach as far as the summary does.
+			rev = current.get("review") or log.last(current["url"])
+			curses.endwin()
+			subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
+			               input=log.detail(rev), text=True)
+			scr.refresh()
+		elif k == ord("r") and current and current["section"] == "REVIEW REQUESTED":
+			# ponytail: r is REVIEW now, as the design always labelled it. Refresh moved to f. This is a
+			# muscle-memory break on two keys people use constantly, taken deliberately rather than by
+			# redraw — the branch talked itself out of it once and left ⏎ and r meaning the older thing.
+			if in_flight(state.reviews.get(current["url"], "")) or current["url"] in state.reviews:
 				pass  # already reviewed or in flight
 			elif confirm(scr, state, sel, f" Claude review + post verdict on #{current['number']}? [y/n]"):
 				state.start_review(current)
+		elif k in (10, 13, curses.KEY_ENTER):
+			# ponytail: ⏎ is the pane, which is what the design drew. Say so when there is no room for
+			# one — the key silently doing nothing reads as the app being broken, not the terminal.
+			h_, w_ = scr.getmaxyx()
+			if w_ >= PANE_MIN and h_ >= PANE_MIN_H:
+				state.pane = not state.pane
+			else:
+				draw(scr, state, sel, prompt=f" the detail pane needs {PANE_MIN}x{PANE_MIN_H}; this is {w_}x{h_}")
+				scr.refresh()
+				curses.napms(900)
