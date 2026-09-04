@@ -822,3 +822,87 @@ def test_the_pane_never_writes_over_the_footer_or_off_the_screen(screen):
 		foot = screen.line(h - 2) + screen.line(h - 1)
 		assert "NAV" in foot, f"h={h}: the footer was overwritten by the pane"
 		assert "summary long enough" not in foot, f"h={h}: pane text landed on the footer"
+
+
+def test_a_missing_pager_does_not_strand_the_terminal(monkeypatch, screen, tmp_path):
+	"""endwin / run / refresh in a straight line meant a missing pager raised between the second and
+	third: no refresh, and the exception unwound out of main() with the terminal already out of curses
+	mode. What you get is a shell that echoes ^M and stair-steps its output.
+	"""
+	restored = []
+	monkeypatch.setattr(ui.curses, "endwin", lambda: restored.append("endwin"), raising=False)
+	monkeypatch.setattr(screen, "refresh", lambda: restored.append("refresh"))
+	def missing(cmd, **kw):
+		raise FileNotFoundError(2, "No such file or directory")
+	monkeypatch.setattr(ui.subprocess, "run", missing)
+
+	err = ui.shell_out(screen, ["less", "-R"], "body")
+
+	assert "less" in err and "No such file" in err       # reported, not raised
+	assert restored == ["endwin", "refresh"], "the screen must come back even when the command does not"
+
+
+def test_shell_out_restores_on_success_too(monkeypatch, screen):
+	seen = []
+	monkeypatch.setattr(ui.curses, "endwin", lambda: seen.append("endwin"), raising=False)
+	monkeypatch.setattr(screen, "refresh", lambda: seen.append("refresh"))
+	monkeypatch.setattr(ui.subprocess, "run", lambda cmd, **kw: seen.append(("ran", cmd[0])))
+	assert ui.shell_out(screen, ["less"], "x") == ""
+	assert seen == ["endwin", ("ran", "less"), "refresh"]
+
+
+def test_editing_memory_with_no_editor_reports_instead_of_crashing(monkeypatch, screen, tmp_path):
+	"""The exact case this PR exists for: $EDITOR unset and nano missing.
+
+	It raised NameError right after shell_out returned — confirm(scr, state, sel, …) inside a function
+	that had neither. The terminal was restored by the finally and the dashboard died anyway, which is
+	the same class as the `p` handler: an error path no test drives.
+	"""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(ui.curses, "endwin", lambda: None, raising=False)
+	monkeypatch.setattr(ui.subprocess, "run",
+	                    lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError(2, "No such file or directory")))
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda s, st, sl, msg: said.append(msg) or True)
+	st = State(60)
+
+	ui.edit_memory(screen, st, 0, None)          # must not raise
+
+	assert said and "set $EDITOR" in said[0]
+
+
+def test_every_name_in_the_ui_resolves():
+	"""Two NameErrors shipped today, both on error paths nothing drives — `p` and the editor fallback.
+
+	symtable knows about closures, comprehensions and globals, so this is the check that a test suite
+	cannot give you: a name read by a function that is neither local, free from an enclosing scope, a
+	module global, nor a builtin. It costs nothing and it is exactly the class that keeps escaping.
+	"""
+	import symtable, builtins, pathlib, dashy
+	# ponytail: anchored on the package, not the cwd. Path("dashy") resolves relative to wherever pytest
+	# was started, so from outside the repo root it globbed nothing and the test PASSED — a guard against
+	# vacuous tests that was itself vacuous. The count assert below is the belt to that brace.
+	root = pathlib.Path(dashy.__file__).parent
+	mods = sorted(root.rglob("*.py"))
+	assert len(mods) >= 8, f"found only {len(mods)} modules under {root} — this test cannot pass vacuously"
+	bad = []
+	for mod_path in mods:
+		src = mod_path.read_text()
+		top = symtable.symtable(src, str(mod_path), "exec")
+		names = {s.get_name() for s in top.get_symbols()}
+		# ponytail: module dunders are always bound at runtime but are not symtable symbols
+		builtin = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__package__", "__spec__"}
+
+		def walk(tab, enclosing):
+			here = {s.get_name() for s in tab.get_symbols() if s.is_local() or s.is_parameter()}
+			for s in tab.get_symbols():
+				n = s.get_name()
+				if (s.is_referenced() and not s.is_local() and not s.is_parameter() and not s.is_free()
+				        and n not in names and n not in builtin and n not in enclosing):
+					bad.append(f"{mod_path}:{tab.get_name()}() reads {n!r}")
+			for child in tab.get_children():
+				walk(child, enclosing | here)
+
+		walk(top, set())
+	assert not bad, "names that resolve to nothing:\n  " + "\n  ".join(bad)
