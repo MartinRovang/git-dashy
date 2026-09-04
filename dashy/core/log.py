@@ -29,7 +29,7 @@ def last(url):
 def tag(e):
 	"""'adaptive/medium $0.42 3m' — depth[/effort] the review ran with, then what it cost; '' for old entries."""
 	t = e.get("depth", "") + ("/" + e["effort"] if e.get("effort") else "")
-	if e.get("cost") is not None:
+	if e.get("cost"):  # 0 on a subscription run, not worth a "$0.00"
 		t += f" ${e['cost']:.2f}"
 	if e.get("ms"):
 		s = round(e["ms"] / 1000)
@@ -38,7 +38,8 @@ def tag(e):
 
 
 def log_review(pr, model, verdict, at=None):
-	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model, "pr": pr,
+	entry = {"at": at or datetime.now(timezone.utc).isoformat(timespec="seconds"), "model": model,
+	         "pr": {k: v for k, v in pr.items() if k != "checks"},  # CI state at review time is stale by the time anyone reads it
 	         "depth": config.DEPTH, "effort": config.EFFORT, "head": pr.get("head", ""),
 	         "cost": verdict.get("cost"), "ms": verdict.get("ms"),
 	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"]}

@@ -16,7 +16,10 @@ def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None
 
 
 def install():
-	"""ponytail: swap the three module attrs the app calls out through — no injection framework."""
+	"""ponytail: swap every module attr the app calls out through — no injection framework.
+
+	ponytail: EVERY one. A new call-out that is not swapped here reaches the real thing, and the demo
+	promises no gh and no claude — `p` shipped for one commit doing exactly that."""
 	config.TEAM = ""  # never sync the demo
 	config.SETTINGS = ""  # never read or write the real settings
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
@@ -69,6 +72,20 @@ def install():
 		v = next(verdicts)
 		return log.log_review(p, model, v) if v else "error: claude: rate limit exceeded, retry in 60s"
 
+	def fake_self_review(p, model):
+		# ponytail: swapped for the same reason fake_review is. start_self_review calls a DIFFERENT module
+		# attr, so swapping review.review alone left `p` on a demo row spawning a real `claude -p` against
+		# acme/api#101, which then shells out to gh — against a README that promises no gh and no claude.
+		time.sleep(4)
+		dest = log.LOG[:-6] + f"-selfreview-{p['number']}.md"
+		with open(dest, "w") as f:
+			f.write(f"# Pre-review — {p['repository']['nameWithOwner']}#{p['number']}\n\n"
+			        "> **Not posted.** This is the demo reviewer: nothing ran, nothing was sent.\n\n"
+			        "**Verdict (advisory):** ✗ changes requested — demo\n\n---\n\n"
+			        "## Findings\n\n- `api/handlers.py:88` the pager reads `total` before the guard\n"
+			        "- no test covers the empty-result path\n")
+		return "✗ changes requested (not posted) · 1 waiting", dest
+
 	def fake_dream(model):
 		time.sleep(4)
 		return ("merged 2 duplicate lines about tabs in acme/api\nmoved 'run make lint' to general\ndropped a stale note about the old CI",
@@ -82,4 +99,5 @@ def install():
 		return "" if login != "dave" else "dave is on leave (demo error)"
 
 	github.fetch, review.review, update.update_available, memory.dream = fake_fetch, fake_review, lambda: "", fake_dream
+	review.self_review = fake_self_review
 	github.collaborators, github.request_review, github.copy = lambda repo: ["alice", "bob", "carol", "dave", "erin"], fake_request_review, lambda t: "demo"

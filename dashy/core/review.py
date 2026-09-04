@@ -1,4 +1,5 @@
 """Run Claude headless on a PR and post its verdict."""
+import datetime
 import json
 import os
 import pathlib
@@ -92,39 +93,95 @@ def self_check(model):
 	return out
 
 
+SELF_HEADER = """# Pre-review — {repo}#{n}
+
+> **Not posted.** gitdashy reviewed your own PR at your request, {at}, with {model} at {depth} depth.
+> Nothing was sent to GitHub and nothing was logged. Findings wait in the self drafts pool; a later real
+> review that lands on the same fact by itself confirms it.
+
+**Verdict (advisory):** {verdict} — {summary}
+
+---
+
+"""
+
+SELF_DIR = os.path.expanduser("~/.prs_reviews")  # ponytail: outside every synced tree — scratch, not memory
+
+
+def _verdict(repo, n, model, prev=None):
+	"""Build the prompt, run the reviewer, return its parsed verdict. Raises on failure.
+
+	ponytail: one implementation, because a pre-review that reasons differently from the real one is
+	worth nothing as a preview of it. The only differences are what the caller does with the result.
+	"""
+	mem, brief = memory.read(repo), memory.project()
+	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
+	                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
+	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
+	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
+	if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
+		with open(config.INSTRUCTIONS) as f:
+			prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
+	with tempfile.TemporaryDirectory() as here:
+		# ponytail: run from a directory of our own. A review reads the PR through gh and nothing from
+		# disk, so the launch directory is not merely irrelevant — inheriting it is a liability. It can
+		# have been DELETED since (a checkout in that tree is enough), and claude then refuses to start
+		# at all: "the current working directory was deleted", every review failing for no visible
+		# reason. --safe-mode already ignores what is in it; this stops it mattering that it exists.
+		out = subprocess.run(
+			["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
+			 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
+			capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here,
+		).stdout
+	result = json.loads(out)
+	text = result["result"].strip()
+	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	verdict["cost"], verdict["ms"] = result.get("total_cost_usd"), result.get("duration_ms")  # claude reports both
+	if config.DEPTH == "adaptive" and verdict.get("depth_used"):
+		verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
+	return verdict
+
+
+def self_review(pr, model):
+	"""Pre-review your own PR. Posts NOTHING. Returns (status, path-to-the-written-review).
+
+	ponytail: nothing is posted, and not only because GitHub refuses to let you approve your own PR —
+	a verdict on your own work is not a review, it is a second opinion from the same head. It goes to a
+	file you read and act on, and the PR stays clean for whoever actually reviews it.
+	ponytail: findings go to the SELF drafts pool, which never promotes on its own. See memory.append_self.
+	"""
+	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
+	try:
+		verdict = _verdict(repo, n, model)  # ponytail: no `prev` — PREV claims "you already reviewed this",
+		                                    # and a real reviewer's verdict is not ours to speak for
+		os.makedirs(SELF_DIR, exist_ok=True)
+		dest = os.path.join(SELF_DIR, f"{memory.slug(repo)[:-3]}__{n}.md")
+		kept = memory.append_self(repo, verdict.get("memory"))
+		if kept:
+			# ponytail: every other writer pushes after writing — review(), remember, edit_memory, the dream.
+			# Scratch or not, a memory dir backed by git must not depend on the next unrelated write to
+			# carry these across; that is the kind of silent exception nobody remembers is there.
+			team.push_dir(config.MEMORY_DIR, f"memory: pre-review {repo}#{n}", "mine")
+		with open(dest, "w") as f:
+			f.write(SELF_HEADER.format(repo=repo, n=n, at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+			                           model=model, depth=config.DEPTH,
+			                           verdict=config.STATUS.get(verdict["verdict"], verdict["verdict"]),
+			                           summary=verdict.get("summary", "")) + verdict["body"] + "\n")
+		return f"{config.STATUS.get(verdict['verdict'], verdict['verdict'])} (not posted)" + (
+			f" · {len(kept)} waiting" if kept else ""), dest
+	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, KeyError, ValueError, OSError) as e:
+		return "error: " + ((getattr(e, "stderr", None) or str(e)).strip().splitlines() or ["?"])[-1][:80], ""
+
+
 def review(pr, model):
 	"""Review the PR, post the verdict, log it. Returns a status string for the row."""
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
 	try:
-		mem, prev = memory.read(repo), log.last(pr["url"])
-		brief = memory.project()
-		prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
-		                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
-		                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
-		                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
-		if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
-			with open(config.INSTRUCTIONS) as f:
-				prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
+		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
 		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
-		with tempfile.TemporaryDirectory() as here:
-			# ponytail: run from a directory of our own. A review reads the PR through gh and nothing from
-			# disk, so the launch directory is not merely irrelevant — inheriting it is a liability. It can
-			# have been DELETED since (a checkout in that tree is enough), and claude then refuses to start
-			# at all: "the current working directory was deleted", every review failing for no visible
-			# reason. --safe-mode already ignores what is in it; this stops it mattering that it exists.
-			out = subprocess.run(
-				["claude", "-p", prompt, "--output-format", "json", SAFE, "--append-system-prompt", LENS,
-				 "--allowedTools", TOOLS, "--model", model] + (["--effort", config.EFFORT] if config.EFFORT else []),
-				capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here,
-			).stdout
-		result = json.loads(out)
-		text = result["result"].strip()
-		verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
-		verdict["cost"], verdict["ms"] = result.get("total_cost_usd"), result.get("duration_ms")  # claude reports both
-		if config.DEPTH == "adaptive" and verdict.get("depth_used"):
-			verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
+		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		promoted = memory.append(repo, verdict.get("memory"))  # drafts, and whatever a second review confirmed
 		status = log.log_review(pr, model, verdict)

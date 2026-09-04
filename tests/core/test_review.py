@@ -1,11 +1,12 @@
 import json
+import os
 import re
 import subprocess
 
 import pytest
 
 from dashy import config
-from dashy.core import github, log, review as review_mod
+from dashy.core import github, log, memory, review as review_mod
 from dashy.core.review import review
 
 from conftest import PR, Result, claude_out
@@ -248,3 +249,73 @@ def test_a_dream_does_not_either(monkeypatch, tmp_path):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	memory.dream("opus")
 	assert seen["cwd"] and seen["cwd"] != __import__("os").getcwd()
+
+
+def test_a_self_review_posts_nothing_and_writes_a_file(monkeypatch, tmp_path):
+	"""GitHub refuses to let you approve your own PR, and a verdict on your own work is not a review_mod."""
+	mem = tmp_path / "mem"
+	mem.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path / "out"))
+	posted = []
+	monkeypatch.setattr(review_mod.github, "post_review", lambda *a, **k: posted.append(a))
+	monkeypatch.setattr(review_mod.github, "comment", lambda *a, **k: posted.append(a))
+	monkeypatch.setattr(review_mod.log, "log_review", lambda *a, **k: posted.append(a))
+	monkeypatch.setattr(review_mod, "_verdict", lambda repo, n, model, prev=None: {
+		"verdict": "request_changes", "summary": "adds a thing",
+		"body": "## Findings\n- foo.py:1 is wrong", "memory": "the api owns no DDL"})
+
+	pr = {"repository": {"nameWithOwner": "acme/api"}, "number": 7, "url": "u"}
+	status, dest = review_mod.self_review(pr, "opus")
+
+	assert posted == []                       # nothing reached GitHub, nothing was logged
+	assert "not posted" in status
+	assert os.path.isfile(dest) and dest.startswith(str(tmp_path / "out"))
+	body = open(dest).read()
+	assert "Not posted" in body and "foo.py:1 is wrong" in body
+	assert [t for _n, t in memory.self_drafts("acme/api")] == ["the api owns no DDL"]
+	assert memory.known("acme/api") == []      # and it is not a fact yet
+
+
+def test_a_self_review_does_not_claim_a_previous_review_it_did_not_write(monkeypatch, tmp_path):
+	"""PREV says 'you already reviewed this PR'. A real reviewer's verdict is not ours to speak for."""
+	seen = {}
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path / "out"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	monkeypatch.setattr(config, "TEAM", "")
+	def spy(repo, n, model, prev=None):
+		seen["prev"] = prev
+		return {"verdict": "comment", "summary": "s", "body": "b", "memory": ""}
+	monkeypatch.setattr(review_mod, "_verdict", spy)
+	monkeypatch.setattr(review_mod.log, "last", lambda url: {"at": "2026-01-01", "verdict": "approve", "body": "x"})
+	review_mod.self_review({"repository": {"nameWithOwner": "a/b"}, "number": 1, "url": "u"}, "opus")
+	assert seen["prev"] is None
+
+
+def test_both_paths_build_the_prompt_the_same_way(monkeypatch, tmp_path):
+	"""A pre-review that reasons differently is worthless as a preview of the real one.
+
+	Behavioural: both callers are driven and the prompt each produced is compared, rather than the
+	source being grepped for a call — a source check passes on code that never runs.
+	"""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path / "out"))
+	seen = []
+	def spy(repo, n, model, prev=None):
+		seen.append((repo, n, model, prev))
+		return {"verdict": "comment", "summary": "s", "body": "b", "memory": ""}
+	monkeypatch.setattr(review_mod, "_verdict", spy)
+	monkeypatch.setattr(review_mod.github, "comment", lambda *a, **k: None)
+	monkeypatch.setattr(review_mod.github, "post_review", lambda *a, **k: None)
+	monkeypatch.setattr(review_mod.log, "last", lambda url: None)
+	monkeypatch.setattr(review_mod.log, "log_review", lambda *a, **k: "~ commented")
+	monkeypatch.setattr(review_mod.team, "push", lambda *a, **k: None)
+	monkeypatch.setattr(review_mod.team, "push_dir", lambda *a, **k: None)
+
+	pr = {"repository": {"nameWithOwner": "acme/api"}, "number": 7, "url": "u"}
+	review_mod.review(pr, "opus")
+	review_mod.self_review(pr, "opus")
+	assert len(seen) == 2
+	assert seen[0][:3] == seen[1][:3] == ("acme/api", 7, "opus")   # same builder, same inputs

@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 from dashy import cli, config
-from dashy.core import memory, team
+from dashy.core import install as install_mod, memory, team
 
 
 def facts(p):
@@ -129,3 +129,77 @@ def test_install_dry_run_explains_and_writes_nothing(monkeypatch, tmp_path, caps
 	cli.run(["gitdashy", "install", "--dry-run"])
 	assert "nothing was changed" in capsys.readouterr().out
 	assert not (cfg / "prs-memory").exists()
+
+
+def _offer_env(monkeypatch, tmp_path):
+	"""A machine where install --full would land, with the offer reachable."""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	mem = tmp_path / "mem"
+	mem.mkdir()
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(install_mod, "CORPUS_HOME", str(tmp_path / "corpus-home"))
+	monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+	called = []
+	monkeypatch.setattr(cli, "setup", lambda argv: called.append(argv))
+	return called
+
+
+def test_declining_the_briefs_is_not_a_failed_install(monkeypatch, tmp_path, capsys):
+	"""cli.setup's own `ask` raises SystemExit on Ctrl-C, and SystemExit is a BaseException.
+
+	It walked past the handler, so a COMPLETED install that printed its report still exited
+	non-zero — a wrapper checking $? read a finished install as a failed one.
+	"""
+	_offer_env(monkeypatch, tmp_path)
+	monkeypatch.setattr(cli, "setup", lambda argv: (_ for _ in ()).throw(SystemExit("\nnothing written")))
+	monkeypatch.setattr("builtins.input", lambda _: "y")
+	cli.offer_setup(["gitdashy", "install", "--full"])       # must not raise
+	assert "nothing written" in capsys.readouterr().out
+
+
+def test_yes_skips_the_offer_because_it_means_do_not_ask_me(monkeypatch, tmp_path):
+	"""This command tells you to pass --yes for unattended installs, then used to block anyway.
+
+	isatty alone does not cover it: a bootstrap script run from an interactive shell inherits the tty.
+	"""
+	called = _offer_env(monkeypatch, tmp_path)
+	monkeypatch.setattr("builtins.input", lambda _: pytest.fail("--yes must not prompt"))
+	cli.offer_setup(["gitdashy", "install", "--full", "--yes"])
+	assert called == []
+
+
+def test_no_setup_and_a_non_tty_both_skip_the_offer(monkeypatch, tmp_path):
+	called = _offer_env(monkeypatch, tmp_path)
+	monkeypatch.setattr("builtins.input", lambda _: pytest.fail("must not prompt"))
+	cli.offer_setup(["gitdashy", "install", "--full", "--no-setup"])
+	monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+	cli.offer_setup(["gitdashy", "install", "--full"])
+	assert called == []
+
+
+def test_saying_yes_reaches_setup_and_no_does_not(monkeypatch, tmp_path, capsys):
+	called = _offer_env(monkeypatch, tmp_path)
+	monkeypatch.setattr("builtins.input", lambda _: "n")
+	cli.offer_setup(["gitdashy", "install", "--full"])
+	assert called == [] and "whenever you want them" in capsys.readouterr().out
+	monkeypatch.setattr("builtins.input", lambda _: "")   # blank is yes
+	cli.offer_setup(["gitdashy", "install", "--full"])
+	assert len(called) == 1
+
+
+def test_a_failed_full_install_never_offers_the_briefs(monkeypatch, tmp_path):
+	"""The guard depends on install.fail() emitting a line prefixed FAIL — nothing else holds that."""
+	called = _offer_env(monkeypatch, tmp_path)
+	offered = []
+	monkeypatch.setattr(cli, "offer_setup", lambda argv: offered.append(argv))
+	monkeypatch.setattr(install_mod, "full_apply", lambda *a, **k: ["ok    something", "FAIL  broken"])
+	monkeypatch.setattr(install_mod, "full_explain", lambda *a, **k: ["…"])
+	cli.install(["gitdashy", "install", "--full", "--yes"])
+	assert offered == []
+	monkeypatch.setattr(install_mod, "full_apply", lambda *a, **k: ["ok    something"])
+	cli.install(["gitdashy", "install", "--full", "--yes"])
+	assert len(offered) == 1

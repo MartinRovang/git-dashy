@@ -232,6 +232,20 @@ Removes the symlink, the corpus import block and the hook — leaving your other
 your other hooks and anything you wrote in `CLAUDE.md` untouched. **The corpus itself stays
 on disk**, because by then it is yours and may not look like what was installed.
 
+### Filling the briefs
+
+A full install ends by offering the two briefs — who you are, and what the work is for —
+and runs `gitdashy setup` if you say yes. Decline and nothing is waiting on it; run
+`gitdashy setup` whenever. The offer is skipped by `--yes`, by `--no-setup`, and when stdin
+is not a terminal — `--yes` included because this command already tells you to pass it if
+you meant to install unattended, and a bootstrap script run from an interactive shell
+inherits that terminal, so `isatty` alone would still have stopped it.
+
+Plain `install` does not offer them. It puts no corpus on the machine, so there is no
+`USER.md` to fill in, and staying out of the way is the whole promise of that tier. The
+project brief still applies there — every review reads it — and `gitdashy setup` writes
+it on its own, skipping the identity half with a message when no corpus is installed.
+
 ### When it stops
 
 A corpus with no `identity/` directory is refused: there is nothing to import, and a

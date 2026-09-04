@@ -12,9 +12,10 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
-       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
+       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
@@ -36,9 +37,15 @@ remember files a fact you learned while working, into the same drafts a review w
   review and a coding session found independently is confirmed by their agreement. --repo defaults to this
   directory's origin; --general is for something true of every repo.
 
+self-review runs the reviewer over one of your OWN PRs and posts nothing — a pass before you ask a
+  person, not a substitute for one. The review is written to ~/.prs_reviews/ and its findings wait in a
+  separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
+  on the same diff, so only a later real review landing on the same fact independently promotes it.
+
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
   directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
-  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. Reviews need
+  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
+  by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
 
 install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
@@ -110,7 +117,62 @@ def install(argv):
 		except (EOFError, KeyboardInterrupt):
 			return print("\nnothing changed")
 	print("")
-	print("\n".join(install_mod.full_apply(corpus, url) if full else install_mod.apply()))
+	out = install_mod.full_apply(corpus, url) if full else install_mod.apply()
+	print("\n".join(out))
+	# ponytail: --full ONLY. Plain install puts no corpus on the machine, so there is no USER.md to
+	# fill in, and its whole promise is that it stays out of the way — no corpus, no hooks, no
+	# settings.json, and nothing to answer. The project brief still matters at that tier and setup
+	# writes it, but offering a two-part flow whose first half SKIPs is worse than saying nothing.
+	if full and not any(l.startswith("FAIL") for l in out):
+		offer_setup(argv)
+
+
+def offer_setup(argv):
+	"""After a full install, offer the questions rather than only naming the file to hand-edit.
+
+	ponytail: the installer used to say "fill it in, it is the highest-value file here" and never
+	mention `gitdashy setup` — every occurrence of that string was inside setup() itself or a marker.
+	The guided path existed and was unreachable from the one moment you are deciding how to fill it.
+	"""
+	# ponytail: --yes too. This command already tells you "pass --yes if you meant to install unattended"
+	# when stdin is not a tty, so --yes means "do not ask me" for BOTH gates or the promise is false. A
+	# bootstrap script run from an interactive shell inherits that tty, so isatty alone does not cover it.
+	if "--no-setup" in argv or "--yes" in argv or not sys.stdin.isatty():
+		return
+	if install_mod.setup_done():
+		return  # ponytail: nothing to offer when both briefs are already written
+	later = "`gitdashy setup` whenever you want them — nothing else is waiting on it."
+	try:
+		if input("\nAnswer the two briefs now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+			return print(later)
+	except (EOFError, KeyboardInterrupt):
+		return print("\n" + later)
+	print("")
+	try:
+		setup(argv)
+	except SystemExit as e:
+		# ponytail: cli.setup's own `ask` raises SystemExit on Ctrl-C, and SystemExit is a BaseException,
+		# so it walked past the handler above — the install had COMPLETED and printed its report, and the
+		# process still exited non-zero. A wrapper checking $? read a finished install as a failed one.
+		# Declining halfway through the briefs is a decline, not a failure.
+		print((str(e).strip() or later))
+
+
+def self_review(argv):
+	"""Pre-review one of your own PRs. Posts nothing; writes a file and prints where it is."""
+	nums = [a for a in argv[2:] if a.isdigit()]
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not nums or not repo:
+		raise SystemExit("gitdashy: self-review needs a PR number, and --repo owner/name "
+		                 "unless this directory has a github origin")
+	config.load()
+	team.activate()
+	pr = {"repository": {"nameWithOwner": repo}, "number": int(nums[0]),
+	      "url": f"https://github.com/{repo}/pull/{nums[0]}"}
+	print(f"pre-reviewing {repo}#{nums[0]} — nothing will be posted…")
+	status, dest = review_mod.self_review(pr, arg("--model", config.DEFAULT_MODEL, str, argv))
+	print(f"{status}\n{dest}" if dest else status)
+	raise SystemExit(0 if dest else 1)
 
 
 def setup(argv):
@@ -182,6 +244,8 @@ def run(argv=None):
 		return remember(argv)
 	if len(argv) > 1 and argv[1] == "install":
 		return install(argv)
+	if len(argv) > 1 and argv[1] == "self-review":
+		return self_review(argv)
 	if len(argv) > 1 and argv[1] == "setup":
 		return setup(argv)
 	if len(argv) > 1 and argv[1] == "init":

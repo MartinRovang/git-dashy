@@ -716,6 +716,16 @@ def compose(title, lead, answers, extra=()):
 	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
+def setup_done(corpus_home=None):
+	"""True when both briefs are already written, so there is nothing to offer."""
+	from . import memory
+	home = corpus_home or CORPUS_HOME
+	user = os.path.join(home, "identity", "USER.md")
+	tmpl = os.path.join(home, "identity", "USER.md.template")
+	mine = _read(user).strip() and _read(user).strip() != _read(tmpl).strip()  # a seeded template is not done
+	return bool(mine) and bool(memory.project().strip())
+
+
 def setup(ask, corpus_home=None):
 	"""Walk the two briefs a corpus needs, writing only what was answered. Returns report lines.
 
@@ -729,7 +739,12 @@ def setup(ask, corpus_home=None):
 	# ponytail: a marker only compose() writes. Sniffing for the words "gitdashy setup" matched the
 	# shipped TEMPLATE, which says them in prose — so the file install --full seeds looked like one
 	# setup had written, and editing its blanks in place then lost everything on the next run.
-	if os.path.exists(user) and _read(user).strip() and SETUP_MARK not in _read(user):
+	# ponytail: the file install --full SEEDS is the shipped template, byte for byte. It is not empty
+	# and carries no marker, so the guard below read it as a file someone had written by hand and
+	# refused to ask — leaving the guided path dead in exactly the case it exists for. Untouched
+	# template means untouched; one edit of their own and it is theirs again.
+	seeded = _read(user).strip() == _read(os.path.join(home, "identity", "USER.md.template")).strip()
+	if os.path.exists(user) and _read(user).strip() and not seeded and SETUP_MARK not in _read(user):
 		# ponytail: the brief refuses when it exists; this file must too, or re-running to change one
 		# line destroys the rest. Only a file setup itself wrote is safe to rewrite.
 		out.append(f"ok     {knowledge.tilde(user)} is yours already — edit it directly to change it")

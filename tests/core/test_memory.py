@@ -352,3 +352,67 @@ def test_a_solo_brief_reaches_a_review_with_no_team_at_all(monkeypatch, tmp_path
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "project.md").write_text("Just me, building a thing.\n")
 	assert memory.project() == "### mine\nJust me, building a thing."
+
+
+def _mem(monkeypatch, tmp_path):
+	d = tmp_path / "mem"
+	d.mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(d))
+	monkeypatch.setattr(config, "TEAM", "")
+	return d
+
+
+def test_a_pre_review_alone_never_becomes_a_fact(monkeypatch, tmp_path):
+	"""The pre-review and the real review are the same model on the same diff.
+
+	If a pre-review could promote by itself, or by being run twice, PROMOTE_AT would measure how often
+	you pre-reviewed rather than whether the fact recurred.
+	"""
+	_mem(monkeypatch, tmp_path)
+	memory.append_self("acme/api", "the api owns no DDL")
+	memory.append_self("acme/api", "the api owns no DDL")   # again, and again
+	memory.append_self("acme/api", "the api owns no DDL")
+	assert memory.known("acme/api") == []                    # never a fact
+	assert [t for _n, t in memory.self_drafts("acme/api")] == ["the api owns no DDL"]
+	assert memory.drafts("acme/api") == []                   # and not in the real queue either
+
+
+def test_a_real_review_agreeing_with_a_pre_review_promotes(monkeypatch, tmp_path):
+	"""Two runs, one of which did not know the other existed. That is the bar."""
+	_mem(monkeypatch, tmp_path)
+	memory.append_self("acme/api", "the api owns no DDL")
+	promoted = memory.append("acme/api", "the api owns no DDL")
+	assert promoted == ["the api owns no DDL"]
+	assert "the api owns no DDL" in memory.known("acme/api")
+	assert memory.self_drafts("acme/api") == []              # consumed, not left to pay out again
+
+
+def test_a_spent_pre_review_finding_cannot_pay_out_twice(monkeypatch, tmp_path):
+	"""One pre-review must not keep contributing to fact after fact."""
+	_mem(monkeypatch, tmp_path)
+	memory.append_self("acme/api", "the api owns no DDL")
+	memory.append("acme/api", "the api owns no DDL")          # consumes it
+	memory.forget("acme/api", "the api owns no DDL")          # start over
+	assert memory.append("acme/api", "the api owns no DDL") == []   # one observation again, not two
+	assert [n for n, _t in memory.drafts("acme/api")] == [1]
+
+
+def test_self_drafts_never_reach_a_prompt_or_the_dream(monkeypatch, tmp_path):
+	"""Same rule as drafts, same reason — a reviewer must not meet its own guess as evidence."""
+	d = _mem(monkeypatch, tmp_path)
+	(d / "acme__api.md").write_text("- a real fact\n")
+	memory.append_self("acme/api", "a pre-review guess")
+
+	assert "pre-review guess" not in memory.read("acme/api")
+	assert "pre-review guess" not in memory.scope_text("acme/api")
+	assert "pre-review guess" not in memory.scope_text()
+	assert not any("pre-review guess" in t for t in memory.files().values())   # the dream cannot rewrite it
+	assert "a real fact" in memory.read("acme/api")                            # and facts still flow
+
+
+def test_a_pre_review_does_not_repeat_what_is_already_known(monkeypatch, tmp_path):
+	"""Proposing a settled fact says nothing new, and would sit in the pool forever."""
+	d = _mem(monkeypatch, tmp_path)
+	(d / "acme__api.md").write_text("- the api owns no DDL\n")
+	assert memory.append_self("acme/api", "the api owns no DDL") == []
+	assert memory.self_drafts("acme/api") == []

@@ -107,7 +107,7 @@ def fetch():
 					p["head"], p["checks"] = n.get("headRefOid", ""), checks(n)
 					if name == "MINE":
 						p["status"], p["reviewers"] = own_status(n), reviewers(n)
-		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError):
+		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError, TypeError):
 			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
 	return out
