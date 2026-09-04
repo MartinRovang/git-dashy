@@ -55,12 +55,18 @@ THEMES = {
 }
 
 # age, repo, pr, author and state are fixed; the title takes what is left. Mirrors the design's grid.
-COLS = ((4, "age"), (18, "repo"), (5, "pr"), (0, "title"), (12, "author"), (20, "state"))
+# ponytail: reviewers has a column of its own. Folded into the state cell they all took the state's
+# colour, and state is the LAST column — so at any real width they were pushed off the right edge
+# and never appeared at all. zip(COLS, cells) also silently drops a cell when the two disagree.
+COLS = ((4, "age"), (18, "repo"), (5, "pr"), (0, "title"), (12, "author"), (14, "reviewers"),
+        (20, "state"))
 PANE = 62  # columns the detail pane wants
 PANE_MIN = 150  # total width below which there is no room for it and the list gets everything
-# ponytail: the design labels these ⏎ pane / r review / D draft-comment. Left as they are: ⏎ has meant
-# review since the first version, r has meant refresh, and silently swapping them would break the hands
-# of everyone already using it. p opens the pane instead. Worth revisiting deliberately, not by redraw.
+PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than the four rows
+# ponytail: the design labels these ⏎ pane / r review, and that is now what they do. The branch had
+# declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
+# shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
+# used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
 KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · a auto · Z dream"),
         ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · u update · q quit"))
 
@@ -188,7 +194,10 @@ def draw(scr, state, sel, prompt=None, now=None):
 	current = rs[cur][1] if cur >= 0 else None
 	# ponytail: the pane only exists where there is room for it AND the list still. Below that the list
 	# wins, because a dashboard you cannot read the rows of is not improved by a panel beside them.
-	pane_w = PANE if getattr(state, "pane", True) and w >= PANE_MIN else 0
+	# ponytail: height as well as width. A pane needs rows to be worth anything, and gating on width
+	# alone put one beside a four-row list. Belt and braces with line()'s own bound: this decides
+	# whether a pane makes sense, that one guarantees it cannot fault if the decision is ever wrong.
+	pane_w = PANE if getattr(state, "pane", True) and w >= PANE_MIN and h >= PANE_MIN_H else 0
 	lw = w - pane_w
 	title_w = max(12, lw - 2 - sum(c for c, _ in COLS if c) - len(COLS))
 
@@ -364,11 +373,10 @@ def draw(scr, state, sel, prompt=None, now=None):
 			         (("└ " if p.get("child") else "") + ("draft " if p.get("isDraft") else "") + p["title"],
 			          base | curses.A_BOLD if is_cur else 0),
 			         (p.get("author", {}).get("login", ""), dim),
-			         # ponytail: reviewer chips arrived after this design was drawn and it has no column
-			         # for them. They qualify the state, so they ride in its cell — and being last, they
-			         # are what the ellipsis eats first on a narrow terminal, which is the right order.
-			         (" ".join([st] + p.get("reviewers", "").split()).strip() + ("  " + tag if tag else ""),
-			          st_attr | curses.A_BOLD)]
+			         (p.get("reviewers", ""), dim),   # ponytail: overpainted per chip below, by glyph
+			         (st + ("  " + tag if tag else ""), st_attr | curses.A_BOLD)]
+			assert len(cells) == len(COLS)  # ponytail: zip drops a cell silently when they disagree, and
+			                                # this pair has now been wrong once in each direction
 			x = 1
 			for (width_, name), (text, attr) in zip(COLS, cells):
 				room = title_w if width_ == 0 else width_
@@ -387,6 +395,17 @@ def draw(scr, state, sel, prompt=None, now=None):
 				else:
 					t = text if len(text) <= room else text[:max(0, room - 1)] + "…"
 				scr.addnstr(y, x, t.ljust(room), room, base if is_cur else attr)
+				if name == "reviewers" and t.strip():
+					# ponytail: the cell is drawn first so layout is decided in one place, then each chip
+					# is overpainted in its own glyph's colour — ✓ green, ✗ red, · pending. That is what
+					# REVIEWER_COLOR is for, and it sat populated and unused once the chips moved here.
+					cx = x
+					for chip in t.split():
+						if x + room - cx < len(chip):
+							break
+						scr.addnstr(y, cx, chip, len(chip),
+						            base if is_cur else REVIEWER_COLOR.get(chip[0], C(1)) | curses.A_BOLD)
+						cx += len(chip) + 1
 				x += (title_w if width_ == 0 else width_) + 1
 
 	if pane_w:
@@ -434,6 +453,12 @@ def detail(scr, state, h, x0, width, pr):
 	itself out with rows that say nothing.
 	"""
 	def line(y, cells):
+		# ponytail: every write in this pane goes through here, so the vertical bound belongs here too.
+		# Nothing checked y against h: the title wrap, the stats, CHECKS and AI REVIEW all walked past
+		# the last row, and curses raises on an off-screen addnstr — which unwound out of draw() and
+		# killed the dashboard on any terminal under 16 rows wide enough to show the pane.
+		if not 4 <= y < h - 2:
+			return
 		x = x0 + 2
 		for text, attr in cells:
 			if not text or x >= x0 + width - 1:
@@ -448,7 +473,7 @@ def detail(scr, state, h, x0, width, pr):
 	y = 4
 	line(y, [("SELECTED PR", C(25)), ("", 0)])
 	if width > 34:
-		scr.addnstr(y, x0 + width - 15, "⏎ pane · esc", 13, C(25))
+		scr.addnstr(y, x0 + width - 10, "⏎ close", 8, C(25))
 	y += 2
 	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
 	         ("· " + age(pr["updatedAt"]), C(1))])
@@ -475,8 +500,7 @@ def detail(scr, state, h, x0, width, pr):
 		y += 2
 	rev = pr.get("review") or {}
 	if not rev:
-		from ..core import log as log_mod
-		rev = log_mod.last(pr["url"]) or {}
+		rev = log.last(pr["url"]) or {}
 	if rev:
 		line(y, [("AI REVIEW", C(25))])
 		if width > 30:
@@ -497,9 +521,15 @@ def detail(scr, state, h, x0, width, pr):
 					break
 				scr.addnstr(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
 				room = width - 13
-				txt = (f["loc"] + " " if f["loc"] else "") + f["text"]
+				# ponytail: the file's BASENAME, not its path. "features/library/ui/LibraryLanding.tsx:19"
+				# is most of a pane on its own, so the finding itself — the part you actually read — was
+				# always the half that got truncated away. The directory is recoverable; the point is not.
+				loc = f["loc"].rsplit("/", 1)[-1] if f["loc"] else ""
+				txt = (loc + "  " if loc else "") + f["text"]
 				scr.addnstr(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
 				y += 1
+			if len(found) > 0 and width > 26:
+				scr.addnstr(min(y, h - 7), x0 + width - 12, "v read all", 10, C(25))
 		elif rev.get("summary"):
 			for chunk in textwrap.wrap(rev["summary"], max(10, width - 4))[:2]:
 				scr.addnstr(y, x0 + 2, chunk, width - 3, C(1))
@@ -508,8 +538,11 @@ def detail(scr, state, h, x0, width, pr):
 	if y < h - 5:
 		line(y, [("ACTIONS", C(25))])
 		y += 1
-		for key, what in (("⏎", "review this PR"), ("o", "open in browser"), ("a", "auto mode"), ("Z", "dream")):
-			if y >= h - 2:
+		acts = [("r", "review this PR"), ("p", "pre-review, posting nothing"), ("o", "open in browser")]
+		if pr.get("review") or log.last(pr["url"]):
+			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
+		for key, what in acts:
+			if y >= h - 3:
 				break
 			scr.addnstr(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
 			scr.addnstr(y, x0 + 5, what, width - 6, C(1))
@@ -1043,12 +1076,16 @@ def main(scr, interval, auto, model):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
-		elif k == ord("v") and current and current["section"] == "REVIEWED":
+		elif k == ord("v") and current and (current.get("review") or log.last(current["url"])):
 			# ponytail: reading a past review moved off ⏎ with the rest. `v` because the dream already
 			# uses [v] view full for exactly this — one idiom for "show me the whole thing in less".
+			# ponytail: any row with a review, not only a REVIEWED one. The pane shows a summary of the
+			# findings for the selected PR whatever section it is in, so the key that opens the whole
+			# thing has to reach as far as the summary does.
+			rev = current.get("review") or log.last(current["url"])
 			curses.endwin()
 			subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
-			               input=log.detail(current["review"]), text=True)
+			               input=log.detail(rev), text=True)
 			scr.refresh()
 		elif k == ord("r") and current and current["section"] == "REVIEW REQUESTED":
 			# ponytail: r is REVIEW now, as the design always labelled it. Refresh moved to f. This is a
@@ -1059,4 +1096,12 @@ def main(scr, interval, auto, model):
 			elif confirm(scr, state, sel, f" Claude review + post verdict on #{current['number']}? [y/n]"):
 				state.start_review(current)
 		elif k in (10, 13, curses.KEY_ENTER):
-			state.pane = not state.pane  # ponytail: ⏎ is the pane, which is what the design drew
+			# ponytail: ⏎ is the pane, which is what the design drew. Say so when there is no room for
+			# one — the key silently doing nothing reads as the app being broken, not the terminal.
+			h_, w_ = scr.getmaxyx()
+			if w_ >= PANE_MIN and h_ >= PANE_MIN_H:
+				state.pane = not state.pane
+			else:
+				draw(scr, state, sel, prompt=f" the detail pane needs {PANE_MIN}x{PANE_MIN_H}; this is {w_}x{h_}")
+				scr.refresh()
+				curses.napms(900)

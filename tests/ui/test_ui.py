@@ -48,8 +48,14 @@ def test_draw_clamps_selection_and_handles_empty(screen):
 def test_draw_survives_tiny_terminals(screen):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [dict(PR)], None), ("REVIEWED", [], None)], time.time()
-	for h in range(1, 12):
-		for w in range(1, 40):
+	# ponytail: the sweep stopped at w=40, so it never reached PANE_MIN and never drew the pane at all —
+	# which is why a crash on every terminal under 16 rows wide enough for one got through. It has to
+	# cover the widths where the pane turns on, with a detail and a review present to fill it.
+	st.details[(dict(PR)["url"], dict(PR)["updatedAt"])] = {
+		"branch": "feat/x", "add": 4, "del": 2, "files": 3,
+		"checks": [{"name": f"c{i}", "state": "ok"} for i in range(9)]}
+	for h in range(1, 20):
+		for w in list(range(1, 40)) + list(range(140, 240, 6)):
 			screen.h, screen.w = h, w
 			sel, cur = ui.draw(screen, st, 0)  # FakeScr asserts every addnstr lands on screen
 			assert sel == 0 and cur["url"] == "u"
@@ -553,8 +559,10 @@ def test_the_pane_shows_the_selected_pr_and_folds_away(screen, monkeypatch):
 	st = State(60)
 	pr = dict(PR, number=949, title="feat(viewer): user-customisable keyboard shortcuts", url="u949")
 	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
-	st.details["u949"] = {"branch": "feat/kb", "add": 412, "del": 96, "files": 14,
-	                      "checks": [{"name": "ci", "state": "ok"}, {"name": "e2e", "state": "run"}]}
+	# ponytail: keyed by (url, updatedAt) now — a PR that moved has a different branch head, diff size
+	# and CI result, and keying on the url alone kept showing the old ones until a restart.
+	st.details[("u949", pr["updatedAt"])] = {"branch": "feat/kb", "add": 412, "del": 96, "files": 14,
+	                                         "checks": [{"name": "ci", "state": "ok"}, {"name": "e2e", "state": "run"}]}
 	ui.draw(screen, st, 0)
 	out = screen.text()
 	assert "SELECTED PR" in out and "#949" in out and "feat/kb" in out
@@ -563,7 +571,7 @@ def test_the_pane_shows_the_selected_pr_and_folds_away(screen, monkeypatch):
 	assert "ACTIONS" in out and "open in browser" in out
 	st.pane = False
 	ui.draw(screen, st, 0)
-	assert "SELECTED PR" not in screen.text()  # p folds it away and the list takes the width
+	assert "SELECTED PR" not in screen.text()  # ⏎ folds it away and the list takes the width
 
 
 def test_the_pane_never_appears_on_a_narrow_terminal(screen):
@@ -587,7 +595,7 @@ def test_the_pane_draws_a_review_it_has_findings_for(screen):
 	out = screen.text()
 	assert "AI REVIEW" in out and "changes requested" in out
 	assert "1 blocking" in out and "1 nit" in out
-	assert "keymap.ts:88 duplicate binding" in out
+	assert "keymap.ts:88  duplicate binding" in out
 
 
 def test_the_pane_says_so_when_nothing_is_selected(screen):
@@ -702,3 +710,82 @@ def test_pre_review_offers_reads_and_reruns(monkeypatch, screen, tmp_path):
 	st.reviews[_pr_at()["url"]] = "pre-reviewing..."
 	ui.pre_review(screen, st, 0, _pr_at())
 	assert started == [7, 7] and len(paged) == 1
+
+
+def test_reviewer_chips_get_their_own_column_and_their_own_colours(screen, monkeypatch):
+	"""Folded into the state cell they took the state's colour — and state is the LAST column, so at any
+	real width they were pushed off the right edge and never appeared at all.
+
+	This also pins COLS against cells: zip() drops a cell silently when the two disagree, and that pair
+	has now been wrong in each direction — 7 cells with 6 columns, then 7 columns with 6 cells.
+	"""
+	painted = []
+	real = screen.addnstr
+	monkeypatch.setattr(screen, "addnstr", lambda y, x, s, n, a=0: painted.append((s.rstrip(), a)) or real(y, x, s, n, a))
+	monkeypatch.setattr(ui, "C", lambda k: k)          # colour pair number, so chips are distinguishable
+	ui.REVIEWER_COLOR.clear()
+	ui.REVIEWER_COLOR.update({"✓": 4, "✗": 3, "·": 5, "~": 1})
+	screen.w = 150
+	st = State(60)
+	# ponytail: two rows, asserting on the UNSELECTED one — a selected row paints everything in the
+	# selection tint on purpose, so its chips share a colour by design rather than by the bug.
+	st.sections = [("MINE", [dict(PR, url="u1"), dict(PR, url="u2", reviewers="✓bob ✗carol",
+	                                                  status="✓ approved")], None)]
+	ui.draw(screen, st, 0, now=1000.0)
+
+	chips = {s: a for s, a in painted if s in ("✓bob", "✗carol")}
+	assert set(chips) == {"✓bob", "✗carol"}, "every chip that fits must be painted"
+	assert len(set(chips.values())) == 2, "each glyph keeps its own colour, not the state's"
+	assert "REVIEWERS" in screen.text()
+
+	# more reviewers than the column holds: the overflow is elided, never half a name
+	painted.clear()
+	st.sections = [("MINE", [dict(PR, url="u1"), dict(PR, url="u3", reviewers="✓bob ✗carol ·dave",
+	                                                  status="✓ approved")], None)]
+	ui.draw(screen, st, 0, now=1000.0)
+	assert "…" in screen.text()
+	assert not [s for s, _ in painted if s.startswith("·dav") and s != "·dave"]
+
+
+def test_cells_and_cols_stay_the_same_length(screen):
+	"""zip() truncates in silence, and that is exactly how the status ended up under REVIEWERS."""
+	st = State(60)
+	st.sections = [("MINE", [dict(PR, reviewers="✓bob")], None)]
+	ui.draw(screen, st, 0, now=1000.0)   # the assert lives in draw(); this fails loudly if they diverge
+	assert len(ui.COLS) == 7
+
+
+def test_a_finding_shows_its_text_not_mostly_its_path(screen):
+	"""A full path is most of a pane on its own, so the finding itself was the half that got truncated.
+
+	The directory is recoverable from the file name; what the review actually said is not.
+	"""
+	screen.w, screen.h = 190, 26
+	st = State(60)
+	pr = dict(PR, url="u9", number=966)
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details[("u9", pr["updatedAt"])] = {"branch": "feat/library", "add": 214, "del": 138, "files": 25}
+	# ponytail: findings are a structured field, not parsed out of the body prose
+	log.log_review(pr, "opus", {"verdict": "comment", "summary": "s", "body": "b", "findings": [
+		{"kind": "note", "loc": "features/library/ui/LibraryLanding.tsx:19",
+		 "text": "Count is derived on the client and can disagree with the API"}]})
+	ui.draw(screen, st, 0, now=1000.0)
+	out = screen.text()
+
+	assert "LibraryLanding.tsx:19" in out                       # the file, short
+	assert "features/library/ui/LibraryLanding" not in out      # not the whole path
+	assert "Count is derived" in out                            # and the finding itself is readable
+	assert "v read all" in out                                  # with a way to open the whole review
+
+
+def test_v_reads_the_review_from_any_row_that_has_one(screen, monkeypatch):
+	"""The pane summarises findings for the selected PR whatever section it is in, so the key that
+	opens the whole thing has to reach as far as the summary does — it was REVIEWED-only."""
+	pr = dict(PR, url="u10", number=970, section="MINE")
+	log.log_review(pr, "opus", {"verdict": "approve", "summary": "s", "body": "b",
+	                            "findings": [{"kind": "nit", "loc": "a.ts:1", "text": "x"}]})
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	screen.w, screen.h = 190, 26
+	ui.draw(screen, st, 0, now=1000.0)
+	assert "read the full review" in screen.text()   # offered on a MINE row, not just REVIEWED

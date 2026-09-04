@@ -68,13 +68,14 @@ self-check makes one real claude call and proves the three things every review d
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
-Keys: j/k move, o open, ⏎ review (REVIEW REQUESTED) or read the review (REVIEWED), p detail pane,
+Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
+v read a past review (REVIEWED), o open,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
 P share your facts with the team (t share, x forget), Z dream (Claude tidies all memory, you approve),
-T team repo setup or leave, u install the newest release, r refresh, q quit."""
+T team repo setup or leave, u install the newest release, f refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):

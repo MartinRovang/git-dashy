@@ -52,7 +52,7 @@ gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
 The list is a table — `age · repo · pr · title · author · state` — with your own PRs in their own
-section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `p`
+section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `⏎`
 opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
 found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
 
@@ -86,12 +86,14 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in `less`, and offers a fresh one once the PR has changed since |
-| `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
+| `Enter` | show / hide the detail pane for the selected PR |
+| `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
+| `v` | read the full review of the selected PR in `less` — any row that has one, not only REVIEWED |
+| `f` | refresh now |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
-| `p` | show / hide the detail pane for the selected PR |
 | `?` | show each setting's key next to it in the header |
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |
@@ -107,7 +109,6 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `C` | point the team checkout somewhere else (only while you are not in a team) |
 | `T` | team setup: share log + memory through a git repo, or leave the team you are in (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
-| `r` | refresh now |
 | `q` | quit |
 
 `m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` (or `q`) keeps.

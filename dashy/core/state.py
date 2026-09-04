@@ -52,6 +52,9 @@ class State:
 		self.known = None  # urls wanted from me at the last fetch; None until the first fetch lands
 
 	def want_detail(self, pr):
+		# ponytail: keyed by (url, updatedAt), not url. A PR that moved has a different branch head, diff
+		# size and CI result, and the pane kept showing the old ones until a restart — the same staleness
+		# the pre-review path had, for the same reason: caching what changes as though it does not.
 		"""The selected PR's detail, or None while it is being fetched.
 
 		ponytail: fetched once per PR, off the draw thread. draw() runs 20 times a second — anything that
@@ -59,18 +62,22 @@ class State:
 		"""
 		if pr is None:
 			return None
-		url = pr["url"]
+		key = (pr["url"], pr.get("updatedAt", ""))
 		with self.lock:
-			if url in self.details:
-				return self.details[url]
-			if url in self.detailing:
+			if key in self.details:
+				return self.details[key]
+			if key in self.detailing:
 				return None
-			self.detailing.add(url)
+			self.detailing.add(key)
 		def run():
 			got = github.detail(pr["repository"]["nameWithOwner"], pr["number"])
 			with self.lock:
-				self.details[url] = got
-				self.detailing.discard(url)
+				# ponytail: drop what we knew about this PR at any other revision, so the cache cannot
+				# grow one entry per push for a branch someone is iterating on.
+				for k in [k for k in self.details if k[0] == key[0]]:
+					del self.details[k]
+				self.details[key] = got
+				self.detailing.discard(key)
 		threading.Thread(target=run, daemon=True).start()
 		return None
 
