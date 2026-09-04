@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 
@@ -31,3 +32,24 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	st.sections = github.fetch()
 	ui.C = lambda n: 0
 	ui.draw(FakeScr(), st, 0)  # renders without raising
+
+
+def test_demo_swaps_every_call_out_including_the_pre_reviewer(monkeypatch, tmp_path):
+	"""`p` on a demo row called review.self_review, which demo.install() did not swap.
+
+	With claude on PATH that spawned a real `claude -p` against acme/api#101, which then shells out to
+	gh — against a README that promises no gh and no claude. The other test asserts no subprocess.run;
+	this one asserts the attr itself is not the real function, which is what actually went wrong.
+	"""
+	monkeypatch.setenv("TMPDIR", str(tmp_path))
+	real_review, real_self = review_mod.review, review_mod.self_review
+	demo.install()
+	try:
+		assert review_mod.review is not real_review
+		assert review_mod.self_review is not real_self, "demo must swap the pre-reviewer too"
+		status, dest = review_mod.self_review({"repository": {"nameWithOwner": "acme/api"},
+		                                       "number": 101, "url": "u"}, "opus")
+		assert "not posted" in status and os.path.isfile(dest)
+		assert str(tmp_path) in dest  # and it wrote into the demo's own temp dir, not ~/.prs_reviews
+	finally:
+		review_mod.review, review_mod.self_review = real_review, real_self

@@ -9,6 +9,16 @@ from .. import config
 from . import github, install, log, memory, mirror, review as review_mod, team, update
 
 
+def in_flight(status):
+	"""True while a review or a pre-review is running.
+
+	ponytail: the trailing "..." is the contract, not the verb. Four places matched the literal string
+	"reviewing..." and a pre-review was invisible to every one of them — the row, the spinner, the
+	header count and the stale-verdict sweep. One predicate, so the next verb is covered by writing it.
+	"""
+	return bool(status) and status.endswith("...")
+
+
 def refresh_mirrors():
 	"""Re-mirror every repo `gitdashy init` registered. Never raises: a bad entry must not stop a refresh."""
 	for into, repo, root, _loader in install.registered():
@@ -94,7 +104,7 @@ class State:
 			with self.lock:
 				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 				for u in stale:  # forget the old verdict so Enter / auto can review the new push
-					if self.reviews.get(u) != "reviewing...":
+					if not in_flight(self.reviews.get(u, "")):
 						self.reviews.pop(u, None)
 				new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []

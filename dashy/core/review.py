@@ -155,6 +155,11 @@ def self_review(pr, model):
 		os.makedirs(SELF_DIR, exist_ok=True)
 		dest = os.path.join(SELF_DIR, f"{memory.slug(repo)[:-3]}__{n}.md")
 		kept = memory.append_self(repo, verdict.get("memory"))
+		if kept:
+			# ponytail: every other writer pushes after writing — review(), remember, edit_memory, the dream.
+			# Scratch or not, a memory dir backed by git must not depend on the next unrelated write to
+			# carry these across; that is the kind of silent exception nobody remembers is there.
+			team.push_dir(config.MEMORY_DIR, f"memory: pre-review {repo}#{n}", "mine")
 		with open(dest, "w") as f:
 			f.write(SELF_HEADER.format(repo=repo, n=n, at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
 			                           model=model, depth=config.DEPTH,

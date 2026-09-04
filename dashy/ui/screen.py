@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
 from ..core import github, knowledge, log, memory, team, update
-from ..core.state import State
+from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
 
@@ -158,7 +158,7 @@ def draw(scr, state, sel, prompt=None):
 	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - time.time()))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
-	running = sum(v == "reviewing..." for v in vals)
+	running = sum(1 for v in vals if in_flight(v))  # ponytail: any verb, so a pre-review counts
 	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(1, 0, " " * (w - 1), w - 1, C(15))
 	scr.addnstr(2, 0, "▀" * (w - 1), w - 1, C(21))  # ponytail: upper half-block = a half-row gradient step, no true gradients in a tty
@@ -278,7 +278,7 @@ def draw(scr, state, sel, prompt=None):
 			# status from GitHub's review decision, so the old order short-circuited and a pre-review
 			# started, ran and finished without the row ever saying so.
 			st = reviews.get(p["url"]) or p.get("status") or p.get("prev", "")
-			if st.endswith("..."):
+			if in_flight(st):
 				st = f"{spin} {st[:-3]}…"  # ponytail: same clock-driven frame as the header, any verb
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else C(3) if st.startswith("✗") else C(5)
 			x = 1
@@ -649,7 +649,7 @@ def set_path(scr, state, sel, which):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
-def page(scr, state, sel, path):
+def page(scr, state, sel, path, label):
 	"""Show a file in less. ponytail: same route the dream's [v] takes — one pager, one set of habits."""
 	try:
 		with open(path) as f:
@@ -657,7 +657,9 @@ def page(scr, state, sel, path):
 	except OSError as e:
 		return confirm(scr, state, sel, f" {e}  [any key]")
 	curses.endwin()
-	subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", os.path.basename(path))], input=body, text=True)
+	# ponytail: a fixed label, not the filename. less reads a bare "." in a -P string as the
+	# end-of-conditional token and eats it, so "acme__api__7.md" rendered as "acme__api__7md".
+	subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", label)], input=body, text=True)
 	scr.refresh()
 
 
@@ -770,7 +772,7 @@ def main(scr, interval, auto, model):
 	sel, current, saved = 0, None, snapshot(state)
 	while True:
 		# ponytail: any in-flight verb, not the one literal string — a pre-review spins for the same reason
-		spinning = state.fetched_at is None or state.fetching or any(v.endswith("...") for v in state.reviews.values())
+		spinning = state.fetched_at is None or state.fetching or any(in_flight(v) for v in state.reviews.values())
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
 		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
@@ -813,8 +815,8 @@ def main(scr, interval, auto, model):
 			# ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone
 			# else's work that is never posted helps nobody — this is a pass before you ask a person.
 			if current["url"] in state.self_reviews:
-				page(scr, state, sel, state.self_reviews[current["url"]])
-			elif state.reviews.get(current["url"], "").endswith("..."):
+				page(scr, state, sel, state.self_reviews[current["url"]], f"pre-review of #{current['number']}")
+			elif in_flight(state.reviews.get(current["url"], "")):
 				pass  # already in flight
 			elif confirm(scr, state, sel, f" Pre-review #{current['number']}? Nothing is posted. [y/n]"):
 				state.start_self_review(current)

@@ -73,6 +73,7 @@ than whether the fact recurred.
 | `o` | open the PR in your browser |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; press `p` again to reopen it in `less` |
 | `Enter` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. On a REVIEWED row: read the summary + review in `less` |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
