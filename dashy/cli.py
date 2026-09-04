@@ -45,7 +45,7 @@ self-review runs the reviewer over one of your OWN PRs and posts nothing — a p
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
   directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
-  by offering the two briefs; --no-setup skips that, as does a non-terminal stdin. Reviews need
+  by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
 
 install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
@@ -134,18 +134,28 @@ def offer_setup(argv):
 	mention `gitdashy setup` — every occurrence of that string was inside setup() itself or a marker.
 	The guided path existed and was unreachable from the one moment you are deciding how to fill it.
 	"""
-	if "--no-setup" in argv or not sys.stdin.isatty():
-		return  # ponytail: never prompt a script; --no-setup is the explicit opt-out for one that is a tty
+	# ponytail: --yes too. This command already tells you "pass --yes if you meant to install unattended"
+	# when stdin is not a tty, so --yes means "do not ask me" for BOTH gates or the promise is false. A
+	# bootstrap script run from an interactive shell inherits that tty, so isatty alone does not cover it.
+	if "--no-setup" in argv or "--yes" in argv or not sys.stdin.isatty():
+		return
 	if install_mod.setup_done():
 		return  # ponytail: nothing to offer when both briefs are already written
+	later = "`gitdashy setup` whenever you want them — nothing else is waiting on it."
 	try:
-		if input("\nAnswer the two briefs now? [Y/n] ").strip().lower() in ("", "y", "yes"):
-			print("")
-			setup(argv)
-		else:
-			print("`gitdashy setup` whenever you want them — nothing else is waiting on it.")
+		if input("\nAnswer the two briefs now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+			return print(later)
 	except (EOFError, KeyboardInterrupt):
-		print("\n`gitdashy setup` whenever you want them.")
+		return print("\n" + later)
+	print("")
+	try:
+		setup(argv)
+	except SystemExit as e:
+		# ponytail: cli.setup's own `ask` raises SystemExit on Ctrl-C, and SystemExit is a BaseException,
+		# so it walked past the handler above — the install had COMPLETED and printed its report, and the
+		# process still exited non-zero. A wrapper checking $? read a finished install as a failed one.
+		# Declining halfway through the briefs is a decline, not a failure.
+		print((str(e).strip() or later))
 
 
 def self_review(argv):

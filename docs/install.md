@@ -236,8 +236,10 @@ on disk**, because by then it is yours and may not look like what was installed.
 
 A full install ends by offering the two briefs — who you are, and what the work is for —
 and runs `gitdashy setup` if you say yes. Decline and nothing is waiting on it; run
-`gitdashy setup` whenever. `--no-setup` skips the offer, and it is skipped automatically
-when stdin is not a terminal, so a scripted install never blocks.
+`gitdashy setup` whenever. The offer is skipped by `--yes`, by `--no-setup`, and when stdin
+is not a terminal — `--yes` included because this command already tells you to pass it if
+you meant to install unattended, and a bootstrap script run from an interactive shell
+inherits that terminal, so `isatty` alone would still have stopped it.
 
 Plain `install` does not offer them. It puts no corpus on the machine, so there is no
 `USER.md` to fill in, and staying out of the way is the whole promise of that tier. The
