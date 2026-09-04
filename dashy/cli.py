@@ -14,7 +14,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy setup
        gitdashy self-check [--model NAME]
-       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--uninstall]
+       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
@@ -38,7 +38,8 @@ remember files a fact you learned while working, into the same drafts a review w
 
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
   directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
-  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. Reviews need
+  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
+  by offering the two briefs; --no-setup skips that, as does a non-terminal stdin. Reviews need
   none of this — they read memory through the prompt and always have.
 
 install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
@@ -110,7 +111,35 @@ def install(argv):
 		except (EOFError, KeyboardInterrupt):
 			return print("\nnothing changed")
 	print("")
-	print("\n".join(install_mod.full_apply(corpus, url) if full else install_mod.apply()))
+	out = install_mod.full_apply(corpus, url) if full else install_mod.apply()
+	print("\n".join(out))
+	# ponytail: --full ONLY. Plain install puts no corpus on the machine, so there is no USER.md to
+	# fill in, and its whole promise is that it stays out of the way — no corpus, no hooks, no
+	# settings.json, and nothing to answer. The project brief still matters at that tier and setup
+	# writes it, but offering a two-part flow whose first half SKIPs is worse than saying nothing.
+	if full and not any(l.startswith("FAIL") for l in out):
+		offer_setup(argv)
+
+
+def offer_setup(argv):
+	"""After a full install, offer the questions rather than only naming the file to hand-edit.
+
+	ponytail: the installer used to say "fill it in, it is the highest-value file here" and never
+	mention `gitdashy setup` — every occurrence of that string was inside setup() itself or a marker.
+	The guided path existed and was unreachable from the one moment you are deciding how to fill it.
+	"""
+	if "--no-setup" in argv or not sys.stdin.isatty():
+		return  # ponytail: never prompt a script; --no-setup is the explicit opt-out for one that is a tty
+	if install_mod.setup_done():
+		return  # ponytail: nothing to offer when both briefs are already written
+	try:
+		if input("\nAnswer the two briefs now? [Y/n] ").strip().lower() in ("", "y", "yes"):
+			print("")
+			setup(argv)
+		else:
+			print("`gitdashy setup` whenever you want them — nothing else is waiting on it.")
+	except (EOFError, KeyboardInterrupt):
+		print("\n`gitdashy setup` whenever you want them.")
 
 
 def setup(argv):
