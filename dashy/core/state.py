@@ -9,14 +9,16 @@ from .. import config
 from . import github, install, log, memory, mirror, review as review_mod, team, update
 
 
-def in_flight(status):
-	"""True while a review or a pre-review is running.
+def in_flight(state, url):
+	"""True while a review or pre-review of this PR is running.
 
-	ponytail: the trailing "..." is the contract, not the verb. Four places matched the literal string
-	"reviewing..." and a pre-review was invisible to every one of them — the row, the spinner, the
-	header count and the stale-verdict sweep. One predicate, so the next verb is covered by writing it.
+	ponytail: membership, not a suffix. The status channel also carries a truncated stderr line, so
+	sniffing for "..." meant an error whose last line happened to end in one would pin the UI at a 50ms
+	timeout, count as a running agent, block the key from ever retrying that PR, and survive the stale
+	sweep — permanently, on wording nobody controls. The set is written by the two functions that start
+	work and cleared by the two that finish it; nothing has to be parsed.
 	"""
-	return bool(status) and status.endswith("...")
+	return url in state.running
 
 
 def refresh_mirrors():
@@ -39,6 +41,11 @@ class State:
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
+		self.running = set()  # urls with a review or pre-review in flight — see in_flight()
+		# ponytail: the PR's updatedAt when a finished status was last seen. A verdict describes one
+		# revision; once the PR moves, it is stale and must stop masking what GitHub now says.
+		self.seen_at = {}
+		self.done_at = {}  # url -> when a status landed, so an older in-flight fetch cannot baseline it
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		# ponytail: main's persisted settings win over the branch's hardcoded defaults — config.WINDOW
 		# and friends came later and are the whole point of the settings file.
@@ -103,9 +110,13 @@ class State:
 			status = review_mod.review(pr, model)  # module attr: --demo and tests swap it
 			with self.lock:
 				self.reviews[pr["url"]] = status
+				self.running.discard(pr["url"])
+				self.seen_at.pop(pr["url"], None)
+				self.done_at[pr["url"]] = time.time()
 			self.wake.set()  # refetch so an approved PR drops off the list
 		with self.lock:
 			self.reviews[pr["url"]] = "reviewing..."
+			self.running.add(pr["url"])
 		threading.Thread(target=run, daemon=True).start()
 
 	def start_self_review(self, pr):
@@ -115,9 +126,13 @@ class State:
 			status, _dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
 			with self.lock:
 				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
+				self.running.discard(pr["url"])
+				self.seen_at.pop(pr["url"], None)
+				self.done_at[pr["url"]] = time.time()
 			self.wake.set()
 		with self.lock:
 			self.reviews[pr["url"]] = "pre-reviewing..."
+			self.running.add(pr["url"])
 		threading.Thread(target=run, daemon=True).start()
 
 	def loop(self):
@@ -134,9 +149,38 @@ class State:
 				time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
 			with self.lock:
 				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
-				for u in stale:  # forget the old verdict so Enter / auto can review the new push
-					if not in_flight(self.reviews.get(u, "")):
+				for u in stale:  # forget the old verdict so r / auto can review the new push
+					if not in_flight(self, u):
 						self.reviews.pop(u, None)
+						self.seen_at.pop(u, None)
+				# ponytail: and forget it for ANY row whose PR has moved since. `stale` comes from
+				# log.mark_rereviews, which only ever names REVIEW REQUESTED urls — so a finished
+				# pre-review masked GitHub's decision on a MINE row until restart, and a colleague
+				# approving your PR never showed. One rule for both: a verdict describes one revision.
+				# ponytail: baselined on the first fetch that STARTED after the work finished. Posting a
+				# review bumps updatedAt itself, so the value we held is already stale — and a fetch that
+				# was in flight when the verdict landed carries the pre-post value, which is why the
+				# start time is compared rather than merely "the next fetch".
+				for _name, prs, _err in data:
+					for p in prs or []:
+						u = p["url"]
+						if u not in self.reviews or in_flight(self, u):
+							continue
+						# ponytail: .get, not a subscript. A KeyError here runs on the refresh thread and
+						# takes the whole loop down; a PR without the field simply never goes stale.
+						at = p.get("updatedAt")
+						if at is None:
+							continue
+						if self.done_at.get(u, 0) > t0:
+							# ponytail: this fetch STARTED before the work finished, so it carries the
+							# pre-post updatedAt. Baselining on it would sweep our own verdict on the
+							# next tick — which the comment below claimed to avoid and did not.
+							continue
+						if u not in self.seen_at:
+							self.seen_at[u] = at
+						elif self.seen_at[u] != at:
+							self.reviews.pop(u, None)
+							self.seen_at.pop(u, None)
 				new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
 				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
 			for p in new:

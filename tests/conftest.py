@@ -2,7 +2,7 @@
 import json
 import pytest
 
-from dashy import config
+from dashy import demo, config
 from dashy.core import github, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
@@ -24,10 +24,12 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(team, "ERROR", "")
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
-	# ponytail: re-set the swappable attrs so --demo's install() can't leak into the next test
-	monkeypatch.setattr(github, "fetch", github.fetch)
-	monkeypatch.setattr(review, "review", review.review)
-	monkeypatch.setattr(memory, "dream", memory.dream)
+	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs
+	# while install() swapped eight, so github.copy, collaborators, request_review, self_review and
+	# update_available stayed faked for every module collected afterwards. demo.restore() puts back
+	# whatever was actually swapped, so a swap added later is covered without touching this file.
+	yield
+	demo.restore()
 
 
 class Result:

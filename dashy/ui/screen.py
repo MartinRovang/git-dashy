@@ -183,6 +183,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
+		busy = set(state.running)  # ponytail: copied under the same lock as reviews
 	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
 	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
 		rs = [r for r in rs if r[0] != "cols"]
@@ -215,7 +216,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - now))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
-	running = sum(1 for v in vals if in_flight(v))  # ponytail: any verb, so a pre-review counts
+	running = len(busy)  # ponytail: the set, so an error whose text ends in "..." is not an agent
 	scr.addnstr(0, 0, " " * (w - 1), w - 1, C(7))
 	scr.addnstr(1, 0, " " * (w - 1), w - 1, C(15))
 	scr.addnstr(2, 0, "▀" * (w - 1), w - 1, C(21))  # ponytail: upper half-block = a half-row gradient step, no true gradients in a tty
@@ -362,8 +363,11 @@ def draw(scr, state, sel, prompt=None, now=None):
 			# ponytail: carried over from main, not the branch's older order — what THIS session is doing
 			# wins over what was fetched, or a pre-review runs to completion with the row never saying so.
 			st = reviews.get(p["url"]) or p.get("status") or p.get("prev", "")
-			if in_flight(st):
-				st = f"{spin} {st[:-3]}…"  # ponytail: same clock-driven frame as the header, any verb
+			if p["url"] in busy:
+				# ponytail: removesuffix, not [:-3]. Membership of `busy` is what says in-flight now, so
+				# nothing guarantees the text ends in dots — the two are written under one lock today,
+				# and that is a coupling rather than a rule.
+				st = f"{spin} {st.removesuffix('...')}…"
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else \
 				C(3) if st.startswith("✗") else C(5)
 			tag = ("▸+" + str(p["more"])) if p.get("more") else "▾" if p.get("open") else ""
@@ -972,7 +976,7 @@ def pre_review(scr, state, sel, pr):
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
 	# ponytail: shared with the pane, not repeated — see review.self_review_state
 	at, moved = review_mod.self_review_state(pr)
-	if in_flight(state.reviews.get(pr["url"], "")):
+	if in_flight(state, pr["url"]):
 		return
 	if at and not moved:
 		return page(scr, state, sel, review_mod.self_review_path(repo, n), f"pre-review of #{n}")
@@ -1119,7 +1123,7 @@ def main(scr, interval, auto, model):
 	sel, current, saved = 0, None, snapshot(state)
 	while True:
 		# ponytail: any in-flight verb, not the one literal string — a pre-review spins for the same reason
-		spinning = state.fetched_at is None or state.fetching or any(in_flight(v) for v in state.reviews.values())
+		spinning = state.fetched_at is None or state.fetching or bool(state.running)
 		sel, current = draw(scr, state, sel)  # ponytail: redraw every tick, cheap enough
 		scr.refresh()  # draw() only stages; noutrefresh clears the touched flag so getch() would not flush it
 		scr.timeout(50 if spinning else 150 if SCROLLING[0] else 500)  # spin smoothly while busy, glide the marquee, else idle
@@ -1193,7 +1197,7 @@ def main(scr, interval, auto, model):
 			# ponytail: r is REVIEW now, as the design always labelled it. Refresh moved to f. This is a
 			# muscle-memory break on two keys people use constantly, taken deliberately rather than by
 			# redraw — the branch talked itself out of it once and left ⏎ and r meaning the older thing.
-			if in_flight(state.reviews.get(current["url"], "")) or current["url"] in state.reviews:
+			if in_flight(state, current["url"]) or current["url"] in state.reviews:
 				pass  # already reviewed or in flight
 			elif confirm(scr, state, sel, f" Claude review + post verdict on #{current['number']}? [y/n]"):
 				state.start_review(current)

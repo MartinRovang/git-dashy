@@ -15,6 +15,23 @@ def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None
 	        "updatedAt": (now - timedelta(hours=hours)).isoformat()}
 
 
+SWAPPED = {}  # (module, attr) -> the original, so a caller can put every one of them back
+
+
+def _swap(mod, name, fn):
+	"""Replace a module attr, remembering what was there. See restore()."""
+	SWAPPED.setdefault((mod, name), getattr(mod, name))
+	setattr(mod, name, fn)
+
+
+def restore():
+	"""Undo every swap install() made. ponytail: the demo is for a person, so nothing calls this in
+	anger — but the test suite must, and a list it maintains by hand drifts from the list here."""
+	for (mod, name), original in SWAPPED.items():
+		setattr(mod, name, original)
+	SWAPPED.clear()
+
+
 def install():
 	"""ponytail: swap every module attr the app calls out through — no injection framework.
 
@@ -98,6 +115,14 @@ def install():
 				p["reviewers"] = (p["reviewers"] + f" ·{login}").strip()
 		return "" if login != "dave" else "dave is on leave (demo error)"
 
-	github.fetch, review.review, update.update_available, memory.dream = fake_fetch, fake_review, lambda: "", fake_dream
-	review.self_review = fake_self_review
-	github.collaborators, github.request_review, github.copy = lambda repo: ["alice", "bob", "carol", "dave", "erin"], fake_request_review, lambda t: "demo"
+	# ponytail: every swap goes through _swap, which RECORDS the original. A test suite that puts them
+	# back by naming them has to be kept in step by hand, and it was not — five of the eight leaked into
+	# every module collected after the demo test. Recording means a swap added later is covered by
+	# having been written, not by someone remembering to add it in two places.
+	for mod, name, fn in ((github, "fetch", fake_fetch), (review, "review", fake_review),
+	                      (review, "self_review", fake_self_review), (memory, "dream", fake_dream),
+	                      (update, "update_available", lambda: ""),
+	                      (github, "collaborators", lambda repo: ["alice", "bob", "carol", "dave", "erin"]),
+	                      (github, "request_review", fake_request_review),
+	                      (github, "copy", lambda t: "demo")):
+		_swap(mod, name, fn)

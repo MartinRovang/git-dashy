@@ -53,3 +53,26 @@ def test_demo_swaps_every_call_out_including_the_pre_reviewer(monkeypatch, tmp_p
 		assert str(tmp_path) in dest  # and it wrote into the demo's own temp dir, not ~/.prs_reviews
 	finally:
 		review_mod.review, review_mod.self_review = real_review, real_self
+
+
+def test_demo_puts_back_everything_it_swapped(monkeypatch, tmp_path):
+	"""conftest named three attrs while install() swapped eight, so five stayed faked for every module
+	collected after this file — github.copy, collaborators, request_review, self_review and
+	update_available. Recording the originals means a swap added later is covered by having been
+	written, not by someone remembering to add it in a second place.
+	"""
+	from dashy.core import update
+	monkeypatch.setenv("TMPDIR", str(tmp_path))
+	originals = {(m, n): getattr(m, n) for m, n in
+	             ((github, "fetch"), (github, "copy"), (github, "collaborators"), (github, "request_review"),
+	              (review_mod, "review"), (review_mod, "self_review"), (update, "update_available"))}
+
+	demo.install()
+	assert all(getattr(m, n) is not o for (m, n), o in originals.items()), "install must swap all of them"
+	assert len(demo.SWAPPED) >= len(originals)
+
+	demo.restore()
+
+	for (m, n), o in originals.items():
+		assert getattr(m, n) is o, f"{m.__name__}.{n} was not put back"
+	assert demo.SWAPPED == {}
