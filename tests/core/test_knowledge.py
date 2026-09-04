@@ -32,9 +32,14 @@ def test_repoint_refuses_rather_than_picking_a_winner(monkeypatch, tmp_path):
 	(new / "general.md").write_text("theirs\n")
 	monkeypatch.delenv("PRS_MEMORY", raising=False)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(old))
+	(old / "drafts").mkdir()   # ponytail: something that does NOT collide, to prove it is not moved either
+	(old / "drafts" / "x.md").write_text("- (1) a guess\n")
 	err = knowledge.set_local(str(new))
-	assert "merge them by hand" in err
+	assert "merge by hand" in err and "general.md" in err
 	assert (new / "general.md").read_text() == "theirs\n" and (old / "general.md").read_text() == "mine\n"
+	# it used to move everything that did not collide, THEN refuse — so the non-colliding half was
+	# already gone, under a message saying to merge by hand as though nothing had happened
+	assert (old / "drafts" / "x.md").exists() and not (new / "drafts").exists()
 
 
 def test_set_store_refuses_while_the_refresh_thread_is_in_there(monkeypatch, tmp_path):
@@ -498,3 +503,28 @@ def test_the_memory_row_says_nothing_when_history_is_fine(monkeypatch, tmp_path)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
 	assert team.init_history(str(mem))
 	assert k.history_note() == ""
+
+
+def test_pointing_memory_at_an_existing_repo_moves_nothing(monkeypatch, tmp_path):
+	"""The normal way to hit the partial-move bug: both ends have a .git, so they always collide.
+
+	Pointing memory at a corpus or a notes repo is a reasonable thing to try, and it used to scatter
+	general.md, drafts/ and project.md into that repo before refusing.
+	"""
+	import subprocess as sp
+	mem, repo = tmp_path / "prs_memory", tmp_path / "corpus"
+	(mem / "drafts").mkdir(parents=True)
+	(mem / "general.md").write_text("- cross-repo facts\n")
+	(mem / "project.md").write_text("- the brief\n")
+	sp.run(["git", "init", "-q", str(mem)], check=True)
+	(repo / "identity").mkdir(parents=True)
+	(repo / "README.md").write_text("# corpus\n")
+	sp.run(["git", "init", "-q", str(repo)], check=True)
+	monkeypatch.delenv("PRS_MEMORY", raising=False)
+	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mem))
+
+	err = knowledge.set_local(str(repo))
+
+	assert ".git exists in both" in err and "a directory of its own" in err
+	assert sorted(p.name for p in repo.iterdir()) == [".git", "README.md", "identity"]
+	assert (mem / "general.md").exists() and (mem / "project.md").exists() and (mem / "drafts").is_dir()
