@@ -552,10 +552,10 @@ def detail(scr, state, h, x0, width, pr):
 	# ponytail: pre-reviews live on disk under a derived name, so this survives a restart with nothing
 	# remembered — the pane just asks the filesystem. Before this they were invisible: you had to press
 	# p and hope, with no way to tell a fresh one from a review of a diff you have since pushed over.
-	pre_at = review_mod.self_review_at(pr["repository"]["nameWithOwner"], pr["number"]) if pr else 0.0
-	# ponytail: the same comparison the p handler makes, so what ACTIONS promises is what p does. Said
-	# once and used twice, because a pane that offers "read" while the key re-runs is worse than silent.
-	pre_moved = bool(pre_at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > pre_at
+	# ponytail: MINE only, because `p` is bound on MINE only. The pane offered "read the pre-review" for
+	# any section, so a file left beside a non-MINE row promised a key that does nothing there.
+	# ponytail: and `pr` is not None here — the pane returned on that sixty lines up.
+	pre_at, pre_moved = review_mod.self_review_state(pr) if pr.get("section") == "MINE" else (0.0, False)
 	if pre_at and y < h - 6:
 		moved = pre_moved
 		line(y, [("PRE-REVIEW", C(25)),
@@ -938,6 +938,28 @@ def page(scr, state, sel, path, label):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
+def copy_pre_review(scr, state, sel, pr):
+	"""`Y`: put the pre-review's PATH on the clipboard. Returns what it copied, or "".
+
+	ponytail: the path, not the contents — it is a file you open in an editor or hand to something
+	else, and a whole review on the clipboard is not what anyone wants to paste.
+	ponytail: a function, not eight lines in the key loop. The test for this pressed nothing and called
+	github.copy itself, so neither branch of the handler ran — which is how the p handler shipped a
+	NameError. A handler that cannot be driven is a handler that is not tested.
+	"""
+	at, _moved = review_mod.self_review_state(pr)
+	if not at:
+		draw(scr, state, sel, prompt=f" no pre-review of #{pr['number']} yet — p runs one")
+		scr.refresh()
+		return ""
+	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
+	tool = github.copy(path)
+	draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
+	     else f" sent {path} to the terminal (OSC 52)")
+	scr.refresh()
+	return path
+
+
 def pre_review(scr, state, sel, pr):
 	"""`p` on one of your own rows: read the pre-review if it still fits the diff, else offer a fresh one.
 
@@ -948,11 +970,8 @@ def pre_review(scr, state, sel, pr):
 	work that is never posted helps nobody — this is a pass before you ask a person.
 	"""
 	repo, n = pr["repository"]["nameWithOwner"], pr["number"]
-	at = review_mod.self_review_at(repo, n)
-	# ponytail: the PR moving is what makes a pre-review stale, so compare the file against updatedAt
-	# rather than keeping a flag. Read it back while it still describes this diff; offer a fresh one the
-	# moment it does not. Nothing to remember across a restart.
-	moved = bool(at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > at
+	# ponytail: shared with the pane, not repeated — see review.self_review_state
+	at, moved = review_mod.self_review_state(pr)
 	if in_flight(state.reviews.get(pr["url"], "")):
 		return
 	if at and not moved:
@@ -1112,16 +1131,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("p") and current and current["section"] == "MINE":
 			pre_review(scr, state, sel, current)
 		elif k == ord("Y") and current:
-			# ponytail: the PATH, not the contents. It is a file you open in an editor or pass to
-			# something else; a whole review on the clipboard is not what anyone wants to paste.
-			path = review_mod.self_review_path(current["repository"]["nameWithOwner"], current["number"])
-			if not review_mod.self_review_at(current["repository"]["nameWithOwner"], current["number"]):
-				draw(scr, state, sel, prompt=f" no pre-review of #{current['number']} yet — p runs one")
-			else:
-				tool = github.copy(path)
-				draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
-				     else f" sent {path} to the terminal (OSC 52)")
-			scr.refresh()
+			copy_pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else

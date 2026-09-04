@@ -944,18 +944,26 @@ def test_the_pane_says_a_pre_review_exists_and_whether_it_is_current(monkeypatch
 
 
 def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, tmp_path):
-	"""The path, not the contents — it is a file you open or pass on, not something to paste."""
+	"""The path, not the contents — a file you open or hand on, not something to paste.
+
+	ponytail: this DRIVES the handler. The first version called github.copy itself and pressed nothing,
+	so neither branch ran — which is exactly how the p handler shipped a NameError.
+	"""
 	from dashy.core import review as review_mod
 	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
-	pr = dict(PR, url="uY", number=903)
+	pr = dict(PR, url="uY", number=903, section="MINE")
 	repo = pr["repository"]["nameWithOwner"]      # ponytail: from the fixture, not assumed
-	copied = []
+	copied, said = [], []
 	monkeypatch.setattr(ui.github, "copy", lambda t: copied.append(t) or "xclip")
-	assert review_mod.self_review_at(repo, 903) == 0.0   # none yet
+	monkeypatch.setattr(ui, "draw", lambda s, st, sl, prompt=None, now=None: said.append(prompt or ""))
+	st = State(60)
+
+	assert ui.copy_pre_review(screen, st, 0, pr) == ""          # none yet: nothing copied
+	assert copied == [] and "no pre-review of #903 yet" in said[-1]
 
 	path = _with_pre_review(monkeypatch, tmp_path, pr, 4e9)
-	assert review_mod.self_review_at(repo, 903) > 0
-	assert ui.github.copy(path) == "xclip" and copied == [path]
+	assert ui.copy_pre_review(screen, st, 0, pr) == path
+	assert copied == [path] and "✓ copied" in said[-1] and "xclip" in said[-1]
 	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
 	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
 	assert path == review_mod.self_review_path(repo, 903)
