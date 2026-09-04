@@ -59,6 +59,11 @@ def test_draw_survives_tiny_terminals(screen):
 	st.details[(dict(PR)["url"], dict(PR)["updatedAt"])] = {
 		"branch": "feat/x", "add": 4, "del": 2, "files": 3,
 		"checks": [{"name": f"c{i}", "state": "ok"} for i in range(9)]}
+	# ponytail: a review with a SUMMARY AND NO FINDINGS — every entry written before the findings field
+	# existed, so the common case. The findings loop bounds itself; the summary fallback did not, and a
+	# sweep over a PR with no review at all could never reach either.
+	log.log_review(dict(PR), "opus", {"verdict": "approve", "body": "b",
+	                                  "summary": "a summary long enough to wrap onto a second line here"})
 	for h in range(1, 20):
 		for w in list(range(1, 40)) + list(range(140, 240, 6)):
 			screen.h, screen.w = h, w
@@ -794,3 +799,26 @@ def test_v_reads_the_review_from_any_row_that_has_one(screen, monkeypatch):
 	screen.w, screen.h = 190, 26
 	ui.draw(screen, st, 0, now=1000.0)
 	assert "read the full review" in screen.text()   # offered on a MINE row, not just REVIEWED
+
+
+def test_the_pane_never_writes_over_the_footer_or_off_the_screen(screen):
+	"""Two writes bypassed line() — the summary fallback and the model tag — so a review with a summary
+	and NO findings walked past the last list row.
+
+	That is every entry written before the findings field existed, so the common case rather than an
+	edge one. The findings loop bounds itself, which is why the case with findings looked fine.
+	At h=16 the stray write lands ON screen and overprints the footer; taller and it goes off it.
+	"""
+	st = State(60)
+	pr = dict(PR, url="uS")
+	st.sections, st.fetched_at = [("MINE", [pr], None)], time.time()
+	st.details[("uS", pr["updatedAt"])] = {"branch": "feat/x", "add": 4, "del": 2, "files": 3,
+	                                       "checks": [{"name": f"check-{i}", "state": "ok"} for i in range(9)]}
+	log.log_review(pr, "opus", {"verdict": "approve", "body": "b",
+	                            "summary": " ".join(["a summary long enough to wrap several times"] * 6)})
+	for h in (16, 17, 18, 20, 24):
+		screen.h, screen.w = h, 190
+		ui.draw(screen, screen and st, 0, now=1000.0)          # must not raise
+		foot = screen.line(h - 2) + screen.line(h - 1)
+		assert "NAV" in foot, f"h={h}: the footer was overwritten by the pane"
+		assert "summary long enough" not in foot, f"h={h}: pane text landed on the footer"

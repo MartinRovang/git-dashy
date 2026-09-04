@@ -457,35 +457,41 @@ def detail(scr, state, h, x0, width, pr):
 	from a review that ran — every section is skipped rather than shown empty, so the pane never pads
 	itself out with rows that say nothing.
 	"""
+	def at(y, x, text, n, attr=0):
+		"""Every write in this pane, bounded. The ONLY one that touches the screen.
+
+		ponytail: line() bounded the writes that went through it, and nine did not — the model tag, the
+		summary fallback, ACTIONS, the title wrap. The commit that added line() said it "guarantees it
+		cannot fault"; that was true of a third of the pane, and a review of a PR with a summary and no
+		findings — every entry written before the findings field existed — still killed the dashboard.
+		A guarantee that depends on remembering to use it is not one.
+		"""
+		if 4 <= y < h - 2 and x < x0 + width:
+			scr.addnstr(y, x, text, max(1, min(n, x0 + width - x)), attr)
+
 	def line(y, cells):
-		# ponytail: every write in this pane goes through here, so the vertical bound belongs here too.
-		# Nothing checked y against h: the title wrap, the stats, CHECKS and AI REVIEW all walked past
-		# the last row, and curses raises on an off-screen addnstr — which unwound out of draw() and
-		# killed the dashboard on any terminal under 16 rows wide enough to show the pane.
-		if not 4 <= y < h - 2:
-			return
 		x = x0 + 2
 		for text, attr in cells:
 			if not text or x >= x0 + width - 1:
 				continue
-			scr.addnstr(y, x, text, x0 + width - 1 - x, attr)
+			at(y, x, text, x0 + width - 1 - x, attr)
 			x += len(text) + 1
 	for y in range(4, h - 2):  # ponytail: from the first list row, not through the header's breathing space
-		scr.addnstr(y, x0, "│", 1, C(25))
+		at(y, x0, "│", 1, C(25))
 	if pr is None:
-		scr.addnstr(4, x0 + 2, "no row selected", width - 3, C(1))
+		at(4, x0 + 2, "no row selected", width - 3, C(1))
 		return
 	y = 4
 	line(y, [("SELECTED PR", C(25)), ("", 0)])
 	if width > 34:
-		scr.addnstr(y, x0 + width - 10, "⏎ close", 8, C(25))
+		at(y, x0 + width - 10, "⏎ close", 8, C(25))
 	y += 2
 	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
 	         ("· " + age(pr["updatedAt"]), C(1))])
 	y += 1
 	title = pr["title"]
 	for chunk in textwrap.wrap(title, max(10, width - 4))[:2]:
-		scr.addnstr(y, x0 + 2, chunk, width - 3, 0)
+		at(y, x0 + 2, chunk, width - 3, 0)
 		y += 1
 	d = state.want_detail(pr) or {}
 	who = pr.get("author", {}).get("login", "")
@@ -509,8 +515,7 @@ def detail(scr, state, h, x0, width, pr):
 	if rev:
 		line(y, [("AI REVIEW", C(25))])
 		if width > 30:
-			scr.addnstr(y, x0 + width - 2 - len(t := f"{rev.get('model', '')} {log.tag(rev)}".strip()), t,
-			            len(t), C(25))
+			at(y, x0 + width - 2 - len(t := f"{rev.get('model', '')} {log.tag(rev)}".strip()), t, len(t), C(25))
 		y += 1
 		verdict = config.STATUS.get(rev.get("verdict"), "")
 		line(y, [(verdict, C(4) if verdict.startswith("✓") else C(3) if verdict.startswith("✗") else C(5))])
@@ -524,20 +529,20 @@ def detail(scr, state, h, x0, width, pr):
 			for f in found:
 				if y >= h - 6:
 					break
-				scr.addnstr(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
+				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
 				room = width - 13
 				# ponytail: the file's BASENAME, not its path. "features/library/ui/LibraryLanding.tsx:19"
 				# is most of a pane on its own, so the finding itself — the part you actually read — was
 				# always the half that got truncated away. The directory is recoverable; the point is not.
 				loc = f["loc"].rsplit("/", 1)[-1] if f["loc"] else ""
 				txt = (loc + "  " if loc else "") + f["text"]
-				scr.addnstr(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
+				at(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
 				y += 1
 			if len(found) > 0 and width > 26:
-				scr.addnstr(min(y, h - 7), x0 + width - 12, "v read all", 10, C(25))
+				at(y, x0 + width - 12, "v read all", 10, C(25))
 		elif rev.get("summary"):
 			for chunk in textwrap.wrap(rev["summary"], max(10, width - 4))[:2]:
-				scr.addnstr(y, x0 + 2, chunk, width - 3, C(1))
+				at(y, x0 + 2, chunk, width - 3, C(1))
 				y += 1
 		y += 1
 	if y < h - 5:
@@ -549,8 +554,8 @@ def detail(scr, state, h, x0, width, pr):
 		for key, what in acts:
 			if y >= h - 3:
 				break
-			scr.addnstr(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
-			scr.addnstr(y, x0 + 5, what, width - 6, C(1))
+			at(y, x0 + 2, key, 2, C(23) | curses.A_BOLD)
+			at(y, x0 + 5, what, width - 6, C(1))
 			y += 1
 
 

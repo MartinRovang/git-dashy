@@ -69,7 +69,7 @@ self-check makes one real claude call and proves the three things every review d
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
 Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
-v read a past review (REVIEWED), o open,
+v read the full review of the selected PR (any row that has one), o open,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
