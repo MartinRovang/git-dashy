@@ -822,3 +822,30 @@ def test_the_pane_never_writes_over_the_footer_or_off_the_screen(screen):
 		foot = screen.line(h - 2) + screen.line(h - 1)
 		assert "NAV" in foot, f"h={h}: the footer was overwritten by the pane"
 		assert "summary long enough" not in foot, f"h={h}: pane text landed on the footer"
+
+
+def test_a_missing_pager_does_not_strand_the_terminal(monkeypatch, screen, tmp_path):
+	"""endwin / run / refresh in a straight line meant a missing pager raised between the second and
+	third: no refresh, and the exception unwound out of main() with the terminal already out of curses
+	mode. What you get is a shell that echoes ^M and stair-steps its output.
+	"""
+	restored = []
+	monkeypatch.setattr(ui.curses, "endwin", lambda: restored.append("endwin"), raising=False)
+	monkeypatch.setattr(screen, "refresh", lambda: restored.append("refresh"))
+	def missing(cmd, **kw):
+		raise FileNotFoundError(2, "No such file or directory")
+	monkeypatch.setattr(ui.subprocess, "run", missing)
+
+	err = ui.shell_out(screen, ["less", "-R"], "body")
+
+	assert "less" in err and "No such file" in err       # reported, not raised
+	assert restored == ["endwin", "refresh"], "the screen must come back even when the command does not"
+
+
+def test_shell_out_restores_on_success_too(monkeypatch, screen):
+	seen = []
+	monkeypatch.setattr(ui.curses, "endwin", lambda: seen.append("endwin"), raising=False)
+	monkeypatch.setattr(screen, "refresh", lambda: seen.append("refresh"))
+	monkeypatch.setattr(ui.subprocess, "run", lambda cmd, **kw: seen.append(("ran", cmd[0])))
+	assert ui.shell_out(screen, ["less"], "x") == ""
+	assert seen == ["endwin", ("ran", "less"), "refresh"]

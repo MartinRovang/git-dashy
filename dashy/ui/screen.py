@@ -793,9 +793,9 @@ def edit_memory(scr, repo):
 	# ponytail: $EDITOR writes the file itself, so no helper of ours sees it. Starting history HERE
 	# commits the state before the edit, which is exactly the version you want back if you regret it.
 	memory.history()
-	curses.endwin()
-	subprocess.run([os.environ.get("EDITOR", "nano"), path])
-	scr.refresh()
+	err = shell_out(scr, [os.environ.get("EDITOR", "nano"), path])
+	if err:
+		confirm(scr, state, sel, f" {err}  — set $EDITOR to one you have  [any key]")
 	# ponytail: n/g edit YOUR memory, which is no longer inside the team checkout — push the one we wrote
 	team.push_dir(config.MEMORY_DIR, f"memory: {repo or 'general'} edited", "mine")
 
@@ -885,6 +885,25 @@ def set_path(scr, state, sel, which):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
+def shell_out(scr, cmd, text_in=None):
+	"""Leave curses, run something interactive, and come back — whatever happens. "" or an error string.
+
+	ponytail: the restore lives in a finally. Every one of these used to be endwin / run / refresh in a
+	straight line, so a pager or editor that is not installed raised between the second and third, the
+	refresh never ran, and the exception unwound out of main() with the terminal already out of curses
+	mode — no echo, no carriage return on newline. You get a shell that prints ^M and stair-steps its
+	output, which does not look like a crash in a program you just quit.
+	"""
+	curses.endwin()
+	try:
+		subprocess.run(cmd, input=text_in, text=True)
+		return ""
+	except OSError as e:
+		return f"{cmd[0]}: {e.strerror or e}"
+	finally:
+		scr.refresh()
+
+
 def page(scr, state, sel, path, label):
 	"""Show a file in less. ponytail: same route the dream's [v] takes — one pager, one set of habits."""
 	try:
@@ -892,11 +911,11 @@ def page(scr, state, sel, path, label):
 			body = f.read()
 	except OSError as e:
 		return confirm(scr, state, sel, f" {e}  [any key]")
-	curses.endwin()
 	# ponytail: a fixed label, not the filename. less reads a bare "." in a -P string as the
 	# end-of-conditional token and eats it, so "acme__api__7.md" rendered as "acme__api__7md".
-	subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", label)], input=body, text=True)
-	scr.refresh()
+	err = shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", label)], body)
+	if err:
+		confirm(scr, state, sel, f" {err}  [any key]")
 
 
 def pre_review(scr, state, sel, pr):
@@ -990,10 +1009,8 @@ def dream_screen(scr, state, sel):
 			panel(scr, "dream over", lines, "[y] accept and rewrite memory   [v] view full   [n/esc] discard", accent=6)
 			k = scr.getch()
 			if k == ord("v"):
-				curses.endwin()
-				subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", "the dream")],
-				               input=dream_detail(summary, before, new), text=True)
-				scr.refresh()
+				shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", "the dream")],
+				          dream_detail(summary, before, new))
 		if k == ord("y"):
 			team.pull_dir(config.MEMORY_DIR, "mine")  # a dream rewrites both sources, so both are pulled
 			team.pull()
@@ -1097,10 +1114,8 @@ def main(scr, interval, auto, model):
 			# findings for the selected PR whatever section it is in, so the key that opens the whole
 			# thing has to reach as far as the summary does.
 			rev = current.get("review") or log.last(current["url"])
-			curses.endwin()
-			subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
-			               input=log.detail(rev), text=True)
-			scr.refresh()
+			shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", f"#{current['number']}")],
+			          log.detail(rev))
 		elif k == ord("r") and current and current["section"] == "REVIEW REQUESTED":
 			# ponytail: r is REVIEW now, as the design always labelled it. Refresh moved to f. This is a
 			# muscle-memory break on two keys people use constantly, taken deliberately rather than by
