@@ -47,6 +47,36 @@ def test_fetch_handles_bad_json(monkeypatch):
 	assert ps is None and err
 
 
+def test_fetch_joins_ci_and_head_from_graphql_for_every_section(monkeypatch):
+	a, b = dict(PR, url="a"), dict(PR, url="b")
+	per_flag = {"--author=@me": [a], "--review-requested=@me": [b], "--assignee=@me": []}
+	def fake_run(cmd, **kw):
+		if cmd[1] == "api":
+			assert 'rr: search(query: "is:pr is:open review-requested:@me"' in cmd[-1]
+			return Result(json.dumps({"data": {
+				"mine": {"nodes": [{"url": "a", "headRefOid": "aaa", "reviewDecision": "APPROVED",
+				                    "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]}}]},
+				"rr": {"nodes": [{"url": "b", "headRefOid": "bbb", "commits": {"nodes": [{"commit": {"statusCheckRollup": None}}]}}]},
+				"asg": {"nodes": []}}}))
+		return Result(json.dumps(per_flag[cmd[4]]))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	secs = github.fetch()
+	a, b = secs[0][1][0], secs[1][1][0]
+	assert (a["head"], a["checks"], a["status"]) == ("aaa", "✗", "✓ approved")
+	assert (b["head"], b["checks"]) == ("bbb", "") and "status" not in b  # no checks configured, not my PR
+	assert github.checks({"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}) == "●"
+
+
+def test_open_in_browser_uses_open_on_mac(monkeypatch):
+	ran = []
+	monkeypatch.setattr(github.subprocess, "Popen", lambda cmd, **kw: ran.append(cmd))
+	monkeypatch.setattr(github.sys, "platform", "darwin")
+	github.open_in_browser("u")
+	monkeypatch.setattr(github.sys, "platform", "linux")
+	github.open_in_browser("u")
+	assert [c[0] for c in ran] == ["open", "xdg-open"]
+
+
 # ---- review ----
 
 

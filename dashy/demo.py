@@ -27,11 +27,11 @@ def install():
 	memory.append(None, "run make lint before flagging style")
 	memory.append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore")
 	now = datetime.now(timezone.utc)
-	mine = [dict(pr(101, "Add retry to webhook client", hours=2, now=now), status="· awaiting review", reviewers="✓bob ·carol"),
+	mine = [dict(pr(101, "Add retry to webhook client", hours=2, now=now), status="· awaiting review", reviewers="✓bob ·carol", checks="✓"),
 	        dict(pr(98, "WIP: migrate to pydantic v2 and drop the hand-rolled validators in the ingest and export paths",
 	                hours=30, draft=True, now=now), reviewers="")]  # long title: overflows most terminals, shows the marquee
-	rr = [pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1, now=now),
-	      pr(207, "Cache user lookups in session middleware", "acme/web", "carol", 5, now=now),
+	rr = [dict(pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1, now=now), checks="✗"),
+	      dict(pr(207, "Cache user lookups in session middleware", "acme/web", "carol", 5, now=now), checks="●"),
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48, now=now)]
 	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0, now=now)  # 3rd refresh, exercises auto
 	assigned = [pr(300, "Flaky integration test in CI", "acme/api", "erin", 72, now=now)]

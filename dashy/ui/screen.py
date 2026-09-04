@@ -298,8 +298,9 @@ def draw(scr, state, sel, prompt=None):
 			put("  ")
 			put("draft " if p.get("isDraft") else "", C(5))
 			tag = p.get("tag", "") + (f"  ▸ +{p['more']}" if p.get("more") else "  ▾" if p.get("open") else "")
+			ci = p.get("checks", "")  # CI on the head commit: ✓ ✗ ● or nothing
 			revs = p.get("reviewers", "").split()  # "✓bob ·alice": one token per reviewer, coloured by its glyph
-			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0)
+			title_w = w - 1 - x - auth_w - 3 - (len(st) + 3 if st else 0) - (len(tag) + 2 if tag else 0) - (len(" ".join(revs)) + 2 if revs else 0) - (5 if ci else 0)
 			t = p["title"]
 			if is_cur and len(t) > title_w > 4:  # the selected row scrolls its overflowing title, the others just clip
 				SCROLLING[0] = True
@@ -311,6 +312,9 @@ def draw(scr, state, sel, prompt=None):
 			for r in revs:
 				put(" ")
 				put(r, REVIEWER_COLOR.get(r[0], C(1)) | curses.A_BOLD)
+			if ci:
+				put("  ")
+				put("ci" + ci, REVIEWER_COLOR.get(ci, C(5)) | curses.A_BOLD)
 			if tag:
 				put("  ")
 				put(tag, C(1))
