@@ -67,8 +67,8 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · a auto · Z dream"),
-        ("config", "m model · d depth · e effort · i interval"), ("app", "f refresh · v view · T team · u update · q quit"))
+KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y copy path · a auto"),
+        ("config", "m model · d depth · e effort · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -549,10 +549,30 @@ def detail(scr, state, h, x0, width, pr):
 				at(y, x0 + 2, chunk, width - 3, C(1))
 				y += 1
 		y += 1
+	# ponytail: pre-reviews live on disk under a derived name, so this survives a restart with nothing
+	# remembered — the pane just asks the filesystem. Before this they were invisible: you had to press
+	# p and hope, with no way to tell a fresh one from a review of a diff you have since pushed over.
+	pre_at = review_mod.self_review_at(pr["repository"]["nameWithOwner"], pr["number"]) if pr else 0.0
+	# ponytail: the same comparison the p handler makes, so what ACTIONS promises is what p does. Said
+	# once and used twice, because a pane that offers "read" while the key re-runs is worse than silent.
+	pre_moved = bool(pre_at) and datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00")).timestamp() > pre_at
+	if pre_at and y < h - 6:
+		moved = pre_moved
+		line(y, [("PRE-REVIEW", C(25)),
+		         ("· stale, the PR moved since" if moved else "· current", C(3) if moved else C(1))])
+		y += 1
+		when = datetime.fromtimestamp(pre_at).strftime("%d %b %H:%M")
+		line(y, [(when, C(1)), ("— p to read, Y to copy its path", C(25))])
+		y += 2
 	if y < h - 5:
 		line(y, [("ACTIONS", C(25))])
 		y += 1
-		acts = [("r", "review this PR"), ("p", "pre-review, posting nothing"), ("o", "open in browser")]
+		acts = [("r", "review this PR"),
+		        ("p", "re-run: the PR moved since" if pre_moved else
+		               "read the pre-review" if pre_at else "pre-review, posting nothing"),
+		        ("o", "open in browser")]
+		if pre_at:
+			acts.append(("Y", "copy the pre-review path"))
 		if pr.get("review") or log.last(pr["url"]):
 			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
 		for key, what in acts:
@@ -1091,6 +1111,17 @@ def main(scr, interval, auto, model):
 			add_reviewer(scr, state, sel, current)
 		elif k == ord("p") and current and current["section"] == "MINE":
 			pre_review(scr, state, sel, current)
+		elif k == ord("Y") and current:
+			# ponytail: the PATH, not the contents. It is a file you open in an editor or pass to
+			# something else; a whole review on the clipboard is not what anyone wants to paste.
+			path = review_mod.self_review_path(current["repository"]["nameWithOwner"], current["number"])
+			if not review_mod.self_review_at(current["repository"]["nameWithOwner"], current["number"]):
+				draw(scr, state, sel, prompt=f" no pre-review of #{current['number']} yet — p runs one")
+			else:
+				tool = github.copy(path)
+				draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
+				     else f" sent {path} to the terminal (OSC 52)")
+			scr.refresh()
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else
