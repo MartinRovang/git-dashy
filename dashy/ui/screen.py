@@ -1040,23 +1040,53 @@ def dream_screen(scr, state, sel):
 			return
 		summary, before, new = box[0]  # what the dream saw, not what is on disk now
 		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
-		lines += [(n[:-3].replace("__", "/"), f"{len(before[n].splitlines())} → {len(t.splitlines())}") for n, t in new.items()]
+		# ponytail: a file going to zero is a DELETION, and it read as one more row in a list of line
+		# counts. A dream emptied general.md — eight cross-repo facts — and "8 → 0" scrolled past among
+		# the tidies. Marked, coloured, and sorted to the top so it cannot be the row you skim over.
+		gone = sorted(n for n, t in new.items() if not t.strip() and before[n].strip())
+		lines += [(n[:-3].replace("__", "/"),
+		           f"{len(before[n].splitlines())} → DELETED" if n in gone
+		           else f"{len(before[n].splitlines())} → {len(new[n].splitlines())}")
+		          for n in sorted(new, key=lambda n: (n not in gone, n))]
 		scr.timeout(-1)
 		k = None
 		while k not in (ord("y"), ord("n"), 27):
 			draw(scr, state, sel, prompt=" ")
-			panel(scr, "dream over", lines, "[y] accept and rewrite memory   [v] view full   [n/esc] discard", accent=6)
+			panel(scr, "dream over", lines,
+			      ("[y] accept — DELETES %d file%s   [v] view full   [n/esc] discard"
+			       % (len(gone), "" if len(gone) == 1 else "s")) if gone else
+			      "[y] accept and rewrite memory   [v] view full   [n/esc] discard",
+			      accent=3 if gone else 6)
 			k = scr.getch()
 			if k == ord("v"):
 				if err := shell_out(scr, ["less", "-R", "-P", LESS_PROMPT.replace("%f", "the dream")],
 				                     dream_detail(summary, before, new)):
 					confirm(scr, state, sel, f" {err}  [any key]")
+		if k == ord("y") and gone:
+			# ponytail: a second, separate yes for deletion only. Tidying and destroying arrived on the
+			# same keypress, and the one you want almost always is the tidy — so the destructive half
+			# rode in on it. This names the files; nothing else in the dream needs naming.
+			what = ", ".join(n[:-3].replace("__", "/") for n in gone)
+			lost = sum(len(before[n].splitlines()) for n in gone)
+			if not confirm(scr, state, sel,
+			               f" DELETE {what} — {lost} fact{'s' if lost != 1 else ''} lost. Sure? [y/n]"):
+				return
 		if k == ord("y"):
 			team.pull_dir(config.MEMORY_DIR, "mine")  # a dream rewrites both sources, so both are pulled
 			team.pull()
 			memory.write(new)
-			team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")  # a dream rewrites both sources
-			team.push("memory: dream cleanup")
+			# ponytail: a dream is the one write that can DELETE, so it is the one that must confirm its
+			# own record landed. Silently failing here is what left eight facts deleted with no commit
+			# saying so, and the next review's push carrying the blame.
+			# ponytail: BOTH sources. A dream rewrites mine/ and team/, so checking only mine left a
+			# team file that was emptied and not committed exactly as silent as the bug this fixes.
+			# `or` and not `and`: the first failure is the one worth naming, and both are checked
+			# because push_dir runs either way.
+			mine_err = team.push_dir(config.MEMORY_DIR, "memory: dream cleanup", "mine")
+			team_err = team.push("memory: dream cleanup")
+			if err := (mine_err or team_err):
+				confirm(scr, state, sel,
+				        f" memory rewritten, but NOT committed: {err} — a backup is in ~/.prs_backups  [any key]")
 	finally:
 		scr.timeout(500)
 

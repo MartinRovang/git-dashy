@@ -309,6 +309,12 @@ with identical tarballs. Restore with `tar xzf`; the paths inside are `mine/` an
 
 The directory is outside every synced tree, so backups are never pushed anywhere.
 
+**A dream that deletes asks twice.** Any file it would empty is marked `→ DELETED`, sorted to the top
+of the accept panel, and the footer says how many files accepting destroys. Then a second prompt names
+them and the number of facts at stake. The two questions are separate because tidying is what you almost
+always want and destroying rode in on the same keypress: eight cross-repo facts went that way on
+2026-09-04, as `8 → 0` in a list of line counts.
+
 The one that most needs this: `Z` (dream) applies a model's output verbatim and **deletes any
 file it returned empty**. It is one keypress, and before this it was unrecoverable on a default
 install. It now takes a backup and a commit first, so accepting a bad dream is a decision you

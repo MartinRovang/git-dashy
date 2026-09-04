@@ -967,3 +967,48 @@ def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, t
 	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
 	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
 	assert path == review_mod.self_review_path(repo, 903)
+
+
+def test_a_dream_that_deletes_needs_a_second_yes(screen, monkeypatch, st, tmp_path):
+	"""A file going to zero read as one more row of line counts. A dream emptied general.md — eight
+	cross-repo facts — and "8 → 0" scrolled past among the tidies on a single keypress.
+	"""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("".join(f"- fact {i}\n" for i in range(8)))
+	(tmp_path / "a__b.md").write_text("- x\n- x\n")
+	before = {"mine/general.md": (tmp_path / "general.md").read_text(), "mine/a__b.md": "- x\n- x\n"}
+	monkeypatch.setattr(ui.memory, "dream",
+	                    lambda m: ("tidied", before, {"mine/general.md": "", "mine/a__b.md": "- x"}))
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda s, st_, sl, msg: asked.append(msg) or False)  # say NO
+	shown = []
+	def getch():
+		shown.append(screen.text())
+		return ord("y")
+	screen.getch, screen.timeout = getch, lambda t: None
+
+	ui.dream_screen(screen, st, 0)
+
+	panel = shown[-1]
+	assert "DELETED" in panel, "a deletion must not render as a line count"
+	assert "DELETES 1 file" in panel, "the footer must say what accepting destroys"
+	assert asked and "DELETE mine/general" in asked[0] and "8 facts lost" in asked[0]
+	# and saying no to the second prompt leaves everything alone
+	assert (tmp_path / "general.md").read_text().count("- fact") == 8
+	assert (tmp_path / "a__b.md").read_text() == "- x\n- x\n"
+
+
+def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, tmp_path):
+	"""The gate must not fire on an ordinary tidy, or it becomes the prompt everyone learns to skip."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "a__b.md").write_text("- x\n- x\n")
+	monkeypatch.setattr(ui.memory, "dream",
+	                    lambda m: ("merged", {"mine/a__b.md": "- x\n- x\n"}, {"mine/a__b.md": "- x"}))
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda s, st_, sl, msg: asked.append(msg) or True)
+	screen.getch, screen.timeout = lambda: ord("y"), lambda t: None
+
+	ui.dream_screen(screen, st, 0)
+
+	assert not asked, "no deletion, so no second prompt"
+	assert open(ui.memory.path("a/b")).read() == "- x\n"
