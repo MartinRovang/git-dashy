@@ -29,6 +29,7 @@ class State:
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
+		self.self_reviews = {}  # url -> path of a pre-review on disk, so `p` can reopen it
 		self.auto, self.auto_baseline = False, None  # baseline: RR urls present when auto was switched on
 		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
@@ -62,6 +63,20 @@ class State:
 			self.wake.set()  # refetch so an approved PR drops off the list
 		with self.lock:
 			self.reviews[pr["url"]] = "reviewing..."
+		threading.Thread(target=run, daemon=True).start()
+
+	def start_self_review(self, pr):
+		"""Pre-review one of MY PRs. Posts nothing; leaves a path in self_reviews for the UI to open."""
+		model = self.model
+		def run():
+			status, dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
+			with self.lock:
+				self.reviews[pr["url"]] = status
+				if dest:
+					self.self_reviews[pr["url"]] = dest
+			self.wake.set()
+		with self.lock:
+			self.reviews[pr["url"]] = "pre-reviewing..."
 		threading.Thread(target=run, daemon=True).start()
 
 	def loop(self):

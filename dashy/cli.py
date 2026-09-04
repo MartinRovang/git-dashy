@@ -12,6 +12,7 @@ USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-
 Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
@@ -35,6 +36,11 @@ sync-memory copies this repo's review memory into PATH as a read-only mirror, so
 remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
   review and a coding session found independently is confirmed by their agreement. --repo defaults to this
   directory's origin; --general is for something true of every repo.
+
+self-review runs the reviewer over one of your OWN PRs and posts nothing — a pass before you ask a
+  person, not a substitute for one. The review is written to ~/.prs_reviews/ and its findings wait in a
+  separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
+  on the same diff, so only a later real review landing on the same fact independently promotes it.
 
 install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
   directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
@@ -142,6 +148,23 @@ def offer_setup(argv):
 		print("\n`gitdashy setup` whenever you want them.")
 
 
+def self_review(argv):
+	"""Pre-review one of your own PRs. Posts nothing; writes a file and prints where it is."""
+	nums = [a for a in argv[2:] if a.isdigit()]
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not nums or not repo:
+		raise SystemExit("gitdashy: self-review needs a PR number, and --repo owner/name "
+		                 "unless this directory has a github origin")
+	config.load()
+	team.activate()
+	pr = {"repository": {"nameWithOwner": repo}, "number": int(nums[0]),
+	      "url": f"https://github.com/{repo}/pull/{nums[0]}"}
+	print(f"pre-reviewing {repo}#{nums[0]} — nothing will be posted…")
+	status, dest = review_mod.self_review(pr, arg("--model", config.DEFAULT_MODEL, str, argv))
+	print(f"{status}\n{dest}" if dest else status)
+	raise SystemExit(0 if dest else 1)
+
+
 def setup(argv):
 	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for."""
 	print("Two short briefs. Blank keeps what is already there — the prompt shows you what. "
@@ -211,6 +234,8 @@ def run(argv=None):
 		return remember(argv)
 	if len(argv) > 1 and argv[1] == "install":
 		return install(argv)
+	if len(argv) > 1 and argv[1] == "self-review":
+		return self_review(argv)
 	if len(argv) > 1 and argv[1] == "setup":
 		return setup(argv)
 	if len(argv) > 1 and argv[1] == "init":

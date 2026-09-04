@@ -16,7 +16,7 @@ from . import art
 from .rows import age, rows
 
 LESS_PROMPT = "review of %f  |  q close  j/k scroll  /search"
-FOOTER = " j/k move  o open  y copy url  + reviewer  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  esc menu  q quit"
+FOOTER = " j/k move  o open  y copy url  + reviewer  p pre-review  ⏎ review / details  ␣ fold  a auto  m model  d depth  e effort  t window  i interval  s summaries  D drafts  S/R/V settings  n/g memory  Z dream  T team  u update  r refresh  ? keys  esc menu  q quit"
 COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(1, 244, curses.COLOR_WHITE, -1, -1),          # dim
 	(2, 75, curses.COLOR_CYAN, -1, -1),            # section header
@@ -646,6 +646,18 @@ def set_path(scr, state, sel, which):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
+def page(scr, state, sel, path):
+	"""Show a file in less. ponytail: same route the dream's [v] takes — one pager, one set of habits."""
+	try:
+		with open(path) as f:
+			body = f.read()
+	except OSError as e:
+		return confirm(scr, state, sel, f" {e}  [any key]")
+	curses.endwin()
+	subprocess.run(["less", "-R", "-P", LESS_PROMPT.replace("%f", os.path.basename(path))], input=body, text=True)
+	scr.refresh()
+
+
 def team_setup(scr, state, sel):
 	if team.on():
 		name = team.NAME
@@ -793,6 +805,15 @@ def main(scr, interval, auto, model):
 			github.open_in_browser(current["url"])
 		elif k == ord("+") and current and current["section"] == "MINE":
 			add_reviewer(scr, state, sel, current)
+		elif k == ord("p") and current and current["section"] == "MINE":
+			# ponytail: MINE only. GitHub refuses to let you approve your own PR, and a verdict on someone
+			# else's work that is never posted helps nobody — this is a pass before you ask a person.
+			if current["url"] in state.self_reviews:
+				page(scr, state, sel, state.self_reviews[current["url"]])
+			elif state.reviews.get(current["url"], "").endswith("..."):
+				pass  # already in flight
+			elif confirm(scr, state, sel, f" Pre-review #{current['number']}? Nothing is posted. [y/n]"):
+				state.start_self_review(current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else

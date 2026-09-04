@@ -48,12 +48,23 @@ gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no r
 gitdashy --help
 gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
 gitdashy remember "the viewer owns mask state"   # file what a coding session learned
+gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
 MINE rows show GitHub's review decision for your own PRs: `✓ approved`, `✗ changes requested`,
 `· awaiting review`, or `↻ re-review requested` when you pushed after a changes-requested and asked
 again but the reviewer has not looked yet. Next to it, one chip per reviewer: `✓bob` approved,
 `✗bob` requested changes, `·bob` asked but not looked yet, `~bob` commented.
+
+`p` on one of your own rows **pre-reviews it**: the same reviewer, the same prompt, the same memory —
+but nothing is posted and nothing is logged. The review is written to `~/.prs_reviews/` and `p` again
+reopens it. It is a pass before you ask a person, not a substitute for one; GitHub will not let you
+approve your own PR, and a verdict on your own work is a second opinion from the same head.
+
+Its findings do not become facts on their own. They wait in a separate pool, and only a later **real**
+review that lands on the same fact by itself confirms one — the pre-review and the real review are the
+same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
+than whether the fact recurred.
 
 ## Keys
 
