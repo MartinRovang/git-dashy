@@ -50,8 +50,8 @@ Routes:
 
 Roster in responses is filtered to entries seen within `STALE = 180` seconds. Response is JSON:
 `{"online": {login: {"reviewing": [...]}}}`. Restart loses state; that is correct for presence.
-Bad JSON or missing login → 400. Body over 4 KB → 413. No other validation; login is self-asserted from
-`gh` identity and the address is the trust boundary.
+Bad JSON or missing login → 400. Body over 4 KB → 413. No other validation; login is `memory.whoami()`,
+the same `$USER` slug the team pool keys on, and the address is the trust boundary.
 
 ## Client: `dashy/core/presence.py`
 
@@ -75,12 +75,12 @@ a key in the Knowledge group (`W`), which prompts for the address like `L` promp
 
 ## UI
 
-- Header: `online: bob, alice` chip beside the team name, others only, sorted. Hidden when off or
-  empty. `presence: <error>` in the error slot when `ERROR` is set, same place team sync errors go.
+- Header: an `Online bob, alice` row in the Knowledge group beside Team, others only, sorted; `nobody`
+  when empty, the error text in red when `ERROR` is set, absent entirely when presence is off.
 - REVIEW REQUESTED rows: `bob reviewing` in the state column when another login has that PR in its
   list. Own reviews are unaffected.
 - `r` on such a row: `bob is reviewing this — continue? y/n`. `y` proceeds as today.
-- `K` (knowledge panel) shows the presence address or `off`.
+- `W` prompts for the address, showing the current one; `-` turns presence off.
 - Demo mode fakes a roster with one other member reviewing one row.
 
 ## Testing
@@ -94,6 +94,6 @@ a key in the Knowledge group (`W`), which prompts for the address like `L` promp
 ## Not doing
 
 - Locking: advisory only. Two people can still review the same PR if both say `y`.
-- Identity: login is whatever `gh` says. The Tailcat address is the only gate.
+- Identity: login is `memory.whoami()`, self-asserted. The Tailcat address is the only gate.
 - Persistence on the server. Presence that survives a restart is stale by definition.
 - Websockets. See Goal.
