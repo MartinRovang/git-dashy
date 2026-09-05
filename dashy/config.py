@@ -41,12 +41,13 @@ def load():
 		with open(SETTINGS) as f:
 			saved = json.load(f)
 	except (OSError, ValueError):
-		return
+		saved = {}  # no file, or a broken one: the defaults stand, and the checklists below still get normalised
 	for key, name in SAVED.items():
 		if key in saved and ENV.get(key, "") not in os.environ:
 			globals()[name] = saved[key]
-	# ponytail: a saved checklist may name a box that no longer exists (ponytail was a voice before it
-	# was a hunter). Drop it rather than refuse to start over a file nobody typed.
+	# ponytail: a saved or env checklist may name a box that no longer exists (ponytail was a voice before
+	# it was a hunter). Drop it rather than refuse to start over a value nobody typed as a flag. After this,
+	# VOICE is never empty: the one place that rule lives.
 	global VOICE, HUNTER
 	VOICE = [v for v in ([VOICE] if isinstance(VOICE, str) else VOICE) if v in VOICES] or ["review"]
 	HUNTER = [h for h in ([HUNTER] if isinstance(HUNTER, str) else HUNTER) if h in HUNTERS]

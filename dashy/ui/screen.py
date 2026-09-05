@@ -968,7 +968,7 @@ def open_pre_review(scr, state, sel, pr):
 		return ""
 	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
 	github.open_in_browser(path)
-	draw(scr, state, sel, prompt=f" opened {path}")
+	draw(scr, state, sel, prompt=f" handed {path} to xdg-open")  # ponytail: a report, not a claim; xdg-open fails silently
 	scr.refresh()
 	return path
 

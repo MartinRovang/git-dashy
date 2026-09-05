@@ -30,3 +30,12 @@ def test_stale_checklist_values_are_dropped_on_load(tmp_path, monkeypatch):
 	config.save({"voice": "caveman", "hunter": "tests"})  # hand-edited to a string
 	config.load()
 	assert config.VOICE == ["caveman"] and config.HUNTER == ["tests"]
+
+
+def test_env_checklist_is_normalised_even_without_a_settings_file(tmp_path, monkeypatch):
+	"""PRS_VOICE=ponytail on a first run: no file to load, but the value still has to be checked."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "missing.json"))
+	monkeypatch.setattr(config, "VOICE", ["ponytail"])  # what the env parse at import would have left
+	monkeypatch.setattr(config, "HUNTER", ["ponytail", "typo"])
+	config.load()
+	assert config.VOICE == ["review"] and config.HUNTER == ["ponytail"]

@@ -971,7 +971,7 @@ def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, t
 
 	path = _with_pre_review(monkeypatch, tmp_path, pr, 4e9)
 	assert ui.open_pre_review(screen, st, 0, pr) == path
-	assert opened == [path] and "opened" in said[-1]
+	assert opened == [path] and "handed" in said[-1]
 	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
 	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
 	assert path == review_mod.self_review_path(repo, 903)

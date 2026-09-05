@@ -365,6 +365,6 @@ def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatc
 	assert "Do NOT write the standard review" in calls[1][2] and "**Caveman**" in calls[1][2]
 	assert calls[0][-1].endswith("voices **caveman**.")  # the author is told up front why it reads that way
 	calls.clear()
-	monkeypatch.setattr(config, "VOICE", [])  # nothing checked falls back to the plain review
+	monkeypatch.setattr(config, "VOICE", ["review"])
 	review(dict(PR), "opus")
 	assert "Append a section" not in calls[1][2] and "Do NOT" not in calls[1][2]

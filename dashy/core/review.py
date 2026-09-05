@@ -143,9 +143,9 @@ def on(table, chosen):
 	return [v for v in table if v in chosen]
 
 
-def voices():
-	"""The prompt tail for the chosen voices and hunters. No voice means the plain review."""
-	v = on(config.VOICES, config.VOICE) or ["review"]
+def tail():
+	"""The prompt tail for the chosen voices and hunters. config.load keeps VOICE non-empty."""
+	v = on(config.VOICES, config.VOICE)
 	return ("" if "review" in v else NO_REVIEW) + "".join(VOICE[x] for x in v) + "".join(HUNTER[h] for h in on(config.HUNTERS, config.HUNTER))
 
 
@@ -156,7 +156,7 @@ def _verdict(repo, n, model, prev=None):
 	worth nothing as a preview of it. The only differences are what the caller does with the result.
 	"""
 	mem, brief = memory.read(repo), memory.project()
-	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + voices(),
+	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + tail(),
 	                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
 	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
@@ -236,7 +236,7 @@ def review(pr, model):
 		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
 		hunters = ", ".join(on(config.HUNTERS, config.HUNTER))
-		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(on(config.VOICES, config.VOICE) or ["review"]),
+		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(on(config.VOICES, config.VOICE)),
 		                                     hunters=f" and hunters **{hunters}**" if hunters else "", model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		verdict = _verdict(repo, n, model, prev)
