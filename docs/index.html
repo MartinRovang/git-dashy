@@ -44,10 +44,9 @@
       <div class="mono" style="display:flex; align-items:center; gap:10px; font-size:13px">
         <img src="logo.png" alt="git-dashy" style="width:28px; height:28px; border-radius:6px; display:block; object-fit:cover">
         <span style="background:#f2d17c; color:#2a0a1d; font-weight:700; padding:3px 8px; border-radius:3px">gitdashy</span>
-        <span class="dim version">v1.26.1</span>
+        <span class="dim version">v1.26.2</span>
       </div>
       <nav class="mono" style="display:flex; align-items:center; gap:22px; font-size:13px">
-        <a href="#install" style="color:#efe3ea">install</a>
         <a href="#keys" style="color:#efe3ea">keys</a>
         <a href="https://github.com/MartinRovang/github-dashy" style="color:#efe3ea">github ↗</a>
       </nav>
@@ -96,7 +95,7 @@
         <div class="mono" style="min-width:940px; font-size:12.5px; line-height:1.75; padding:12px 14px 0">
 
           <div style="display:flex; align-items:center; gap:18px; flex-wrap:nowrap; padding-bottom:2px">
-            <span style="background:#f2d17c; color:#2a0a1d; font-weight:700; padding:1px 7px; border-radius:3px">gitdashy <span class="version">v1.26.1</span></span>
+            <span style="background:#f2d17c; color:#2a0a1d; font-weight:700; padding:1px 7px; border-radius:3px">gitdashy <span class="version">v1.26.2</span></span>
             <span style="color:#efe3ea">23 PRs</span>
             <span class="dim">·</span>
             <span style="color:#ff86c8">2 agents running</span>
@@ -245,15 +244,11 @@
       <div style="border:1px solid #4a1a37; border-radius:8px; background:#250b1b; padding:clamp(30px,5vw,56px); display:grid; gap:22px; justify-items:center; text-align:center">
         <h2 class="mono" style="font-size:clamp(24px,3.6vw,36px); margin:0; font-weight:700; letter-spacing:-0.02em">Stop refreshing the PR tab.</h2>
         <p style="margin:0; max-width:520px; font-size:16px; line-height:1.6; color:#c9b3c0; text-wrap:pretty">One script, one keystroke per review. Install it, run <code style="color:#f2d17c">gitdashy</code>, and get on with the code.</p>
-        <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center">
-          <button class="copy" onclick="copyCmd(this, ' install command')" style="border-radius:5px; padding:12px 22px; font-size:13.5px">copy install command</button>
-          <a class="ghost" href="https://github.com/MartinRovang/github-dashy">Star on GitHub</a>
-        </div>
       </div>
     </section>
 
     <footer class="mono dim" style="display:flex; flex-wrap:wrap; gap:14px; align-items:center; justify-content:space-between; padding:44px 0 40px; margin-top:44px; border-top:1px solid #4a1a37; font-size:12px">
-      <span>git-dashy <span class="version">v1.26.1</span> · MIT</span>
+      <span>git-dashy <span class="version">v1.26.2</span> · MIT</span>
       <span>built by <a href="https://github.com/MartinRovang">MartinRovang</a></span>
     </footer>
 
@@ -263,10 +258,10 @@
 <script>
   // ponytail: no framework — the design's DCLogic component boils down to one copy button and a version string.
   const CMD = "curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh";
-  function copyCmd(btn, suffix = "") {
+  function copyCmd(btn) {
     const done = () => {
-      btn.textContent = "copied" + suffix;
-      setTimeout(() => (btn.textContent = "copy" + suffix), 1600);
+      btn.textContent = "copied";
+      setTimeout(() => (btn.textContent = "copy"), 1600);
     };
     if (navigator.clipboard) navigator.clipboard.writeText(CMD).then(done, done); else done();
   }
