@@ -9,7 +9,7 @@ from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--instructions FILE] [--demo] [--version] [--help]
+Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
@@ -23,7 +23,8 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m picks at runtime
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default {config.EFFORT}, or $PRS_EFFORT); e picks
   --depth LEVEL  review depth: low, medium, high, adaptive (default {config.DEPTH}, or $PRS_DEPTH); d picks
-  --voice A,B    what the posted body holds: review, ponytail, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
+  --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
+  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
 
@@ -71,7 +72,7 @@ self-check makes one real claude call and proves the three things every review d
 
 Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
 v read the full review of the selected PR (any row that has one), Y open the pre-review in the browser, o open,
-␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, t REVIEWED history window, i interval, s summaries
+␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
@@ -267,6 +268,9 @@ def run(argv=None):
 	config.VOICE = arg("--voice", config.VOICE, lambda v: [x for x in v.split(",") if x], argv)
 	if set(config.VOICE) - set(config.VOICES):
 		return print(f"gitdashy: --voice must be from {', '.join(config.VOICES)}, not {config.VOICE!r}")
+	config.HUNTER = arg("--hunter", config.HUNTER, lambda v: [x for x in v.split(",") if x], argv)
+	if set(config.HUNTER) - set(config.HUNTERS):
+		return print(f"gitdashy: --hunter must be from {', '.join(config.HUNTERS)}, not {config.HUNTER!r}")
 	config.INSTRUCTIONS = arg("--instructions", config.INSTRUCTIONS, str, argv)
 	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
 	               arg("--model", config.DEFAULT_MODEL, str, argv))

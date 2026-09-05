@@ -19,7 +19,7 @@ def test_review_posts_verdict_and_logs(monkeypatch):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "sonnet") == "✗ changes requested"
 	assert calls[0][:6] == ["gh", "pr", "comment", "7", "--repo", "a/b"]
-	assert calls[0][-1] == "**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium**, depth **adaptive** (Dashy picks the depth from the diff size and risk) and voices **review**."
+	assert calls[0][-1] == "**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium**, depth **adaptive** (Dashy picks the depth from the diff size and risk), voices **review**."
 	assert calls[1][0] == "claude" and calls[1][calls[1].index("--model") + 1] == "sonnet"
 	assert calls[2][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
 	assert "--request-changes" in calls[2] and calls[2][-1] == "nope"
@@ -350,10 +350,15 @@ def test_self_review_writes_where_the_lookup_looks(monkeypatch, tmp_path):
 def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatch):
 	calls = []
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
-	monkeypatch.setattr(config, "VOICE", ["bot", "review", "ponytail"])
+	monkeypatch.setattr(config, "VOICE", ["bot", "review"])
+	monkeypatch.setattr(config, "HUNTER", ["tests", "ponytail"])
 	review(dict(PR), "opus")
 	prompt = calls[1][2]
-	assert prompt.index("**Ponytail**") < prompt.index("**Bot**") and "**Caveman**" not in prompt and "Do NOT" not in prompt
+	assert prompt.index("**Bot**") < prompt.index("**Ponytail**") < prompt.index("**Tests**")  # voices, then hunters, each in table order
+	assert "**Caveman**" not in prompt and "**Security**" not in prompt and "Do NOT" not in prompt
+	assert calls[0][-1].endswith("voices **review, bot** and hunters **ponytail, tests**.")
+	calls.clear()
+	monkeypatch.setattr(config, "HUNTER", [])
 	calls.clear()
 	monkeypatch.setattr(config, "VOICE", ["caveman"])  # review unchecked: caveman IS the review
 	review(dict(PR), "opus")

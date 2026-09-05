@@ -188,7 +188,7 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 
 
 def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
-	# ponytail: "│ Voices off" widened the Agent group by 23, so the pins moved up by that
+	# ponytail: "│ Voices off" and "│ Hunters off" widened the Agent group by 39, so the pins moved up by that
 	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)  # conftest moves TEAM; pin the optional row off
 	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
 	st = State(60)
@@ -197,16 +197,16 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 		screen.w = w
 		ui.draw(screen, st, 0)
 		return screen.line(1)
-	out = row1(263)
+	out = row1(279)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
 	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
 	assert "Agent" in out
 	assert out.index("Agent") < out.index("View") < out.index("Knowledge")
-	out = row1(247)
+	out = row1(263)
 	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
-	out = row1(207)
+	out = row1(223)
 	assert "History 4h" in out and out.rstrip().endswith("☰ Knowledge")  # Knowledge folds first, it is the least-touched
-	out = row1(167)
+	out = row1(183)
 	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
 	out = row1(120)
 	assert "☰ Agent" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
@@ -246,9 +246,9 @@ def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.group_menu(screen, st, 0, "R")
 	assert config.DEPTH == "low"
-	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
+	assert "▸ Model     opus" in seen[0] and "Depth     adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
 	assert "▸ adaptive" in seen[2] and "Depth:  j/k or d move" in seen[2]
-	assert "Depth    low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
+	assert "Depth     low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
 
 
 def test_group_menu_toggles_drafts(screen):
@@ -319,7 +319,7 @@ def test_strip_shows_update_and_auto_badges(screen):
 def test_hints_show_each_settings_key(screen, monkeypatch):
 	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)
 	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
-	screen.w = 250  # three groups, each key spelled out: nothing folds only well past 200
+	screen.w = 280  # three groups, each key spelled out: nothing folds only well past 270
 	st = State(60)
 	st.sections, st.fetched_at, st.hints = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
@@ -1043,11 +1043,15 @@ def test_voices_dropdown_is_a_checklist(screen, monkeypatch):
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
 	screen.w = 263
-	screen.getch, screen.timeout = _keys(ord("j"), ord("j"), ord("j"), 10, ord("k"), ord("k"), 10, 10, 27), lambda t: None
-	assert ui.dropdown(screen, st, 0, "x") is True  # bot on, ponytail on then off again, close
+	screen.getch, screen.timeout = _keys(ord("j"), ord("j"), 10, ord("k"), 10, 10, 27), lambda t: None
+	assert ui.dropdown(screen, st, 0, "x") is True  # bot on, caveman on then off again, close
 	assert config.VOICE == ["review", "bot"]
-	assert "[x] review" in screen.text() and "[ ] ponytail" in screen.text() and "[x] bot" in screen.text()
+	assert "[x] review" in screen.text() and "[ ] caveman" in screen.text() and "[x] bot" in screen.text()
 	assert ui.snapshot(st)["voice"] == ["review", "bot"]
-	screen.getch = _keys(10, ord("j"), ord("j"), ord("j"), 10, 27)  # untick review, then try to untick bot
+	screen.getch = _keys(10, ord("j"), ord("j"), 10, 27)  # untick review, then try to untick bot
 	ui.dropdown(screen, st, 0, "x")
-	assert config.VOICE == ["bot"]  # the last box will not untick
+	assert config.VOICE == ["bot"]  # the last voice will not untick
+	monkeypatch.setattr(config, "HUNTER", ["tests"])
+	screen.getch = _keys(ord("j"), ord("j"), 10, 27)  # hunters may all go off
+	ui.dropdown(screen, st, 0, "h")
+	assert config.HUNTER == [] and ui.snapshot(st)["hunter"] == []

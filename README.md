@@ -106,7 +106,8 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
-| `x` | tick the voices the posted review holds: review / ponytail / caveman / bot, any mix, at least one |
+| `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
@@ -158,11 +159,12 @@ lets Claude pick from the size and risk of the diff. `--effort LEVEL` is passed 
 `claude --effort` (low to max) and controls how much thinking the model spends. `d` and `e` pick
 them at runtime; the header's `reviewer` group shows them as `depth <depth>` and `effort <effort>`.
 
-`--voice A,B` (or `PRS_VOICE`) picks what the posted body holds. `review` is the normal review;
-`ponytail` appends a section that hunts only over-engineering; `caveman` and `bot` restate the verdict
-in caveman speech and as a terse machine log. Any mix, at least one; untick `review` and the voices
-you left ticked are the whole review. The hello comment names the voices so the author knows why it
-reads that way. `x` ticks them at runtime.
+`--voice A,B` (or `PRS_VOICE`) picks how the posted body is phrased. `review` is the normal review;
+`caveman` and `bot` restate the verdict in caveman speech and as a terse machine log. Any mix, at
+least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
+`PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
+over-engineering, `security` only security, `tests` only missing or toothless tests. The hello
+comment names both so the author knows why the review reads that way. `x` and `h` tick them at runtime.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it

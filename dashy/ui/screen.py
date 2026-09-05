@@ -68,7 +68,7 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
 KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
-        ("config", "m model · d depth · e effort · x voices · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
+        ("config", "m model · d depth · e effort · x voices · h hunters · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -86,6 +86,7 @@ def settings(state):
 		"d": ("Depth", config.DEPTHS, config.DEPTH, lambda v: setattr(config, "DEPTH", v), str),
 		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
 		"x": ("Voices", config.VOICES, config.VOICE, lambda v: setattr(config, "VOICE", v), lambda v: ", ".join(v) or "off"),
+		"h": ("Hunters", config.HUNTERS, config.HUNTER, lambda v: setattr(config, "HUNTER", v), lambda v: ", ".join(v) or "off"),
 		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
 		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
 		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
@@ -108,7 +109,7 @@ def header_groups(state):
 	# ponytail: "Agent" rather than "Reviewer" — the group is what drives the model, and reviewing is
 	# only what it happens to be doing. The design's "role reviewer" is left out on purpose: there is
 	# one role, so it would be a label dressed as a control.
-	reviewer = [row("m"), row("d"), row("e"), row("x")]
+	reviewer = [row("m"), row("d"), row("e"), row("x"), row("h")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
@@ -685,7 +686,7 @@ def dropdown(scr, state, sel, key):
 				return True
 			o = options[idx]
 			new = [v for v in options if (v in current) != (v == o)]  # ponytail: rebuilt in option order, never mutated
-			if new:  # the last box stays ticked: an empty choice would mean nothing gets posted
+			if new or key != "x":  # the last voice stays ticked: an empty choice would mean nothing gets posted
 				set_(new)
 				current = settings(state)[key][2]
 		elif k in (27, ord("q")):
@@ -1118,7 +1119,7 @@ def snapshot(state):
 	"""Everything the settings row can change, in the shape config.save writes."""
 	return {"model": state.model, "interval": state.interval, "subs": state.subs, "window": state.window,
 	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME,
-	        "voice": list(config.VOICE)}
+	        "voice": list(config.VOICE), "hunter": list(config.HUNTER)}
 
 
 def main(scr, interval, auto, model):

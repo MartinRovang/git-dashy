@@ -37,16 +37,24 @@ DEPTH = {
 }
 VOICE = {  # ponytail: each is a prompt fragment; the model writes the sections into body, so no new JSON field
 	"review": "",
-	"ponytail": "\n\nAppend a section `---\n**Ponytail**`: hunt ONLY over-engineering. One line per finding, "
-	            "`file:L<n>: <delete|stdlib|native|yagni|shrink>: what. replacement.`, then `net: -N lines possible.` "
-	            "Nothing to cut: `Lean already. Ship.`",
 	"caveman": "\n\nAppend a section `---\n**Caveman**`: the verdict in caveman speech. Short sentences. "
 	           "No articles. No hedging. Ten lines max.",
 	"bot": "\n\nAppend a section `---\n**Bot**`: the verdict as a terse machine log, one "
 	       "`[LEVEL] file:line message` per finding, no prose.",
 }
+HUNTER = {  # a lens, not a style: each hunts one class of problem the main review is not told to chase
+	"ponytail": "\n\nAppend a section `---\n**Ponytail**`: hunt ONLY over-engineering. One line per finding, "
+	            "`file:L<n>: <delete|stdlib|native|yagni|shrink>: what. replacement.`, then `net: -N lines possible.` "
+	            "Nothing to cut: `Lean already. Ship.`",
+	"security": "\n\nAppend a section `---\n**Security**`: hunt ONLY security. Trust boundaries, injection, authz, "
+	            "secrets, unsafe deserialisation, SSRF, path traversal. One line per finding, `file:L<n>: <class>: what. fix.` "
+	            "Nothing found: `No exposure seen.`",
+	"tests": "\n\nAppend a section `---\n**Tests**`: hunt ONLY test coverage. Changed logic with no test, tests that "
+	         "cannot fail, mocks that hide the seam under test. One line per finding, `file:L<n>: what is unproven. the test.` "
+	         "Nothing found: `Covered.`",
+}
 NO_REVIEW = "\n\nDo NOT write the standard review prose: \"body\" holds ONLY the sections below. \"findings\" stays as specified."
-HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}) and voices **{voices}**."""
+HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}), voices **{voices}**{hunters}."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
@@ -135,10 +143,14 @@ def voices_on():
 	return [v for v in config.VOICES if v in config.VOICE] or ["review"]
 
 
+def hunters_on():
+	return [h for h in config.HUNTERS if h in config.HUNTER]
+
+
 def voices():
-	"""The prompt tail for the chosen sections."""
+	"""The prompt tail for the chosen voices and hunters."""
 	on = voices_on()
-	return ("" if "review" in on else NO_REVIEW) + "".join(VOICE[v] for v in on)
+	return ("" if "review" in on else NO_REVIEW) + "".join(VOICE[v] for v in on) + "".join(HUNTER[h] for h in hunters_on())
 
 
 def _verdict(repo, n, model, prev=None):
@@ -227,7 +239,7 @@ def review(pr, model):
 	try:
 		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
-		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(voices_on()), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(voices_on()), hunters=(" and hunters **" + ", ".join(hunters_on()) + "**") if hunters_on() else "", model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
