@@ -92,7 +92,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in `less`, and offers a fresh one once the PR has changed since |
-| `Y` | copy the path of the selected PR's pre-review to the clipboard |
+| `Y` | open the selected PR's pre-review with whatever the desktop uses for `.md` |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
 | `v` | read the full review of the selected PR in `less` — any row that has one, not only REVIEWED |
@@ -106,6 +106,8 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
+| `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
@@ -156,6 +158,13 @@ whole diff, `high` also reads the surrounding code and traces callers, and `adap
 lets Claude pick from the size and risk of the diff. `--effort LEVEL` is passed straight to
 `claude --effort` (low to max) and controls how much thinking the model spends. `d` and `e` pick
 them at runtime; the header's `reviewer` group shows them as `depth <depth>` and `effort <effort>`.
+
+`--voice A,B` (or `PRS_VOICE`) picks how the posted body is phrased. `review` is the normal review;
+`caveman` and `bot` restate the verdict in caveman speech and as a terse machine log. Any mix, at
+least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
+`PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
+over-engineering, `security` only security, `tests` only missing or toothless tests. The hello
+comment names both so the author knows why the review reads that way. `x` and `h` tick them at runtime.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it

@@ -8,6 +8,10 @@ EFFORTS = ["", "low", "medium", "high", "xhigh", "max"]  # e cycles; "" = claude
 DEPTHS = ["adaptive", "low", "medium", "high"]  # d cycles
 EFFORT = os.environ.get("PRS_EFFORT", "medium")  # claude --effort: low, medium, high, xhigh, max; "" = claude's default
 DEPTH = os.environ.get("PRS_DEPTH", "adaptive")  # review depth: low, medium, high, adaptive
+VOICES = ["review", "caveman", "bot"]  # how the posted body is phrased, in this order; x toggles any number, at least one
+VOICE = [v for v in os.environ.get("PRS_VOICE", "review").split(",") if v]  # ponytail: a list, json has no set; empty = review
+HUNTERS = ["ponytail", "security", "tests"]  # extra lenses, each appends a section of its own findings; h toggles
+HUNTER = [v for v in os.environ.get("PRS_HUNTER", "").split(",") if v]
 INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
 TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # git checkout shared with the team; T sets it up
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
@@ -27,8 +31,8 @@ WINDOW = 4
 DRAFTS = False  # show draft PRs; D toggles
 SETTINGS = os.environ.get("PRS_SETTINGS", os.path.expanduser("~/.prs_settings.json"))  # runtime picks land here
 SAVED = {"model": "DEFAULT_MODEL", "interval": "INTERVAL", "subs": "SUB", "window": "WINDOW", "drafts": "DRAFTS",
-         "depth": "DEPTH", "effort": "EFFORT", "notify": "NOTIFY", "theme": "THEME"}  # json key -> constant
-ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "notify": "PRS_NOTIFY", "theme": "PRS_THEME"}
+         "depth": "DEPTH", "effort": "EFFORT", "notify": "NOTIFY", "theme": "THEME", "voice": "VOICE", "hunter": "HUNTER"}  # json key -> constant
+ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "notify": "PRS_NOTIFY", "theme": "PRS_THEME", "voice": "PRS_VOICE", "hunter": "PRS_HUNTER"}
 
 
 def load():
@@ -37,10 +41,16 @@ def load():
 		with open(SETTINGS) as f:
 			saved = json.load(f)
 	except (OSError, ValueError):
-		return
+		saved = {}  # no file, or a broken one: the defaults stand, and the checklists below still get normalised
 	for key, name in SAVED.items():
 		if key in saved and ENV.get(key, "") not in os.environ:
 			globals()[name] = saved[key]
+	# ponytail: a saved or env checklist may name a box that no longer exists (ponytail was a voice before
+	# it was a hunter). Drop it rather than refuse to start over a value nobody typed as a flag. After this,
+	# VOICE is never empty: the one place that rule lives.
+	global VOICE, HUNTER
+	VOICE = [v for v in ([VOICE] if isinstance(VOICE, str) else VOICE) if v in VOICES] or ["review"]
+	HUNTER = [h for h in ([HUNTER] if isinstance(HUNTER, str) else HUNTER) if h in HUNTERS]
 
 
 def save(values):

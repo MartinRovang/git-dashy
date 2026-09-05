@@ -2,11 +2,8 @@
 import datetime
 import json
 import os
-import pathlib
-import random
 import tempfile
 import subprocess
-from urllib.parse import quote
 
 from .. import config
 from . import github, log, memory, team
@@ -38,9 +35,26 @@ DEPTH = {
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
 	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
 }
-SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # any .png in here, at any depth, joins the rotation
-SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/"
-HELLO = """{sprite}**Dashy is on its way!** {what} with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
+VOICE = {  # ponytail: each is a prompt fragment; the model writes the sections into body, so no new JSON field
+	"review": "",
+	"caveman": "\n\nAppend a section `---\n**Caveman**`: the verdict in caveman speech. Short sentences. "
+	           "No articles. No hedging. Ten lines max.",
+	"bot": "\n\nAppend a section `---\n**Bot**`: the verdict as a terse machine log, one "
+	       "`[LEVEL] file:line message` per finding, no prose.",
+}
+HUNTER = {  # a lens, not a style: each hunts one class of problem the main review is not told to chase
+	"ponytail": "\n\nAppend a section `---\n**Ponytail**`: hunt ONLY over-engineering. One line per finding, "
+	            "`file:L<n>: <delete|stdlib|native|yagni|shrink>: what. replacement.`, then `net: -N lines possible.` "
+	            "Nothing to cut: `Lean already. Ship.`",
+	"security": "\n\nAppend a section `---\n**Security**`: hunt ONLY security. Trust boundaries, injection, authz, "
+	            "secrets, unsafe deserialisation, SSRF, path traversal. One line per finding, `file:L<n>: <class>: what. fix.` "
+	            "Nothing found: `No exposure seen.`",
+	"tests": "\n\nAppend a section `---\n**Tests**`: hunt ONLY test coverage. Changed logic with no test, tests that "
+	         "cannot fail, mocks that hide the seam under test. One line per finding, `file:L<n>: what is unproven. the test.` "
+	         "Nothing found: `Covered.`",
+}
+NO_REVIEW = "\n\nDo NOT write the standard review prose: \"body\" holds ONLY the sections below. \"findings\" stays as specified."
+HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}), voices **{voices}**{hunters}."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
@@ -59,11 +73,6 @@ Security is structural, not a checklist appended at the end. Watch for duplicate
 plainly what you verified first-hand and what you took on trust."""
 TIMEOUT = 900
 
-
-def sprite():
-	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
-	paths = [p.relative_to(SPRITE_DIR).as_posix() for p in SPRITE_DIR.rglob("*.png")]
-	return f'<img src="{SPRITE_URL + quote(random.choice(paths))}" width="120">\n\n' if paths else ""
 
 
 MARKER = "GITDASHY_SELFCHECK_MARKER"
@@ -129,6 +138,17 @@ def self_review_at(repo, n):
 		return 0.0
 
 
+def on(table, chosen):
+	"""The ticked boxes in table order."""
+	return [v for v in table if v in chosen]
+
+
+def tail():
+	"""The prompt tail for the chosen voices and hunters. config.load keeps VOICE non-empty."""
+	v = on(config.VOICES, config.VOICE)
+	return ("" if "review" in v else NO_REVIEW) + "".join(VOICE[x] for x in v) + "".join(HUNTER[h] for h in on(config.HUNTERS, config.HUNTER))
+
+
 def _verdict(repo, n, model, prev=None):
 	"""Build the prompt, run the reviewer, return its parsed verdict. Raises on failure.
 
@@ -136,7 +156,7 @@ def _verdict(repo, n, model, prev=None):
 	worth nothing as a preview of it. The only differences are what the caller does with the result.
 	"""
 	mem, brief = memory.read(repo), memory.project()
-	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
+	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + tail(),
 	                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
 	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
@@ -215,7 +235,9 @@ def review(pr, model):
 	try:
 		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
-		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		hunters = ", ".join(on(config.HUNTERS, config.HUNTER))
+		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(on(config.VOICES, config.VOICE)),
+		                                     hunters=f" and hunters **{hunters}**" if hunters else "", model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
