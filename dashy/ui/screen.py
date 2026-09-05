@@ -1159,7 +1159,7 @@ def main(scr, interval, auto, model):
 			state.hints = not state.hints
 		elif k == ord(" ") and current and current["section"] == "REVIEWED":
 			state.expanded ^= {current["url"]}
-		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
+		elif 0 < k < 256 and chr(k) in settings(state):  # ponytail: the table is the key list, so a new row is a new key
 			dropdown(scr, state, sel, chr(k))
 		elif k in (ord("R"), ord("V"), ord("K")):
 			group_menu(scr, state, sel, chr(k))

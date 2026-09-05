@@ -1020,3 +1020,17 @@ def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, t
 
 	assert not asked, "no deletion, so no second prompt"
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
+
+
+def test_every_setting_key_opens_its_dropdown(screen, monkeypatch):
+	"""x was in the settings table but not in main()'s key list, so it drew a hint and did nothing."""
+	opened = []
+	monkeypatch.setattr(ui, "dropdown", lambda scr, st, sel, key: opened.append(key))
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(config, "SETTINGS", "")
+	keys = list(ui.settings(State(60)))
+	screen.getch, screen.timeout = _keys(*[ord(k) for k in keys], ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert opened == keys
