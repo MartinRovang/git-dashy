@@ -64,8 +64,8 @@ ERROR = ""    # last failure, shown in the header until the next success
 ```
 
 `beat(reviewing)` sends the heartbeat and replaces `ONLINE`. Called from the refresh tick, when a
-review starts, and when it finishes. `reviewing` is the set of PR keys with a review thread live,
-which `review.py` already tracks. Off when `config.PRESENCE` is empty: no subprocess, `ONLINE` stays
+review starts, and when it finishes. `reviewing` is `state.running`, the set of in-flight review URLs
+the row spinner already reads. Off when `config.PRESENCE` is empty: no subprocess, `ONLINE` stays
 empty.
 
 Timeout 15 s. A dead or missing `tailcat` binary, a non-200, or unparseable JSON sets `ERROR` and
