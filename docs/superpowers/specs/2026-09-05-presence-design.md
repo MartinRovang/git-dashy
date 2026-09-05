@@ -32,9 +32,8 @@ writes one HTTP/1.0 request to stdin, reads the response from stdout, and the pr
 rules as `team._remote`: bounded timeout, never prompts, failure is a header string not a hang.
 Tailcat is built for short-lived connections; one per tick is exactly that.
 
-Fallback: the `presence` setting may also hold an `http(s)://` URL (for a Cloudflare Tunnel). Then the
-client uses `urllib` with the same request body. Same protocol, different pipe. Cloudflare Access or a
-token in the URL is the owner's problem, not the dashboard's.
+No TLS. Tailcat is WireGuard end to end and the address embeds the keys, so plain HTTP inside the pipe
+is already encrypted and authenticated. The server binds 127.0.0.1 on maze; only Tailcat reaches it.
 
 ## Server: `presence_server.py`
 
@@ -71,7 +70,7 @@ empty.
 Timeout 15 s. A dead or missing `tailcat` binary, a non-200, or unparseable JSON sets `ERROR` and
 leaves `ONLINE` as it was.
 
-`config.PRESENCE` comes from `PRS_PRESENCE` or the settings file key `presence`. Set at runtime through
+`config.PRESENCE` is the Tailcat address, from `PRS_PRESENCE` or the settings file key `presence`. Set at runtime through
 a key in the Knowledge group (`W`), which prompts for the address like `L` prompts for a path.
 
 ## UI
@@ -88,7 +87,7 @@ a key in the Knowledge group (`W`), which prompts for the address like `L` promp
 
 - `tests/test_presence_server.py`: start the handler on an ephemeral port in a thread, POST two beats,
   GET, assert both present; age one past STALE by patching time, assert it drops; 400 on bad JSON.
-- `tests/test_presence.py`: fake `subprocess.run` (and `urllib.request.urlopen` for the URL path),
+- `tests/test_presence.py`: fake `subprocess.run`,
   assert `ONLINE` on success, `ERROR` text and untouched `ONLINE` on failure, no call when off.
 - Row rendering: one test that a row claimed by another login shows `<login> reviewing`.
 
