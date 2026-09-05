@@ -1034,3 +1034,17 @@ def test_every_setting_key_opens_its_dropdown(screen, monkeypatch):
 	screen.getch, screen.timeout = _keys(*[ord(k) for k in keys], ord("q")), lambda t: None
 	ui.main(screen, 60, False, "opus")
 	assert opened == keys
+
+
+def test_voices_dropdown_is_a_checklist(screen, monkeypatch):
+	"""A list-valued setting: Enter toggles the row and stays open, Esc closes; the list is rebuilt in
+	option order whatever order the boxes were ticked in."""
+	monkeypatch.setattr(config, "VOICE", ["review"])
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.w = 263
+	screen.getch, screen.timeout = _keys(ord("j"), ord("j"), ord("j"), 10, ord("k"), ord("k"), 10, 10, 27), lambda t: None
+	assert ui.dropdown(screen, st, 0, "x") is True  # bot on, ponytail on then off again, close
+	assert config.VOICE == ["review", "bot"]
+	assert "[x] review" in screen.text() and "[ ] ponytail" in screen.text() and "[x] bot" in screen.text()
+	assert ui.snapshot(st)["voice"] == ["review", "bot"]

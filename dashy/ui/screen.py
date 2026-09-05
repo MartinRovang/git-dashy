@@ -85,8 +85,7 @@ def settings(state):
 		"m": ("Model", config.MODELS, state.model, lambda v: setattr(state, "model", v), str),
 		"d": ("Depth", config.DEPTHS, config.DEPTH, lambda v: setattr(config, "DEPTH", v), str),
 		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
-		# ponytail: current is a list, and that alone is what makes the dropdown a checklist. show renders the row.
-		"x": ("Voices", config.VOICES, config.VOICE, lambda v: setattr(config, "VOICE", v), lambda v: ", ".join(v) or "off" if isinstance(v, list) else v),
+		"x": ("Voices", config.VOICES, config.VOICE, lambda v: setattr(config, "VOICE", v), lambda v: ", ".join(v) or "off"),
 		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
 		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
 		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
