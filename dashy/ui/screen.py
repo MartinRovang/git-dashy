@@ -67,7 +67,7 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y copy path · a auto"),
+KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
         ("config", "m model · d depth · e effort · x voices · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
@@ -578,7 +578,7 @@ def detail(scr, state, h, x0, width, pr):
 		               "read the pre-review" if pre_at else "pre-review, posting nothing"),
 		        ("o", "open in browser")]
 		if pre_at:
-			acts.append(("Y", "copy the pre-review path"))
+			acts.append(("Y", "open the pre-review"))
 		if pr.get("review") or log.last(pr["url"]):
 			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
 		for key, what in acts:
@@ -950,11 +950,11 @@ def page(scr, state, sel, path, label):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
-def copy_pre_review(scr, state, sel, pr):
-	"""`Y`: put the pre-review's PATH on the clipboard. Returns what it copied, or "".
+def open_pre_review(scr, state, sel, pr):
+	"""`Y`: open the pre-review file in the browser. Returns the path it opened, or "".
 
-	ponytail: the path, not the contents — it is a file you open in an editor or hand to something
-	else, and a whole review on the clipboard is not what anyone wants to paste.
+	ponytail: xdg-open/open take a file path as readily as a URL, so this is the `o` helper with a
+	path. It copied the path before, which left you pasting it somewhere; opening is what came next.
 	ponytail: a function, not eight lines in the key loop. The test for this pressed nothing and called
 	github.copy itself, so neither branch of the handler ran — which is how the p handler shipped a
 	NameError. A handler that cannot be driven is a handler that is not tested.
@@ -965,9 +965,8 @@ def copy_pre_review(scr, state, sel, pr):
 		scr.refresh()
 		return ""
 	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
-	tool = github.copy(path)
-	draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
-	     else f" sent {path} to the terminal (OSC 52)")
+	github.open_in_browser(path)
+	draw(scr, state, sel, prompt=f" opened {path}")
 	scr.refresh()
 	return path
 
@@ -1174,7 +1173,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("p") and current and current["section"] == "MINE":
 			pre_review(scr, state, sel, current)
 		elif k == ord("Y") and current:
-			copy_pre_review(scr, state, sel, current)
+			open_pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else

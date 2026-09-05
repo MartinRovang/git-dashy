@@ -941,7 +941,7 @@ def test_the_pane_says_a_pre_review_exists_and_whether_it_is_current(monkeypatch
 	ui.draw(screen, st, 0, now=1000.0)
 	out = screen.text()
 	assert "PRE-REVIEW" in out and "current" in out and "stale" not in out
-	assert "read the pre-review" in out and "copy the pre-review path" in out
+	assert "read the pre-review" in out and "open the pre-review" in out
 
 	moved = dict(pr, updatedAt="2099-01-01T00:00:00Z")  # the PR moved after the pre-review
 	st.sections = [("MINE", [moved], None)]
@@ -961,17 +961,17 @@ def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, t
 	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
 	pr = dict(PR, url="uY", number=903, section="MINE")
 	repo = pr["repository"]["nameWithOwner"]      # ponytail: from the fixture, not assumed
-	copied, said = [], []
-	monkeypatch.setattr(ui.github, "copy", lambda t: copied.append(t) or "xclip")
+	opened, said = [], []
+	monkeypatch.setattr(ui.github, "open_in_browser", lambda t: opened.append(t))
 	monkeypatch.setattr(ui, "draw", lambda s, st, sl, prompt=None, now=None: said.append(prompt or ""))
 	st = State(60)
 
-	assert ui.copy_pre_review(screen, st, 0, pr) == ""          # none yet: nothing copied
-	assert copied == [] and "no pre-review of #903 yet" in said[-1]
+	assert ui.open_pre_review(screen, st, 0, pr) == ""          # none yet: nothing opened
+	assert opened == [] and "no pre-review of #903 yet" in said[-1]
 
 	path = _with_pre_review(monkeypatch, tmp_path, pr, 4e9)
-	assert ui.copy_pre_review(screen, st, 0, pr) == path
-	assert copied == [path] and "✓ copied" in said[-1] and "xclip" in said[-1]
+	assert ui.open_pre_review(screen, st, 0, pr) == path
+	assert opened == [path] and "opened" in said[-1]
 	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
 	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
 	assert path == review_mod.self_review_path(repo, 903)
