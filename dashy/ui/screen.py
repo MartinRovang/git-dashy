@@ -67,8 +67,8 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y copy path · a auto"),
-        ("config", "m model · d depth · e effort · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
+KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
+        ("config", "m model · d depth · e effort · x voices · h hunters · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -85,6 +85,8 @@ def settings(state):
 		"m": ("Model", config.MODELS, state.model, lambda v: setattr(state, "model", v), str),
 		"d": ("Depth", config.DEPTHS, config.DEPTH, lambda v: setattr(config, "DEPTH", v), str),
 		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
+		"x": ("Voices", config.VOICES, config.VOICE, lambda v: setattr(config, "VOICE", v), lambda v: ", ".join(v) or "off"),
+		"h": ("Hunters", config.HUNTERS, config.HUNTER, lambda v: setattr(config, "HUNTER", v), lambda v: ", ".join(v) or "off"),
 		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
 		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
 		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
@@ -107,7 +109,7 @@ def header_groups(state):
 	# ponytail: "Agent" rather than "Reviewer" — the group is what drives the model, and reviewing is
 	# only what it happens to be doing. The design's "role reviewer" is left out on purpose: there is
 	# one role, so it would be a label dressed as a control.
-	reviewer = [row("m"), row("d"), row("e")]
+	reviewer = [row("m"), row("d"), row("e"), row("x"), row("h")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
@@ -576,7 +578,7 @@ def detail(scr, state, h, x0, width, pr):
 		               "read the pre-review" if pre_at else "pre-review, posting nothing"),
 		        ("o", "open in browser")]
 		if pre_at:
-			acts.append(("Y", "copy the pre-review path"))
+			acts.append(("Y", "open the pre-review"))
 		if pr.get("review") or log.last(pr["url"]):
 			acts.append(("v", "read the full review"))  # ponytail: offered only when there is one
 		for key, what in acts:
@@ -665,22 +667,30 @@ def dropdown(scr, state, sel, key):
 	"""Pick a setting's value from a list hanging under its header label (or its group's chip when collapsed).
 	j/k or the key itself moves, Enter picks, Esc keeps. The dashboard keeps ticking behind it."""
 	label, options, current, set_, show = settings(state)[key]
-	options = list(options) + ([current] if current not in options else [])  # --model can name anything
-	idx = options.index(current)
+	many = isinstance(current, list)  # a checklist: Enter toggles the row and stays open, Esc closes
+	options = list(options) + ([current] if not many and current not in options else [])  # --model can name anything
+	idx = 0 if many else options.index(current)
 	while True:
-		draw(scr, state, sel, prompt=f" {label}:  j/k or {key} move   ⏎ pick   esc keep")
+		draw(scr, state, sel, prompt=f" {label}:  j/k or {key} move   ⏎ {'toggle' if many else 'pick'}   esc {'close' if many else 'keep'}")
 		y, x = ANCHORS.get(key, (1, 3))  # after draw: the label's place at this width
-		popup(scr, y, x, label, [show(o) for o in options], idx, options.index(current))
+		lines = [f"[{'x' if o in current else ' '}] {o}" if many else show(o) for o in options]
+		popup(scr, y, x, label, lines, idx, None if many else options.index(current))
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN, ord(key)):
 			idx = (idx + 1) % len(options)
 		elif k in (ord("k"), curses.KEY_UP):
 			idx = (idx - 1) % len(options)
 		elif k in (10, 13, curses.KEY_ENTER):
-			set_(options[idx])
-			return True
+			if not many:
+				set_(options[idx])
+				return True
+			o = options[idx]
+			new = [v for v in options if (v in current) != (v == o)]  # ponytail: rebuilt in option order, never mutated
+			if new or key != "x":  # the last voice stays ticked: an empty choice would mean nothing gets posted
+				set_(new)
+				current = settings(state)[key][2]
 		elif k in (27, ord("q")):
-			return False
+			return many  # a checklist closes with its toggles kept, a pick closes with nothing picked
 
 
 def group_menu(scr, state, sel, key):
@@ -942,11 +952,11 @@ def page(scr, state, sel, path, label):
 		confirm(scr, state, sel, f" {err}  [any key]")
 
 
-def copy_pre_review(scr, state, sel, pr):
-	"""`Y`: put the pre-review's PATH on the clipboard. Returns what it copied, or "".
+def open_pre_review(scr, state, sel, pr):
+	"""`Y`: open the pre-review file with the desktop's handler for .md. Returns the path it opened, or "".
 
-	ponytail: the path, not the contents — it is a file you open in an editor or hand to something
-	else, and a whole review on the clipboard is not what anyone wants to paste.
+	ponytail: xdg-open/open take a file path as readily as a URL, so this is the `o` helper with a
+	path. It copied the path before, which left you pasting it somewhere; opening is what came next.
 	ponytail: a function, not eight lines in the key loop. The test for this pressed nothing and called
 	github.copy itself, so neither branch of the handler ran — which is how the p handler shipped a
 	NameError. A handler that cannot be driven is a handler that is not tested.
@@ -957,9 +967,8 @@ def copy_pre_review(scr, state, sel, pr):
 		scr.refresh()
 		return ""
 	path = review_mod.self_review_path(pr["repository"]["nameWithOwner"], pr["number"])
-	tool = github.copy(path)
-	draw(scr, state, sel, prompt=f" ✓ copied {path}  (via {tool})" if tool != "terminal"
-	     else f" sent {path} to the terminal (OSC 52)")
+	github.open_in_browser(path)
+	draw(scr, state, sel, prompt=f" handed {path} to xdg-open")  # ponytail: a report, not a claim; xdg-open fails silently
 	scr.refresh()
 	return path
 
@@ -1109,7 +1118,8 @@ def dream_detail(summary, before, new):
 def snapshot(state):
 	"""Everything the settings row can change, in the shape config.save writes."""
 	return {"model": state.model, "interval": state.interval, "subs": state.subs, "window": state.window,
-	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME}
+	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME,
+	        "voice": list(config.VOICE), "hunter": list(config.HUNTER)}
 
 
 def main(scr, interval, auto, model):
@@ -1150,7 +1160,7 @@ def main(scr, interval, auto, model):
 			state.hints = not state.hints
 		elif k == ord(" ") and current and current["section"] == "REVIEWED":
 			state.expanded ^= {current["url"]}
-		elif k in (ord("m"), ord("d"), ord("e"), ord("s"), ord("t"), ord("i")):
+		elif 0 < k < 256 and chr(k) in settings(state):  # ponytail: the table is the key list, so a new row is a new key
 			dropdown(scr, state, sel, chr(k))
 		elif k in (ord("R"), ord("V"), ord("K")):
 			group_menu(scr, state, sel, chr(k))
@@ -1165,7 +1175,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("p") and current and current["section"] == "MINE":
 			pre_review(scr, state, sel, current)
 		elif k == ord("Y") and current:
-			copy_pre_review(scr, state, sel, current)
+			open_pre_review(scr, state, sel, current)
 		elif k == ord("y") and current:
 			tool = github.copy(current["url"])
 			draw(scr, state, sel, prompt=f" ✓ copied {current['url']}  (via {tool})" if tool != "terminal" else

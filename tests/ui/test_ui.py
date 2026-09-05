@@ -188,6 +188,7 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 
 
 def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
+	# ponytail: "│ Voices off" and "│ Hunters off" widened the Agent group by 39, so the pins moved up by that
 	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)  # conftest moves TEAM; pin the optional row off
 	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
 	st = State(60)
@@ -196,16 +197,16 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 		screen.w = w
 		ui.draw(screen, st, 0)
 		return screen.line(1)
-	out = row1(240)
+	out = row1(279)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
 	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
 	assert "Agent" in out
 	assert out.index("Agent") < out.index("View") < out.index("Knowledge")
-	out = row1(225)
+	out = row1(263)
 	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
-	out = row1(200)
+	out = row1(223)
 	assert "History 4h" in out and out.rstrip().endswith("☰ Knowledge")  # Knowledge folds first, it is the least-touched
-	out = row1(160)
+	out = row1(183)
 	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
 	out = row1(120)
 	assert "☰ Agent" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out
@@ -245,9 +246,9 @@ def test_group_menu_lists_settings_and_opens_one(screen, monkeypatch):
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.group_menu(screen, st, 0, "R")
 	assert config.DEPTH == "low"
-	assert "▸ Model    opus" in seen[0] and "Depth    adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
+	assert "▸ Model     opus" in seen[0] and "Depth     adaptive" in seen[0] and "Agent:  j/k move" in seen[0]
 	assert "▸ adaptive" in seen[2] and "Depth:  j/k or d move" in seen[2]
-	assert "Depth    low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
+	assert "Depth     low" in seen[4] and "Agent:  j/k move" in seen[4]  # back in the group with the new value
 
 
 def test_group_menu_toggles_drafts(screen):
@@ -318,7 +319,7 @@ def test_strip_shows_update_and_auto_badges(screen):
 def test_hints_show_each_settings_key(screen, monkeypatch):
 	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)
 	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
-	screen.w = 250  # three groups, each key spelled out: nothing folds only well past 200
+	screen.w = 280  # three groups, each key spelled out: nothing folds only well past 270
 	st = State(60)
 	st.sections, st.fetched_at, st.hints = [("MINE", [], None)], time.time(), True
 	ui.draw(screen, st, 0)
@@ -940,7 +941,7 @@ def test_the_pane_says_a_pre_review_exists_and_whether_it_is_current(monkeypatch
 	ui.draw(screen, st, 0, now=1000.0)
 	out = screen.text()
 	assert "PRE-REVIEW" in out and "current" in out and "stale" not in out
-	assert "read the pre-review" in out and "copy the pre-review path" in out
+	assert "read the pre-review" in out and "open the pre-review" in out
 
 	moved = dict(pr, updatedAt="2099-01-01T00:00:00Z")  # the PR moved after the pre-review
 	st.sections = [("MINE", [moved], None)]
@@ -960,17 +961,17 @@ def test_Y_copies_the_path_and_says_so_when_there_is_none(monkeypatch, screen, t
 	monkeypatch.setattr(review_mod, "SELF_DIR", str(tmp_path))
 	pr = dict(PR, url="uY", number=903, section="MINE")
 	repo = pr["repository"]["nameWithOwner"]      # ponytail: from the fixture, not assumed
-	copied, said = [], []
-	monkeypatch.setattr(ui.github, "copy", lambda t: copied.append(t) or "xclip")
+	opened, said = [], []
+	monkeypatch.setattr(ui.github, "open_in_browser", lambda t: opened.append(t))
 	monkeypatch.setattr(ui, "draw", lambda s, st, sl, prompt=None, now=None: said.append(prompt or ""))
 	st = State(60)
 
-	assert ui.copy_pre_review(screen, st, 0, pr) == ""          # none yet: nothing copied
-	assert copied == [] and "no pre-review of #903 yet" in said[-1]
+	assert ui.open_pre_review(screen, st, 0, pr) == ""          # none yet: nothing opened
+	assert opened == [] and "no pre-review of #903 yet" in said[-1]
 
 	path = _with_pre_review(monkeypatch, tmp_path, pr, 4e9)
-	assert ui.copy_pre_review(screen, st, 0, pr) == path
-	assert copied == [path] and "✓ copied" in said[-1] and "xclip" in said[-1]
+	assert ui.open_pre_review(screen, st, 0, pr) == path
+	assert opened == [path] and "handed" in said[-1]
 	# derived from owner, repo and number — nothing is remembered, so a restart finds it again
 	assert path.endswith(f"{repo.replace('/', '__')}__903.md")
 	assert path == review_mod.self_review_path(repo, 903)
@@ -1019,3 +1020,38 @@ def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, t
 
 	assert not asked, "no deletion, so no second prompt"
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
+
+
+def test_every_setting_key_opens_its_dropdown(screen, monkeypatch):
+	"""x was in the settings table but not in main()'s key list, so it drew a hint and did nothing."""
+	opened = []
+	monkeypatch.setattr(ui, "dropdown", lambda scr, st, sel, key: opened.append(key))
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(config, "SETTINGS", "")
+	keys = list(ui.settings(State(60)))
+	screen.getch, screen.timeout = _keys(*[ord(k) for k in keys], ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert opened == keys
+
+
+def test_voices_dropdown_is_a_checklist(screen, monkeypatch):
+	"""A list-valued setting: Enter toggles the row and stays open, Esc closes; the list is rebuilt in
+	option order whatever order the boxes were ticked in."""
+	monkeypatch.setattr(config, "VOICE", ["review"])
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [], None)], time.time()
+	screen.w = 263
+	screen.getch, screen.timeout = _keys(ord("j"), ord("j"), 10, ord("k"), 10, 10, 27), lambda t: None
+	assert ui.dropdown(screen, st, 0, "x") is True  # bot on, caveman on then off again, close
+	assert config.VOICE == ["review", "bot"]
+	assert "[x] review" in screen.text() and "[ ] caveman" in screen.text() and "[x] bot" in screen.text()
+	assert ui.snapshot(st)["voice"] == ["review", "bot"]
+	screen.getch = _keys(10, ord("j"), ord("j"), 10, 27)  # untick review, then try to untick bot
+	ui.dropdown(screen, st, 0, "x")
+	assert config.VOICE == ["bot"]  # the last voice will not untick
+	monkeypatch.setattr(config, "HUNTER", ["tests"])
+	screen.getch = _keys(ord("j"), ord("j"), 10, 27)  # hunters may all go off
+	ui.dropdown(screen, st, 0, "h")
+	assert config.HUNTER == [] and ui.snapshot(st)["hunter"] == []
