@@ -1048,3 +1048,6 @@ def test_voices_dropdown_is_a_checklist(screen, monkeypatch):
 	assert config.VOICE == ["review", "bot"]
 	assert "[x] review" in screen.text() and "[ ] ponytail" in screen.text() and "[x] bot" in screen.text()
 	assert ui.snapshot(st)["voice"] == ["review", "bot"]
+	screen.getch = _keys(10, ord("j"), ord("j"), ord("j"), 10, 27)  # untick review, then try to untick bot
+	ui.dropdown(screen, st, 0, "x")
+	assert config.VOICE == ["bot"]  # the last box will not untick

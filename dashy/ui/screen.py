@@ -684,8 +684,10 @@ def dropdown(scr, state, sel, key):
 				set_(options[idx])
 				return True
 			o = options[idx]
-			set_([v for v in options if (v in current) != (v == o)])  # ponytail: rebuilt in option order, never mutated
-			current = settings(state)[key][2]
+			new = [v for v in options if (v in current) != (v == o)]  # ponytail: rebuilt in option order, never mutated
+			if new:  # the last box stays ticked: an empty choice would mean nothing gets posted
+				set_(new)
+				current = settings(state)[key][2]
 		elif k in (27, ord("q")):
 			return many
 

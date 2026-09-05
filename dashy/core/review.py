@@ -2,11 +2,8 @@
 import datetime
 import json
 import os
-import pathlib
-import random
 import tempfile
 import subprocess
-from urllib.parse import quote
 
 from .. import config
 from . import github, log, memory, team
@@ -49,9 +46,7 @@ VOICE = {  # ponytail: each is a prompt fragment; the model writes the sections 
 	       "`[LEVEL] file:line message` per finding, no prose.",
 }
 NO_REVIEW = "\n\nDo NOT write the standard review prose: \"body\" holds ONLY the sections below. \"findings\" stays as specified."
-SPRITE_DIR = pathlib.Path(__file__).parents[2] / "sprites"  # any .png in here, at any depth, joins the rotation
-SPRITE_URL = "https://raw.githubusercontent.com/MartinRovang/git-dashy/main/sprites/"
-HELLO = """{sprite}**Dashy is on its way!** {what} with model **{model}**, effort **{effort}** and depth **{depth}** ({why})."""
+HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}) and voices **{voices}**."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
 TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
@@ -70,11 +65,6 @@ Security is structural, not a checklist appended at the end. Watch for duplicate
 plainly what you verified first-hand and what you took on trust."""
 TIMEOUT = 900
 
-
-def sprite():
-	"""An <img> tag for a random sprite, or "" if the sprites dir is empty."""
-	paths = [p.relative_to(SPRITE_DIR).as_posix() for p in SPRITE_DIR.rglob("*.png")]
-	return f'<img src="{SPRITE_URL + quote(random.choice(paths))}" width="120">\n\n' if paths else ""
 
 
 MARKER = "GITDASHY_SELFCHECK_MARKER"
@@ -140,9 +130,14 @@ def self_review_at(repo, n):
 		return 0.0
 
 
+def voices_on():
+	"""The chosen sections in VOICES order. Empty means the plain review."""
+	return [v for v in config.VOICES if v in config.VOICE] or ["review"]
+
+
 def voices():
-	"""The prompt tail for the chosen sections. Empty selection means the plain review."""
-	on = [v for v in config.VOICES if v in config.VOICE] or ["review"]
+	"""The prompt tail for the chosen sections."""
+	on = voices_on()
 	return ("" if "review" in on else NO_REVIEW) + "".join(VOICE[v] for v in on)
 
 
@@ -232,7 +227,7 @@ def review(pr, model):
 	try:
 		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
-		github.comment(repo, n, HELLO.format(sprite=sprite(), what=what, model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(voices_on()), model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
