@@ -690,7 +690,7 @@ def dropdown(scr, state, sel, key):
 				set_(new)
 				current = settings(state)[key][2]
 		elif k in (27, ord("q")):
-			return many
+			return many  # a checklist closes with its toggles kept, a pick closes with nothing picked
 
 
 def group_menu(scr, state, sel, key):
@@ -953,7 +953,7 @@ def page(scr, state, sel, path, label):
 
 
 def open_pre_review(scr, state, sel, pr):
-	"""`Y`: open the pre-review file in the browser. Returns the path it opened, or "".
+	"""`Y`: open the pre-review file with the desktop's handler for .md. Returns the path it opened, or "".
 
 	ponytail: xdg-open/open take a file path as readily as a URL, so this is the `o` helper with a
 	path. It copied the path before, which left you pasting it somewhere; opening is what came next.

@@ -47,8 +47,9 @@ def load():
 			globals()[name] = saved[key]
 	# ponytail: a saved checklist may name a box that no longer exists (ponytail was a voice before it
 	# was a hunter). Drop it rather than refuse to start over a file nobody typed.
-	VOICE[:] = [v for v in VOICE if v in VOICES] or ["review"]
-	HUNTER[:] = [h for h in HUNTER if h in HUNTERS]
+	global VOICE, HUNTER
+	VOICE = [v for v in ([VOICE] if isinstance(VOICE, str) else VOICE) if v in VOICES] or ["review"]
+	HUNTER = [h for h in ([HUNTER] if isinstance(HUNTER, str) else HUNTER) if h in HUNTERS]
 
 
 def save(values):

@@ -27,3 +27,6 @@ def test_stale_checklist_values_are_dropped_on_load(tmp_path, monkeypatch):
 	config.save({"voice": ["ponytail"]})
 	config.load()
 	assert config.VOICE == ["review"]  # nothing valid left: the plain review, never an empty body
+	config.save({"voice": "caveman", "hunter": "tests"})  # hand-edited to a string
+	config.load()
+	assert config.VOICE == ["caveman"] and config.HUNTER == ["tests"]

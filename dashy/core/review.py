@@ -138,19 +138,15 @@ def self_review_at(repo, n):
 		return 0.0
 
 
-def voices_on():
-	"""The chosen sections in VOICES order. Empty means the plain review."""
-	return [v for v in config.VOICES if v in config.VOICE] or ["review"]
-
-
-def hunters_on():
-	return [h for h in config.HUNTERS if h in config.HUNTER]
+def on(table, chosen):
+	"""The ticked boxes in table order."""
+	return [v for v in table if v in chosen]
 
 
 def voices():
-	"""The prompt tail for the chosen voices and hunters."""
-	on = voices_on()
-	return ("" if "review" in on else NO_REVIEW) + "".join(VOICE[v] for v in on) + "".join(HUNTER[h] for h in hunters_on())
+	"""The prompt tail for the chosen voices and hunters. No voice means the plain review."""
+	v = on(config.VOICES, config.VOICE) or ["review"]
+	return ("" if "review" in v else NO_REVIEW) + "".join(VOICE[x] for x in v) + "".join(HUNTER[h] for h in on(config.HUNTERS, config.HUNTER))
 
 
 def _verdict(repo, n, model, prev=None):
@@ -239,7 +235,9 @@ def review(pr, model):
 	try:
 		prev = log.last(pr["url"])
 		what = f"Re-reviewing (was {config.STATUS[prev['verdict']]} on {prev['at'][:10]})" if prev else "Reviewing"
-		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(voices_on()), hunters=(" and hunters **" + ", ".join(hunters_on()) + "**") if hunters_on() else "", model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
+		hunters = ", ".join(on(config.HUNTERS, config.HUNTER))
+		github.comment(repo, n, HELLO.format(what=what, voices=", ".join(on(config.VOICES, config.VOICE) or ["review"]),
+		                                     hunters=f" and hunters **{hunters}**" if hunters else "", model=model, effort=config.EFFORT or "default", depth=config.DEPTH,
 		                                     why=WHY.get(config.DEPTH, "set by the reviewer")))
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])

@@ -203,3 +203,13 @@ def test_a_failed_full_install_never_offers_the_briefs(monkeypatch, tmp_path):
 	monkeypatch.setattr(install_mod, "full_apply", lambda *a, **k: ["ok    something"])
 	cli.install(["gitdashy", "install", "--full", "--yes"])
 	assert len(offered) == 1
+
+
+def test_voice_and_hunter_flags_are_checked(monkeypatch, capsys):
+	monkeypatch.setattr(config, "SETTINGS", "")
+	monkeypatch.setattr(config, "VOICE", ["review"])
+	cli.run(["gitdashy", "--voice", "ponytail"])
+	assert "--voice must be from review, caveman, bot" in capsys.readouterr().out
+	monkeypatch.setattr(config, "VOICE", ["review"])  # the refused value is not undone; a real run exits here
+	cli.run(["gitdashy", "--hunter", "tests,nope"])
+	assert "--hunter must be from ponytail, security, tests" in capsys.readouterr().out
