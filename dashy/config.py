@@ -45,6 +45,10 @@ def load():
 	for key, name in SAVED.items():
 		if key in saved and ENV.get(key, "") not in os.environ:
 			globals()[name] = saved[key]
+	# ponytail: a saved checklist may name a box that no longer exists (ponytail was a voice before it
+	# was a hunter). Drop it rather than refuse to start over a file nobody typed.
+	VOICE[:] = [v for v in VOICE if v in VOICES] or ["review"]
+	HUNTER[:] = [h for h in HUNTER if h in HUNTERS]
 
 
 def save(values):
