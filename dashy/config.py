@@ -8,6 +8,8 @@ EFFORTS = ["", "low", "medium", "high", "xhigh", "max"]  # e cycles; "" = claude
 DEPTHS = ["adaptive", "low", "medium", "high"]  # d cycles
 EFFORT = os.environ.get("PRS_EFFORT", "medium")  # claude --effort: low, medium, high, xhigh, max; "" = claude's default
 DEPTH = os.environ.get("PRS_DEPTH", "adaptive")  # review depth: low, medium, high, adaptive
+VOICES = ["review", "ponytail", "caveman", "bot"]  # sections of the posted body, in this order; x toggles any number
+VOICE = [v for v in os.environ.get("PRS_VOICE", "review").split(",") if v]  # ponytail: a list, json has no set; empty = review
 INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
 TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # git checkout shared with the team; T sets it up
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
@@ -27,8 +29,8 @@ WINDOW = 4
 DRAFTS = False  # show draft PRs; D toggles
 SETTINGS = os.environ.get("PRS_SETTINGS", os.path.expanduser("~/.prs_settings.json"))  # runtime picks land here
 SAVED = {"model": "DEFAULT_MODEL", "interval": "INTERVAL", "subs": "SUB", "window": "WINDOW", "drafts": "DRAFTS",
-         "depth": "DEPTH", "effort": "EFFORT", "notify": "NOTIFY", "theme": "THEME"}  # json key -> constant
-ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "notify": "PRS_NOTIFY", "theme": "PRS_THEME"}
+         "depth": "DEPTH", "effort": "EFFORT", "notify": "NOTIFY", "theme": "THEME", "voice": "VOICE"}  # json key -> constant
+ENV = {"model": "PRS_MODEL", "depth": "PRS_DEPTH", "effort": "PRS_EFFORT", "notify": "PRS_NOTIFY", "theme": "PRS_THEME", "voice": "PRS_VOICE"}
 
 
 def load():

@@ -188,6 +188,7 @@ def test_strip_shows_refreshing_while_fetch_in_flight(screen):
 
 
 def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
+	# ponytail: "│ Voices off" widened the Agent group by 23, so the pins moved up by that
 	monkeypatch.setattr(ui.knowledge, "store_moved", lambda: False)  # conftest moves TEAM; pin the optional row off
 	monkeypatch.setattr(ui.knowledge, "effective", lambda: "~/.prs_memory")  # layout, not paths: keep it stable
 	st = State(60)
@@ -196,16 +197,16 @@ def test_strip_collapses_groups_to_chips_on_narrow_screens(screen, monkeypatch):
 		screen.w = w
 		ui.draw(screen, st, 0)
 		return screen.line(1)
-	out = row1(240)
+	out = row1(263)
 	assert out.index("Session") + len("Session") == screen.line(0).index("v" + ui.VERSION) + len("v" + ui.VERSION) + 1  # chip edge incl. its padding
 	assert out.rstrip().endswith("Team off") and "☰" not in out and "Memory ~/.prs_memory" in out
 	assert "Agent" in out
 	assert out.index("Agent") < out.index("View") < out.index("Knowledge")
-	out = row1(225)
+	out = row1(247)
 	assert "Team off" in out and "  │  " in out and "   │   " not in out  # spacing tightens before anything folds
-	out = row1(200)
+	out = row1(207)
 	assert "History 4h" in out and out.rstrip().endswith("☰ Knowledge")  # Knowledge folds first, it is the least-touched
-	out = row1(160)
+	out = row1(167)
 	assert "Effort medium" in out and out.rstrip().endswith("☰ Knowledge") and "☰ View" in out and "Summaries" not in out
 	out = row1(120)
 	assert "☰ Agent" in out and "☰ View" in out and "☰ Knowledge" in out and "Model" not in out

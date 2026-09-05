@@ -68,7 +68,7 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
 KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y copy path · a auto"),
-        ("config", "m model · d depth · e effort · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
+        ("config", "m model · d depth · e effort · x voices · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
 ANCHORS = {}  # setting key -> (y, x) where its label was last drawn; dropdowns hang from it
@@ -85,6 +85,8 @@ def settings(state):
 		"m": ("Model", config.MODELS, state.model, lambda v: setattr(state, "model", v), str),
 		"d": ("Depth", config.DEPTHS, config.DEPTH, lambda v: setattr(config, "DEPTH", v), str),
 		"e": ("Effort", config.EFFORTS, config.EFFORT, lambda v: setattr(config, "EFFORT", v), lambda v: v or "default"),
+		# ponytail: current is a list, and that alone is what makes the dropdown a checklist. show renders the row.
+		"x": ("Voices", config.VOICES, config.VOICE, lambda v: setattr(config, "VOICE", v), lambda v: ", ".join(v) or "off" if isinstance(v, list) else v),
 		"s": ("Summaries", config.SUBS, state.subs, lambda v: setattr(state, "subs", v), str),
 		"t": ("History", config.WINDOWS, state.window, lambda v: setattr(state, "window", v), lambda v: f"{v}h" if v else "all"),
 		"i": ("Refresh", config.INTERVALS, state.interval, lambda v: setattr(state, "interval", v),
@@ -107,7 +109,7 @@ def header_groups(state):
 	# ponytail: "Agent" rather than "Reviewer" — the group is what drives the model, and reviewing is
 	# only what it happens to be doing. The design's "role reviewer" is left out on purpose: there is
 	# one role, so it would be a label dressed as a control.
-	reviewer = [row("m"), row("d"), row("e")]
+	reviewer = [row("m"), row("d"), row("e"), row("x")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
@@ -665,22 +667,28 @@ def dropdown(scr, state, sel, key):
 	"""Pick a setting's value from a list hanging under its header label (or its group's chip when collapsed).
 	j/k or the key itself moves, Enter picks, Esc keeps. The dashboard keeps ticking behind it."""
 	label, options, current, set_, show = settings(state)[key]
-	options = list(options) + ([current] if current not in options else [])  # --model can name anything
-	idx = options.index(current)
+	many = isinstance(current, list)  # a checklist: Enter toggles the row and stays open, Esc closes
+	options = list(options) + ([current] if not many and current not in options else [])  # --model can name anything
+	idx = 0 if many else options.index(current)
 	while True:
-		draw(scr, state, sel, prompt=f" {label}:  j/k or {key} move   ⏎ pick   esc keep")
+		draw(scr, state, sel, prompt=f" {label}:  j/k or {key} move   ⏎ {'toggle' if many else 'pick'}   esc {'close' if many else 'keep'}")
 		y, x = ANCHORS.get(key, (1, 3))  # after draw: the label's place at this width
-		popup(scr, y, x, label, [show(o) for o in options], idx, options.index(current))
+		lines = [f"[{'x' if o in current else ' '}] {o}" if many else show(o) for o in options]
+		popup(scr, y, x, label, lines, idx, None if many else options.index(current))
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN, ord(key)):
 			idx = (idx + 1) % len(options)
 		elif k in (ord("k"), curses.KEY_UP):
 			idx = (idx - 1) % len(options)
 		elif k in (10, 13, curses.KEY_ENTER):
-			set_(options[idx])
-			return True
+			if not many:
+				set_(options[idx])
+				return True
+			o = options[idx]
+			set_([v for v in options if (v in current) != (v == o)])  # ponytail: rebuilt in option order, never mutated
+			current = settings(state)[key][2]
 		elif k in (27, ord("q")):
-			return False
+			return many
 
 
 def group_menu(scr, state, sel, key):
@@ -1109,7 +1117,8 @@ def dream_detail(summary, before, new):
 def snapshot(state):
 	"""Everything the settings row can change, in the shape config.save writes."""
 	return {"model": state.model, "interval": state.interval, "subs": state.subs, "window": state.window,
-	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME}
+	        "drafts": state.drafts, "depth": config.DEPTH, "effort": config.EFFORT, "notify": config.NOTIFY, "theme": config.THEME,
+	        "voice": list(config.VOICE)}
 
 
 def main(scr, interval, auto, model):

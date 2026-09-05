@@ -347,3 +347,20 @@ def test_self_review_writes_where_the_lookup_looks(monkeypatch, tmp_path):
 	                                        "number": 7, "url": "u"}, "opus")
 	assert dest == review_mod.self_review_path("acme/api", 7)
 	assert review_mod.self_review_at("acme/api", 7) > 0
+
+
+def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatch):
+	calls = []
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
+	monkeypatch.setattr(config, "VOICE", ["bot", "review", "ponytail"])
+	review(dict(PR), "opus")
+	prompt = calls[1][2]
+	assert prompt.index("**Ponytail**") < prompt.index("**Bot**") and "**Caveman**" not in prompt and "Do NOT" not in prompt
+	calls.clear()
+	monkeypatch.setattr(config, "VOICE", ["caveman"])  # review unchecked: caveman IS the review
+	review(dict(PR), "opus")
+	assert "Do NOT write the standard review" in calls[1][2] and "**Caveman**" in calls[1][2]
+	calls.clear()
+	monkeypatch.setattr(config, "VOICE", [])  # nothing checked falls back to the plain review
+	review(dict(PR), "opus")
+	assert "Append a section" not in calls[1][2] and "Do NOT" not in calls[1][2]
