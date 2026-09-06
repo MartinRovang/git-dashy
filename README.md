@@ -368,11 +368,32 @@ rate limit). If a tag is numerically newer than `VERSION`, the header shows `↑
 `u` confirms, checks that tag out, and re-execs the script with the same arguments. You track
 releases, not `main`. Non-git installs, no origin, or no network: the badge just never appears.
 
+## Other models
+
+Reviews run through the `claude` CLI by default. Name a model `openrouter:x-ai/grok-4` or
+`local:qwen3-coder` and it goes to that provider's OpenAI-compatible endpoint instead, as one chat
+completion: those backends get no tool loop, so gitdashy pastes `gh pr view` and `gh pr diff` into the
+prompt for them (a diff over 200k characters is cut). `--effort` carries over to OpenRouter as the
+model's reasoning budget (`xhigh` and `max` collapse onto `high`, since OpenRouter stops there): leave
+it at `low` unless a reasoning model is worth the wait. `gitdashy self-check` on another backend only
+proves the endpoint answers.
+
+```sh
+PRS_MODELS=openrouter:x-ai/grok-4,local:qwen3-coder OPENROUTER_API_KEY=sk-... gitdashy
+```
+
+Then `m` cycles them like any other model.
+
 ## Environment
 
 | var | default | what |
 |-----|---------|------|
-| `PRS_MODEL` | `opus` | model used for reviews |
+| `PRS_MODEL` | `opus` | model used for reviews; a bare name is the claude CLI, `openrouter:<model>` or `local:<model>` uses that OpenAI-compatible API instead |
+| `PRS_MODELS` | (none) | comma separated extra names the `m` picker cycles, e.g. `openrouter:x-ai/grok-4,local:qwen3-coder` |
+| `OPENROUTER_API_KEY` | (none) | key for `openrouter:` models |
+| `PRS_OPENROUTER_URL` | `https://openrouter.ai/api/v1` | OpenRouter base url |
+| `PRS_LOCAL_URL` | `http://localhost:1234/v1` | base url for `local:` models: LM Studio, Ollama (`:11434/v1`), llama.cpp |
+| `PRS_LOCAL_KEY` | (none) | key for `local:` models, sent only when set |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
 | `PRS_EFFORT` | `medium` | `--effort` passed to claude: low, medium, high, xhigh, max |
 | `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |

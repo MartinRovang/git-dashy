@@ -42,6 +42,7 @@ class State:
 		self.model = model
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.running = set()  # urls with a review or pre-review in flight — see in_flight()
+		self.started_at = {}  # url -> when it started, so a row in flight can say how long it has been
 		# ponytail: the PR's updatedAt when a finished status was last seen. A verdict describes one
 		# revision; once the PR moves, it is stale and must stop masking what GitHub now says.
 		self.seen_at = {}
@@ -107,7 +108,13 @@ class State:
 	def start_review(self, pr):
 		model = self.model
 		def run():
-			status = review_mod.review(pr, model)  # module attr: --demo and tests swap it
+			# ponytail: the row spins until this thread writes a status, so an exception review() does not
+			# catch would leave it spinning for the rest of the session with nothing to press. Catch here
+			# too, and the row says what happened.
+			try:
+				status = review_mod.review(pr, model)  # module attr: --demo and tests swap it
+			except Exception as e:
+				status = f"error: {e}"[:88]
 			with self.lock:
 				self.reviews[pr["url"]] = status
 				self.running.discard(pr["url"])
@@ -117,13 +124,17 @@ class State:
 		with self.lock:
 			self.reviews[pr["url"]] = "reviewing..."
 			self.running.add(pr["url"])
+			self.started_at[pr["url"]] = time.time()
 		threading.Thread(target=run, daemon=True).start()
 
 	def start_self_review(self, pr):
 		"""Pre-review one of MY PRs. Posts nothing; the file it writes is found again by its name."""
 		model = self.model
 		def run():
-			status, _dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
+			try:  # ponytail: same reason as start_review — a dead thread must not wedge the row
+				status, _dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
+			except Exception as e:
+				status = f"error: {e}"[:88]
 			with self.lock:
 				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
 				self.running.discard(pr["url"])
@@ -133,6 +144,7 @@ class State:
 		with self.lock:
 			self.reviews[pr["url"]] = "pre-reviewing..."
 			self.running.add(pr["url"])
+			self.started_at[pr["url"]] = time.time()
 		threading.Thread(target=run, daemon=True).start()
 
 	def loop(self):
