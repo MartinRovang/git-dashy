@@ -600,3 +600,29 @@ def test_an_ssh_url_that_cannot_authenticate_still_says_something_useful(monkeyp
 		cmd, 128, "", "fatal: Authentication failed for 'git@github.com:o/r.git'"))
 	err = team.clone("git@github.com:o/r.git", str(tmp_path / "x"))
 	assert "ssh agent" in err and "github.com" in err and len(err) <= team.FOOTER
+
+
+def test_a_long_remote_is_never_clipped(monkeypatch, tmp_path):
+	"""Dropping words to fit is fine; a truncated REMOTE is not a remote. Handing someone an
+	uncopyable git URL is the same failure as the 181-char message, just rarer."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None: subprocess.CompletedProcess(
+		cmd, 128, "", "fatal: could not read Username for 'https://h': terminal prompts disabled"))
+	long_url = "https://git.a-very-long-internal-host.example.com/platform/group/subgroup/memory.git"
+	err = team.clone(long_url, str(tmp_path / "x"))
+	assert team.ssh_form(long_url) in err          # whole, and copyable
+	assert len(err) > team.FOOTER                   # the words went instead, and it says nothing else
+	assert err == team.ssh_form(long_url)
+
+
+def test_git_is_asked_in_a_locale_we_can_read(monkeypatch):
+	"""Detection matches on git's stderr. On a localized machine those strings never appear, the auth
+	branch never fires, and the user gets the clipped fatal this whole path exists to replace."""
+	seen = {}
+	def fake(cmd, **kw):
+		seen.update(kw.get("env", {}))
+		return subprocess.CompletedProcess(cmd, 0, "", "")
+	monkeypatch.setattr(subprocess, "run", fake)
+	team._remote(["git", "status"])
+	assert seen.get("LC_ALL") == "C" and seen.get("LANGUAGE") == ""
+	assert seen.get("GIT_TERMINAL_PROMPT") == "0"   # and the reason it cannot prompt is still there
