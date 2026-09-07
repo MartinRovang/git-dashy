@@ -2,5 +2,5 @@
 import os
 
 
-VERSION = "1.29.1"
+VERSION = "1.29.2"
 HERE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # repo root; realpath: installed as a symlink
