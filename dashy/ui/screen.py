@@ -1116,8 +1116,7 @@ def _new_team(scr, state, sel):
 
 def _connect_team(scr, state, sel, joined):
 	"""Point a team at a git repo, once there is one. The key does not change, so bindings hold."""
-	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Connect which team? ({', '.join(joined)})")
-	if not key or not team.dir_of(key):
+	if not (key := _pick_team(scr, state, sel, joined, "Connect")):
 		return
 	url = ask(scr, state, sel, f" Git URL for {key} (any host — it just has to be a repo you can push to):")
 	if not url:
@@ -1126,6 +1125,39 @@ def _connect_team(scr, state, sel, joined):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
 		confirm(scr, state, sel, f" {key} now pushes to {url}  [any key]")
+
+
+def _pick_team(scr, state, sel, joined, verb):
+	"""Which team, when there is more than one. "" when the answer is not one we have."""
+	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" {verb} which team? ({', '.join(joined)})")
+	return key if key and team.dir_of(key) else ""
+
+
+def _edit_brief(scr, state, sel, joined):
+	"""Open a team's brief in $EDITOR and push it. This is the file every review of its repos reads."""
+	if not (key := _pick_team(scr, state, sel, joined, "Edit the brief of")):
+		return
+	path = os.path.join(team.dir_of(key), "memory", memory.PROJECT)
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	team.seed_project(path)  # ponytail: never overwrites — a template only when there is nothing yet
+	if err := shell_out(scr, [os.environ.get("EDITOR", "nano"), path]):
+		return confirm(scr, state, sel, f" {err} — set $EDITOR to one you have  [any key]") and None
+	# ponytail: pushed, because it is the team's file and the point of it is that everyone reads the
+	# same one. n/g edit YOUR memory and push that; this is the other side of the same rule.
+	team.push_dir(team.dir_of(key), f"memory: the brief for {key}", "sync")
+
+
+def _describe_team(scr, state, sel, joined):
+	"""Change what a team says it is. Shared, because it lives in the team's own team.json."""
+	if not (key := _pick_team(scr, state, sel, joined, "Describe")):
+		return
+	it = team.info(key)
+	desc = ask(scr, state, sel, f" One line: what is {it['name']} for?  [now: {it['description'][:40] or 'nothing yet'}]")
+	if not desc:
+		return
+	if err := team.write_info(key, it["name"], desc):
+		return confirm(scr, state, sel, f" {err}  [any key]") and None
+	team.push_dir(team.dir_of(key), f"team: describe {key}", "sync")
 
 
 def _join_team(scr, state, sel):
@@ -1143,11 +1175,9 @@ def _leave_team(scr, state, sel, joined):
 	"""Drop one team's checkout, having said which one and what that removes."""
 	# ponytail: names WHICH team. "Leave the team" is not a sentence that says what it will delete once
 	# there are several, and this prompt is the last thing anyone reads before files go.
-	name = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Leave which team? ({', '.join(joined)})")
-	if not name:
+	if not (name := _pick_team(scr, state, sel, joined, "Leave")):
 		return
-	if not (d := team.dir_of(name)):
-		return confirm(scr, state, sel, f" not in {name}  [any key]") and None
+	d = team.dir_of(name)
 	where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
 	         if os.path.islink(d) else f"files in {d} are deleted")
 	if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
@@ -1156,6 +1186,51 @@ def _leave_team(scr, state, sel, joined):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
 		state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
+
+
+def bind_screen(scr, state, sel, pr):
+	"""Bind the selected PR's repo to a team, its whole owner, or nothing. `b` on any row.
+
+	ponytail: the TUI could READ a binding everywhere — the pane names the brief, the list groups by
+	team — and write one nowhere. So a team started with `T` was inert until you went to a shell, which
+	is the same "mechanism without a door" as the drafts store and the second team before it.
+	ponytail: the owner rule is offered because that is the shape an estate actually has. Fifteen repos
+	under one org is fifteen keypresses otherwise, and one more for every repo somebody adds later.
+	"""
+	repo = (pr or {}).get("repository", {}).get("nameWithOwner", "")
+	if not repo:
+		return confirm(scr, state, sel, " no row selected  [any key]") and None
+	joined = team.joined()
+	if not joined:
+		return confirm(scr, state, sel, " no teams yet — T starts one  [any key]") and None
+	owner = bind.key(repo).split("/")[0]
+	while True:
+		# ponytail: why(), not of() — x removes a repo's OWN binding, and saying "bound to X" when X came
+		# from an owner rule would make that key look broken. It tombstones the repo either way, which
+		# is what excludes one repo from a rule; the label has to say which case you are in.
+		kind, to = bind.why(repo)
+		now = (f"{to}  · via {owner}/*" if kind == "owner" else to) or "no team"
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"bind {repo}",
+		      [("now", now), ("", ""), *[(f"{i + 1}  {team.info(t)['name']}", t) for i, t in enumerate(joined[:8])]],
+		      "[1-8] this repo   [o] then 1-8: every " + owner + "/*   [x] unbind   [esc] close")
+		k = scr.getch()
+		if k in (27, ord("q")):
+			return
+		if k == ord("x"):
+			bind.forget(repo)
+			state.wake.set()
+		elif k == ord("o"):
+			panel(scr, f"bind every {owner}/* repo",
+			      [(f"{i + 1}  {team.info(t)['name']}", t) for i, t in enumerate(joined[:8])],
+			      "[1-8] pick a team   [esc] cancel")
+			k2 = scr.getch()
+			if ord("1") <= k2 <= ord("8") and (k2 - ord("1")) < len(joined):
+				bind.bind_owner(owner, joined[k2 - ord("1")])
+				state.wake.set()
+		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
+			bind.bind(repo, joined[k - ord("1")])
+			state.wake.set()
 
 
 def team_setup(scr, state, sel):
@@ -1171,10 +1246,14 @@ def team_setup(scr, state, sel):
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      [(team.info(s)["name"], "no remote yet" if not team.has_remote(team.dir_of(s)) else "")
 		       for s in joined] or [("a team is a git repo of shared memory", "")],
-		      "[n] start one   [a] join one   [c] connect a remote   [x] leave one   [esc] close")
+		      "[n] start  [a] join  [e] edit brief  [d] describe  [c] connect  [x] leave  [esc] close")
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel)
+		elif k == ord("e") and joined:
+			_edit_brief(scr, state, sel, joined)
+		elif k == ord("d") and joined:
+			_describe_team(scr, state, sel, joined)
 		elif k == ord("c") and joined:
 			_connect_team(scr, state, sel, joined)
 		elif k == ord("a"):
@@ -1359,6 +1438,8 @@ def main(scr, interval, auto, model):
 			share_screen(scr, state, sel)
 		elif k == ord("W"):
 			drafts_screen(scr, state, sel)
+		elif k == ord("b"):
+			bind_screen(scr, state, sel, current)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

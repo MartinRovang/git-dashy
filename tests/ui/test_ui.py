@@ -1256,7 +1256,7 @@ def test_t_can_start_a_team_that_does_not_exist_anywhere_yet(screen, monkeypatch
 	ui.team_setup(screen, st, 0)
 	assert started == [("NeoMedSys review memory", "what we build", "")]
 	assert "none yet" in screen.text()          # and the empty state still offers both routes
-	assert "start one" in screen.text() and "join one" in screen.text()
+	assert "[n] start" in screen.text() and "[a] join" in screen.text()
 
 
 def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_path):
@@ -1299,3 +1299,83 @@ def test_no_function_has_code_after_it_returns():
 					name = getattr(node, "name", "<module>")
 					bad.append(f"{f.name}:{body[i + 1].lineno} unreachable in {name}() after line {st.lineno}")
 	assert not bad, "code after a return:\n  " + "\n  ".join(bad)
+
+
+def _two_teams(monkeypatch, tmp_path):
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	team.start("NeoMedSys Platform", "precision medicine")
+	team.start("Acme Tools", "internal")
+	return dict(PR, repository={"nameWithOwner": "NeoMedSys/neo-api", "name": "neo-api"})
+
+
+def test_b_binds_the_selected_repo_from_the_dashboard(screen, monkeypatch, st, tmp_path):
+	"""The TUI could READ a binding everywhere and write one nowhere, so a team started with T was
+	inert until you went to a shell."""
+	pr = _two_teams(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(ord("2"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.of("NeoMedSys/neo-api") == "neomedsys-platform"
+	assert "Acme Tools" in screen.text() and "NeoMedSys Platform" in screen.text()
+
+
+def test_b_can_bind_a_whole_owner_and_says_when_a_rule_is_what_matched(screen, monkeypatch, st, tmp_path):
+	"""Fifteen repos under one org is fifteen keypresses otherwise, and one more per repo added later."""
+	pr = _two_teams(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(ord("o"), ord("1"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.owners() == {"neomedsys": "acme-tools"} and bind.bindings() == {}
+	assert bind.why("NeoMedSys/neo-api") == ("owner", "acme-tools")
+	screen.erase()
+	screen.getch = _keys(27)
+	ui.bind_screen(screen, st, 0, pr)
+	assert "via neomedsys/*" in screen.text()   # or the key would look like the repo's own binding
+
+
+def test_b_unbinds_and_that_beats_an_owner_rule(screen, monkeypatch, st, tmp_path):
+	pr = _two_teams(monkeypatch, tmp_path)
+	bind.bind_owner("neomedsys", "acme-tools")
+	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.of("NeoMedSys/neo-api") == ""          # excluded from the rule, which is the point
+	assert bind.owners() == {"neomedsys": "acme-tools"}  # and the rule still covers everything else
+
+
+def test_b_says_so_when_there_is_no_team_or_no_row(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "none"))
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	ui.bind_screen(screen, st, 0, dict(PR))
+	ui.bind_screen(screen, st, 0, None)
+	assert "no teams yet" in said[0] and "no row selected" in said[1]
+
+
+def test_t_edits_the_team_brief_every_review_reads(screen, monkeypatch, st, tmp_path):
+	"""n/g edit YOUR memory; nothing edited the team's brief, which is the file that reaches the model
+	for every repo bound to it. `gitdashy setup` was the only way, and that is not the TUI."""
+	from dashy.core import memory, team
+	_two_teams(monkeypatch, tmp_path)
+	opened, pushed = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme-tools")
+	monkeypatch.setattr(ui, "shell_out", lambda scr, cmd: opened.append(cmd[-1]) or "")
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushed.append((d, m)))
+	screen.getch, screen.timeout = _keys(ord("e"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert opened == [os.path.join(team.dir_of("acme-tools"), "memory", memory.PROJECT)]
+	assert os.path.exists(opened[0])                    # seeded with a template, not left missing
+	assert pushed and pushed[0][0] == team.dir_of("acme-tools")   # and pushed: it is the team's file
+
+
+def test_t_changes_what_a_team_says_it_is(screen, monkeypatch, st, tmp_path):
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	answers = iter(["acme-tools", "now for the platform work"])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	it = team.info("acme-tools")
+	assert it["description"] == "now for the platform work"
+	assert it["name"] == "Acme Tools"     # the NAME is the key's origin and is not touched by this

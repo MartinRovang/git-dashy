@@ -135,6 +135,16 @@ def of(repo):
 	return _pick(_entries(), repo)[1]
 
 
+def why(repo):
+	"""How `repo` resolved: ("team", key) / ("owner", key) / ("", "").
+
+	ponytail: deleted once for having no production caller, and correctly — I had written it for a
+	surface that did not exist yet. The bind screen is that surface: it has to show whether this repo
+	is bound in its own right or covered by an owner rule, because `x` unbinds only the first kind.
+	"""
+	return _pick(_entries(), repo)
+
+
 def _append(entry):
 	"""Add one line. Returns "" or why it could not — never raises.
 

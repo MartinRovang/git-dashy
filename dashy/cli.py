@@ -107,8 +107,9 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
+b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
-T teams (a join another, x leave one), u install the newest release, f refresh, q quit."""
+T teams (n start, a join, e edit its brief, d describe, c connect a remote, x leave), u install the newest release, f refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):
