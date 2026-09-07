@@ -179,14 +179,26 @@ class State:
 				# review bumps updatedAt itself, so the value we held is already stale — and a fetch that
 				# was in flight when the verdict landed carries the pre-post value, which is why the
 				# start time is compared rather than merely "the next fetch".
-				for _name, prs, _err in data:
+				for name, prs, _err in data:
+					if name == "REVIEWED":
+						# ponytail: not a live row. Its updatedAt is the log timestamp, which never equals
+						# the live row's value, so sweeping it dropped every verdict on the next tick.
+						continue
 					for p in prs or []:
 						u = p["url"]
 						if u not in self.reviews or in_flight(self, u):
 							continue
 						# ponytail: .get, not a subscript. A KeyError here runs on the refresh thread and
 						# takes the whole loop down; a PR without the field simply never goes stale.
-						at = p.get("updatedAt")
+						# ponytail: by head on a REVIEW REQUESTED row, like mark_rereviews. updatedAt there
+						# comes from the lagging search index — the tick after a verdict can still read the
+						# pre-post value and the next the post-post one — and a reply on the thread bumps
+						# it too; both dropped the verdict and auto reviewed the same head again. On MINE
+						# rows updatedAt stays: a colleague's approval must be allowed to unmask GitHub.
+						if name == "REVIEW REQUESTED":
+							at = p.get("head")  # no head means the graphql call failed; not a reason to call it moved
+						else:
+							at = p.get("updatedAt")
 						if at is None:
 							continue
 						if self.done_at.get(u, 0) > t0:

@@ -341,3 +341,40 @@ def test_auto_does_not_re_review_on_a_fetch_older_than_the_verdict(monkeypatch):
 	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [dict(PR, url="a", head="new")], None),
 	                           ("REVIEWED", log.reviewed(), None)])
 	assert st.reviews == {"a": "✓ approved"} and started == []
+
+
+def test_auto_does_not_re_review_the_same_head_when_updatedat_moves(monkeypatch):
+	"""`gh search` reads a lagging index, so the tick after a verdict can still carry the pre-post
+	updatedAt and the one after it the post-post one — and any reply on the thread bumps it too. The
+	head has not moved, so neither is a reason to review again. mark_rereviews already says so by head;
+	the updatedAt sweep must not overrule it on REVIEW REQUESTED rows.
+	"""
+	started = []
+	monkeypatch.setattr(State, "start_review", lambda self, p: started.append(p["url"]))
+	log.log_review(dict(PR, url="a", head="h1"), "opus", {"verdict": "approve", "body": ""})
+	st = State(0)
+	st.set_auto(True, include_existing=True)
+	st.reviews["a"] = "✓ approved"
+	st.done_at["a"] = time.time() - 60
+	for at in ("t1", "t2"):
+		one_loop(st, monkeypatch, [("REVIEW REQUESTED", [dict(PR, url="a", head="h1", updatedAt=at)], None),
+		                           ("REVIEWED", log.reviewed(), None)])
+	assert st.reviews == {"a": "✓ approved"} and started == []
+
+
+def test_auto_keeps_the_verdict_when_graphql_fails_and_the_row_has_no_head(monkeypatch):
+	"""`head` is only set when the graphql call succeeds. A tick without it must not fall back to
+	updatedAt — that flips the key and drops the verdict, and the next line reviews the same head again.
+	"""
+	started = []
+	monkeypatch.setattr(State, "start_review", lambda self, p: started.append(p["url"]))
+	log.log_review(dict(PR, url="a", head="h1"), "opus", {"verdict": "approve", "body": ""})
+	st = State(0)
+	st.set_auto(True, include_existing=True)
+	st.reviews["a"] = "✓ approved"
+	st.done_at["a"] = time.time() - 60
+	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [dict(PR, url="a", head="h1", updatedAt="t1")], None),
+	                           ("REVIEWED", log.reviewed(), None)])
+	row = {k: v for k, v in dict(PR, url="a", updatedAt="t2").items() if k != "head"}
+	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [row], None), ("REVIEWED", log.reviewed(), None)])
+	assert st.reviews == {"a": "✓ approved"} and started == []
