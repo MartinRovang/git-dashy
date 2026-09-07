@@ -66,6 +66,15 @@ def test_rows_drafts_filter():
 	assert ("head", ("MINE", "1 open", "")) in rows(secs, drafts=False)
 
 
+def test_rows_draft_under_review_is_exempt_from_the_filter():
+	p, d = dict(PR), {**PR, "url": "d", "isDraft": True}
+	secs = [("MINE", [p, d], None)]
+	shown = lambda busy: [x["url"] for k, x in rows(secs, drafts=False, busy=busy) if k == "pr"]
+	assert shown(set()) == ["u"]
+	assert shown({"d"}) == ["u", "d"]
+	assert shown(set()) == ["u"], "the exemption is in-flight only, it does not stick"
+
+
 def test_rows_reviewed_stacks_rereviews_and_unfolds():
 	from datetime import datetime, timezone, timedelta
 	now = datetime.now(timezone.utc)

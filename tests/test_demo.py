@@ -76,12 +76,3 @@ def test_demo_puts_back_everything_it_swapped(monkeypatch, tmp_path):
 	for (m, n), o in originals.items():
 		assert getattr(m, n) is o, f"{m.__name__}.{n} was not put back"
 	assert demo.SWAPPED == {}
-
-
-def test_draft_under_review_shows_despite_filter():
-	d = demo.pr(1, "wip", draft=True)
-	secs = [("MINE", [d, demo.pr(2, "ready")], None)]
-	url = d["url"]
-	shown = lambda busy: [p["url"] for k, p in ui.rows(secs, drafts=False, busy=busy) if k == "pr"]
-	assert url not in shown(set())
-	assert url in shown({url})
