@@ -1,4 +1,5 @@
 
+from dashy.core import bind
 from dashy.ui.rows import age, rows
 
 from conftest import PR
@@ -107,3 +108,53 @@ def test_an_empty_queue_collapses_but_a_live_one_opens():
 	empty = R([("MINE", [], None), ("REVIEW REQUESTED", [], None), ("ASSIGNED", [], None), ("REVIEWED", [], None)])
 	assert [k for k, _ in empty] == ["cols", "head", "empty", "blank", "head", "queue", "queue", "queue"]
 	assert ("head", ("QUEUES", "", "nothing waiting on you")) in empty
+
+
+def _pr(repo, n):
+	return {"repository": {"nameWithOwner": repo, "name": repo.split("/")[-1]}, "number": n,
+	        "url": f"u{n}", "title": "T", "isDraft": False, "author": {"login": "me"},
+	        "updatedAt": "2020-01-01T00:00:00Z"}
+
+
+def test_rows_separate_a_section_by_team():
+	"""Which team a repo's reviews use was invisible until you opened the pane on every single row."""
+	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	bind.bind("acme/tool", "acme/mem")
+	prs = [_pr("me/weekend", 1), _pr("neomedsys/neo-api", 2), _pr("acme/tool", 3),
+	       _pr("neomedsys/nms-platform-v2", 4)]
+	out = rows([("MINE", prs, None)])
+	groups = [p for k, p in out if k == "group"]
+	assert groups == ["acme/mem", "neomedsys/review-memory", "not bound to a team"]
+	# each PR sits under its own team's separator, and unbound is the last pile
+	order = [p if k == "group" else p["repository"]["nameWithOwner"] for k, p in out if k in ("group", "pr")]
+	assert order == ["acme/mem", "acme/tool",
+	                 "neomedsys/review-memory", "neomedsys/neo-api", "neomedsys/nms-platform-v2",
+	                 "not bound to a team", "me/weekend"]
+
+
+def test_one_team_gets_no_separator():
+	"""A separator above a single group labels what the whole list already is."""
+	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	out = rows([("MINE", [_pr("neomedsys/neo-api", 2), _pr("neomedsys/neo-access", 3)], None)])
+	assert not [p for k, p in out if k == "group"]
+	out = rows([("MINE", [_pr("me/a", 1), _pr("me/b", 2)], None)])
+	assert not [p for k, p in out if k == "group"]  # and none when nothing is bound at all
+
+
+def test_a_group_rule_is_never_written_zero_wide():
+	"""ncurses treats n=0 as a no-op, so a real terminal shrugs and it stays invisible. FakeScr asserts
+	n >= 1, which is the bound every other write in screen.py honours via max(1, ...)."""
+	import sys, time
+	sys.path.insert(0, "tests")
+	from conftest import FakeScr
+	from dashy.core.state import State
+	from dashy.ui import screen as ui
+	ui.C = lambda n: 0
+	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	prs = [_pr("neomedsys/neo-api", 1), _pr("me/weekend", 2)]
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", prs, None)], time.time()
+	for w in range(8, 130):
+		for h in (5, 8, 12, 24, 40):
+			scr = FakeScr(h=h, w=w)
+			ui.draw(scr, st, 0, now=1000.0)  # must not raise at any width

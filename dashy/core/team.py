@@ -244,6 +244,26 @@ def activate():
 		return
 	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")  # the review log really is shared
 	NAME = origin_slug(config.TEAM)  # ponytail: MEMORY_DIR stays yours — memory.sources() reads both
+	# ponytail: lazy, and only these two lines need it — bind and memory both import this module, so an
+	# import at the top is a cycle. Seeding lives HERE, on the one function that says "a team is now
+	# known", rather than at each of the six entry points that call it: a bootstrap only some callers
+	# perform is the bootstrap that is missing on the path nobody tested.
+	from . import bind, install, memory
+	# ponytail: the review log AND the mirror registry. Seeding from the log alone missed the one route
+	# that is not reviewing — a repo wired with `gitdashy init` and never reviewed stayed unbound, so
+	# mirror._write resolved sources(repo) to yours alone and, because a mirror never outlives its
+	# source, DELETED the general.md and repo.md already sitting in that repo on the next refresh tick.
+	# ponytail: but only registry repos the team ALREADY HOLDS FACTS FOR. logged_repos() is disclosure-
+	# neutral by construction — the team can see those names already. The registry is not: it is every
+	# repo `gitdashy init` ever wired, personal side projects included, and binding one makes its facts
+	# poolable and shareable. Seeding the whole registry fixed a deletion by GRANTING DISCLOSURE that
+	# neither of the old rules gave, which is a fix carried past its reason. This set is exactly the old
+	# disclosure test, and exactly the set whose repo.md the mirror would otherwise strip: a repo the
+	# team has no facts about only ever had general.md mirrored, and dropping that IS the new rule.
+	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
+	theirs = os.path.join(config.TEAM, "memory")
+	known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
+	bind.seed(NAME, sorted(memory.logged_repos()) + known)
 
 
 def clone(repo, dest):
@@ -320,5 +340,9 @@ def setup(repo, create=False):
 	seed_project(os.path.join(config.TEAM, "memory", "project.md"))
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
 		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
+		# ponytail: again, because the log only exists NOW. activate() seeds bindings from it, and on a
+		# first join it ran against a checkout that had none — so the repos you review would stay bound to
+		# nothing until the next launch, which is the one session where you would notice and blame the join.
+		activate()
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))
 	return ERROR

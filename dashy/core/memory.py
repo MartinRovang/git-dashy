@@ -14,7 +14,7 @@ import tarfile
 import time
 
 from .. import config
-from . import log, team
+from . import bind, log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
@@ -85,23 +85,59 @@ def _consume_self(repo, fact):
 	return True
 
 
-def project():
-	"""What the work is for — yours, then the team's. "" when neither has been written.
+def _brief_text(p):
+	"""One brief file's content, without gitdashy's own marker line.
 
-	ponytail: two sources, like everything else. It used to be the team's alone, which left anyone
-	working on their own with nowhere to put it — and a USER.md template pointing them at a file that
-	could not exist.
-
-	ponytail: declared, not learned. Nothing in the promotion pipeline may touch it: it is not a fact
-	someone's reviewer noticed twice, it is what somebody says the work is for. So it is excluded from
-	the dream, from sharing, and from ever being read as a repo's facts.
+	ponytail: the marker exists so setup can tell its output from yours. A reviewer has no use for it,
+	and everything else in that prompt is there to be read.
 	"""
-	# ponytail: strip gitdashy's own marker line. It exists so setup can tell its output from yours;
-	# a reviewer has no use for it, and everything else in this prompt is there to be read.
-	parts = [f"### {label}\n{t}" for label, base in sources()
-	         if (t := "\n".join(l for l in _read(os.path.join(base, PROJECT)).splitlines()
-	                             if l.strip() != SETUP_MARK).strip())]
-	return "\n\n".join(parts)
+	return "\n".join(l for l in _read(p).splitlines() if l.strip() != SETUP_MARK).strip()
+
+
+def brief(repo=None, slug=None):
+	"""The ONE brief that applies to `repo`, and where it came from: (text, source).
+
+	Two values, deliberately. A caller cannot put a brief in front of a reviewer without also holding
+	the answer to "which one, and why that one" — so "you are getting your own, because this repo is
+	bound to no team" is something that has to be dropped on purpose rather than a line somebody has to
+	remember to add. A line somebody had to remember to add is what put one product's brief into every
+	review of every other.
+
+	ponytail: never more than one. This used to return yours AND the team's, concatenated, for every
+	repo — two statements of what the work is for in one prompt, which is worse than saying nothing.
+	Selection is by binding: declared, visible, and undoable. See core/bind.py for why not the log.
+	"""
+	mine = _brief_text(brief_path())
+	# ponytail: `slug` lets a caller that has ALREADY resolved this repo hand the answer in — the draw
+	# path resolves every visible row through one bind.resolver(), and asking again per frame reopens
+	# the store for an answer it is holding. None means "look it up", which every other caller wants.
+	slug = (bind.of(repo) if repo else "") if slug is None else slug
+	if slug:
+		d = bind.team_dir(slug)
+		if theirs := (_brief_text(os.path.join(d, PROJECT)) if d else ""):
+			return theirs, f"team {slug}"
+		why = f"team {slug} has no brief" if d else f"not in team {slug}"
+	else:
+		# ponytail: only worth saying when there IS a brief to explain. With none anywhere, "bound to no
+		# team" reads as though binding would produce one, and it would not — "no brief written" is the
+		# thing to act on. A bound team we are not in is different: joining it really is the fix.
+		why = f"{repo} is bound to no team" if repo and mine else ""
+	if not mine:
+		return "", why or "no brief written"
+	return mine, "yours" + (f" · {why}" if why else "")
+
+
+def brief_path(slug=""):
+	"""Where a brief is written: yours when `slug` is "", else that team's. "" for a team we do not have."""
+	if not slug:
+		return os.path.join(config.MEMORY_DIR, PROJECT)
+	return os.path.join(d, PROJECT) if (d := bind.team_dir(slug)) else ""
+
+
+def brief_written():
+	"""True when a brief exists anywhere — yours, or the team we are in. For "is there anything to ask"."""
+	theirs = brief_path(bind.team_key())
+	return bool(_brief_text(brief_path()) or (theirs and _brief_text(theirs)))
 
 
 BACKUPS = os.path.expanduser("~/.prs_backups")  # ponytail: outside every synced tree, so it is never pushed
@@ -197,8 +233,32 @@ def backup(reason="tick"):
 		return ""
 
 
-def sources():
-	"""(label, dir) for each approved source, yours first. ponytail: drafts/ is deliberately not one."""
+def sources(repo):
+	"""(label, dir) for the sources that apply to a review of `repo`, yours first.
+
+	ponytail: SCOPED by the binding, and the argument is required so no caller can get the unscoped set
+	by forgetting it. A repo bound to no team is private: it reads your memory alone. Before this, every
+	repo on the machine was told how one team conducts reviews — a personal side project included.
+	ponytail: `repo` None means "no repo in hand", which is yours alone for the same reason. Reading a
+	GENERAL file for a review of repo R still passes R; the scope being read and the repo whose sources
+	apply are different questions, and conflating them is how the team's general.md leaked everywhere.
+	ponytail: drafts/ is deliberately not a source.
+	"""
+	out = [("mine", config.MEMORY_DIR)]
+	slug = bind.of(repo) if repo else ""  # ponytail: asked once — every bind.of() is a read of the store
+	if d := bind.team_dir(slug):
+		out.append(("team " + (slug or "shared"), d))
+	return out
+
+
+def every_source():
+	"""(label, dir) for every source on this machine, whatever any binding says.
+
+	ponytail: for the readers that must see ALL of memory rather than what applies to one repo — the
+	dream tidies every file, and a backup copies every file. Naming them apart from sources() is
+	deliberate: giving sources() an "all" flag would make the unscoped set one forgotten argument away,
+	and the whole point of the scoping is that it cannot be skipped by accident.
+	"""
 	out = [("mine", config.MEMORY_DIR)]
 	if team.on():
 		out.append(("team " + (team.NAME or "shared"), os.path.join(config.TEAM, "memory")))
@@ -214,15 +274,20 @@ def _read(p):
 		return ""
 
 
-def scope_text(repo=None):
-	"""One scope's approved memory, merged across sources and labelled by where each part came from."""
-	parts = [f"### {label}\n{t}" for label, base in sources() if (t := _read(path(repo, base)))]
+def scope_text(scope=None, repo=None):
+	"""One scope's memory, from the sources that apply to `repo`, labelled by where each part came from.
+
+	ponytail: two arguments, because they are two questions. `scope` is which FILE (None = the general
+	one); `repo` is whose sources apply. A general file read for a review of repo R must still come only
+	from the sources bound to R — passing scope as both is exactly how team facts reached every repo.
+	"""
+	parts = [f"### {label}\n{t}" for label, base in sources(repo) if (t := _read(path(scope, base)))]
 	return "\n\n".join(parts)
 
 
 def read(repo):
-	"""General + repo memory from every source as one prompt block, '' when there is none."""
-	parts = [f"## {name}\n{t}" for name, r in (("General", None), (repo, repo)) if (t := scope_text(r))]
+	"""General + repo memory from the sources bound to `repo`, as one prompt block. '' when there is none."""
+	parts = [f"## {name}\n{t}" for name, r in (("General", None), (repo, repo)) if (t := scope_text(r, repo))]
 	return "\n\n".join(parts)
 
 
@@ -303,22 +368,24 @@ def logged_repos():
 
 
 def team_visible(repo):
-	"""True when the team can already see this repo's name, so pooling a fact about it discloses nothing.
+	"""True when this repo belongs to the team, so pooling a fact about it discloses nothing new.
 
-	ponytail: the shared review log is what bootstraps this — it fills as you review, where "repos the
-	team already has memory for" would have started empty and never filled. But team memory counts too,
-	or a repo you only ever code in could never corroborate, despite being just as plainly theirs.
+	ponytail: the BINDING, not the shared review log. The log bootstrapped this well enough while it was
+	the only rule, but it has no undo — reviewing one PR put a repo in it forever — and it was deciding
+	disclosure: whether a fact about your private work is published to other people. That is the last
+	place an irreversible side effect belongs. Joining still seeds bindings from the log, so nothing
+	stops working; it just becomes something you can see and take back.
 	"""
 	if not team.on():
 		return False
 	if repo is None:
 		return True  # a general fact names no repo, so there is nothing to disclose
-	return os.path.exists(path(repo, os.path.join(config.TEAM, "memory"))) or repo in logged_repos()
-
-
-def project_path(mine=True):
-	"""Where a project brief is written: yours, or the team's."""
-	return os.path.join(config.MEMORY_DIR if mine else os.path.join(config.TEAM, "memory"), PROJECT)
+	# ponytail: through team_dir, exactly as every READ resolves it. bool(bind.of(repo)) was true for a
+	# binding to ANY team, including one this machine is not in — so a repo bound to org/other had its
+	# name and facts written into org/mem's pool and offered for sharing, while sources() and brief()
+	# both said it was not ours. One binding meaning "ours" for disclosure and "not ours" for reading is
+	# the two-mechanisms-disagree failure this module argues against, in the direction that publishes.
+	return bool(bind.team_dir(bind.of(repo)))
 
 
 def _pool(repo, fact):
@@ -352,7 +419,7 @@ def backers(index, repo, fact):
 
 def known(repo):
 	"""Every approved fact already covering `repo`, across both sources and both scopes."""
-	return [f for _, base in sources() for scope in (None, repo) for f in _facts(path(scope, base))]
+	return [f for _, base in sources(repo) for scope in (None, repo) for f in _facts(path(scope, base))]
 
 
 def already_known(repo, fact):
@@ -420,6 +487,8 @@ def shareable():
 		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = None if name == "general.md" else name[:-3].replace("__", "/")
+		if not team_visible(repo):
+			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
 		theirs = _facts(path(repo, base))
 		out += [(repo, f) for f in _facts(path(repo)) if not any(_same(f, t) for t in theirs)]
 	return out
@@ -473,7 +542,7 @@ TIMEOUT = 600
 def files():
 	"""{"<source>/<file>": content} for every approved memory file, general first. proposed/ is never included."""
 	out = {}
-	for label, base in sources():
+	for label, base in every_source():  # ponytail: the dream tidies ALL memory, not one repo's view of it
 		key = "mine" if label == "mine" else "team"
 		for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
 			if n.endswith(".md") and n != PROJECT:  # the dream tidies learned facts, not a stated brief

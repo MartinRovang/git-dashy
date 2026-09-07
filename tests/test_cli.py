@@ -212,3 +212,27 @@ def test_voice_and_hunter_flags_are_checked(monkeypatch, capsys):
 	monkeypatch.setattr(config, "VOICE", ["review"])  # the refused value is not undone; a real run exits here
 	cli.run(["gitdashy", "--hunter", "tests,nope"])
 	assert "--hunter must be from ponytail, security, tests" in capsys.readouterr().out
+
+
+def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):
+	"""It used to fall through to this directory's origin and bind the wrong repo, reporting success."""
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/api")
+	monkeypatch.setattr(bind, "team_key", lambda: "org/mem")
+	with pytest.raises(SystemExit) as e:
+		cli.bind(["gitdashy", "bind", "neo-api", "--team", "org/mem"])
+	assert "not owner/name" in str(e.value)
+	assert bind.bindings() == {}  # and nothing was bound in its place
+
+
+def test_bind_list_answers_even_when_the_positional_is_a_typo(monkeypatch, capsys):
+	"""--list is a read-only question; gating it behind a check on the thing you asked about turned it
+	into a SystemExit."""
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	bind.bind("acme/api", "org/mem")
+	cli.bind(["gitdashy", "bind", "not-a-slug", "--list"])
+	assert "acme/api" in capsys.readouterr().out
