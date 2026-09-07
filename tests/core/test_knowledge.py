@@ -44,42 +44,41 @@ def test_repoint_refuses_rather_than_picking_a_winner(monkeypatch, tmp_path):
 
 def test_set_store_refuses_while_the_refresh_thread_is_in_there(monkeypatch, tmp_path):
 	monkeypatch.setattr(team, "on", lambda: True)
-	assert "leave the team first" in knowledge.set_store(str(tmp_path / "elsewhere"))
+	assert "leave every team first" in knowledge.set_store(str(tmp_path / "elsewhere"))
 
 
 def test_leave_refuses_to_delete_unpushed_reviews(monkeypatch, tmp_path):
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	(tmp_path / "team").mkdir()
-	monkeypatch.setattr(knowledge, "unpushed", lambda: 2)
-	assert "2 unpushed reviews" in knowledge.leave()
-	assert (tmp_path / "team").exists()
-	monkeypatch.setattr(knowledge, "unpushed", lambda: -1)  # no upstream: also refuse, the log may exist only here
-	assert "possibly unpushed" in knowledge.leave()
-	assert (tmp_path / "team").exists()
+	store = tmp_path / "teams" / "org__t"
+	(store / ".git").mkdir(parents=True)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 2)
+	assert "2 unpushed reviews" in knowledge.leave("org/t")
+	assert store.exists()
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: -1)  # no upstream: also refuse, the log may exist only here
+	assert "possibly unpushed" in knowledge.leave("org/t")
+	assert store.exists()
 
 
 def test_leave_goes_back_to_the_solo_locations(monkeypatch, tmp_path):
-	from dashy.core import log
-	store = tmp_path / "team"
-	store.mkdir()
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
-	monkeypatch.setattr(config, "TEAM", str(store))
+	store = tmp_path / "teams" / "org__t"
+	(store / ".git").mkdir(parents=True)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
-	monkeypatch.setattr(config, "LOCAL_LOG", str(tmp_path / "solo.jsonl"))
-	monkeypatch.setattr(knowledge, "unpushed", lambda: 0)
-	assert knowledge.leave() == ""
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
+	assert team.joined() == ["org/t"]
+	assert knowledge.leave("org/t") == ""
 	assert not store.exists()
-	assert log.LOG == str(tmp_path / "solo.jsonl")  # the log lived in the checkout, so it comes back
+	# ponytail: nothing to move back — each team keeps its own log and yours holds the unbound repos,
+	# so leaving one just removes a source that log.logs() stops listing.
+	assert team.joined() == []
 	assert config.MEMORY_DIR == str(tmp_path / "mine")  # memory never moved there, so nothing to move back
 	assert team.NAME == ""
 
 
 def test_store_moved_only_off_the_default(monkeypatch, tmp_path):
-	monkeypatch.setattr(config, "TEAM", knowledge.DEFAULT_STORE)
+	monkeypatch.setattr(config, "TEAMS", knowledge.DEFAULT_STORE)
 	assert not knowledge.store_moved()
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "elsewhere"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "elsewhere"))
 	assert knowledge.store_moved()
 
 
@@ -195,14 +194,13 @@ def test_adopt_defers_to_the_env_var(monkeypatch, tmp_path):
 
 def test_leave_refuses_a_dirty_tree_even_with_nothing_unpushed(monkeypatch, tmp_path):
 	"""A push that failed earlier leaves work staged but uncommitted: zero commits ahead, still someone's."""
-	store = tmp_path / "team"
-	store.mkdir()
+	store = tmp_path / "teams" / "org__t"
+	store.mkdir(parents=True)
 	subprocess.run(["git", "init", "-q", str(store)], check=True)
 	(store / "reviewed.jsonl").write_text('{"x":1}\n')
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(config, "TEAM", str(store))
-	assert knowledge.unpushed() == -1  # no upstream AND dirty
-	assert "unpushed" in knowledge.leave()
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert knowledge.unpushed(str(store)) == -1  # no upstream AND dirty
+	assert "unpushed" in knowledge.leave("org/t")
 	assert store.exists() and (store / "reviewed.jsonl").exists()
 
 
@@ -213,13 +211,14 @@ def test_adopt_refuses_to_make_your_memory_the_team_repo(monkeypatch, tmp_path):
 	subprocess.run(["git", "init", "-q", str(store)], check=True)
 	subprocess.run(["git", "-C", str(store), "remote", "add", "origin",
 	                "git@github.com:org/review-team.git"], check=True)
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(config, "TEAM", str(store))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	os.makedirs(tmp_path / "teams", exist_ok=True)
+	os.rename(store, tmp_path / "teams" / "org__review-team")
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
 	monkeypatch.delenv("PRS_MEMORY", raising=False)
 	for url in ("git@github.com:org/review-team.git", "https://github.com/org/review-team",
 	            "org/review-team"):
-		assert "that is the team repo" in knowledge.adopt(url), url
+		assert "that is a team repo" in knowledge.adopt(url), url
 	assert not (tmp_path / "mine").exists()
 
 
@@ -323,7 +322,7 @@ def test_a_memory_dir_gets_history_on_the_first_write(monkeypatch, tmp_path):
 	mem = tmp_path / "prs_memory"
 	mem.mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
-	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(config, "TEAMS", "")
 	(mem / "general.md").write_text("- two years of facts\n")
 	memory._append_line(str(mem / "general.md"), "one more")
 	assert team.is_repo(str(mem)) and not team.has_remote(str(mem))
@@ -343,7 +342,7 @@ def test_backups_are_compressed_deduplicated_and_capped(monkeypatch, tmp_path):
 	mem, backups = tmp_path / "prs_memory", tmp_path / "backups"
 	mem.mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
-	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(config, "TEAMS", "")
 	monkeypatch.setattr(memory, "BACKUPS", str(backups))
 	monkeypatch.setattr(memory, "KEEP_BACKUPS", 3)
 	(mem / "general.md").write_text("- a fact\n")
@@ -366,7 +365,7 @@ def test_backup_never_raises_and_never_blocks(monkeypatch, tmp_path):
 	"""It runs on the refresh tick and before a dream; failing must not stop either."""
 	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "gone"))
-	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(config, "TEAMS", "")
 	monkeypatch.setattr(memory, "BACKUPS", "/proc/nope/backups")  # unwritable
 	assert memory.backup("test") == ""
 
@@ -439,7 +438,7 @@ def test_every_rewrite_of_memory_has_history_behind_it(monkeypatch, tmp_path):
 	mem = tmp_path / "prs_memory"
 	mem.mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
-	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.setattr(config, "TEAMS", "")
 	(mem / "general.md").write_text("- keep me\n- drop me\n")
 
 	memory.forget(None, "drop me")
