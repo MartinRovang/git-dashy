@@ -209,21 +209,28 @@ class State:
 			t0 = time.time()
 			try:
 				self.tick(t0)
+				base = self.fetched_at  # ponytail: the fetch's own time, so the header's countdown agrees
 			except Exception as e:  # noqa: BLE001 — the whole point: a failed tick is a row, not the end
 				with self.lock:
 					self.fetching = False
 					self.error = (str(e).strip().splitlines() or [type(e).__name__])[-1][:60]
-			# ponytail: `or t0`. A FIRST tick that raised leaves fetched_at None, and adding the interval
-			# to it raises again — on the line scheduling the retry, which is the second way this thread
-			# could die and the one a guard around the work alone would not have caught.
-			until = (self.fetched_at or t0) + self.interval
-			while not self.wake.wait(1) and time.time() < until:
-				pass  # 1s slices so an interval change via i takes effect now
+				# ponytail: from THIS attempt, not from fetched_at. That holds the last SUCCESSFUL fetch,
+				# so the moment one tick failed the deadline was already in the past — the loop fell
+				# straight out of the wait and retried every second, hammering gh for as long as the
+				# failure lasted. It also covers the FIRST tick, where fetched_at is still None.
+				base = t0
+			# ponytail: `base + self.interval` is evaluated per slice, and `interval` is the reason.
+			# Hoisting it into a variable above the loop is the natural way to write this and silently
+			# breaks `i`: settings()["i"] assigns state.interval and does NOT set state.wake, so
+			# dropping 30m to 1m waited out the remaining 29 instead of refetching now.
+			while not self.wake.wait(1) and time.time() < base + self.interval:
+				pass  # 1s slices, so a change to either side takes effect within the second
 			self.wake.clear()
 
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
-		self.fetching = True
+		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
+			self.fetching = True
 		team.pull()  # newest team log + memory before we read them
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after

@@ -1924,6 +1924,21 @@ def test_a_failed_refresh_says_so_in_the_header(screen):
 	assert "refresh failed" not in screen.text()
 
 
+def test_a_failed_refresh_drops_the_countdown_beside_it(screen):
+	"""ponytail: fetched_at holds the last SUCCESSFUL fetch, so the countdown was computed off a
+	deadline already in the past and rendered "next refresh 0s" next to "✗ refresh failed" — the two
+	halves of one row contradicting each other."""
+	screen.w = 210
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR, url="m")], None)], time.time() - 600
+	ui.draw(screen, st, 0)
+	assert "next refresh" in screen.text()
+	st.error = "gh: could not resolve host"
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "refresh failed" in out and "next refresh" not in out
+
+
 def test_a_first_refresh_that_failed_still_draws(screen):
 	"""fetched_at is None, so the splash path and the countdown are both off — the error is all there is."""
 	st = State(60)

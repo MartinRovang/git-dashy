@@ -258,7 +258,10 @@ def draw(scr, state, sel, prompt=None, now=None):
 	# the same rule the Memory row follows for its history: a net that is off says so every time.
 	status = f"✗ refresh failed: {failed}" if failed else \
 		f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
-	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
+	# ponytail: nothing when the last tick failed. fetched_at is the last SUCCESSFUL fetch, so the
+	# countdown beside "✗ refresh failed" was computed from a deadline already past — it rendered
+	# "next refresh 0s" next to a line saying the refresh had not happened. Two contradicting claims.
+	nxt = "" if fetched_at is None or failed else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - now))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
 	running = len(busy)  # ponytail: the set, so an error whose text ends in "..." is not an agent

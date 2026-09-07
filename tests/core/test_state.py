@@ -115,17 +115,23 @@ def test_loop_wait_reads_interval_each_slice(monkeypatch):
 	monkeypatch.setattr(github, "fetch", lambda: [("MINE", [], None)])
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
-	waits = []
+	# ponytail: this used to raise on the second wait unconditionally, so it never observed whether the
+	# loop EXITED because of the new interval — it pinned the slice size and nothing else. Hoisting the
+	# deadline out of the condition then broke `i` with the suite still green. Counting TICKS is what
+	# distinguishes "noticed" from "kept waiting": one tick means the shrink was ignored.
+	ticks, waits = [], []
+	monkeypatch.setattr(State, "tick", lambda self, t0: ticks.append(t0) or setattr(self, "fetched_at", time.time()))
 	def wait(t):
 		waits.append(t)
 		st.interval = 0  # shrink mid-wait: loop must notice and refetch instead of sleeping 600 slices
-		if len(waits) > 1:
-			raise SystemExit
+		if len(ticks) > 1:
+			raise SystemExit  # it noticed: a second refresh started
+		assert len(waits) < 6, "the wait ignored the new interval"  # else this spins for 600 slices
 		return False
 	monkeypatch.setattr(st.wake, "wait", wait)
 	with pytest.raises(SystemExit):
 		st.loop()
-	assert waits == [1, 1]
+	assert waits == [1, 1] and len(ticks) == 2
 
 
 def test_set_auto_include_existing_reviews_listed_prs(monkeypatch):
@@ -568,3 +574,25 @@ def test_fetch_survives_a_log_line_it_cannot_read(monkeypatch):
 	monkeypatch.setattr(github.subprocess, "run",
 	                    lambda *a, **kw: (_ for _ in ()).throw(github.subprocess.TimeoutExpired("gh", 60)))
 	assert github.fetch()[-1] == ("REVIEWED", [], None)
+
+
+def test_a_failed_tick_waits_a_full_interval_before_retrying(monkeypatch):
+	"""ponytail: fetched_at is the last SUCCESSFUL fetch, so once a tick failed the deadline it implies
+	is already in the past — the loop fell straight out of the wait and retried every second, hammering
+	gh for as long as the outage lasted. A failed attempt backs off from ITSELF."""
+	st = State(300)
+	st.fetched_at = time.time() - 600  # a good fetch, long enough ago that its deadline has passed
+	tries, waits = [], []
+	def boom(self, t0):
+		tries.append(t0)
+		raise RuntimeError("gh exploded")
+	monkeypatch.setattr(State, "tick", boom)
+	def wait(t):
+		waits.append(t)
+		if len(waits) >= 4:
+			raise SystemExit  # four slices in and still waiting: backing off, not hammering
+		return False
+	monkeypatch.setattr(st.wake, "wait", wait)
+	with pytest.raises(SystemExit):
+		st.loop()
+	assert len(tries) == 1 and st.error == "gh exploded"
