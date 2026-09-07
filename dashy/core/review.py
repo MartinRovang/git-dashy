@@ -20,7 +20,7 @@ CONTRACT = """
 
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
- "body": "<markdown review, concise, list concrete findings with file:line>",
+ "body": "<markdown review, concise, list concrete findings with file:line{sections}>",
  "findings": [{{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}}],
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}}
@@ -198,6 +198,21 @@ def tail():
 	return ("" if "review" in v else NO_REVIEW) + "".join(VOICE[x] for x in v) + "".join(HUNTER[h] for h in on(config.HUNTERS, config.HUNTER))
 
 
+def sections():
+	"""The section headings the body must end with, in order. "" when none were asked for.
+
+	ponytail: the SCHEMA has to name them. Asking for them above and then describing "body" as a plain
+	markdown review left the last, most concrete word saying nothing about sections — and a re-review
+	dropped three of four. The instruction that says what a field contains is the field's description.
+	"""
+	names = [f"**{x.title()}**" for x in on(config.VOICES, config.VOICE) if x != "review"]
+	names += [f"**{h.title()}**" for h in on(config.HUNTERS, config.HUNTER)]
+	if not names:
+		return ""
+	return (", then every one of these sections, each after a `---` line, in this order: "
+	        + ", ".join(names) + " — none of them may be left out")
+
+
 def _verdict(repo, n, model, prev=None):
 	"""Build the prompt, run the reviewer, return its parsed verdict. Raises on failure.
 
@@ -225,7 +240,7 @@ def _verdict(repo, n, model, prev=None):
 		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n)
 	else:
 		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
-	prompt += tail() + CONTRACT  # how to write the body, then the shape it has to arrive in — last, both
+	prompt += tail() + CONTRACT.format(sections=sections())  # how to write the body, then its shape — last, both
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
