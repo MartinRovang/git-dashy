@@ -20,7 +20,10 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	secs = github.fetch()
 	assert [n for n, _, _ in secs] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
 	assert len(secs[3][1]) == 3  # seeded history, #180 twice
-	assert [p["more"] for k, p in ui.rows(secs) if k == "pr" and p["section"] == "REVIEWED"] == [0, 1]  # #44, then #180 with one folded
+	# ponytail: #180 (06:43) then #44 (04:43) — BY TIMESTAMP. reviewed() used to return reversed FILE
+	# order and call it newest-first, which is only the same thing when appends arrive in time order.
+	# The demo writes at=updatedAt, so it never did here; with logs from several teams it never will.
+	assert [p["more"] for k, p in ui.rows(secs) if k == "pr" and p["section"] == "REVIEWED"] == [1, 0]
 	assert len(github.fetch()[1][1]) == 4 and len(github.fetch()[1][1]) == 5  # a new PR shows up on the 3rd refresh (+1 re-requested)
 	assert log.mark_rereviews(github.fetch()) == ["https://github.com/acme/infra/pull/44"]
 	p = secs[1][1][0]

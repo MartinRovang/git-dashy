@@ -19,7 +19,8 @@ VOICE = [v for v in os.environ.get("PRS_VOICE", "review").split(",") if v]  # po
 HUNTERS = ["ponytail", "security", "tests"]  # extra lenses, each appends a section of its own findings; h toggles
 HUNTER = [v for v in os.environ.get("PRS_HUNTER", "").split(",") if v]
 INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
-TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # git checkout shared with the team; T sets it up
+TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # the OLD single checkout; migrated into TEAMS
+TEAMS = os.environ.get("PRS_TEAMS", os.path.expanduser("~/.prs_teams"))  # one checkout per team, dir name = slug
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # jsonl, one review per line
 # ponytail: joining a team moves LOG into the checkout; MEMORY_DIR stays yours, since memory.sources()

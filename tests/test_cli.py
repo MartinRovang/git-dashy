@@ -221,9 +221,9 @@ def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):
 	from dashy.core import bind, team
 	monkeypatch.setattr(team, "activate", lambda: None)
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/api")
-	monkeypatch.setattr(bind, "team_key", lambda: "org/mem")
+	monkeypatch.setattr(bind, "team_key", lambda: "org-mem")
 	with pytest.raises(SystemExit) as e:
-		cli.bind(["gitdashy", "bind", "neo-api", "--team", "org/mem"])
+		cli.bind(["gitdashy", "bind", "neo-api", "--team", "org-mem"])
 	assert "not owner/name" in str(e.value)
 	assert bind.bindings() == {}  # and nothing was bound in its place
 
@@ -234,7 +234,7 @@ def test_bind_list_answers_even_when_the_positional_is_a_typo(monkeypatch, capsy
 	from dashy import cli
 	from dashy.core import bind, team
 	monkeypatch.setattr(team, "activate", lambda: None)
-	bind.bind("acme/api", "org/mem")
+	bind.bind("acme/api", "org-mem")
 	cli.bind(["gitdashy", "bind", "not-a-slug", "--list"])
 	assert "acme/api" in capsys.readouterr().out
 
@@ -335,3 +335,36 @@ def test_api_refuses_a_url(monkeypatch):
 	for url in ("https://evil.example.com/collect?t=", "http://169.254.169.254/latest/meta-data/", "//evil.example.com/x"):
 		with pytest.raises(SystemExit, match="not a URL"):
 			cli.api(["gitdashy", "api", url])
+def test_teams_lists_what_each_one_covers(monkeypatch, capsys, tmp_path):
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for slug in ("org-one", "org-two"):
+		(tmp_path / "teams" / slug / ".git").mkdir(parents=True)
+	bind.bind_owner("neomedsys", "org-one")
+	bind.bind("acme/tool", "org-two")
+	cli.teams(["gitdashy", "teams"])
+	out = capsys.readouterr().out
+	assert "org-one" in out and "neomedsys/*" in out
+	assert "org-two" in out and "acme/tool" in out
+	assert out.index("org-one") < out.index("org-two")      # each team's coverage under its own row
+	assert out.index("neomedsys/*") < out.index("org-two")
+
+
+def test_teams_join_names_the_team_it_just_joined(monkeypatch, capsys, tmp_path):
+	"""joined()[-1] is the last ALPHABETICALLY, so already being in "zulu" and joining "acme" printed
+	"joined zulu"."""
+	from dashy import cli
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "ERROR", "")
+	for key in ("zulu",):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+	def fake_setup(repo, name=""):
+		(tmp_path / "teams" / "acme" / ".git").mkdir(parents=True)
+		return ""
+	monkeypatch.setattr(team, "setup", fake_setup)
+	cli.teams(["gitdashy", "teams", "--join", "somewhere/acme.git"])
+	assert "joined acme" in capsys.readouterr().out

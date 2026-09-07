@@ -8,7 +8,7 @@ import signal
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import bind as bind_mod, github, install as install_mod, memory, mirror, review as review_mod, team
+from .core import bind as bind_mod, github, install as install_mod, knowledge, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -24,6 +24,8 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name]
+       gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
+                      [--team KEY --connect URL] [--leave KEY]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -82,6 +84,18 @@ drafts shows what a review proposed and no second review has confirmed — the s
   because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
   promotes one by hand or drops it.
 
+teams lists the teams this machine has joined, what each calls itself, and what it covers.
+  A team is a git repo — or just a directory — that pools what reviews learn. Whoever can reach it is
+  on the team; there is no service and no account. Its name and description live in team.json inside
+  it, so everyone who clones it sees the same ones.
+  --new starts one right here with no remote at all: a name, a description, and files. --at DIR keeps
+  it somewhere else and links to it. When you have a repo for it, --team KEY --connect URL points it
+  there and pushes; the key does not change, so every binding still holds.
+  --join clones one that exists, from any git URL or a path (a bare owner/name is expanded to GitHub
+  as a convenience, nothing more). It takes its key from the team's own name.
+  --leave drops one checkout, refusing while it holds unpushed work.
+  Several teams at once; which one applies to a repo is `gitdashy bind`.
+
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
   one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
@@ -96,9 +110,10 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
-L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
+L local memory dir, C where all team checkouts live, n repo memory, g general memory ($EDITOR),
+b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
-T team repo setup or leave, u install the newest release, f refresh, q quit."""
+T teams (n start, a join, e edit its brief, d describe, c connect a remote, x leave), u install the newest release, f refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):
@@ -398,6 +413,58 @@ def drafts(argv):
 	      f"W in the dashboard promotes or drops one")
 
 
+def teams(argv):
+	"""List the teams this machine has joined, or join/leave one.
+
+	ponytail: a CLI as well as `T`, for the same reason `bind` has one — it is scriptable, it is
+	testable without curses, and the join path is the one that clones a repo, which is worth being able
+	to run somewhere errors are visible rather than on a footer.
+	"""
+	team.activate()
+	if new := arg("--new", "", str, argv):
+		# ponytail: START one, with nothing hosted anywhere. Every other path clones a repo that already
+		# exists, so the first person on a team was stuck waiting for somebody to make one.
+		if err := team.start(new, arg("--desc", "", str, argv), arg("--at", "", str, argv)):
+			raise SystemExit("gitdashy: " + err)
+		key = team.key_of(new)
+		print(f"gitdashy: started {new} ({key}) at {team.dir_of(key)}")
+		print(f"  bind repos to it: gitdashy bind --owner OWNER --team {key}")
+		print(f"  give it a remote when you have one: gitdashy teams --team {key} --connect URL")
+	elif url := arg("--connect", "", str, argv):
+		key = arg("--team", "", str, argv) or (team.joined()[0] if len(team.joined()) == 1 else "")
+		if not key:
+			raise SystemExit(f"gitdashy: say which team: --team {' | --team '.join(team.joined()) or 'NAME'}")
+		if err := team.connect(key, url):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {key} now pushes to {url}")
+	elif join := arg("--join", "", str, argv):
+		# ponytail: what CHANGED, not joined()[-1] — that is the last alphabetically, so already being
+		# in "zulu" and joining "acme" printed "joined zulu".
+		before = set(team.joined())
+		if err := team.setup(join, arg("--name", "", str, argv)):
+			raise SystemExit("gitdashy: " + err)
+		fresh = sorted(set(team.joined()) - before)
+		print(f"gitdashy: joined {fresh[0] if fresh else join}"
+		      + (f"  ({team.ERROR})" if team.ERROR else ""))
+	elif leave := arg("--leave", "", str, argv):
+		if err := knowledge.leave(leave):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: left {leave}")
+	got = team.joined()
+	if not got:
+		return print("  no teams joined — `gitdashy teams --join owner/name` or T in the dashboard")
+	for key in got:
+		it = team.info(key)
+		bound = sorted(r for r, t in bind_mod.bindings().items() if t == key)
+		owners = sorted(o + "/*" for o, t in bind_mod.owners().items() if t == key)
+		d = team.dir_of(key)
+		print(f"  {it['name']}  ({key})")
+		if it["description"]:
+			print(f"      {it['description']}")
+		print(f"      {d}{'' if team.has_remote(d) else '   · no remote yet'}")
+		print(f"      {', '.join(owners + bound) or 'no repos bound to it yet'}")
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -422,16 +489,18 @@ def run(argv=None):
 		return api(argv)
 	if len(argv) > 1 and argv[1] == "drafts":
 		return drafts(argv)
-	# ponytail: an unknown subcommand is an ERROR, not the dashboard. `gitdashy api …` against a build
-	# without that command fell through to here and opened curses, which is how a review crashed rather
-	# than being told the command was not there.
-	if len(argv) > 1 and not argv[1].startswith("-") and argv[1] != "self-check":
-		raise SystemExit(f"gitdashy: no command {argv[1]!r} in {VERSION} — see gitdashy --help")
+	if len(argv) > 1 and argv[1] == "teams":
+		return teams(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:
 			print(f"{'ok  ' if ok else 'FAIL'}  {name}" + ("" if ok else f"  ({detail})"))
 		raise SystemExit(0 if all(ok for _, ok, _ in rows) else 1)
+	# ponytail: an unknown subcommand is an ERROR, not the dashboard. `gitdashy api …` against a build
+	# without that command fell through to here and opened curses, which is how a review crashed rather
+	# than being told the command was not there. Last, so every command above still gets its turn.
+	if len(argv) > 1 and not argv[1].startswith("-"):
+		raise SystemExit(f"gitdashy: no command {argv[1]!r} in {VERSION} — see gitdashy --help")
 	if "--demo" in argv:
 		demo.install()
 	config.load()

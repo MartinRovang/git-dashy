@@ -9,7 +9,7 @@ from dashy.ui import screen as ui
 from dashy.core.review import review
 from dashy.core.state import State
 
-from conftest import PR, FakeScr, claude_out
+from conftest import FakeScr, PR, a_team, claude_out
 
 
 def test_draw_renders_sections_status_and_selection(screen):
@@ -389,14 +389,11 @@ def test_esc_menu_theme_notify_refresh_quit(screen, monkeypatch):
 
 
 def _team(monkeypatch, tmp_path):
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(ui.team, "on", lambda: True)
-	monkeypatch.setattr(ui.team, "NAME", "org/t")
-	bind.bind("a/b", "org/t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
 	return mine, shared
 
 
@@ -413,7 +410,7 @@ def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, s
 	keys = iter([ord("t"), ord("x"), 27])
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "share with org/t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "share with org-t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
 	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
 	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
 	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
@@ -440,7 +437,7 @@ def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
 def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):
 	mine, shared = _team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- only I found this\n- both of us found this\n")
-	pool = tmp_path / "team" / "memory" / "pool"
+	pool = shared / "pool"   # ponytail: inside the team's own checkout, wherever a_team put it
 	(pool / "me").mkdir(parents=True)
 	(pool / "martin").mkdir(parents=True)
 	(pool / "me" / "a__b.md").write_text("- both of us found this\n")
@@ -467,7 +464,7 @@ def test_set_path_clones_a_git_url_and_asks_first(screen, monkeypatch, st, tmp_p
 def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
 	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("must not clone after n"))
-	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org/mem.git")
+	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org-mem.git")
 	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
 	ui.set_path(screen, st, 0, "L")
 
@@ -475,7 +472,7 @@ def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, t
 def test_set_path_sends_a_url_for_the_store_back_to_T(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("the store is not cloned here"))
 	monkeypatch.setattr(ui.knowledge, "set_store", lambda p: pytest.fail("a URL is not a directory"))
-	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org/team.git")
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org-team.git")
 	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
 	ui.set_path(screen, st, 0, "C")
 	assert "T is what clones a team repo" in screen.text()
@@ -1045,15 +1042,12 @@ def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, t
 def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, tmp_path):
 	"""A thing that silently selects your context must name what it selected, and why that one."""
 	from dashy.core import bind, team
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
-	shared.mkdir(parents=True)
-	(tmp_path / "team" / ".git").mkdir()
 	(mine / "project.md").write_text("My own work.\n")
-	(shared / "project.md").write_text("What the team builds.\n")
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	(shared / "project.md").write_text("What the team builds.\n")
 	st = State(60)
 	monkeypatch.setattr(st, "want_detail", lambda pr: {})  # no background fetch from a draw test
 	pr = dict(PR)
@@ -1062,14 +1056,14 @@ def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, t
 	assert "BRIEF yours · a/b is bound to no team" in screen.text()
 
 	screen.erase()
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	ui.detail(screen, st, 30, 40, 60, pr)
-	assert "BRIEF team org/t" in screen.text()
+	assert "BRIEF team org-t" in screen.text()
 
 	screen.erase()
 	(shared / "project.md").unlink()
 	ui.detail(screen, st, 30, 40, 60, pr)
-	assert "BRIEF yours · team org/t has no brief" in screen.text()
+	assert "BRIEF yours · team org-t has no brief" in screen.text()
 
 
 def test_every_setting_key_opens_its_dropdown(screen, monkeypatch):
@@ -1233,3 +1227,204 @@ def test_finished_review_row_stops_spinning():
 	row = next(scr.line(y) for y in range(scr.h) if "✓ approved" in scr.line(y))
 	assert "approved…" not in row and "0s" not in row and "⠋" not in row, row
 	assert "0 agents running" in scr.text()
+
+
+def test_t_can_still_join_once_you_are_already_in_a_team(screen, monkeypatch, st, tmp_path):
+	"""It used to return after offering to LEAVE, so a second team could not be joined from anywhere —
+	the store, the resolution and the log all handled several while no surface could produce one."""
+	from dashy.core import team
+	a_team(monkeypatch, tmp_path, "org-one")
+	asked, joined = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (asked.append(prompt), "org-two")[1])
+	monkeypatch.setattr(ui.team, "setup", lambda repo, create=False: joined.append(repo) or "")
+	screen.getch, screen.timeout = _keys(ord("a"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert joined == ["org-two"]                       # the join path is reachable
+	assert "Existing team" in asked[0]
+	assert "org-one" in screen.text() and "1 joined" in screen.text()
+
+
+def test_t_can_start_a_team_that_does_not_exist_anywhere_yet(screen, monkeypatch, st, tmp_path):
+	"""Every other path CLONES something that already exists, so the first person on a team was stuck."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	answers, started = iter(["NeoMedSys review memory", "what we build", ""]), []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: True)
+	monkeypatch.setattr(ui.team, "start", lambda name, desc="", at="": started.append((name, desc, at)) or "")
+	screen.getch, screen.timeout = _keys(ord("n"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert started == [("NeoMedSys review memory", "what we build", "")]
+	assert "none yet" in screen.text()          # and the empty state still offers both routes
+	assert "[n] start" in screen.text() and "[a] join" in screen.text()
+
+
+def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_path):
+	from dashy.core import knowledge
+	a_team(monkeypatch, tmp_path, "org-one")
+	(tmp_path / "teams" / "org-two" / ".git").mkdir(parents=True)
+	prompts, left = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), "org-two")[1])
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: prompts.append(prompt) or True)
+	monkeypatch.setattr(ui.knowledge, "leave", lambda slug: left.append(slug) or "")
+	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert left == ["org-two"]
+	assert "Leave which team?" in prompts[0] and "org-one, org-two" in prompts[0]
+	assert "team org-two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes
+
+
+def test_no_function_has_code_after_it_returns():
+	"""Editing by slice leaves the tail of the old body behind, and Python parses it happily.
+
+	This has now happened three times in this codebase — a dedent that swallowed loop() into a class, an
+	anchor that re-indented 380 lines, and a setup() replacement that cut at the first `return` and left
+	30 lines of the previous implementation underneath it. Every one parsed, imported and stayed green,
+	because a test suite can only see lines that run. Unreachable code is the signature.
+	"""
+	import ast, pathlib
+	import dashy
+	root = pathlib.Path(dashy.__file__).parent
+	mods = sorted(root.rglob("*.py"))
+	assert len(mods) >= 8, f"found only {len(mods)} modules under {root} — this test cannot pass vacuously"
+	bad = []
+	for f in mods:
+		tree = ast.parse(f.read_text())
+		for node in ast.walk(tree):
+			if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+				continue
+			body = node.body
+			for i, st in enumerate(body[:-1]):
+				if isinstance(st, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+					name = getattr(node, "name", "<module>")
+					bad.append(f"{f.name}:{body[i + 1].lineno} unreachable in {name}() after line {st.lineno}")
+	assert not bad, "code after a return:\n  " + "\n  ".join(bad)
+
+
+def _two_teams(monkeypatch, tmp_path):
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	team.start("NeoMedSys Platform", "precision medicine")
+	team.start("Acme Tools", "internal")
+	return dict(PR, repository={"nameWithOwner": "NeoMedSys/neo-api", "name": "neo-api"})
+
+
+def test_b_binds_the_selected_repo_from_the_dashboard(screen, monkeypatch, st, tmp_path):
+	"""The TUI could READ a binding everywhere and write one nowhere, so a team started with T was
+	inert until you went to a shell."""
+	pr = _two_teams(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(ord("2"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.of("NeoMedSys/neo-api") == "neomedsys-platform"
+	assert "Acme Tools" in screen.text() and "NeoMedSys Platform" in screen.text()
+
+
+def test_b_can_bind_a_whole_owner_and_says_when_a_rule_is_what_matched(screen, monkeypatch, st, tmp_path):
+	"""Fifteen repos under one org is fifteen keypresses otherwise, and one more per repo added later."""
+	pr = _two_teams(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(ord("o"), ord("1"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.owners() == {"neomedsys": "acme-tools"} and bind.bindings() == {}
+	assert bind.why("NeoMedSys/neo-api") == ("owner", "acme-tools")
+	screen.erase()
+	screen.getch = _keys(27)
+	ui.bind_screen(screen, st, 0, pr)
+	assert "via neomedsys/*" in screen.text()   # or the key would look like the repo's own binding
+
+
+def test_b_unbinds_and_that_beats_an_owner_rule(screen, monkeypatch, st, tmp_path):
+	pr = _two_teams(monkeypatch, tmp_path)
+	bind.bind_owner("neomedsys", "acme-tools")
+	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
+	ui.bind_screen(screen, st, 0, pr)
+	assert bind.of("NeoMedSys/neo-api") == ""          # excluded from the rule, which is the point
+	assert bind.owners() == {"neomedsys": "acme-tools"}  # and the rule still covers everything else
+
+
+def test_b_says_so_when_there_is_no_team_or_no_row(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "none"))
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	ui.bind_screen(screen, st, 0, dict(PR))
+	ui.bind_screen(screen, st, 0, None)
+	assert "no teams yet" in said[0] and "no row selected" in said[1]
+
+
+def test_t_edits_the_team_brief_every_review_reads(screen, monkeypatch, st, tmp_path):
+	"""n/g edit YOUR memory; nothing edited the team's brief, which is the file that reaches the model
+	for every repo bound to it. `gitdashy setup` was the only way, and that is not the TUI."""
+	from dashy.core import memory, team
+	_two_teams(monkeypatch, tmp_path)
+	opened, pushed = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme-tools")
+	monkeypatch.setattr(ui, "shell_out", lambda scr, cmd: opened.append(cmd[-1]) or "")
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushed.append((d, m)))
+	screen.getch, screen.timeout = _keys(ord("e"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert opened == [os.path.join(team.dir_of("acme-tools"), "memory", memory.PROJECT)]
+	assert os.path.exists(opened[0])                    # seeded with a template, not left missing
+	assert pushed and pushed[0][0] == team.dir_of("acme-tools")   # and pushed: it is the team's file
+
+
+def test_t_changes_what_a_team_says_it_is(screen, monkeypatch, st, tmp_path):
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	answers = iter(["acme-tools", "now for the platform work"])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	it = team.info("acme-tools")
+	assert it["description"] == "now for the platform work"
+	assert it["name"] == "Acme Tools"     # the NAME is the key's origin and is not touched by this
+
+
+def test_a_completed_migration_is_announced_not_shown_as_an_error(screen, monkeypatch, tmp_path):
+	"""team.ERROR is painted with the err attribute, so a move that WORKED showed up red. It is also a
+	move of the user's files done without being asked, so it gets said out loud once."""
+	from dashy.core import team
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "ERROR", "")
+
+    # a move that worked
+	monkeypatch.setattr(team, "migrate", lambda: "gitdashy: moved your team checkout to /x, and repointed 2 bindings")
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert said and "moved your team checkout" in said[0]
+	assert team.ERROR == ""                      # not red, and not on the row
+
+	# a move that refused stays on the row, where it will be read again
+	said.clear()
+	monkeypatch.setattr(team, "migrate", lambda: "gitdashy: /x has 2 unpushed reviews — push them, then restart")
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert "unpushed reviews" in team.ERROR and not said
+
+
+def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st, tmp_path):
+	"""setup() returns "" for a join that worked but could not push, which is right for "did you join"
+	— and left the join silent: the only sign was a clipped line on the T row that the next successful
+	pull clears."""
+	from dashy.core import team
+	a_team(monkeypatch, tmp_path, "org-one")
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "somewhere/repo.git")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.team, "setup", lambda repo, name="": "")
+	monkeypatch.setattr(ui.team, "ERROR", "join: remote rejected the push")
+	ui._join_team(screen, st, 0)
+	assert said and "could not publish" in said[0] and "remote rejected" in said[0]
+	assert st.wake.is_set()          # and it still counts as joined: REVIEWED reloads
+
+	# a clean join says nothing
+	said.clear()
+	st.wake.clear()
+	monkeypatch.setattr(ui.team, "ERROR", "")
+	ui._join_team(screen, st, 0)
+	assert said == [] and st.wake.is_set()

@@ -113,10 +113,10 @@ def header_groups(state):
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
-	        ("T", "Team", team.ERROR[:40] if team.ERROR else (team.NAME or "off"),  # ponytail: clipped, T shows it whole
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
-		know.append(("C", "Store", knowledge.show(config.TEAM), None))
+		know.append(("C", "Store", knowledge.show(config.TEAMS), None))
 	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
@@ -923,7 +923,11 @@ def share_screen(scr, state, sel):
 		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
 		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
 		draw(scr, state, sel, prompt=" ")
-		panel(scr, f"share with {team.NAME or 'the team'}  ·  {i + 1}/{len(items)}",
+		# ponytail: the team this FACT goes to, not "the" team. share() routes by the repo's binding, so
+		# with several joined the header has to name the same one the keypress will write to — a title
+		# saying one team while the write lands in another is the silent selection all of this removes.
+		to = bind.of(repo) if repo else (team.joined()[0] if len(team.joined()) == 1 else "")
+		panel(scr, f"share with {to or 'the team'}  ·  {i + 1}/{len(items)}",
 		      [(repo or "general", mark), ("", ""), *body],
 		      "[t] share   [x] forget   [j/k] move   [esc] close")
 		k = scr.getch()
@@ -996,7 +1000,7 @@ def set_path(scr, state, sel, which):
 	ponytail: the filesystem keeps the setting — the old location becomes a symlink to the new one, so it
 	survives a restart without a config file, the same way team mode persists as a .git in a known folder.
 	"""
-	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAM, False)
+	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAMS, False)
 	note = "  (the team's memory is in use; this applies when you leave)" if live else ""
 	tail = ", or a git repo to clone" if which == "L" else ""
 	new = ask(scr, state, sel, f" {what} directory{tail} [{knowledge.tilde(cur)}]{note}:")
@@ -1096,32 +1100,180 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
-def team_setup(scr, state, sel):
-	if team.on():
-		name = team.NAME
-		# ponytail: a symlinked TEAM keeps its checkout — only the link goes. Said here, because the
-		# prompt is the last place anyone reads before agreeing to something that deletes files.
-		where = (f"the checkout at {knowledge.tilde(os.path.realpath(config.TEAM))} is kept"
-		         if os.path.islink(config.TEAM) else f"files in {config.TEAM} are deleted")
-		if not confirm(scr, state, sel, f" team {name} · {where} · leave and go back to local memory? [y/n]"):
-			return
-		err = knowledge.leave()
-		if err:
-			confirm(scr, state, sel, f" {err}  [any key]")
-		else:
-			state.wake.set()  # ponytail: REVIEWED must reload from the solo log, the team one is gone
+def _new_team(scr, state, sel):
+	"""Start a team that does not exist anywhere yet: a name, a description, a place. No host."""
+	name = ask(scr, state, sel, " Name the new team (this is what your repos get bound to):")
+	if not name:
 		return
-	repo = ask(scr, state, sel, " Team repo (owner/name, a local path, or a git URL; owner/name is created if missing):")
-	if not repo:
+	desc = ask(scr, state, sel, " One line: what is this team for? (shared with everyone who joins)")
+	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or a path to keep it somewhere else)")
+	if err := team.start(name, desc, at):
+		return confirm(scr, state, sel, f" {err}  [any key]") and None
+	state.wake.set()
+	key = team.key_of(name)
+	confirm(scr, state, sel, f" started {key} · no remote yet — c connects one when you have it  [any key]")
+
+
+def _connect_team(scr, state, sel, joined):
+	"""Point a team at a git repo, once there is one. The key does not change, so bindings hold."""
+	if not (key := _pick_team(scr, state, sel, joined, "Connect")):
 		return
-	err = team.setup(repo)
-	if err and "/" in repo and not os.path.isdir(repo):  # ponytail: any clone failure of owner/name → offer to create
-		if confirm(scr, state, sel, f" {err} · create {repo} as a private repo? [y/n]"):
-			err = team.setup(repo, create=True)
-	if err:
+	url = ask(scr, state, sel, f" Git URL for {key} (any host — it just has to be a repo you can push to):")
+	if not url:
+		return
+	if err := team.connect(key, url):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
-		state.wake.set()  # reload REVIEWED from the team log
+		confirm(scr, state, sel, f" {key} now pushes to {url}  [any key]")
+
+
+def _pick_team(scr, state, sel, joined, verb):
+	"""Which team, when there is more than one. "" when the answer is not one we have."""
+	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" {verb} which team? ({', '.join(joined)})")
+	if not key:
+		return ""            # ponytail: an empty answer is a cancel, and a cancel says nothing
+	if not team.dir_of(key):
+		# ponytail: a TYPO is not a cancel. It used to return the same "" and the screen just came back,
+		# so a mistyped key looked exactly like changing your mind.
+		confirm(scr, state, sel, f" not in {key} — joined: {', '.join(joined)}  [any key]")
+		return ""
+	return key
+
+
+def _edit_brief(scr, state, sel, joined):
+	"""Open a team's brief in $EDITOR and push it. This is the file every review of its repos reads."""
+	if not (key := _pick_team(scr, state, sel, joined, "Edit the brief of")):
+		return
+	path = os.path.join(team.dir_of(key), "memory", memory.PROJECT)
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	team.seed_project(path)  # ponytail: never overwrites — a template only when there is nothing yet
+	if err := shell_out(scr, [os.environ.get("EDITOR", "nano"), path]):
+		return confirm(scr, state, sel, f" {err} — set $EDITOR to one you have  [any key]") and None
+	# ponytail: pushed, because it is the team's file and the point of it is that everyone reads the
+	# same one. n/g edit YOUR memory and push that; this is the other side of the same rule.
+	team.push_dir(team.dir_of(key), f"memory: the brief for {key}", "sync")
+
+
+def _describe_team(scr, state, sel, joined):
+	"""Change what a team says it is. Shared, because it lives in the team's own team.json."""
+	if not (key := _pick_team(scr, state, sel, joined, "Describe")):
+		return
+	it = team.info(key)
+	desc = ask(scr, state, sel, f" One line: what is {it['name']} for?  [now: {it['description'][:40] or 'nothing yet'}]")
+	if not desc:
+		return
+	if err := team.write_info(key, it["name"], desc):
+		return confirm(scr, state, sel, f" {err}  [any key]") and None
+	team.push_dir(team.dir_of(key), f"team: describe {key}", "sync")
+
+
+def _join_team(scr, state, sel):
+	"""Join a team that already exists: any git URL, or a checkout on this machine."""
+	repo = ask(scr, state, sel, " Existing team (a git URL, a path, or owner/name on GitHub):")
+	if not repo:
+		return
+	if err := team.setup(repo):
+		confirm(scr, state, sel, f" {err}  [any key]")
+		return
+	state.wake.set()  # reload REVIEWED, which now reads one more log
+	# ponytail: setup() returns "" for a join that worked but could not PUSH — read-only access clones
+	# fine — and puts the reason in ERROR. That is right for "did you join", and it left the join
+	# silent: the only sign was a clipped line on the T row that the next successful pull clears.
+	if team.ERROR:
+		confirm(scr, state, sel, f" joined, but could not publish: {team.ERROR[:70]}  [any key]")
+
+
+def _leave_team(scr, state, sel, joined):
+	"""Drop one team's checkout, having said which one and what that removes."""
+	# ponytail: names WHICH team. "Leave the team" is not a sentence that says what it will delete once
+	# there are several, and this prompt is the last thing anyone reads before files go.
+	if not (name := _pick_team(scr, state, sel, joined, "Leave")):
+		return
+	d = team.dir_of(name)
+	where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
+	         if os.path.islink(d) else f"files in {d} are deleted")
+	if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
+		return
+	if err := knowledge.leave(name):
+		confirm(scr, state, sel, f" {err}  [any key]")
+	else:
+		state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
+
+
+def bind_screen(scr, state, sel, pr):
+	"""Bind the selected PR's repo to a team, its whole owner, or nothing. `b` on any row.
+
+	ponytail: the TUI could READ a binding everywhere — the pane names the brief, the list groups by
+	team — and write one nowhere. So a team started with `T` was inert until you went to a shell, which
+	is the same "mechanism without a door" as the drafts store and the second team before it.
+	ponytail: the owner rule is offered because that is the shape an estate actually has. Fifteen repos
+	under one org is fifteen keypresses otherwise, and one more for every repo somebody adds later.
+	"""
+	repo = (pr or {}).get("repository", {}).get("nameWithOwner", "")
+	if not repo:
+		return confirm(scr, state, sel, " no row selected  [any key]") and None
+	joined = team.joined()
+	if not joined:
+		return confirm(scr, state, sel, " no teams yet — T starts one  [any key]") and None
+	owner = bind.key(repo).split("/")[0]
+	while True:
+		# ponytail: why(), not of() — x removes a repo's OWN binding, and saying "bound to X" when X came
+		# from an owner rule would make that key look broken. It tombstones the repo either way, which
+		# is what excludes one repo from a rule; the label has to say which case you are in.
+		kind, to = bind.why(repo)
+		now = (f"{to}  · via {owner}/*" if kind == "owner" else to) or "no team"
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"bind {repo}",
+		      [("now", now), ("", ""), *[(f"{i + 1}  {team.info(t)['name']}", t) for i, t in enumerate(joined[:8])]],
+		      "[1-8] this repo   [o] then 1-8: every " + owner + "/*   [x] unbind   [esc] close")
+		k = scr.getch()
+		if k in (27, ord("q")):
+			return
+		if k == ord("x"):
+			bind.forget(repo)
+			state.wake.set()
+		elif k == ord("o"):
+			panel(scr, f"bind every {owner}/* repo",
+			      [(f"{i + 1}  {team.info(t)['name']}", t) for i, t in enumerate(joined[:8])],
+			      "[1-8] pick a team   [esc] cancel")
+			k2 = scr.getch()
+			if ord("1") <= k2 <= ord("8") and (k2 - ord("1")) < len(joined):
+				bind.bind_owner(owner, joined[k2 - ord("1")])
+				state.wake.set()
+		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
+			bind.bind(repo, joined[k - ord("1")])
+			state.wake.set()
+
+
+def team_setup(scr, state, sel):
+	"""The teams you are in: join another, or leave one.
+
+	ponytail: JOIN stays reachable once you are in a team. This used to return after offering to leave,
+	so a second team could not be joined from anywhere — the store, the resolution and the log all
+	handled several while no surface could produce one. A capability nothing can reach is not shipped.
+	"""
+	while True:
+		joined = team.joined()
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
+		      [(team.info(s)["name"], "no remote yet" if not team.has_remote(team.dir_of(s)) else "")
+		       for s in joined] or [("a team is a git repo of shared memory", "")],
+		      "[n] start  [a] join  [e] edit brief  [d] describe  [c] connect  [x] leave  [esc] close")
+		k = scr.getch()
+		if k == ord("n"):
+			_new_team(scr, state, sel)
+		elif k == ord("e") and joined:
+			_edit_brief(scr, state, sel, joined)
+		elif k == ord("d") and joined:
+			_describe_team(scr, state, sel, joined)
+		elif k == ord("c") and joined:
+			_connect_team(scr, state, sel, joined)
+		elif k == ord("a"):
+			_join_team(scr, state, sel)
+		elif k == ord("x") and joined:
+			_leave_team(scr, state, sel, joined)
+		elif k in (27, ord("q")):
+			return
 
 
 DREAM_SKY = "˖ ⋆ ✧ ✦ ☾ · ° ˚ z Z"
@@ -1228,6 +1380,19 @@ def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
 	state = State(interval, model)
+	# ponytail: BEFORE activate(), which lists teams by looking in TEAMS — a pre-plural checkout has to
+	# be there before anything asks what is joined. The report goes on the footer rather than raising;
+	# it is a move, and a move that could not happen must say so where it will be read.
+	# ponytail: only a FAILURE goes in team.ERROR — the Knowledge row paints that with the err attribute,
+	# so a completed move showed up RED. A move that worked is news, not a problem. It is also a move of
+	# the user's files, done once without being asked, so it is said out loud and acknowledged rather
+	# than left on a row they may not look at; a refusal stays on the row, where it will be read again.
+	if moved := team.migrate():
+		line = moved[len("gitdashy: "):]
+		if line.startswith("moved your team checkout"):
+			confirm(scr, state, 0, f" {line[:110]}  [any key]")
+		else:
+			team.ERROR = line[:60]
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
@@ -1293,6 +1458,8 @@ def main(scr, interval, auto, model):
 			share_screen(scr, state, sel)
 		elif k == ord("W"):
 			drafts_screen(scr, state, sel)
+		elif k == ord("b"):
+			bind_screen(scr, state, sel, current)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

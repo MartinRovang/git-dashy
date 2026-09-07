@@ -148,17 +148,6 @@ def request_review(repo, number, login):
 	return ""
 
 
-def create_repo(repo, private=True):
-	"""Create owner/name (an org repo when the owner is not you). "" or the error text."""
-	owner, _, name = repo.partition("/")
-	try:
-		path = "/user/repos" if owner == me() else f"/orgs/{owner}/repos"
-		call(path, "POST", {"name": name, "private": private}, timeout=60)
-	except (Error, ValueError, KeyError) as e:
-		return str(e)
-	return ""
-
-
 def git_auth():
 	"""git flags that let a clone/push reach a private repo with the same token the API uses.
 

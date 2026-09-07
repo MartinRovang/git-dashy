@@ -66,7 +66,12 @@ def sync(into, repo="", pull=True, general=False):
 
 
 def _write(into, repo, general, at):
-	src = " + ".join(label for label, _ in memory.sources(repo))  # ponytail: what a review OF THIS REPO sees
+	# ponytail: ONE call, and the report is derived from it. `where` used to ask bind.of(repo)
+	# independently, so a repo bound to a team you have since LEFT reported "from team X" while
+	# sources() had already returned yours alone — the label and the content disagreeing about the
+	# same write, which is the defect this line was changed to fix in the first place.
+	got = memory.sources(repo)
+	src = " + ".join(label for label, _ in got)
 	wrote = []
 	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):
 		dst = os.path.join(into, name)
@@ -77,6 +82,6 @@ def _write(into, repo, general, at):
 			wrote.append(name)
 		elif os.path.exists(dst):
 			os.remove(dst)  # ponytail: a mirror never outlives its source, or it becomes a rumour
-	where = f"team {team.NAME}" if team.on() else config.MEMORY_DIR
+	where = next((label for label, _ in got if label != "mine"), config.MEMORY_DIR)
 	return (f"gitdashy: mirrored {', '.join(wrote) or 'nothing'} into {into}"
 	        f" from {where}{' for ' + repo if repo else ''}{' · ' + team.ERROR if team.ERROR else ''}")

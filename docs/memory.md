@@ -236,6 +236,66 @@ has either recurred across two independent reviews or been shared by a human.
 
 ---
 
+## 4a. Several teams
+
+```
+~/.prs_teams/<owner>__<name>/     one checkout per team; the directory name IS the slug
+    memory/{general,<repo>,project}.md
+    memory/pool/<user>/*.md
+    reviewed.jsonl                 that team's shared review log
+~/.prs_memory/                     yours
+~/.prs_reviewed.jsonl              yours — reviews of repos bound to no team
+```
+
+The filesystem is the registry: a directory under `~/.prs_teams` holding a `.git` **is** a joined team,
+the same way `~/.prs_team` being a checkout used to mean "team mode is on". There is no config file to
+fall out of step with what is actually on disk.
+
+`bind.team_dir(slug)` is the one seam. Every read and every write asks it the same question — *which
+directory does this slug mean* — which is why going from one team to many changed that function's body
+rather than three dozen call sites.
+
+**The review log is per team, merged on read.** A review is appended to the log of the team its repo is
+bound to; an unbound repo's goes to yours. `log.reviewed()` reads all of them newest-first, so a
+teammate's review still appears in your list — per team, and only for repos that team owns. (It used to
+return reversed *file* order and call that newest-first, which is only the same thing when appends
+arrive in time order. With several logs it never is.)
+
+**A general fact needs exactly one team.** It names no repo, so no binding selects a team for it, and
+with two joined that is two different claims — so it stays yours until you say where it goes.
+
+**A team is a git repo — or just a directory — that pools what reviews learn.** Whoever can reach it is
+on the team. There is no service and no account, and nothing here assumes GitHub: `git clone` takes any
+URL, and a bare `owner/name` is expanded to a GitHub URL as a convenience and nothing more.
+
+**Its name and description live inside it**, in `team.json`, so everyone who clones it sees the same
+ones. `memory/project.md` beside it is the brief — what the work is for, its constraints, its shape.
+
+**The key is the name you gave it, fixed at creation.** The *location* — a path today, a git URL
+tomorrow — is separate and changeable. That split is what makes the local-then-hosted move safe: an
+origin-derived key does not exist until the team is hosted, so every binding pointing at the team would
+have gone dead at exactly the moment it got a URL. The display name in `team.json` can be edited
+freely, because it is not the key.
+
+```sh
+gitdashy teams --new "NeoMedSys Platform" --desc "Precision-medicine platform."
+gitdashy teams --new "Acme" --at /srv/shared/acme-mem     # kept elsewhere, linked
+gitdashy bind --owner neomedsys --team neomedsys-platform # add repos to it
+gitdashy teams --team neomedsys-platform --connect git@somewhere:us/mem.git   # when you have a repo
+gitdashy teams --join git@somewhere:us/mem.git            # a colleague, from any host
+```
+
+`T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
+
+A team needs **no remote to be useful** — memory works local-only the same way. `connect` pushes what
+is already committed, so the `team.json` you wrote before you had a repo is what the next person clones
+and keys by.
+
+**Migration.** A pre-plural `~/.prs_team` moves to `~/.prs_teams/<slug>/` on first launch, after a
+backup. It refuses rather than coping: no origin to key it by, a destination that exists, or any
+uncommitted or unpushed work. `os.rename`, never copy-then-delete, so a failure leaves the source
+exactly where it was.
+
 ## 4b. Which brief a review gets
 
 Facts are keyed by repo (`owner__repo.md`) with `general.md` for what holds everywhere. The brief was

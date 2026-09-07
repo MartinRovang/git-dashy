@@ -114,11 +114,12 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `g` | edit the general review memory in `$EDITOR` |
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
+| `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
-| `C` | point the team checkout somewhere else (only while you are not in a team) |
-| `T` | team setup: share log + memory through a git repo, or leave the team you are in (see Team) |
+| `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
+| `T` | teams: `n` start one, `a` join one, `e` edit its brief, `d` describe it, `c` connect a remote, `x` leave (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
 
@@ -142,6 +143,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
 | `gitdashy drafts` | what a review proposed and no second review has confirmed yet |
+| `gitdashy teams [--new NAME] [--join URL] [--connect URL] [--leave KEY]` | start, join, connect or leave a team; bare, it lists what each covers |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 
@@ -217,12 +219,35 @@ written until you press `y`.
 
 ### Team
 
-Press `T` and give a repo (`org/review-team`, private recommended). gitdashy clones it with `git` into
-`~/.prs_team` (`PRS_TEAM` overrides) and offers to create it if it does not exist. The **review log** moves
-there — that is shared history, a record of what happened rather than a claim about the world, so every
-refresh pulls it and every review pushes it. Everyone sees the same REVIEWED section and re-review detection
-works across people. Files are appended only and merge with git's union driver, so two people reviewing at
-once do not conflict.
+**A team is a git repo — or just a directory — that pools what reviews learn.** Whoever can reach it is on
+the team. There is no service and no account, and nothing here assumes GitHub: `git clone` takes any URL, and
+a bare `owner/name` is expanded to a GitHub URL as a convenience and nothing more.
+
+Press `T`. `n` starts one — a name, a description, a place — with **no remote and nothing hosted anywhere**;
+`c` connects it to a repo when you have one, and the key does not change, so every binding still holds. `a`
+joins one that exists from any git URL or path. `e` opens its brief, `d` changes what it says it is, `x`
+leaves one. The same from a shell:
+
+```sh
+gitdashy teams --new "NeoMedSys Platform" --desc "Precision-medicine platform."
+gitdashy teams --team neomedsys-platform --connect git@somewhere:us/mem.git
+gitdashy teams --join git@somewhere:us/mem.git
+```
+
+Checkouts live in `~/.prs_teams/<key>/` (`PRS_TEAMS` overrides), one per team. **The key is the name you
+gave it, fixed at creation; the location is separate and changeable** — an origin-derived key does not exist
+until a team is hosted, so bindings would have gone dead at exactly the moment a team got a URL. Its name and
+description live in `team.json` inside it, so everyone who clones it sees the same ones.
+
+**You can be in several at once.** Which team applies to a repo is `gitdashy bind` (or `b` on any row), and
+that decides everything: the brief its reviews read, the facts they see, and whether a fact about it may be
+shared. A repo bound to nothing is private.
+
+Each team keeps its **own review log**. A review is appended to the log of the team its repo is bound to; an
+unbound repo's goes to yours, and the REVIEWED section merges them all newest-first — so a teammate's review
+still appears, per team, and only for repos that team owns. Files are appended only and merge with git's
+union driver, so two people reviewing at once do not conflict. **Joining does not copy your own log in**: it
+holds reviews of other teams' repos and of private work.
 
 **Your memory does not move there, and joining does not publish it.** Team memory is a separate, second
 source that reviews read *alongside* yours, and a fact only reaches it when you send it:
@@ -296,10 +321,10 @@ makes it your memory directory, moving the facts already there into it (and refu
 if a file exists on both sides). From then on your memory is a checkout that gitdashy pushes, so your facts
 and drafts follow you between machines without ever passing through the team.
 
-`L` and `C` point the memory directory and the team checkout somewhere else. There is no config file — the old
+`L` and `C` point the memory directory and the team store — `~/.prs_teams`, which holds every joined team — somewhere else. There is no config file — the old
 location becomes a symlink to the new one and whatever was there moves across, so the setting survives a restart
 the same way team mode does, by being a fact about the filesystem. Nothing is overwritten: if both sides hold a
-file of the same name, the move stops and says so. `PRS_MEMORY` and `PRS_TEAM` still win when they are set, and
+file of the same name, the move stops and says so. `PRS_MEMORY` and `PRS_TEAMS` still win when they are set, and
 the keys say so rather than pretending to work. A target inside a git repo that does not ignore it asks first,
 since memory is usually not yours alone to commit.
 
@@ -419,7 +444,8 @@ Then `m` cycles them like any other model.
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
 | `PRS_EFFORT` | `medium` | `--effort` passed to claude: low, medium, high, xhigh, max |
 | `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |
-| `PRS_TEAM` | `~/.prs_team` | team checkout; team mode is on when it contains a `.git` |
+| `PRS_TEAMS` | `~/.prs_teams` | one checkout per team, directory name = the team key; a directory with a `.git` in it is a joined team |
+| `PRS_TEAM` | `~/.prs_team` | the pre-plural single checkout, moved into `PRS_TEAMS` on first launch |
 | `PRS_MEMORY` | `~/.prs_memory` | memory directory: `general.md` + one file per repo |
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 | `PRS_SETTINGS` | `~/.prs_settings.json` | where runtime picks (model, depth, theme, notify…) are saved; env vars and flags still win. The file records the effective state, so a value set by a flag is kept once any setting changes |
