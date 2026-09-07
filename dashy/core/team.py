@@ -11,7 +11,7 @@ from .. import config
 from . import log
 
 ERROR = ""  # last git failure, shown in the header until the next success
-NAME = ""  # owner/name of the team repo, for the stats strip
+NAME = ""  # the joined team keys, comma-joined, for the header strip only — resolution goes by key
 _lock = threading.Lock()  # review threads push concurrently; git wants one writer
 CLONE = 300  # seconds a clone or repo-create may take before we give up on it
 BRANCH = "main"  # the branch a team gitdashy STARTS uses; a team it clones keeps its own
@@ -456,12 +456,12 @@ def looks_local(repo):
 
 def clone(repo, dest):
 	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
-	local = looks_local(repo) or "://" in repo or "@" in repo
+	local = looks_local(repo) or "://" in repo or "@" in repo  # a path, a URL or an ssh remote: pass it through
 	# ponytail: git clone, whatever it is. `gh repo clone` was here so that a bare owner/name would
 	# work, which quietly made GitHub the only host a team could live on — and a team is just a repo
 	# people can reach. A bare owner/name is now expanded to a GitHub URL as a CONVENIENCE, and any
 	# other URL, ssh remote or path goes straight through untouched.
-	url = repo if (local or "://" in repo or "@" in repo) else f"https://github.com/{repo}.git"
+	url = repo if local else f"https://github.com/{repo}.git"
 	return "" if _note(_remote(["git", "clone", "-q", url, dest]), "join") else ERROR
 
 
@@ -516,6 +516,17 @@ def seed_project(path):
 			f.write(PROJECT_TEMPLATE)
 
 
+def _undo(dest):
+	"""Remove a team directory or link we just created and could not finish. Never raises."""
+	try:
+		if os.path.islink(dest):
+			os.remove(dest)          # ponytail: the LINK, never what it points at — that is the user's
+		elif os.path.isdir(dest):
+			shutil.rmtree(dest, ignore_errors=True)
+	except OSError:
+		pass
+
+
 def start(name, description="", at=""):
 	"""Start a team here: a checkout, a name, a description. No remote, no host. "" or an error.
 
@@ -544,9 +555,14 @@ def start(name, description="", at=""):
 			os.makedirs(dest)
 		os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	except OSError as e:
+		_undo(dest)
 		return str(e)
 	if not is_repo(dest):
 		if _git("init", "-q", cwd=dest).returncode != 0:
+			# ponytail: take the link back out. It is not a repo so joined() skips it, but lexists() is
+			# true — so retrying the same name answered "exists and is not a team" forever and the user
+			# had to clean up by hand, after an error that said nothing about a leftover.
+			_undo(dest)
 			return f"could not git init {dest}"
 		# ponytail: PIN the branch. `git init` uses init.defaultBranch, which is "main" on one machine
 		# and "master" on the next — so two people starting or connecting the same team push branches
@@ -630,5 +646,9 @@ def setup(repo, name=""):
 	# else you review. log.reviewed() merges every log on read, so you still see your own history;
 	# they see only what was reviewed for them.
 	activate()
-	push("gitdashy: join " + (os.environ.get("USER") or "team"))
-	return ERROR
+	# ponytail: this checkout's own result, not the ERROR global. push() walks EVERY joined team now, so
+	# a team you were already in whose push fails — access revoked, no cached credential, and
+	# GIT_TERMINAL_PROMPT=0 makes that a hard fail rather than a prompt — set ERROR, and the freshly
+	# cloned, renamed, fully joined team was reported as a failure. The CLI raised SystemExit on it and
+	# the TUI skipped state.wake.set(), so REVIEWED never reloaded; retrying said "already in <key>".
+	return push_dir(dest, "gitdashy: join " + (os.environ.get("USER") or "team"), "join")

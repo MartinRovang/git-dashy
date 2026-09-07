@@ -181,3 +181,16 @@ def test_an_unbound_repos_mirror_loses_the_teams_files(monkeypatch, tmp_path):
 	bind.forget("a/b")
 	mirror.sync(str(into), "a/b", pull=False, general=True)
 	assert sorted(p.name for p in into.iterdir()) == []  # both go: nothing of yours, nothing of theirs
+
+
+def test_the_report_names_the_team_it_actually_read(monkeypatch, tmp_path):
+	"""team.NAME is a comma-joined list now, so a sync for a repo bound to ONE team reported
+	"from team org-a, org-b" — the report naming a source the write did not come from."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-a")
+	(tmp_path / "teams" / "org-b" / ".git").mkdir(parents=True)
+	monkeypatch.setattr(team, "NAME", "org-a, org-b")
+	seed("a/b", "team about a/b", str(shared))
+	bind.bind("a/b", "org-a")
+	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "from team org-a" in out and "org-b" not in out

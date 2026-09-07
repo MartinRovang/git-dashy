@@ -225,12 +225,19 @@ def unpushed(d):
 	"""
 	# ponytail: no default. _git lost its cwd default in this same change because a silent
 	# wrong-directory git call is worse than a TypeError at the call site; this one was the survivor.
-	r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
-	                   capture_output=True, text=True, timeout=60)
-	if r.returncode != 0:
+	# ponytail: NEVER raises. team.migrate() documents that it cannot — it runs before the first draw,
+	# and an exception there is a dashboard that never appears — but it calls this, and a bare
+	# subprocess.run lets TimeoutExpired and OSError straight through. -1 already means "cannot tell",
+	# which is the same answer a hung git should give, and every caller treats it as "do not delete".
+	try:
+		r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
+		                   capture_output=True, text=True, timeout=60)
+		if r.returncode != 0:
+			return -1
+		dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
+		                       capture_output=True, text=True, timeout=60)
+	except (subprocess.TimeoutExpired, OSError):
 		return -1
-	dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
-	                       capture_output=True, text=True, timeout=60)
 	if dirty.returncode != 0 or dirty.stdout.strip():
 		return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
 	return len(r.stdout.strip().splitlines())

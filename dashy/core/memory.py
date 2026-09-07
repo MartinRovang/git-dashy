@@ -615,8 +615,8 @@ def promote(repo, fact):
 
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files: "mine/" are one
-reviewer's private notes, "team:<owner>/<name>/" are shared with one of their teams (there may be several, and
-they are different groups of people), and each source has a general file plus one per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
+reviewer's private notes, "team:<key>/" are shared with one of their teams (there may be several, and they
+are different groups of people), and each source has a general file plus one per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
 fact, move repo-independent lines to that source's general file. Keep only overarching knowledge: how a repo is
 structured and why, conventions, how it affects other repos or the database, which authors own which areas, and —
 in a general file — how reviews are conducted here at all: what blocks and what does not, what must be verified
@@ -631,9 +631,9 @@ genuinely worthless — never merely because the file does not match a category 
 {files}
 
 Respond with ONLY a JSON object, no prose, no code fences. Every key must be a file name exactly as
-listed above, including its "mine/" or "team:<owner>/<name>/" prefix — a key without one names no file and is ignored:
+listed above, including its "mine/" or "team:<key>/" prefix — a key without one names no file and is ignored:
 {{"summary": "<2-5 short lines: what you merged, dropped or moved>",
- "files": {{"mine/general.md": "<new content>", "team:<owner>/<name>/<owner>__<repo>.md": "<new content>", ...}}}}"""
+ "files": {{"mine/general.md": "<new content>", "team:<key>/<owner>__<repo>.md": "<new content>", ...}}}}"""
 TIMEOUT = 600
 
 
@@ -652,9 +652,9 @@ def files():
 
 def _base(key):
 	"""The directory a files() key belongs to, or "" when it names a source that is not there."""
-	# ponytail: "mine/x.md" or "team:<owner>/<name>/x.md" — so the slug's own slash means partition on
-	# the FIRST separator is wrong for a team. Split from the right instead: whatever precedes the last
-	# component is the source, and an unknown one resolves to "" and is dropped, as before.
+	# ponytail: "mine/x.md" or "team:<key>/x.md". key_of strips everything outside [a-z0-9-], so a key
+	# never contains a slash — but split from the RIGHT anyway, so the file name is the last component
+	# whatever the source is. An unknown source resolves to "" and is dropped, as before.
 	where, _, name = key.rpartition("/")
 	if where == "mine":
 		return config.MEMORY_DIR

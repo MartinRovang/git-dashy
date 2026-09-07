@@ -42,8 +42,8 @@ def links():
 	"""(link, target) for the two paths a session reads memory through.
 
 	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
-	joined. With none or several it points inside TEAMS at a name nothing will have started — a dangling
-	link (`key_of("no single team")` would collide, so it is a convention, not an impossibility) —
+	joined. With none or several it points inside TEAMS at a DOTTED name, which key_of can never produce
+	and joined() skips — so no team can ever occupy it. It dangles, which
 	which the loader already degrades on (a missing @import target is skipped and its siblings still
 	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
 	into every session on the machine, which is the defect this whole line of work removes. Making the
@@ -58,7 +58,7 @@ def links():
 	        # guess in the meantime.
 	        (os.path.join(d, "prs-team"),
 	         os.path.join(team.dirs()[0], "memory") if len(team.dirs()) == 1
-	         else os.path.join(config.TEAMS, "no-single-team", "memory"))]
+	         else os.path.join(config.TEAMS, ".no-single-team", "memory"))]
 
 
 def _fence(line, open_at):
@@ -798,7 +798,13 @@ def setup(ask, corpus_home=None):
 	# team, so its project.md could never be selected by anything — but it is a different file from the
 	# one the last version chose, so it is said out loud rather than swapped silently.
 	if team.on() and not slug:
-		out.append("note   the team checkout has no origin, so nothing can be bound to it — "
+		# ponytail: team_key() is "" for NONE and for SEVERAL, and those are different problems. Two
+		# joined teams is the normal state this whole change exists to create, and telling that user
+		# their checkout has no origin describes a cause that is not theirs.
+		joined = team.joined()
+		out.append(f"note   several teams joined ({', '.join(joined)}) — say which with --team; "
+		           "writing your own brief instead" if len(joined) > 1 else
+		           "note   the team checkout has no name, so nothing can be bound to it — "
 		           "writing your own brief instead")
 	dest = memory.brief_path(slug)
 	whose = ("yours, and every review of a repo bound to no team reads it" if mine else

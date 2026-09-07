@@ -1379,3 +1379,29 @@ def test_t_changes_what_a_team_says_it_is(screen, monkeypatch, st, tmp_path):
 	it = team.info("acme-tools")
 	assert it["description"] == "now for the platform work"
 	assert it["name"] == "Acme Tools"     # the NAME is the key's origin and is not touched by this
+
+
+def test_a_completed_migration_is_announced_not_shown_as_an_error(screen, monkeypatch, tmp_path):
+	"""team.ERROR is painted with the err attribute, so a move that WORKED showed up red. It is also a
+	move of the user's files done without being asked, so it gets said out loud once."""
+	from dashy.core import team
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "ERROR", "")
+
+    # a move that worked
+	monkeypatch.setattr(team, "migrate", lambda: "gitdashy: moved your team checkout to /x, and repointed 2 bindings")
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert said and "moved your team checkout" in said[0]
+	assert team.ERROR == ""                      # not red, and not on the row
+
+	# a move that refused stays on the row, where it will be read again
+	said.clear()
+	monkeypatch.setattr(team, "migrate", lambda: "gitdashy: /x has 2 unpushed reviews — push them, then restart")
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert "unpushed reviews" in team.ERROR and not said

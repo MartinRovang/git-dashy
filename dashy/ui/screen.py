@@ -1130,7 +1130,14 @@ def _connect_team(scr, state, sel, joined):
 def _pick_team(scr, state, sel, joined, verb):
 	"""Which team, when there is more than one. "" when the answer is not one we have."""
 	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" {verb} which team? ({', '.join(joined)})")
-	return key if key and team.dir_of(key) else ""
+	if not key:
+		return ""            # ponytail: an empty answer is a cancel, and a cancel says nothing
+	if not team.dir_of(key):
+		# ponytail: a TYPO is not a cancel. It used to return the same "" and the screen just came back,
+		# so a mistyped key looked exactly like changing your mind.
+		confirm(scr, state, sel, f" not in {key} — joined: {', '.join(joined)}  [any key]")
+		return ""
+	return key
 
 
 def _edit_brief(scr, state, sel, joined):
@@ -1371,8 +1378,16 @@ def main(scr, interval, auto, model):
 	# ponytail: BEFORE activate(), which lists teams by looking in TEAMS — a pre-plural checkout has to
 	# be there before anything asks what is joined. The report goes on the footer rather than raising;
 	# it is a move, and a move that could not happen must say so where it will be read.
+	# ponytail: only a FAILURE goes in team.ERROR — the Knowledge row paints that with the err attribute,
+	# so a completed move showed up RED. A move that worked is news, not a problem. It is also a move of
+	# the user's files, done once without being asked, so it is said out loud and acknowledged rather
+	# than left on a row they may not look at; a refusal stays on the row, where it will be read again.
 	if moved := team.migrate():
-		team.ERROR = moved[len("gitdashy: "):][:60]
+		line = moved[len("gitdashy: "):]
+		if line.startswith("moved your team checkout"):
+			confirm(scr, state, 0, f" {line[:110]}  [any key]")
+		else:
+			team.ERROR = line[:60]
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too

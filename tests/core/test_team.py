@@ -440,3 +440,40 @@ def test_joining_never_publishes_your_own_review_log(monkeypatch, tmp_path):
 	assert not os.path.exists(theirs) or "secret-side-project" not in open(theirs).read()
 	assert "secret-side-project" in open(log.LOG).read()   # still yours, still readable by you
 	assert bind.of("acme/secret-side-project") == ""       # and not bound to them either
+
+
+def test_a_join_reports_on_its_own_push_not_another_teams(monkeypatch, tmp_path):
+	"""push() walks EVERY joined team now, so a team you were already in whose push fails set the
+	ERROR global — and the freshly cloned, renamed, fully joined team was reported as a failure."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	good = tmp_path / "good.git"
+	git("init", "-q", "--bare", "-b", "main", str(good), cwd=tmp_path)
+	assert team.start("Broken Team", "") == ""
+	team.connect("broken-team", str(tmp_path / "nonexistent" / "never.git"))
+	open(os.path.join(team.dir_of("broken-team"), "memory", "general.md"), "w").write("- a fact\n")
+
+	err = team.setup(str(good))
+	assert err == "", f"a successful join reported {err!r}"
+	assert "good" in team.joined()
+
+
+def test_a_failed_start_leaves_no_link_behind(monkeypatch, tmp_path):
+	"""It is not a repo so joined() skips it, but lexists() is true — so retrying the same name
+	answered "exists and is not a team" forever and the user had to clean up by hand."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	share = tmp_path / "share"
+	monkeypatch.setattr(team, "_git", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "no"))
+	assert "could not git init" in team.start("Acme", "", str(share))
+	assert not os.path.lexists(tmp_path / "teams" / "acme")   # and the name is free to retry
+	assert share.exists()                                      # what it pointed at is the user's
+
+
+def test_unpushed_cannot_raise(monkeypatch, tmp_path):
+	"""team.migrate() documents that it never raises — it runs before the first draw — and calls this."""
+	def boom(*a, **k):
+		raise subprocess.TimeoutExpired(a, 60)
+	monkeypatch.setattr(knowledge.subprocess, "run", boom)
+	assert knowledge.unpushed(str(tmp_path)) == -1
+	monkeypatch.setattr(knowledge.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("nope")))
+	assert knowledge.unpushed(str(tmp_path)) == -1

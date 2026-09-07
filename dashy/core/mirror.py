@@ -8,7 +8,7 @@ import os
 import subprocess
 
 from .. import config
-from . import memory, team
+from . import bind, memory, team
 
 NAMES = ("general.md", "repo.md")  # the only names sync() ever writes or removes
 HEADER = """> **Shared team memory — read-only mirror.** PR reviews write these facts; `gitdashy sync-memory`
@@ -77,6 +77,9 @@ def _write(into, repo, general, at):
 			wrote.append(name)
 		elif os.path.exists(dst):
 			os.remove(dst)  # ponytail: a mirror never outlives its source, or it becomes a rumour
-	where = f"team {team.NAME}" if team.on() else config.MEMORY_DIR
+	# ponytail: THIS repo's team, not every joined one. team.NAME is a comma-joined list now, so a sync
+	# for a repo bound to one team reported "from team org-a, org-b" — the report naming a source the
+	# write did not come from. Exactly what share_screen was fixed for in this same change, one file over.
+	where = f"team {slug}" if (slug := bind.of(repo) if repo else "") else config.MEMORY_DIR
 	return (f"gitdashy: mirrored {', '.join(wrote) or 'nothing'} into {into}"
 	        f" from {where}{' for ' + repo if repo else ''}{' · ' + team.ERROR if team.ERROR else ''}")
