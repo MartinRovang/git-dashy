@@ -1,5 +1,6 @@
-"""The review log: ~/.prs_reviewed.jsonl, one JSON object per review."""
+"""The review log: one JSON object per review. Yours, plus one inside each joined team."""
 import json
+import os
 from datetime import datetime, timezone
 
 from .. import config
@@ -7,18 +8,59 @@ from .. import config
 LOG = config.LOG  # module attr so --demo and tests can point it elsewhere
 
 
-def reviewed():
-	"""PR dicts from the log, newest first, each with a 'review' entry and a 'status' string."""
+def logs():
+	"""Every log to read: yours, then each joined team's. ponytail: lazy import — team imports this."""
+	from . import team
+	return [LOG] + [p for p in (team.log_of(s) for s in team.joined()) if p and p != LOG]
+
+
+_CACHE = {}  # path -> (stat key, parsed entries). ponytail: see reviewed().
+
+
+def _entries(path):
+	"""One log's parsed entries, oldest first, cached on (mtime, size).
+
+	ponytail: reviewed() is called per FRAME by the detail pane and again per keypress, and it reparsed
+	the whole file every time. That was tolerable while there was one file; the log is per team now, so
+	an N-team machine paid N whole-file parses at ~20fps. The key is the stat, so an append by a review
+	thread — or a pull bringing a teammate's — invalidates it without anything having to remember to.
+	"""
 	try:
-		lines = open(LOG).read().splitlines()
-	except FileNotFoundError:
+		st = os.stat(path)
+	except OSError:
 		return []
-	out = []
-	for line in reversed(lines):
+	key = (st.st_mtime_ns, st.st_size)
+	if _CACHE.get(path, (None,))[0] != key:
+		try:
+			with open(path) as f:
+				# ponytail: a malformed line is skipped, not fatal. One team's half-written append must
+				# not empty the REVIEWED list — and with several logs it is no longer your own file.
+				out = [e for e in (_parse(l) for l in f.read().splitlines()) if e]
+		except OSError:
+			return []
+		_CACHE[path] = (key, out)
+	return _CACHE[path][1]
+
+
+def _parse(line):
+	try:
 		e = json.loads(line)
-		out.append({"title": "?", "isDraft": False, **e["pr"], "review": e, "tag": tag(e),
-		            "status": config.STATUS[e["verdict"]], "updatedAt": e["at"]})
-	return out
+		return e if isinstance(e, dict) and "pr" in e and e.get("verdict") in config.STATUS else None
+	except ValueError:
+		return None
+
+
+def reviewed():
+	"""PR dicts from every log, newest first, each with a 'review' entry and a 'status' string."""
+	# ponytail: newest first, and a STABLE tiebreak. It used to be reversed(lines) on one file, so two
+	# entries written in the same second came back later-line-first. Sorting on "at" alone is stable in
+	# the wrong direction — it kept the earlier line first — which silently reordered same-second
+	# reviews, and log.last() reads the FIRST match. Position within its file breaks the tie.
+	got = [(e, i) for path in logs() for i, e in enumerate(_entries(path))]
+	got.sort(key=lambda p: (p[0]["at"], p[1]), reverse=True)
+	got = [e for e, _ in got]
+	return [{"title": "?", "isDraft": False, **e["pr"], "review": e, "tag": tag(e),
+	         "status": config.STATUS[e["verdict"]], "updatedAt": e["at"]} for e in got]
 
 
 def last(url):
@@ -63,7 +105,14 @@ def log_review(pr, model, verdict, at=None):
 	         "cost": verdict.get("cost"), "ms": verdict.get("ms"),
 	         "verdict": verdict["verdict"], "summary": verdict.get("summary", ""), "body": verdict["body"],
 	         "findings": findings(verdict)}
-	with open(LOG, "a") as f:
+	# ponytail: into the log of the team this repo is BOUND to, and yours when it is bound to none. The
+	# shared review log is how a teammate's review appears in your list; sending it to a team the repo
+	# does not belong to would tell them you reviewed something that is none of their business.
+	from . import bind, team
+	repo = pr.get("repository", {}).get("nameWithOwner", "")
+	dest = team.log_of(bind.of(repo)) if repo else LOG
+	os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+	with open(dest, "a") as f:
 		f.write(json.dumps(entry) + "\n")
 	return config.STATUS[verdict["verdict"]]
 

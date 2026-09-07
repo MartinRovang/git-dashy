@@ -4,6 +4,8 @@ import os
 from dashy import config
 from dashy.core import bind, memory, team
 
+from conftest import a_team
+
 
 def test_one_repo_is_named_the_same_way_however_you_spell_it():
 	"""A binding must survive a re-clone and a move, so it keys on the slug, not on a path or a URL."""
@@ -72,10 +74,8 @@ def test_an_unbinding_survives_the_next_seed():
 
 
 def test_a_binding_names_a_team_this_machine_may_not_have(monkeypatch, tmp_path):
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	(tmp_path / "team" / ".git").mkdir(parents=True)
-	monkeypatch.setattr(team, "NAME", "org/t")
-	assert bind.team_dir("org/t") == str(tmp_path / "team" / "memory")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
+	assert bind.team_dir("org/t") == str(shared)
 	assert bind.team_dir("org/other") == ""  # a team we are not in resolves to nothing, never to ours
 	assert bind.team_dir("") == ""
 	assert bind.team_key() == "org/t"
@@ -83,15 +83,12 @@ def test_a_binding_names_a_team_this_machine_may_not_have(monkeypatch, tmp_path)
 
 def test_the_brief_a_repo_gets_is_the_one_its_binding_names(monkeypatch, tmp_path):
 	"""End to end, through the function reviews actually call."""
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
-	shared.mkdir(parents=True)
+	mine = tmp_path / "mine"
 	mine.mkdir()
 	(mine / "project.md").write_text("My own work.\n")
-	(shared / "project.md").write_text("What the team builds.\n")
-	(tmp_path / "team" / ".git").mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
+	(shared / "project.md").write_text("What the team builds.\n")
 	assert memory.brief("acme/api")[0] == "My own work."
 	bind.bind("acme/api", "org/t")
 	assert memory.brief("acme/api") == ("What the team builds.", "team org/t")
@@ -134,15 +131,12 @@ def test_the_cli_never_reads_a_flags_value_as_the_repo(monkeypatch, tmp_path):
 
 def _estate(monkeypatch, tmp_path):
 	"""A team with facts and a brief, plus your own memory. Returns (mine, team memory)."""
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
-	shared.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	shared = a_team(monkeypatch, tmp_path, "org/mem")
 	(shared / "general.md").write_text("- the team reviews python with 4 spaces\n")
 	(shared / "neomedsys__neo-api.md").write_text("- neo-api holds no DDL\n")
-	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/mem")
 	return mine, shared
 
 

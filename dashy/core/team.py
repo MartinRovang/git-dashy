@@ -36,14 +36,18 @@ def is_repo(d):
 
 
 def on():
-	return is_repo(config.TEAM)
+	"""True when this machine has joined any team. ponytail: plural now — `joined()` is the real answer,
+	and this stays because a dozen call sites only ever asked the yes/no."""
+	return bool(joined())
 
 
-def _git(*args, cwd=None):
+def _git(*args, cwd):
 	"""ponytail: same protection as a clone. These are the calls that run on every refresh tick, from the
 	daemon thread — a pull that stops to ask for a credential would hang the dashboard with nothing on
 	screen to say why, which is the whole reason _remote exists."""
-	return _remote(["git", "-C", cwd or config.TEAM, *args], timeout=120)
+	# ponytail: cwd is REQUIRED now. It used to default to the one team checkout, and with several there
+	# is no such default — a silent wrong-directory git call is worse than a TypeError at the call site.
+	return _remote(["git", "-C", cwd, *args], timeout=120)
 
 
 def _note(r, label="sync"):
@@ -185,15 +189,20 @@ def push_dir(d, msg, label="sync"):
 
 
 def pull():
-	pull_dir(config.TEAM)
+	"""ponytail: every joined team. One failing does not stop the rest — _note keeps the last reason."""
+	for d in dirs():
+		pull_dir(d)
 
 
 def push(msg):
-	"""ponytail: passes the reason up so a caller that deletes can check it — but NOT being in a team is
+	"""Commit and push every joined team. Returns "" or the first reason one did not.
+
+	ponytail: passes the reason up so a caller that deletes can check it — but NOT being in a team is
 	the normal state, not a failure. Returning "not a git checkout" from here made the dream warn that
 	memory was uncommitted every single time, on a machine with no team, which is a warning nobody would
-	read twice."""
-	return push_dir(config.TEAM, msg) if on() else ""
+	read twice.
+	"""
+	return next((e for e in (push_dir(d, msg) for d in dirs()) if e), "")
 
 
 def slug_of(url):
@@ -237,13 +246,64 @@ def origin_slug(path):
 	return slug_of(_url(path))
 
 
+def dirname(slug):
+	"""The directory name a team slug lives under. ponytail: the same __ convention as memory.slug()."""
+	return (slug or "").replace("/", "__")
+
+
+def slug_of_dir(name):
+	""""owner__name" -> "owner/name"."""
+	return (name or "").replace("__", "/")
+
+
+def joined():
+	"""[slug] for every team checkout on this machine, sorted. [] when none.
+
+	ponytail: the FILESYSTEM is the registry, as it is for memory and the store — a directory that
+	happens to hold a .git is a team, exactly as ~/.prs_team being a checkout was "team mode is on".
+	No config file to fall out of step with what is actually on disk.
+	"""
+	try:
+		names = sorted(os.listdir(config.TEAMS))
+	except OSError:
+		return []
+	return [slug_of_dir(n) for n in names if is_repo(os.path.join(config.TEAMS, n))]
+
+
+def dir_of(slug):
+	"""The checkout for `slug`, "" when this machine has not joined it."""
+	if not slug:
+		return ""
+	d = os.path.join(config.TEAMS, dirname(slug))
+	return d if is_repo(d) else ""
+
+
+def dirs():
+	"""Every joined team's checkout directory."""
+	return [os.path.join(config.TEAMS, dirname(s)) for s in joined()]
+
+
+def log_of(slug):
+	"""Where reviews of `slug`'s repos are logged, or your own log when slug is "".
+
+	ponytail: log.LOG for yours, not config.LOCAL_LOG. They are the same path in a real run, and NOT
+	the same under --demo or a test, both of which point log.LOG somewhere throwaway. Reading through
+	the constant while everything else reads the module attr sent test writes to the real
+	~/.prs_reviewed.jsonl — which is the one file in this system nobody would think to check.
+	"""
+	from . import log
+	d = dir_of(slug)
+	return os.path.join(d, "reviewed.jsonl") if d else log.LOG
+
+
 def activate():
 	"""Point log + memory at the team checkout. Called at startup and after setup()."""
 	global NAME
 	if not on():
 		return
-	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")  # the review log really is shared
-	NAME = origin_slug(config.TEAM)  # ponytail: MEMORY_DIR stays yours — memory.sources() reads both
+	# ponytail: the log is PER TEAM now — log.logs() reads yours plus every joined one and merges. There
+	# is no single config.LOG to point somewhere, which is why this line went rather than moved.
+	NAME = ", ".join(joined())  # ponytail: for the header only. Resolution goes through the slug.
 	# ponytail: lazy, and only these two lines need it — bind and memory both import this module, so an
 	# import at the top is a cycle. Seeding lives HERE, on the one function that says "a team is now
 	# known", rather than at each of the six entry points that call it: a bootstrap only some callers
@@ -261,9 +321,12 @@ def activate():
 	# disclosure test, and exactly the set whose repo.md the mirror would otherwise strip: a repo the
 	# team has no facts about only ever had general.md mirrored, and dropping that IS the new rule.
 	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
-	theirs = os.path.join(config.TEAM, "memory")
-	known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
-	bind.seed(NAME, sorted(memory.logged_repos()) + known)
+	# ponytail: per team, and only for teams that can be seeded unambiguously. With several joined, a
+	# repo in one team's log is that team's; a repo in two is left alone rather than guessed at.
+	for slug in joined():
+		theirs = os.path.join(dir_of(slug), "memory")
+		known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
+		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known)
 
 
 def clone(repo, dest):
@@ -330,14 +393,24 @@ def setup(repo, create=False):
 		return ERROR
 	if is_own_memory(repo):
 		return "that is your own memory directory, which holds drafts — use a different repo for the team"
-	err = clone(repo, config.TEAM)
+	# ponytail: the slug decides the directory, so a team is found by name rather than by being THE one.
+	# It comes from the URL before the clone, because after it the directory has to already be right.
+	slug = slug_of(repo) if "/" in repo else ""
+	if not slug:
+		return f"cannot tell an owner/name from {repo!r} — a team is keyed by its slug"
+	dest = os.path.join(config.TEAMS, dirname(slug))
+	if is_repo(dest):
+		return f"already in {slug}"
+	os.makedirs(config.TEAMS, exist_ok=True)
+	err = clone(repo, dest)
 	if err:
 		return err
-	union_attrs(config.TEAM)
-	old_log = log.LOG
+	union_attrs(dest)
+	old_log = config.LOCAL_LOG
 	activate()
-	os.makedirs(os.path.join(config.TEAM, "memory"), exist_ok=True)
-	seed_project(os.path.join(config.TEAM, "memory", "project.md"))
+	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
+	seed_project(os.path.join(dest, "memory", "project.md"))
+	config.LOG = log_of(slug)
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
 		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
 		# ponytail: again, because the log only exists NOW. activate() seeds bindings from it, and on a

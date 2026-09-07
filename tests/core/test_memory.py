@@ -6,7 +6,7 @@ import pytest
 from dashy import config
 from dashy.core import bind, memory, team
 
-from conftest import claude_out
+from conftest import a_team, claude_out
 
 
 def facts(p):
@@ -20,13 +20,10 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 	which repos those are. It defaults to a/b — the PR every other fixture uses — which is what these
 	tests always meant by "in a team"; it just used to be true of every repo on the machine.
 	"""
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True, exist_ok=True)
-	shared.mkdir(parents=True, exist_ok=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
 	for r in (repos or ("a/b",)):
 		bind.bind(r, "org/t")
 	return mine, shared
@@ -106,17 +103,19 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 	calls = []
 	def fake_run(cmd, **kw):
 		calls.append(cmd)
-		return claude_out(summary="tidied", files={"mine/a__b.md": "- uses tabs", "team/general.md": "",
+		return claude_out(summary="tidied", files={"mine/a__b.md": "- uses tabs", "team:org/t/general.md": "",
 		                                           "bogus.md": "- nope"})
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	summary, _before, new = memory.dream("sonnet")
 	assert calls[0][:2] == ["claude", "-p"] and "--model" in calls[0]
 	assert "--safe-mode" in calls[0]  # dream has a JSON contract too, no ambient CLAUDE.md
-	assert "### mine/general.md" in calls[0][2] and "### team/general.md" in calls[0][2]
-	assert "never move a line from mine/ into team/" in calls[0][2].lower() or "never move" in calls[0][2]
+	assert "### mine/general.md" in calls[0][2] and "### team:org/t/general.md" in calls[0][2]
+	# ponytail: the phrase is pinned on purpose — this prompt emptied general.md once, and a reword of
+	# it is a change to what the model is allowed to delete. It now also forbids moving BETWEEN teams.
+	assert "Never move a line from mine/ into a team/, or between two teams" in calls[0][2]
 	assert summary.startswith("tidied")
 	assert "ignored bogus.md" in summary  # a dropped edit is reported, not silently discarded
-	assert set(new) == {"mine/general.md", "mine/a__b.md", "team/general.md"}
+	assert set(new) == {"mine/general.md", "mine/a__b.md", "team:org/t/general.md"}
 	assert new["mine/general.md"] == "- run make lint\n"  # untouched files keep what they had
 	memory.write(new)
 	assert facts(mine / "a__b.md") == ["- uses tabs"]
@@ -127,9 +126,9 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 def test_dream_never_writes_a_team_file_when_you_are_not_in_one(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "general.md").write_text("- solo\n")
-	memory.write({"team/general.md": "- should not appear"})
+	memory.write({"team:org/t/general.md": "- should not appear"})
 	assert not (tmp_path / "general.md").read_text().startswith("- should not appear")
-	assert not os.path.exists(os.path.join(config.TEAM, "memory", "general.md"))
+	assert team.joined() == [] and not team.dirs()  # there is no team checkout to have written to
 
 
 def test_dream_with_no_memory_raises(monkeypatch, tmp_path):
@@ -167,12 +166,12 @@ def test_a_draft_is_never_pooled(monkeypatch, tmp_path):
 
 
 def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
-	mine, _ = in_a_team(monkeypatch, tmp_path)
+	mine, shared = in_a_team(monkeypatch, tmp_path)
 	logged(tmp_path, "a/b")
 	memory.append("a/b", "the API owns all validation")
 	memory.append("a/b", "the API owns all validation")
 	# a teammate's checkout brings their own pool along
-	mate = os.path.join(config.TEAM, "memory", memory.POOL, "martin")
+	mate = os.path.join(str(shared), memory.POOL, "martin")  # the team checkout, wherever a_team put it
 	os.makedirs(mate)
 	open(os.path.join(mate, "a__b.md"), "w").write("- The API owns all validation.\n")  # reworded
 	index = memory.pools()
@@ -196,8 +195,8 @@ def test_sharing_and_forgetting_withdraw_the_evidence(monkeypatch, tmp_path):
 
 
 def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
-	mine, _ = in_a_team(monkeypatch, tmp_path)
-	mate = os.path.join(config.TEAM, "memory", memory.POOL, "martin")
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	mate = os.path.join(str(shared), memory.POOL, "martin")  # the team checkout, wherever a_team put it
 	os.makedirs(mate)
 	open(os.path.join(mate, "a__b.md"), "w").write("- something only martin accepted\n")
 	assert "martin accepted" not in memory.read("a/b")
@@ -510,18 +509,18 @@ def test_push_reports_a_team_failure_but_not_the_absence_of_a_team(monkeypatch, 
 	is the normal state, not a failure. Returning an error there made the dream warn on every run on a
 	machine with no team, which is a warning nobody reads twice.
 	"""
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "no-teams"))
 	assert not team.on()
 	assert team.push("x") == "", "no team is not a failure"
 
 	import subprocess as sp
-	d = tmp_path / "team"
+	d = tmp_path / "teams" / "org__t"   # ponytail: a checkout under TEAMS is what "joined" means now
 	(d / "memory").mkdir(parents=True)
 	sp.run(["git", "init", "-q", str(d)], check=True)
 	sp.run(["git", "-C", str(d), "config", "user.email", "t@t"], check=True)
 	sp.run(["git", "-C", str(d), "config", "user.name", "t"], check=True)
-	monkeypatch.setattr(config, "TEAM", str(d))
-	assert team.on()
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.on() and team.joined() == ["org/t"]
 	(d / "memory" / "general.md").write_text("- shared\n")
 	assert team.push("memory: real") == ""            # a real team commits, and says nothing
 

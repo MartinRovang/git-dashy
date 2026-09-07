@@ -9,7 +9,7 @@ from dashy.ui import screen as ui
 from dashy.core.review import review
 from dashy.core.state import State
 
-from conftest import PR, FakeScr, claude_out
+from conftest import FakeScr, PR, a_team, claude_out
 
 
 def test_draw_renders_sections_status_and_selection(screen):
@@ -389,13 +389,10 @@ def test_esc_menu_theme_notify_refresh_quit(screen, monkeypatch):
 
 
 def _team(monkeypatch, tmp_path):
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(ui.team, "on", lambda: True)
-	monkeypatch.setattr(ui.team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
 	bind.bind("a/b", "org/t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
 	return mine, shared
 
@@ -440,7 +437,7 @@ def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
 def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):
 	mine, shared = _team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- only I found this\n- both of us found this\n")
-	pool = tmp_path / "team" / "memory" / "pool"
+	pool = shared / "pool"   # ponytail: inside the team's own checkout, wherever a_team put it
 	(pool / "me").mkdir(parents=True)
 	(pool / "martin").mkdir(parents=True)
 	(pool / "me" / "a__b.md").write_text("- both of us found this\n")
@@ -1045,15 +1042,12 @@ def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, t
 def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, tmp_path):
 	"""A thing that silently selects your context must name what it selected, and why that one."""
 	from dashy.core import bind, team
-	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
-	shared.mkdir(parents=True)
-	(tmp_path / "team" / ".git").mkdir()
 	(mine / "project.md").write_text("My own work.\n")
-	(shared / "project.md").write_text("What the team builds.\n")
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
+	(shared / "project.md").write_text("What the team builds.\n")
 	st = State(60)
 	monkeypatch.setattr(st, "want_detail", lambda pr: {})  # no background fetch from a draw test
 	pr = dict(PR)

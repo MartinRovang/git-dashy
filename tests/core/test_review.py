@@ -8,7 +8,7 @@ from dashy import config
 from dashy.core import github, log, memory, review as review_mod
 from dashy.core.review import review
 
-from conftest import PR, Result, claude_out
+from conftest import PR, Result, a_team, claude_out
 
 
 def test_review_posts_verdict_and_logs(monkeypatch):
@@ -180,12 +180,16 @@ def test_rereview_prompt_includes_earlier_review(monkeypatch):
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	review(dict(PR), "opus")
 	assert "RE-REVIEW" not in prompts[0]
-	log.log_review(dict(PR), "opus", {"verdict": "request_changes", "body": "- cache never invalidated"}, at="2026-01-02T03:04:05+00:00")
+	# ponytail: dated AFTER the review above, which logged at "now". It used to be backdated to
+	# 2026-01-02 and still win, because reviewed() returned reversed FILE order — so the test passed on
+	# append order while asserting "the newest". With logs from several teams appends are interleaved
+	# and only the timestamp means anything, so the setup now says what it meant.
+	log.log_review(dict(PR), "opus", {"verdict": "request_changes", "body": "- cache never invalidated"}, at="2099-01-02T03:04:05+00:00")
 	calls = []
 	monkeypatch.setattr(github, "comment", lambda repo, n, body: calls.append(body))
 	review(dict(PR), "opus")
-	assert "**Dashy is on its way!** Re-reviewing (was ✗ changes requested on 2026-01-02) with model" in calls[0]
-	assert "RE-REVIEW: you already reviewed this PR on 2026-01-02 with verdict request_changes" in prompts[1]
+	assert "**Dashy is on its way!** Re-reviewing (was ✗ changes requested on 2099-01-02) with model" in calls[0]
+	assert "RE-REVIEW: you already reviewed this PR on 2099-01-02 with verdict request_changes" in prompts[1]
 	assert "- cache never invalidated" in prompts[1]
 
 
@@ -207,11 +211,8 @@ def _briefed(monkeypatch, tmp_path):
 	"""A team with a brief, and a recorder for the prompts a review builds. Returns the prompt list."""
 	from dashy.core import team
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	(tmp_path / "team" / "memory").mkdir(parents=True)
-	(tmp_path / "team" / "memory" / "project.md").write_text("We build X for surgeons.\n")
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
+	(shared / "project.md").write_text("We build X for surgeons.\n")
 	prompts = []
 	def fake_run(cmd, **kw):
 		if cmd[0] == "claude":

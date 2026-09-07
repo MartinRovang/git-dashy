@@ -113,7 +113,7 @@ def header_groups(state):
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
-	        ("T", "Team", team.ERROR[:40] if team.ERROR else (team.NAME or "off"),  # ponytail: clipped, T shows it whole
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
 		know.append(("C", "Store", knowledge.show(config.TEAM), None))
@@ -923,7 +923,11 @@ def share_screen(scr, state, sel):
 		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
 		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
 		draw(scr, state, sel, prompt=" ")
-		panel(scr, f"share with {team.NAME or 'the team'}  ·  {i + 1}/{len(items)}",
+		# ponytail: the team this FACT goes to, not "the" team. share() routes by the repo's binding, so
+		# with several joined the header has to name the same one the keypress will write to — a title
+		# saying one team while the write lands in another is the silent selection all of this removes.
+		to = bind.of(repo) if repo else (team.joined()[0] if len(team.joined()) == 1 else "")
+		panel(scr, f"share with {to or 'the team'}  ·  {i + 1}/{len(items)}",
 		      [(repo or "general", mark), ("", ""), *body],
 		      "[t] share   [x] forget   [j/k] move   [esc] close")
 		k = scr.getch()

@@ -1,4 +1,5 @@
 import os
+import pathlib
 import subprocess
 
 from dashy import config
@@ -12,7 +13,7 @@ def git(*a, cwd):
 def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	remote = tmp_path / "remote.git"
 	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	mem = tmp_path / "mem"
 	mem.mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
@@ -21,10 +22,12 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
-	assert team.on() and log.LOG == str(tmp_path / "me" / "reviewed.jsonl")  # the log is shared history
+	# ponytail: the log lives IN the team now and is merged on read, so there is no single log.LOG to
+	# point at it. team.log_of(slug) is the answer, and yours stays yours for unbound repos.
+	assert team.on() and team.log_of(team.joined()[0]) == os.path.join(team.dirs()[0], "reviewed.jsonl")
 	assert config.MEMORY_DIR == str(mem) and open(memory.path("a/b")).read() == "- tabs\n"  # memory stays yours
 	# joining must not publish every private fact you have ever collected, unreviewed, in one action
-	assert not os.path.exists(memory.path("a/b", str(tmp_path / "me" / "memory")))
+	assert not os.path.exists(memory.path("a/b", os.path.join(team.dirs()[0], "memory")))
 
 	# a teammate appends to the same files; our pull picks it up, our push merges without conflict
 	git("clone", "-q", str(remote), str(tmp_path / "mate"), cwd=tmp_path)
@@ -32,10 +35,14 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	open(tmp_path / "mate" / "reviewed.jsonl", "a").write('{"x":2}\n')
 	git("commit", "-qam", "mate", cwd=tmp_path / "mate")
 	git("push", "-q", cwd=tmp_path / "mate")
-	open(log.LOG, "a").write('{"x":3}\n')
+	# ponytail: the TEAM's log, not yours. Reviews of a bound repo are logged inside the team checkout
+	# and merged on read; yours holds only the unbound ones, so appending here proved nothing about the
+	# union driver it is testing.
+	theirs = team.log_of(team.joined()[0])
+	open(theirs, "a").write('{"x":3}\n')
 	team.push("mine")
 	team.pull()
-	assert team.ERROR == "" and open(log.LOG).read() == '{"x":1}\n{"x":2}\n{"x":3}\n'
+	assert team.ERROR == "" and open(theirs).read() == '{"x":1}\n{"x":2}\n{"x":3}\n'
 
 
 def test_joining_binds_the_repos_the_log_already_names(monkeypatch, tmp_path):
@@ -47,17 +54,17 @@ def test_joining_binds_the_repos_the_log_already_names(monkeypatch, tmp_path):
 	"""
 	remote = tmp_path / "remote.git"
 	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	(mem := tmp_path / "mem").mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
 	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/api"}}}\n')
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
-	assert bind.of("acme/api") == team.NAME and team.NAME  # bound to the team we just joined
+	assert bind.of("acme/api") == team.joined()[0]  # bound to the team we just joined
 	# and the team's brief is what a review of it now reads — the whole point of the binding
-	(tmp_path / "me" / "memory" / "project.md").write_text("What we build together.\n")
-	assert memory.brief("acme/api") == ("What we build together.", f"team {team.NAME}")
+	(pathlib.Path(team.dirs()[0], "memory", "project.md")).write_text("What we build together.\n")
+	assert memory.brief("acme/api") == ("What we build together.", f"team {team.joined()[0]}")
 
 
 def test_off_is_a_noop(tmp_path, monkeypatch):
@@ -68,7 +75,7 @@ def test_off_is_a_noop(tmp_path, monkeypatch):
 
 def test_setup_accepts_a_url_and_never_waits_on_a_prompt(monkeypatch, tmp_path):
 	"""A https/ssh URL clones with git, not gh — and a remote that asks for a password must fail, not hang."""
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	seen = {}
 	def fake_run(cmd, **kw):
 		seen["cmd"], seen["env"], seen["timeout"] = cmd, kw.get("env", {}), kw.get("timeout")
@@ -82,7 +89,7 @@ def test_setup_accepts_a_url_and_never_waits_on_a_prompt(monkeypatch, tmp_path):
 
 
 def test_setup_keeps_a_users_own_ssh_command(monkeypatch, tmp_path):
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /keys/mine")
 	seen = {}
 	def fake_run(cmd, **kw):
@@ -95,11 +102,11 @@ def test_setup_keeps_a_users_own_ssh_command(monkeypatch, tmp_path):
 
 def test_every_git_call_is_bounded_and_never_prompts(monkeypatch, tmp_path):
 	"""pull/push run on every refresh tick from a daemon thread — a credential prompt there hangs the TUI."""
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "t"))
-	(tmp_path / "t" / ".git").mkdir(parents=True)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "o__r" / ".git").mkdir(parents=True)
 	# ponytail: an origin, because pull now skips a checkout that has none — local-only history has
 	# nothing to pull and no error worth showing. The invariant under test is unchanged.
-	(tmp_path / "t" / ".git" / "config").write_text('[remote "origin"]\n\turl = git@github.com:o/r.git\n')
+	(tmp_path / "teams" / "o__r" / ".git" / "config").write_text('[remote "origin"]\n\turl = git@github.com:o/r.git\n')
 	seen = []
 	def fake_run(cmd, **kw):
 		seen.append((cmd[:2], kw.get("env", {}).get("GIT_TERMINAL_PROMPT"), kw.get("timeout")))
@@ -150,7 +157,7 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 	from dashy.core import install
 	remote = tmp_path / "remote.git"
 	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	(mem := tmp_path / "mem").mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
 	monkeypatch.setattr(install, "REGISTRY", str(tmp_path / "mirrors"))
@@ -161,12 +168,12 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
 	# the team holds facts for one of the wired repos; the mirror would strip them if it stayed unbound
-	shared = tmp_path / "me" / "memory"
+	shared = pathlib.Path(team.dirs()[0], "memory")
 	shared.mkdir(parents=True, exist_ok=True)
 	(shared / "acme__only-wired.md").write_text("- the team knows this repo\n")
 	team.activate()
-	assert bind.of("acme/reviewed") == team.NAME    # the log route
-	assert bind.of("acme/only-wired") == team.NAME  # and the mirror route, for a repo they can see
+	assert bind.of("acme/reviewed") == team.joined()[0]    # the log route
+	assert bind.of("acme/only-wired") == team.joined()[0]  # and the mirror route, for a repo they can see
 
 	# ponytail: and NOT the other way. The registry is every repo `gitdashy init` ever wired, personal
 	# ones included; binding one makes its facts poolable and shareable, which neither old rule did.
@@ -192,11 +199,11 @@ def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tm
 	git("commit", "-qm", "mate", cwd=tmp_path / "mate")
 	git("push", "-q", cwd=tmp_path / "mate")
 
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	(mem := tmp_path / "mem").mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
 	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"me/mine"}}}\n')
 	assert team.setup(str(remote)) == ""
-	assert bind.of("acme/theirs") == team.NAME       # seeded from the log that was already there
+	assert bind.of("acme/theirs") == team.joined()[0]       # seeded from the log that was already there
 	assert not os.path.exists(str(tmp_path / "me" / "reviewed.jsonl.bak"))
 	assert "acme/theirs" in open(config.LOG).read()  # and yours was NOT copied over theirs

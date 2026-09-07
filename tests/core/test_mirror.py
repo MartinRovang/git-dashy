@@ -4,6 +4,8 @@ import subprocess
 from dashy import config
 from dashy.core import bind, memory, mirror, team
 
+from conftest import a_team
+
 
 def seed(repo, text, base=None):
 	"""A confirmed fact, written the way two agreeing reviews would have left it."""
@@ -39,12 +41,8 @@ def test_sync_general_mirrors_the_cross_repo_facts_too(monkeypatch, tmp_path):
 
 
 def test_sync_mirrors_what_a_review_sees_from_both_sources(monkeypatch, tmp_path):
-	shared = tmp_path / "team" / "memory"
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
 	bind.bind("a/b", "org/t")  # the mirror shows what a review of THIS repo sees, which the binding decides
 	seed("a/b", "mine about a/b")
 	seed("a/b", "team about a/b", str(shared))
@@ -171,12 +169,8 @@ def test_an_unbound_repos_mirror_loses_the_teams_files(monkeypatch, tmp_path):
 	That is correct behaviour and it is why seeding has to cover every route into the mirror, not just
 	the review log. Pinned here so the deletion is a decision someone made rather than a surprise.
 	"""
-	shared = tmp_path / "team" / "memory"
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org/t")
 	seed("a/b", "team about a/b", str(shared))
 	seed(None, "team general", str(shared))
 	into = tmp_path / "out"
