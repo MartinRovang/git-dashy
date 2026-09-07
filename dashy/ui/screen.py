@@ -116,7 +116,7 @@ def header_groups(state):
 	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
-		know.append(("C", "Store", knowledge.show(config.TEAM), None))
+		know.append(("C", "Store", knowledge.show(config.TEAMS), None))
 	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
 
 
@@ -1000,7 +1000,7 @@ def set_path(scr, state, sel, which):
 	ponytail: the filesystem keeps the setting — the old location becomes a symlink to the new one, so it
 	survives a restart without a config file, the same way team mode persists as a .git in a known folder.
 	"""
-	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAM, False)
+	what, cur, live = ("Memory", config.LOCAL_MEMORY, team.on()) if which == "L" else ("Store", config.TEAMS, False)
 	note = "  (the team's memory is in use; this applies when you leave)" if live else ""
 	tail = ", or a git repo to clone" if which == "L" else ""
 	new = ask(scr, state, sel, f" {what} directory{tail} [{knowledge.tilde(cur)}]{note}:")
@@ -1101,15 +1101,23 @@ def pre_review(scr, state, sel, pr):
 
 
 def team_setup(scr, state, sel):
-	if team.on():
-		name = team.NAME
-		# ponytail: a symlinked TEAM keeps its checkout — only the link goes. Said here, because the
-		# prompt is the last place anyone reads before agreeing to something that deletes files.
-		where = (f"the checkout at {knowledge.tilde(os.path.realpath(config.TEAM))} is kept"
-		         if os.path.islink(config.TEAM) else f"files in {config.TEAM} are deleted")
-		if not confirm(scr, state, sel, f" team {name} · {where} · leave and go back to local memory? [y/n]"):
+	joined = team.joined()
+	if joined:
+		# ponytail: names WHICH team. With several joined, "leave the team" is not a sentence that says
+		# what it will delete — and this prompt is the last thing anyone reads before files go. One
+		# joined leaves that one; several, and it walks them rather than guessing.
+		name = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Leave which team? ({', '.join(joined)})")
+		if not name:
 			return
-		err = knowledge.leave()
+		d = team.dir_of(name)
+		if not d:
+			confirm(scr, state, sel, f" not in {name}  [any key]")
+			return
+		where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
+		         if os.path.islink(d) else f"files in {d} are deleted")
+		if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
+			return
+		err = knowledge.leave(name)
 		if err:
 			confirm(scr, state, sel, f" {err}  [any key]")
 		else:
@@ -1232,6 +1240,11 @@ def main(scr, interval, auto, model):
 	init_colors()
 	scr.timeout(500)
 	state = State(interval, model)
+	# ponytail: BEFORE activate(), which lists teams by looking in TEAMS — a pre-plural checkout has to
+	# be there before anything asks what is joined. The report goes on the footer rather than raising;
+	# it is a move, and a move that could not happen must say so where it will be read.
+	if moved := team.migrate():
+		team.ERROR = moved[len("gitdashy: "):][:60]
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too

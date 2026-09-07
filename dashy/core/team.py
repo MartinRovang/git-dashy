@@ -296,6 +296,42 @@ def log_of(slug):
 	return os.path.join(d, "reviewed.jsonl") if d else log.LOG
 
 
+def migrate():
+	"""Move a pre-plural ~/.prs_team into ~/.prs_teams/<slug>/. Returns a one-line report, or "".
+
+	ponytail: this is an automatic move of a directory holding somebody's unpushed work, at startup,
+	inside curses — the class of operation that has destroyed data twice in this repo. So it refuses on
+	everything it cannot prove safe rather than trying to cope: no slug to key it by, a destination that
+	already exists, uncommitted or unpushed work, or a home it cannot create.
+	ponytail: os.rename, never a copy-then-delete. A failure leaves the source exactly where it was,
+	and there is no window in which the only copy is half-written.
+	ponytail: never raises. It runs before the first draw; an exception here is a dashboard that never
+	appears, over a directory the user could have moved by hand.
+	"""
+	src = config.TEAM
+	if not is_repo(src) or not config.TEAMS:
+		return ""  # nothing to migrate, which is every machine that installed after this
+	slug = origin_slug(src)
+	if not slug:
+		return f"gitdashy: {src} has no origin, so it cannot be keyed by slug — move it by hand"
+	dest = os.path.join(config.TEAMS, dirname(slug))
+	if os.path.lexists(dest):
+		return f"gitdashy: {dest} already exists — {src} was left alone"
+	# ponytail: the same test knowledge.leave() uses before it deletes anything. A migration that moves
+	# a checkout with unpushed reviews in it is a migration that can lose them if the move half-fails.
+	from . import knowledge, memory
+	ahead = knowledge.unpushed(src)
+	if ahead != 0:
+		return f"gitdashy: {src} has {ahead if ahead > 0 else 'possibly'} unpushed reviews — push them, then restart"
+	memory.backup("migrate")  # ponytail: before, not after. Never raises; see memory.backup.
+	try:
+		os.makedirs(config.TEAMS, exist_ok=True)
+		os.rename(src, dest)
+	except OSError as e:
+		return f"gitdashy: could not move {src} to {dest}: {e}"
+	return f"gitdashy: moved your team checkout to {dest}"
+
+
 def activate():
 	"""Point log + memory at the team checkout. Called at startup and after setup()."""
 	global NAME

@@ -3,7 +3,7 @@ import pathlib
 import subprocess
 
 from dashy import config
-from dashy.core import bind, log, memory, team
+from dashy.core import bind, knowledge, log, memory, team
 
 
 def git(*a, cwd):
@@ -207,3 +207,50 @@ def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tm
 	assert bind.of("acme/theirs") == team.joined()[0]       # seeded from the log that was already there
 	assert not os.path.exists(str(tmp_path / "me" / "reviewed.jsonl.bak"))
 	assert "acme/theirs" in open(config.LOG).read()  # and yours was NOT copied over theirs
+
+
+def _old_layout(monkeypatch, tmp_path, remote=True):
+	"""A pre-plural ~/.prs_team with an origin, and an empty plural home beside it."""
+	src = tmp_path / "prs_team"
+	(src / "memory").mkdir(parents=True)
+	git("init", "-q", str(src), cwd=tmp_path)
+	if remote:
+		git("remote", "add", "origin", "git@github.com:org/mem.git", cwd=src)
+	(src / "memory" / "general.md").write_text("- the team knows this\n")
+	monkeypatch.setattr(config, "TEAM", str(src))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "prs_teams"))
+	return src
+
+
+def test_an_old_single_checkout_moves_into_the_plural_home(monkeypatch, tmp_path):
+	"""Everything keeps working with nothing for the user to do — the point of migrating at all."""
+	src = _old_layout(monkeypatch, tmp_path)
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
+	report = team.migrate()
+	assert "moved your team checkout" in report
+	assert not src.exists()
+	assert team.joined() == ["org/mem"]
+	assert open(os.path.join(team.dirs()[0], "memory", "general.md")).read() == "- the team knows this\n"
+	assert team.migrate() == ""            # idempotent: nothing left at the old path
+
+
+def test_migration_refuses_rather_than_risking_unpushed_work(monkeypatch, tmp_path):
+	"""An automatic move of someone's unpushed reviews, at startup, inside curses. It refuses instead."""
+	src = _old_layout(monkeypatch, tmp_path)
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 2)
+	assert "2 unpushed reviews" in team.migrate()
+	assert src.exists() and (src / "memory" / "general.md").exists()   # untouched
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: -1)      # cannot tell: also refuse
+	assert "possibly unpushed" in team.migrate()
+	assert src.exists()
+
+
+def test_migration_refuses_a_checkout_it_cannot_key_or_a_taken_destination(monkeypatch, tmp_path):
+	src = _old_layout(monkeypatch, tmp_path, remote=False)
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
+	assert "no origin" in team.migrate() and src.exists()   # nothing to name the directory by
+
+	git("remote", "add", "origin", "git@github.com:org/mem.git", cwd=src)
+	(tmp_path / "prs_teams" / "org__mem").mkdir(parents=True)
+	assert "already exists" in team.migrate()
+	assert src.exists() and (src / "memory" / "general.md").exists()   # and it is not merged over

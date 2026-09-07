@@ -236,6 +236,39 @@ has either recurred across two independent reviews or been shared by a human.
 
 ---
 
+## 4a. Several teams
+
+```
+~/.prs_teams/<owner>__<name>/     one checkout per team; the directory name IS the slug
+    memory/{general,<repo>,project}.md
+    memory/pool/<user>/*.md
+    reviewed.jsonl                 that team's shared review log
+~/.prs_memory/                     yours
+~/.prs_reviewed.jsonl              yours — reviews of repos bound to no team
+```
+
+The filesystem is the registry: a directory under `~/.prs_teams` holding a `.git` **is** a joined team,
+the same way `~/.prs_team` being a checkout used to mean "team mode is on". There is no config file to
+fall out of step with what is actually on disk.
+
+`bind.team_dir(slug)` is the one seam. Every read and every write asks it the same question — *which
+directory does this slug mean* — which is why going from one team to many changed that function's body
+rather than three dozen call sites.
+
+**The review log is per team, merged on read.** A review is appended to the log of the team its repo is
+bound to; an unbound repo's goes to yours. `log.reviewed()` reads all of them newest-first, so a
+teammate's review still appears in your list — per team, and only for repos that team owns. (It used to
+return reversed *file* order and call that newest-first, which is only the same thing when appends
+arrive in time order. With several logs it never is.)
+
+**A general fact needs exactly one team.** It names no repo, so no binding selects a team for it, and
+with two joined that is two different claims — so it stays yours until you say where it goes.
+
+**Migration.** A pre-plural `~/.prs_team` moves to `~/.prs_teams/<slug>/` on first launch, after a
+backup. It refuses rather than coping: no origin to key it by, a destination that exists, or any
+uncommitted or unpushed work. `os.rename`, never copy-then-delete, so a failure leaves the source
+exactly where it was.
+
 ## 4b. Which brief a review gets
 
 Facts are keyed by repo (`owner__repo.md`) with `general.md` for what holds everywhere. The brief was

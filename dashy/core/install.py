@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 from .. import HERE, config
-from . import knowledge, mirror
+from . import knowledge, mirror, team
 
 BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
 CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->"  # a separate block: one can go without the other
@@ -39,10 +39,25 @@ def claude_dir():
 
 
 def links():
-	"""(link, target) for the two paths a session reads memory through."""
+	"""(link, target) for the two paths a session reads memory through.
+
+	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
+	joined. With none or several it points inside TEAMS at a name no team can have — a dangling link,
+	which the loader already degrades on (a missing @import target is skipped and its siblings still
+	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
+	into every session on the machine, which is the defect this whole line of work removes. Making the
+	route itself per-repo is the deferred session-scoping work, SPEC 5+6.
+	"""
 	d = claude_dir()
 	return [(os.path.join(d, "prs-memory"), config.LOCAL_MEMORY),
-	        (os.path.join(d, "prs-team"), os.path.join(config.TEAM, "memory"))]
+	        # ponytail: the FIRST joined team, and only when there is exactly one. A symlink names one
+	        # directory; with several joined there is no honest answer, and pointing it at whichever
+	        # sorted first would put one team's cross-repo facts into every session on the machine.
+	        # That whole route is the deferred session-scoping work (SPEC 5+6) — this just refuses to
+	        # guess in the meantime.
+	        (os.path.join(d, "prs-team"),
+	         os.path.join(team.dirs()[0], "memory") if len(team.dirs()) == 1
+	         else os.path.join(config.TEAMS, "no-single-team", "memory"))]
 
 
 def _fence(line, open_at):
@@ -805,5 +820,5 @@ def setup(ask, corpus_home=None):
 	_write_text(dest, text)
 	out.append(f"wrote  {knowledge.tilde(dest)}")
 	if not mine:
-		team.push_dir(config.TEAM, "memory: the project brief", "sync")
+		team.push_dir(team.dir_of(slug), "memory: the project brief", "sync")
 	return out
