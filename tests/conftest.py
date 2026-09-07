@@ -35,6 +35,10 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(urllib.request, "urlopen", recorder)
 	for var in ("GH_TOKEN", "GITHUB_TOKEN"):
 		monkeypatch.delenv(var, raising=False)  # a token on the machine must not change what a test sends
+	# ponytail: $GITHUB_API is read at import, so a developer pointed at an Enterprise host would fail
+	# every test that names a url. The environment does not get to decide what the suite asserts.
+	monkeypatch.setattr(github, "API", "https://api.github.com")
+	monkeypatch.setattr(github, "GRAPHQL", "https://api.github.com/graphql")
 	monkeypatch.setattr(review, "api_cmd", lambda: "gitdashy")  # not "where is it installed on this machine"
 	monkeypatch.setattr(github, "_me", "")  # the login is cached for the process; not across tests
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs
@@ -54,7 +58,7 @@ def recorder(req, timeout=None):
 	ponytail: no test gets a socket. github.py talks HTTP now, so without this a test that forgets to
 	fake it hits the real API with the developer's own token — which is exactly what happened once.
 	"""
-	if not req.full_url.startswith(github.API):
+	if not req.full_url.startswith((github.API, github.GRAPHQL)):  # on Enterprise the two are siblings
 		raise AssertionError(f"test tried to reach {req.full_url}")
 	POSTED.append((req.full_url, json.loads(req.data) if req.data else None))
 	return Body(b"{}")
