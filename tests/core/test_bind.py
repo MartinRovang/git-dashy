@@ -255,7 +255,7 @@ def test_seeding_reads_the_store_once_however_many_repos(monkeypatch):
 	real = open
 	monkeypatch.setattr("builtins.open", lambda f, *a, **k: (opens.append(str(f)), real(f, *a, **k))[1])
 	bind.seed("org/t", [f"acme/r{i}" for i in range(50)])
-	reads = [f for f in opens if f == bind.BINDINGS and True]
+	reads = [f for f in opens if f == bind.BINDINGS]
 	# 50 appends are unavoidable; the point is that the store is not RE-READ per repo
 	assert len(bind.bindings()) == 50
 	assert len(reads) <= 55, f"{len(reads)} opens of the store for 50 repos"
