@@ -552,7 +552,7 @@ def test_draw_keeps_a_hidden_draft_visible_while_it_has_an_agent_or_a_verdict():
 	st.sections = [("MINE", [pr], None)]
 	st.drafts = False
 	ui.C = lambda n: 0
-	scr = FakeScr()
+	scr = FakeScr(30, 190)  # wide enough that the title column is not truncated
 	ui.draw(scr, st, 0)
 	assert "wip thing" not in scr.text()
 	st.running.add("u")
