@@ -207,8 +207,8 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 | reader | sees | never sees |
 |---|---|---|
 | review prompt | ONE `project.md` — the bound team's, else yours, named in the prompt — then the facts, every block labelled by source | drafts, the other brief |
-| agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
-| agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
+| agent session, any repo | `general.md` live, through a symlink in the user's config — **and both briefs, unscoped** | drafts |
+| agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored, and so scoped by the binding | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
 
@@ -272,6 +272,15 @@ binding survives a re-clone or a move. Selection for repo `R`:
 | bound to a team you are not in | yours | `yours · not in team org/t` |
 | bound to nothing | yours | `yours · acme/api is bound to no team` |
 | none anywhere | — | `no brief written` |
+
+> **The session path is not scoped yet.** Everything in this section describes the REVIEW path. The
+> corpus block `gitdashy install` writes still imports `@prs-memory/project.md`, `@prs-team/project.md`
+> and `@prs-team/general.md` into every agent session in every repo — so a session still gets both
+> briefs concatenated and one team's cross-repo facts everywhere, exactly as before. That is SPEC §5+§6
+> (the mirror gains `project.md`, the block drops the globals, and existing machines need the block
+> rewritten), and it is deliberately a separate change: the migration is where the risk lives. Said
+> here rather than left for a reader to discover, because a doc claiming a rule the wiring does not
+> keep is worse than no doc.
 
 **The binding decides everything the team knows about a repo**, not just the brief. `memory.sources(repo)`
 returns your memory alone for an unbound repo, so it reads no team facts — not even `general.md` — and

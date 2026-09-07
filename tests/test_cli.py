@@ -1,5 +1,4 @@
 import os
-import subprocess
 
 import pytest
 
@@ -193,7 +192,7 @@ def test_saying_yes_reaches_setup_and_no_does_not(monkeypatch, tmp_path, capsys)
 
 def test_a_failed_full_install_never_offers_the_briefs(monkeypatch, tmp_path):
 	"""The guard depends on install.fail() emitting a line prefixed FAIL — nothing else holds that."""
-	called = _offer_env(monkeypatch, tmp_path)
+	_offer_env(monkeypatch, tmp_path)
 	offered = []
 	monkeypatch.setattr(cli, "offer_setup", lambda argv: offered.append(argv))
 	monkeypatch.setattr(install_mod, "full_apply", lambda *a, **k: ["ok    something", "FAIL  broken"])
@@ -226,3 +225,14 @@ def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):
 		cli.bind(["gitdashy", "bind", "neo-api", "--team", "org/mem"])
 	assert "not owner/name" in str(e.value)
 	assert bind.bindings() == {}  # and nothing was bound in its place
+
+
+def test_bind_list_answers_even_when_the_positional_is_a_typo(monkeypatch, capsys):
+	"""--list is a read-only question; gating it behind a check on the thing you asked about turned it
+	into a SystemExit."""
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	bind.bind("acme/api", "org/mem")
+	cli.bind(["gitdashy", "bind", "not-a-slug", "--list"])
+	assert "acme/api" in capsys.readouterr().out

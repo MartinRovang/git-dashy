@@ -142,3 +142,46 @@ def test_a_new_team_repo_gets_a_brief_to_fill_in(monkeypatch, tmp_path):
 	p.write_text("ours, written\n")
 	team.seed_project(str(p))
 	assert p.read_text() == "ours, written\n"  # never overwritten
+
+
+def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch, tmp_path):
+	"""The route that is not reviewing. A repo wired with `gitdashy init` and never reviewed was left
+	unbound, so its mirror — which never outlives its source — deleted the team files already in it."""
+	from dashy.core import install
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(install, "REGISTRY", str(tmp_path / "mirrors"))
+	install.register(str(tmp_path / "wired"), "acme/only-wired")   # init'd, never reviewed
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/reviewed"}}}\n')
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.setup(str(remote)) == ""
+	assert bind.of("acme/reviewed") == team.NAME   # the log route
+	assert bind.of("acme/only-wired") == team.NAME  # and the mirror route
+
+
+def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tmp_path):
+	"""Only the copy-my-log branch was covered. When the team HAS a log, yours is never copied — so the
+	seed has to come off the first activate(), before that branch is even considered."""
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	# a teammate has already reviewed things and pushed the shared log
+	git("clone", "-q", str(remote), str(tmp_path / "mate"), cwd=tmp_path)
+	(tmp_path / "mate" / "reviewed.jsonl").write_text('{"pr":{"repository":{"nameWithOwner":"acme/theirs"}}}\n')
+	git("add", "-A", cwd=tmp_path / "mate")
+	git("commit", "-qm", "mate", cwd=tmp_path / "mate")
+	git("push", "-q", cwd=tmp_path / "mate")
+
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"me/mine"}}}\n')
+	assert team.setup(str(remote)) == ""
+	assert bind.of("acme/theirs") == team.NAME       # seeded from the log that was already there
+	assert not os.path.exists(str(tmp_path / "me" / "reviewed.jsonl.bak"))
+	assert "acme/theirs" in open(config.LOG).read()  # and yours was NOT copied over theirs

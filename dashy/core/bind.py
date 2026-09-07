@@ -42,6 +42,14 @@ def key(repo):
 	other key in the system arrives as GitHub's own nameWithOwner — so `bind Acme/API` must find the row
 	a review of `acme/api` looks up. It is a lookup key, not a filename anyone reads back.
 	"""
+	# ponytail: a BARE name must be exactly owner/name. team.slug_of keeps the last two segments of
+	# anything, so "acme/api/pull/19" — a URL someone trimmed by hand — came back as "pull/19", passed
+	# the check below, and bound a repo that does not exist while reporting success. A real URL or path
+	# is still handed to slug_of, which is what it is for; the guard is only on the bare form.
+	raw = (repo or "").strip().rstrip("/").removesuffix(".git")
+	bare = not (raw.startswith(("/", "./", "../", "~")) or "://" in raw or "@" in raw)
+	if bare and raw.count("/") != 1:
+		return ""
 	s = team.slug_of(repo).lower()
 	return s if s.count("/") == 1 and all(part for part in s.split("/")) else ""
 
@@ -125,11 +133,6 @@ def resolver():
 def of(repo):
 	"""The team `repo` is bound to, "" when it is unbound or is not an owner/name."""
 	return _pick(_entries(), repo)[1]
-
-
-def why(repo):
-	"""How `repo` resolved: ("team", slug) / ("owner", slug) / ("", "") — for a surface that must say."""
-	return _pick(_entries(), repo)
 
 
 def _append(entry):

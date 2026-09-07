@@ -1,5 +1,4 @@
 import os
-import re
 import time
 
 import pytest
@@ -544,6 +543,26 @@ def test_a_live_status_wins_over_the_fetched_one(monkeypatch):
 	painted = "\n".join(scr.line(y) for y in range(scr.h))
 	assert "pre-reviewing" in painted
 	assert "awaiting review" not in painted
+
+
+def test_draw_keeps_a_hidden_draft_visible_while_it_has_an_agent_or_a_verdict():
+	"""draw() must hand rows() what is in flight — and keep the row up long enough to read the verdict."""
+	st = State(0)
+	pr = dict(PR, url="u", isDraft=True, title="wip thing")
+	st.sections = [("MINE", [pr], None)]
+	st.drafts = False
+	ui.C = lambda n: 0
+	scr = FakeScr(30, 190)  # wide enough that the title column is not truncated
+	ui.draw(scr, st, 0)
+	assert "wip thing" not in scr.text()
+	st.running.add("u")
+	st.reviews["u"] = "pre-reviewing..."
+	ui.draw(scr, st, 0)
+	assert "wip thing" in scr.text()
+	st.running.discard("u")          # agent done, verdict written
+	st.reviews["u"] = "✓ approved"
+	ui.draw(scr, st, 0)
+	assert "wip thing" in scr.text(), "the row must survive to show the answer it was waiting for"
 
 
 def test_any_in_flight_verb_counts_as_running(monkeypatch):

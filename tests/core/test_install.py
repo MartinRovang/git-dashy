@@ -82,7 +82,7 @@ def test_wire_repo_excludes_imports_registers_and_mirrors(monkeypatch, tmp_path)
 	subprocess.run(["git", "init", "-q", str(repo)], check=True)
 	loader = repo / "NOTES.md"
 	loader.write_text("# notes\n")
-	out = install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
+	install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
 	assert ".agent/team/" in (repo / ".git" / "info" / "exclude").read_text()
 	assert "@.agent/team/repo.md" in loader.read_text()
 	entry = install.registered()[0]
@@ -826,3 +826,17 @@ def test_setup_still_refuses_a_file_you_wrote_yourself(monkeypatch, tmp_path):
 
 	assert user.read_text() == "# mine\n\nhand written\n"
 	assert any("is yours already" in l for l in out)
+
+
+def test_setup_says_so_when_the_team_cannot_be_bound_to(monkeypatch, tmp_path):
+	"""In a team whose origin does not resolve, the brief goes to YOUR file — the right one, since
+	nothing can bind to a nameless team, but a different one from what the last version chose."""
+	from dashy.core import memory, team
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(team, "NAME", "")          # a checkout with no origin
+	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
+	assert any("no origin" in l for l in out)
+	assert any("wrote" in l for l in out)
+	assert os.path.exists(memory.brief_path())     # yours, and it says which

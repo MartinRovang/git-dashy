@@ -163,3 +163,27 @@ def test_sync_refuses_when_only_one_of_the_names_is_ignored(monkeypatch, tmp_pat
 	assert "refused" in mirror.sync(str(repo / "mirror"), "a/b")
 	(repo / ".git" / "info" / "exclude").write_text("mirror/\n")  # now both
 	assert "refused" not in mirror.sync(str(repo / "mirror"), "a/b")
+
+
+def test_an_unbound_repos_mirror_loses_the_teams_files(monkeypatch, tmp_path):
+	"""A mirror never outlives its source — so unbinding DELETES what is already in the repo.
+
+	That is correct behaviour and it is why seeding has to cover every route into the mirror, not just
+	the review log. Pinned here so the deletion is a decision someone made rather than a surprise.
+	"""
+	shared = tmp_path / "team" / "memory"
+	shared.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(team, "NAME", "org/t")
+	seed("a/b", "team about a/b", str(shared))
+	seed(None, "team general", str(shared))
+	into = tmp_path / "out"
+	bind.bind("a/b", "org/t")
+	mirror.sync(str(into), "a/b", pull=False, general=True)
+	assert sorted(p.name for p in into.iterdir()) == ["general.md", "repo.md"]
+
+	bind.forget("a/b")
+	mirror.sync(str(into), "a/b", pull=False, general=True)
+	assert sorted(p.name for p in into.iterdir()) == []  # both go: nothing of yours, nothing of theirs

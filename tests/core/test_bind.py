@@ -164,7 +164,7 @@ def test_an_owner_rule_covers_every_repo_under_it(monkeypatch, tmp_path):
 	assert bind.bind_owner("neomedsys", "org/mem") == ""
 	for repo in ("neomedsys/neo-api", "neomedsys/nms-platform-v2", "neomedsys/a-repo-created-tomorrow"):
 		assert bind.of(repo) == "org/mem", repo
-	assert bind.why("neomedsys/neo-api") == ("owner", "org/mem")
+	assert bind.owners() == {"neomedsys": "org/mem"} and bind.bindings() == {}  # covered by the rule, not a row
 	assert bind.of("someone-else/tool") == ""            # the pattern covers one owner, not everything
 	assert "4 spaces" in memory.read("neomedsys/nms-platform-v2")
 	assert memory.read("someone-else/tool") == ""
@@ -175,7 +175,6 @@ def test_an_explicit_binding_beats_the_owner_rule():
 	bind.bind_owner("neomedsys", "org/mem")
 	bind.bind("neomedsys/joint-venture", "org/other")
 	assert bind.of("neomedsys/joint-venture") == "org/other"
-	assert bind.why("neomedsys/joint-venture") == ("team", "org/other")
 	# and a repo in the org that is NOT the project can be excluded, which a pattern alone cannot express
 	bind.forget("neomedsys/someones-fork")
 	assert bind.of("neomedsys/someones-fork") == ""
@@ -234,3 +233,16 @@ def test_a_team_slug_is_matched_however_it_is_typed(monkeypatch, tmp_path):
 	assert bind.team_dir("Org/Mem")                   # not "not in team Org/Mem" about the team we are in
 	assert [l for l, _ in memory.sources("acme/api")] == ["mine", "team Org/Mem"]
 	assert memory.team_visible("acme/api")
+
+
+def test_a_trimmed_url_is_refused_rather_than_truncated():
+	"""team.slug_of keeps the LAST two segments of anything, so a hand-trimmed URL became 'pull/19' —
+	a repo that does not exist — and bound it while reporting success."""
+	assert bind.key("acme/api/pull/19") == ""
+	assert bind.key("acme/api/tree/main") == ""
+	assert bind.bind("acme/api/pull/19", "org/t") == "'acme/api/pull/19' is not an owner/name"
+	assert bind.bindings() == {}
+	# a real URL still resolves — the guard is only on the bare form
+	assert bind.key("https://github.com/acme/api/") == "acme/api"
+	assert bind.key("git@github.com:acme/api.git") == "acme/api"
+	assert bind.key("/home/me/src/acme/api") == "acme/api"
