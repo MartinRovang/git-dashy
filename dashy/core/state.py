@@ -195,7 +195,10 @@ class State:
 						# pre-post value and the next the post-post one — and a reply on the thread bumps
 						# it too; both dropped the verdict and auto reviewed the same head again. On MINE
 						# rows updatedAt stays: a colleague's approval must be allowed to unmask GitHub.
-						at = (p.get("head") if name == "REVIEW REQUESTED" else None) or p.get("updatedAt")
+						if name == "REVIEW REQUESTED":
+							at = p.get("head")  # no head means the graphql call failed; not a reason to call it moved
+						else:
+							at = p.get("updatedAt")
 						if at is None:
 							continue
 						if self.done_at.get(u, 0) > t0:
