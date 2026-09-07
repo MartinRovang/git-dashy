@@ -16,9 +16,11 @@ SECTIONS = [
 DECISION = {"APPROVED": "✓ approved", "CHANGES_REQUESTED": "✗ changes requested", "REVIEW_REQUIRED": "· awaiting review"}
 # ponytail: one graphql call for what `gh search` cannot give — review decision, reviewers, head commit and
 # CI state — over the same three searches, aliased, so the nodes can be joined back to the sections by url.
+# ponytail: no `... on Team { slug }` — that field needs read:org, and a token without it failed the WHOLE
+# query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
 NODE = """{ nodes { ... on PullRequest { url headRefOid reviewDecision
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-    reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }  # ponytail: no Team fragment, its slug needs read:org and one missing scope killed the whole query
+    reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }
     latestReviews(first: 20) { nodes { author { login } state } } } } }"""
 META_QUERY = "{ " + " ".join(f'{a}: search(query: "is:pr is:open {q}", type: ISSUE, first: 100) {NODE}'
                              for a, q in (("mine", "author:@me"), ("rr", "review-requested:@me"), ("asg", "assignee:@me"))) + " }"
