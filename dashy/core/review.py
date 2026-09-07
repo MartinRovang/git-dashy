@@ -58,10 +58,17 @@ HUNTER = {  # a lens, not a style: each hunts one class of problem the main revi
 EXPLORE = """
 
 To read anything the diff does not show — a file it changes in part, a caller, a test — run
-`{cmd} api <github api path>`. It is a GET against the GitHub API and a file comes back decoded, e.g.
-`{cmd} api /repos/{repo}/contents/path/to/file.py?ref=<the PR's head branch>` — without the ref you read
-the base branch's version. Add `--diff` for a unified diff instead of json, e.g.
-`{cmd} api /repos/{repo}/compare/<base>...<head> --diff`. Nothing else is available to you.
+`{cmd} api <github api path>`. It is a GET against the GitHub API, a file comes back decoded, and
+`--diff` gives a unified diff instead of json. Nothing else is available to you. The useful paths:
+
+  {cmd} api /repos/{repo}/contents/path/to/file.py?ref=<head branch>   read a file (no ref = base branch)
+  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1          every path in the repo, to find one
+  {cmd} api "/search/code?q=<symbol>+repo:{repo}"                      where a symbol is used
+  {cmd} api /repos/{repo}/pulls/{number}/files                         the changed files, one by one
+  {cmd} api /repos/{repo}/compare/<base>...<head> --diff               a diff of any range
+
+Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
+survive review.
 """
 NO_TOOLS = """
 
@@ -200,7 +207,7 @@ def _verdict(repo, n, model, prev=None):
 	# path is one thing to get right. Claude keeps the exploring — one read-only command, not a shell.
 	claude = llm.provider(model)[0] == "claude"
 	tools = f"Bash({api_cmd()} api:*)" if claude else ""
-	prompt += (EXPLORE.format(cmd=api_cmd(), repo=repo) if claude else NO_TOOLS)
+	prompt += (EXPLORE.format(cmd=api_cmd(), repo=repo, number=n) if claude else NO_TOOLS)
 	prompt += PR_FOLLOWS + github.context(repo, n)
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
