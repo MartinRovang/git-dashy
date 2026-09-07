@@ -592,31 +592,3 @@ def setup(repo, name=""):
 		activate()
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))
 	return ERROR
-	if is_own_memory(repo):
-		return "that is your own memory directory, which holds drafts — use a different repo for the team"
-	# ponytail: the slug decides the directory, so a team is found by name rather than by being THE one.
-	# It comes from the URL before the clone, because after it the directory has to already be right.
-	slug = slug_of(repo) if "/" in repo else ""
-	if not slug:
-		return f"cannot tell an owner/name from {repo!r} — a team is keyed by its slug"
-	dest = os.path.join(config.TEAMS, dirname(slug))
-	if is_repo(dest):
-		return f"already in {slug}"
-	os.makedirs(config.TEAMS, exist_ok=True)
-	err = clone(repo, dest)
-	if err:
-		return err
-	union_attrs(dest)
-	old_log = config.LOCAL_LOG
-	activate()
-	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
-	seed_project(os.path.join(dest, "memory", "project.md"))
-	config.LOG = log_of(slug)
-	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
-		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
-		# ponytail: again, because the log only exists NOW. activate() seeds bindings from it, and on a
-		# first join it ran against a checkout that had none — so the repos you review would stay bound to
-		# nothing until the next launch, which is the one session where you would notice and blame the join.
-		activate()
-	push("gitdashy: join " + (os.environ.get("USER") or "team"))
-	return ERROR

@@ -1272,3 +1272,30 @@ def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_pat
 	assert left == ["org-two"]
 	assert "Leave which team?" in prompts[0] and "org-one, org-two" in prompts[0]
 	assert "team org-two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes
+
+
+def test_no_function_has_code_after_it_returns():
+	"""Editing by slice leaves the tail of the old body behind, and Python parses it happily.
+
+	This has now happened three times in this codebase — a dedent that swallowed loop() into a class, an
+	anchor that re-indented 380 lines, and a setup() replacement that cut at the first `return` and left
+	30 lines of the previous implementation underneath it. Every one parsed, imported and stayed green,
+	because a test suite can only see lines that run. Unreachable code is the signature.
+	"""
+	import ast, pathlib
+	import dashy
+	root = pathlib.Path(dashy.__file__).parent
+	mods = sorted(root.rglob("*.py"))
+	assert len(mods) >= 8, f"found only {len(mods)} modules under {root} — this test cannot pass vacuously"
+	bad = []
+	for f in mods:
+		tree = ast.parse(f.read_text())
+		for node in ast.walk(tree):
+			if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+				continue
+			body = node.body
+			for i, st in enumerate(body[:-1]):
+				if isinstance(st, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+					name = getattr(node, "name", "<module>")
+					bad.append(f"{f.name}:{body[i + 1].lineno} unreachable in {name}() after line {st.lineno}")
+	assert not bad, "code after a return:\n  " + "\n  ".join(bad)
