@@ -11,7 +11,13 @@ from .. import HERE, config
 from . import github, llm, log, memory, team
 
 PROMPT = """Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
-{depth}{project}{memory}{prev}
+{depth}{project}{memory}{prev}"""
+# ponytail: the contract goes LAST, after the tools, the pasted PR and the voices — everything appended
+# to the prompt used to land after it. A re-review was the case that showed: {prev} puts a whole earlier
+# review between the instruction to append sections and the moment of writing one, and since that earlier
+# review has no sections in it, the nearest example says not to write any. Twice it dropped them.
+CONTRACT = """
+
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line>",
@@ -203,7 +209,7 @@ def _verdict(repo, n, model, prev=None):
 	# dropped: a reviewer weighs "the team that owns this repo says" differently from "the person
 	# running me says, about their work in general", and it is the same value the UI shows.
 	mem, (brief, whose) = memory.read(repo), memory.brief(repo)
-	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + tail(),
+	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
 	                       project=f"\n\nWhat this is being built for, and for whom ({whose}):\n" + brief if brief else "",
 	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
@@ -219,6 +225,7 @@ def _verdict(repo, n, model, prev=None):
 		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n)
 	else:
 		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
+	prompt += tail() + CONTRACT  # how to write the body, then the shape it has to arrive in — last, both
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
