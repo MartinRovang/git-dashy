@@ -119,6 +119,7 @@ class State:
 				self.reviews[pr["url"]] = status
 				self.running.discard(pr["url"])
 				self.seen_at.pop(pr["url"], None)
+				self.started_at.pop(pr["url"], None)
 				self.done_at[pr["url"]] = time.time()
 			self.wake.set()  # refetch so an approved PR drops off the list
 		with self.lock:
@@ -139,6 +140,7 @@ class State:
 				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
 				self.running.discard(pr["url"])
 				self.seen_at.pop(pr["url"], None)
+				self.started_at.pop(pr["url"], None)
 				self.done_at[pr["url"]] = time.time()
 			self.wake.set()
 		with self.lock:

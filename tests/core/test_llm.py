@@ -96,6 +96,49 @@ def test_padding_that_never_ends_stops_at_the_deadline(monkeypatch):
 	assert body.reads  # it read, then gave up, rather than blocking on the socket forever
 
 
+class Firehose:
+	"""A body that pads fast — a padder at MB/s must hit the byte cap long before the deadline."""
+	def read(self, n=None): return b" " * n
+	def __enter__(self): return self
+	def __exit__(self, *a): return False
+
+
+def test_padding_that_never_ends_stops_at_the_byte_cap(monkeypatch):
+	monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: Firehose())
+	with pytest.raises(OSError, match="MB"):
+		llm.ask("p", "local:qwen3", timeout=900)  # the deadline is far away; the cap fires first
+
+
+def test_silent_upstream_gets_a_short_socket_timeout(monkeypatch):
+	import socket
+	seen = {}
+	def go(req, timeout=None):
+		seen["timeout"] = timeout
+		raise socket.timeout("timed out")
+	monkeypatch.setattr(urllib.request, "urlopen", go)
+	with pytest.raises(TimeoutError):
+		llm.ask("p", "local:qwen3", timeout=900)
+	assert seen["timeout"] == llm.READ_TIMEOUT < 900  # one read, not the whole budget
+
+
+def test_unknown_effort_falls_back_to_high(monkeypatch):
+	seen = []
+	monkeypatch.setattr(config, "EFFORT", "typo")
+	monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen(seen, answer("ok")))
+	llm.ask("p", "openrouter:m")
+	assert json.loads(seen[0].data)["reasoning"] == {"effort": "high"}
+
+
+def test_self_check_on_another_backend_only_pings(monkeypatch):
+	from dashy.core import review as review_mod
+	seen, calls = [], []
+	monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen(seen, answer("OK")))
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Result(""))
+	got = review_mod.self_check("local:qwen3")
+	assert [ok for _, ok, _ in got] == [True] and got[0][0] == "local answers"
+	assert not calls  # the claude flag probes are skipped, not run against nothing
+
+
 def test_http_error_body_becomes_the_message(monkeypatch):
 	def boom(req, timeout=None):
 		raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {},

@@ -163,3 +163,11 @@ def test_want_detail_fetches_once_off_the_draw_thread(monkeypatch):
 	assert st.want_detail(dict(PR)) == {"branch": "b"}
 	st.want_detail(dict(PR))
 	assert len(calls) == 1  # cached, not refetched on every draw
+
+
+def test_context_truncates_a_huge_diff(monkeypatch):
+	monkeypatch.setattr(github, "PR_CONTEXT_MAX", 100)
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: Result(json.dumps({"title": "t"}) if "--json" in cmd else "x" * 1000))
+	text = github.context("a/b", 7)
+	assert text.endswith("[diff truncated]") and len(text) < 200

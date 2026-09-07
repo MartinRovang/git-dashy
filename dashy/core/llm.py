@@ -6,6 +6,7 @@ a backend proves it can drive one, not before.
 """
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import time
@@ -16,6 +17,8 @@ from .. import config
 
 REASONING = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 # ponytail: openrouter takes low/medium/high only; claude's two extra levels collapse onto high
+BODY_MAX = 8 << 20  # bytes; an answer is a few KB, so anything past this is padding or a broken upstream
+READ_TIMEOUT = 60  # s per socket read; the whole-request bound is `timeout`, in read_by
 
 
 def provider(model):
@@ -48,7 +51,7 @@ def ask(prompt, model, system="", tools="", timeout=900):
 		# ponytail: --effort was claude-only, so a reasoning model behind OpenRouter thought as hard as it
 		# liked and a 2k-token diff took minutes. Same knob, same names, one translation table.
 		if config.EFFORT:
-			sent["reasoning"] = {"effort": REASONING[config.EFFORT]}
+			sent["reasoning"] = {"effort": REASONING.get(config.EFFORT, "high")}
 	body = json.dumps(sent).encode()
 	headers = {"Content-Type": "application/json"}
 	key = os.environ.get(key_env, "")
@@ -56,8 +59,10 @@ def ask(prompt, model, system="", tools="", timeout=900):
 		headers["Authorization"] = "Bearer " + key
 	req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=body, headers=headers)
 	try:
-		with urllib.request.urlopen(req, timeout=timeout) as r:
+		with urllib.request.urlopen(req, timeout=min(timeout, READ_TIMEOUT)) as r:
 			got = json.loads(read_by(r, started + timeout))
+	except socket.timeout:  # ponytail: one silent read, not the whole budget, before the row clears
+		raise TimeoutError(f"{who}: no bytes for {READ_TIMEOUT}s") from None
 	except urllib.error.HTTPError as e:
 		# ponytail: the body names which of key, model, credit or context length it was; "HTTP Error 404"
 		# on its own sends you looking in the wrong place, and the row only has room for one line.
@@ -92,13 +97,17 @@ def read_by(r, deadline):
 
 	ponytail: urlopen's timeout is per socket read, not per request. OpenRouter pads a slow generation
 	with whitespace to hold the connection open, so bytes keep arriving and that timeout never fires —
-	a wedged upstream spins the dashboard row forever with nothing to press. This bounds the whole read.
+	a wedged upstream spins the dashboard row forever with nothing to press. This bounds the whole read,
+	and BODY_MAX bounds its size — every pad byte would otherwise sit in memory until the deadline.
 	"""
-	out = []
+	out, size = [], 0
 	while True:
 		chunk = r.read(65536)
 		if not chunk:
 			return b"".join(out)
 		out.append(chunk)
+		size += len(chunk)
+		if size > BODY_MAX:
+			raise OSError(f"answer over {BODY_MAX >> 20} MB, gave up")
 		if time.time() > deadline:
 			raise TimeoutError("no complete answer before the timeout")
