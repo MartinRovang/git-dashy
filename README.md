@@ -112,6 +112,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
+| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |

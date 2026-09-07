@@ -629,6 +629,13 @@ def panel(scr, title, lines, footer, accent=4):
 	# away from this; the share screen escaped only because "★ 2 people found this" is short.
 	inner = max([len(l) for l in [title, footer]] + [len(t) + len(r) + 2 for t, r in lines] + [34]) + 6
 	inner = min(inner, w - 4)
+	# ponytail: and a VERTICAL clamp. `top` floored at 1 but the bottom row is top + 4 + len(lines), so
+	# a long body wrote past the last line on a short terminal — h <= 14 was enough. Reachable from the
+	# share screen already; the drafts screen feeds it model-authored text of unbounded length, which is
+	# the caller most likely to find it. Trim the body rather than draw outside the screen.
+	room = max(1, h - 6)  # the border, the two blank rows, the footer
+	if len(lines) > room:
+		lines = list(lines)[:room - 1] + [("…", "")]
 	top = max(1, h // 2 - (len(lines) + 6) // 2)
 	x = max(0, (w - inner) // 2)
 	def row(y, left, right="", attr=0, attr2=None):
@@ -943,7 +950,7 @@ def drafts_screen(scr, state, sel):
 			return
 		# ponytail: most-seen first, so anything one review short of PROMOTE_AT is the first thing you
 		# read. A pre-review finding carries no count and sorts last: it is one opinion, not two.
-		items.sort(key=lambda r: (r[3] == "self", -r[1]))
+		items.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))  # by repo, then most-seen first
 		i %= len(items)
 		repo, n, fact, kind = items[i]
 		if kind == "self":

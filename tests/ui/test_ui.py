@@ -1190,3 +1190,28 @@ def test_a_panels_right_value_never_lands_on_its_own_label(screen):
 	screen.w = 44
 	ui.panel(screen, "t", [("me/weekend", "x" * 60)], "f")
 	assert "me/weekend" in screen.text()
+
+
+def test_a_panel_never_writes_past_the_bottom_of_a_short_terminal():
+	"""top floored at 1 but the bottom row is top + 4 + len(lines). The drafts screen feeds panel()
+	model-authored text of unbounded length, which is the caller most likely to find it."""
+	body = [(f"line {i} of a long wrapped fact", "") for i in range(14)]
+	for h in range(8, 32):
+		for w in (40, 80, 128):
+			scr = FakeScr(h=h, w=w)
+			ui.panel(scr, "waiting", body, "[t] accept   [x] drop   [esc] close")  # must not raise
+
+
+def test_drafts_screen_pushes_both_the_fact_and_its_evidence(screen, monkeypatch, st, tmp_path):
+	"""Promotion writes YOUR memory dir and the team's pool — two checkouts, two pushes. Mocking both
+	to lambda: None proved the keypress ran, not that either landed anywhere."""
+	memory = _waiting(monkeypatch, tmp_path)
+	pushes = []
+	monkeypatch.setattr(ui.team, "push", lambda m: pushes.append(("team", m)))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushes.append(("mine", d, m)))
+	screen.getch, screen.timeout = _keys(ord("t"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert [p[0] for p in pushes] == ["mine", "team"]
+	assert pushes[0][1] == config.MEMORY_DIR          # yours, by path, not "whatever push_dir defaults to"
+	assert "accepted" in pushes[0][2] and "a/b" in pushes[0][2]
+	assert "evidence" in pushes[1][1]

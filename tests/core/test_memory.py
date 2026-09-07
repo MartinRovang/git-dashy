@@ -586,3 +586,21 @@ def test_promoting_a_pre_review_finding_works_the_same_way(monkeypatch, tmp_path
 	memory.promote("a/b", "a pre-review noticed this")
 	assert memory._facts(memory.path("a/b")) == ["a pre-review noticed this"]
 	assert memory.self_drafts("a/b") == []
+
+
+def test_one_fact_is_one_row_even_when_both_queues_hold_it(monkeypatch, tmp_path):
+	"""append_self checks known(repo) — the settled facts — not the drafts queue. So a review and then
+	a pre-review proposing the same line left an entry in both, and t/x removed two at once."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "the API owns all validation")
+	memory.append_self("a/b", "the API owns all validation")
+	assert len(memory.self_drafts("a/b")) == 1          # it really is in both files
+	assert len(memory.drafts("a/b")) == 1
+	got = memory.waiting()
+	assert len(got) == 1 and got[0][3] == "draft"        # one row, and the COUNTED one survives
+	# ponytail: dedupe uses _same, so it is NEAR that decides what counts as the same line — one word
+	# in five scores 0.8 and stays a separate fact, which is the same threshold promotion uses.
+	memory.append_self("a/b", "the API owns every validation")
+	assert len(memory.waiting()) == 2
+	memory.append_self("a/b", "the API owns all validation, always")   # a real rewording
+	assert len([r for r in memory.waiting() if "all validation" in r[2]]) == 1

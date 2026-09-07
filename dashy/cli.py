@@ -1,5 +1,6 @@
 """Argument parsing and the curses entry point. ponytail: sys.argv scan, argparse would be more code than this."""
 import curses
+import itertools
 import os
 import sys
 
@@ -334,16 +335,16 @@ def drafts(argv):
 	if not rows:
 		return print("  nothing waiting — every observation so far is either a fact or gone")
 	rows.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))
-	where = None
-	for repo, n, fact, kind in rows:
-		if repo != where:
-			where = repo
-			team_of = bind_mod.of(repo) if repo else ""
-			print(f"\n  {repo or 'general'}" + (f"  ({team_of})" if team_of else ""))
-		# ponytail: the count is the whole point of the line — it says how close this is to being a fact,
-		# and a pre-review finding has no count at all because one opinion twice is still one opinion.
-		tag = "pre-review" if kind == "self" else f"seen {n}×"
-		print(f"    [{tag:>10}]  {fact}")
+	# ponytail: groupby, not a `where` sentinel. `where = None` collided with the repo of the GENERAL
+	# file, which is also None — and general sorts first, so the one group that could hit it always did:
+	# its rows printed under no heading at all. A sentinel that can equal a real value is not a sentinel.
+	for repo, group in itertools.groupby(rows, key=lambda r: r[0]):
+		team_of = bind_mod.of(repo) if repo else ""
+		print(f"\n  {repo or 'general'}" + (f"  ({team_of})" if team_of else ""))
+		for _repo, n, fact, kind in group:
+			# ponytail: the count is the whole point of the line — it says how close this is to being a
+			# fact, and a pre-review finding has no count because one opinion twice is still one opinion.
+			print(f"    [{('pre-review' if kind == 'self' else f'seen {n}×'):>10}]  {fact}")
 	print(f"\n  {len(rows)} waiting · {memory.PROMOTE_AT} independent observations make a fact · "
 	      f"W in the dashboard promotes or drops one")
 

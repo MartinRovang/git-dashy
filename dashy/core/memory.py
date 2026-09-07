@@ -68,7 +68,7 @@ def append_self(repo, text):
 		if not any(_same(t, fact) for _n, t in items):
 			items.append((1, fact))  # ponytail: no count here. One pre-review, or ten, is still one opinion.
 	_history()
-	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite_counted(self_path(repo), items)
 	return fresh
 
 
@@ -81,7 +81,7 @@ def _consume_self(repo, fact):
 	kept = [(n, t) for n, t in items if not _same(t, fact)]
 	if len(kept) == len(items):
 		return False
-	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in kept))
+	_rewrite_counted(self_path(repo), kept)
 	return True
 
 
@@ -405,8 +405,7 @@ def pools():
 		items = []
 		for name in sorted(os.listdir(d)):
 			if name.endswith(".md"):
-				repo = None if name == "general.md" else name[:-3].replace("__", "/")
-				items += [(repo, f) for f in _facts(os.path.join(d, name))]
+				items += [(_repo_of(name), f) for f in _facts(os.path.join(d, name))]
 		if items:
 			out[user] = items
 	return out
@@ -432,10 +431,19 @@ def drafts(repo):
 	return [_parse(l) for l in _read(queue_path(repo)).splitlines() if l.strip()]
 
 
+def _rewrite_counted(p, items):
+	"""Replace a counted file — drafts or pre-review findings.
+
+	ponytail: the "- (n) fact" line format was written out at four call sites. One of them drifting
+	produces a file the other three cannot read back, and _parse would silently read the whole line as
+	the fact with a count of 1.
+	"""
+	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
+
+
 def _write_drafts(repo, items):
 	_history()
-	p = queue_path(repo)
-	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite_counted(queue_path(repo), items)
 
 
 def append(repo, text):
@@ -486,7 +494,7 @@ def shareable():
 	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
 		if not name.endswith(".md") or name == PROJECT:
 			continue
-		repo = None if name == "general.md" else name[:-3].replace("__", "/")
+		repo = _repo_of(name)
 		if not team_visible(repo):
 			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
 		theirs = _facts(path(repo, base))
@@ -540,7 +548,16 @@ def waiting():
 			repo = _repo_of(name)
 			for n, fact in (_parse(l) for l in _read(os.path.join(base, name)).splitlines() if l.strip()):
 				out.append((repo, n, fact, kind))
-	return out
+	# ponytail: one fact, one row. append_self only checks known(repo) — the settled facts — not the
+	# drafts queue, so a review and then a pre-review proposing the same line leaves an entry in BOTH.
+	# You would page past the same sentence twice, and t/x removes both, so the list jumps by two.
+	# The counted row wins: it is the one carrying how close the fact is, and `self` sorts after it.
+	seen, kept = [], []
+	for row in sorted(out, key=lambda r: r[3] == "self"):
+		if not any(r[0] == row[0] and _same(r[2], row[2]) for r in seen):
+			seen.append(row)
+			kept.append(row)
+	return kept
 
 
 def drop(repo, fact):
@@ -555,7 +572,7 @@ def drop(repo, fact):
 		kept = [(n, t) for n, t in items if not _is(t, fact)]
 		if len(kept) != len(items):
 			gone = True
-			_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in kept))
+			_rewrite_counted(p, kept)
 	return gone
 
 

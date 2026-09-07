@@ -236,3 +236,19 @@ def test_bind_list_answers_even_when_the_positional_is_a_typo(monkeypatch, capsy
 	bind.bind("acme/api", "org/mem")
 	cli.bind(["gitdashy", "bind", "not-a-slug", "--list"])
 	assert "acme/api" in capsys.readouterr().out
+
+
+def test_drafts_prints_a_heading_for_every_group_including_general(monkeypatch, capsys, tmp_path):
+	"""`where = None` collided with the repo of the general file, which is also None — and general
+	sorts first, so the one group that could hit it always did: its rows printed under no heading."""
+	from dashy import cli
+	from dashy.core import memory, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	memory.append(None, "a general guess")
+	memory.append("a/b", "a repo guess")
+	cli.drafts(["gitdashy", "drafts"])
+	out = capsys.readouterr().out
+	assert "general" in out and "a/b" in out
+	assert out.index("general") < out.index("a general guess")   # the heading is ABOVE its rows
+	assert out.index("a/b") < out.index("a repo guess")
