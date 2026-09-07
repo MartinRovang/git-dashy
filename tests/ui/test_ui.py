@@ -1405,3 +1405,26 @@ def test_a_completed_migration_is_announced_not_shown_as_an_error(screen, monkey
 	screen.getch = _keys(ord("q"))
 	ui.main(screen, 60, False, "opus")
 	assert "unpushed reviews" in team.ERROR and not said
+
+
+def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st, tmp_path):
+	"""setup() returns "" for a join that worked but could not push, which is right for "did you join"
+	— and left the join silent: the only sign was a clipped line on the T row that the next successful
+	pull clears."""
+	from dashy.core import team
+	a_team(monkeypatch, tmp_path, "org-one")
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "somewhere/repo.git")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.team, "setup", lambda repo, name="": "")
+	monkeypatch.setattr(ui.team, "ERROR", "join: remote rejected the push")
+	ui._join_team(screen, st, 0)
+	assert said and "could not publish" in said[0] and "remote rejected" in said[0]
+	assert st.wake.is_set()          # and it still counts as joined: REVIEWED reloads
+
+	# a clean join says nothing
+	said.clear()
+	st.wake.clear()
+	monkeypatch.setattr(ui.team, "ERROR", "")
+	ui._join_team(screen, st, 0)
+	assert said == [] and st.wake.is_set()

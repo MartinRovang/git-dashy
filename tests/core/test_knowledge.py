@@ -55,7 +55,7 @@ def test_leave_refuses_to_delete_unpushed_reviews(monkeypatch, tmp_path):
 	assert "2 unpushed reviews" in knowledge.leave("org-t")
 	assert store.exists()
 	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: -1)  # no upstream: also refuse, the log may exist only here
-	assert "possibly unpushed" in knowledge.leave("org-t")
+	assert "uncommitted work" in knowledge.leave("org-t")
 	assert store.exists()
 
 
@@ -200,7 +200,7 @@ def test_leave_refuses_a_dirty_tree_even_with_nothing_unpushed(monkeypatch, tmp_
 	(store / "reviewed.jsonl").write_text('{"x":1}\n')
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	assert knowledge.unpushed(str(store)) == -1  # no upstream AND dirty
-	assert "unpushed" in knowledge.leave("org-t")
+	assert "uncommitted work" in knowledge.leave("org-t")
 	assert store.exists() and (store / "reviewed.jsonl").exists()
 
 
@@ -527,3 +527,22 @@ def test_pointing_memory_at_an_existing_repo_moves_nothing(monkeypatch, tmp_path
 	assert ".git exists in both" in err and "a directory of its own" in err
 	assert sorted(p.name for p in repo.iterdir()) == [".git", "README.md", "identity"]
 	assert (mem / "general.md").exists() and (mem / "project.md").exists() and (mem / "drafts").is_dir()
+
+
+def test_a_remote_with_no_upstream_does_not_trap_you(monkeypatch, tmp_path):
+	"""`git log @{u}..HEAD` needs an UPSTREAM, not a remote — and connect() does `remote add` before it
+	pushes, so a typo'd URL leaves origin set with nothing to compare against."""
+	store = tmp_path / "teams" / "org-t"
+	store.mkdir(parents=True)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	subprocess.run(["git", "init", "-q", str(store)], check=True)
+	subprocess.run(["git", "-C", str(store), "remote", "add", "origin", "file:///nope/never.git"], check=True)
+	assert team.has_remote(str(store))            # a remote, but no upstream
+    # a commit, so the tree is clean rather than empty
+	(store / "memory").mkdir()
+	(store / "memory" / "general.md").write_text("- a fact\n")
+	subprocess.run(["git", "-C", str(store), "add", "-A"], check=True)
+	subprocess.run(["git", "-C", str(store), "-c", "user.name=t", "-c", "user.email=t@t",
+	                "commit", "-qm", "x"], check=True)
+	assert knowledge.unpushed(str(store)) == 0     # nothing to compare against is not "cannot tell"
+	assert knowledge.leave("org-t") == ""

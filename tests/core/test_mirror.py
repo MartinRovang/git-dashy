@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 
 from dashy import config
@@ -194,3 +195,18 @@ def test_the_report_names_the_team_it_actually_read(monkeypatch, tmp_path):
 	bind.bind("a/b", "org-a")
 	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
 	assert "from team org-a" in out and "org-b" not in out
+
+
+def test_the_report_falls_back_when_the_team_has_been_left(monkeypatch, tmp_path):
+	"""The case the label fix was made for and did not cover: a repo still bound to a team whose
+	checkout is gone. sources() drops to yours alone, so the report must say so too."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-a")
+	seed("a/b", "team about a/b", str(shared))
+	seed("a/b", "mine about a/b")
+	bind.bind("a/b", "org-a")
+	assert "from team org-a" in mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+
+	shutil.rmtree(tmp_path / "teams" / "org-a")     # left, while the binding remains
+	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "from team org-a" not in out and str(tmp_path / "mem") in out

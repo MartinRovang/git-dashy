@@ -234,11 +234,14 @@ def unpushed(d):
 		                       capture_output=True, text=True, timeout=60)
 		if dirty.returncode != 0 or dirty.stdout.strip():
 			return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
-		# ponytail: a team with NO REMOTE has nowhere to push, so "unpushed" is not the question — only
-		# whether anything is uncommitted, which is the check above. `git log @{u}..HEAD` exits non-zero
-		# without an upstream, which returned -1 and made a team you STARTED unleavable forever: leave()
-		# refused, and start() on the same name answered "already in <key>". No way out inside the app.
-		if not team.has_remote(d):
+		# ponytail: the check has to match the COMMAND. `git log @{u}..HEAD` needs an UPSTREAM, not a
+		# remote — and `connect` does `remote add` before it pushes, so a typo'd URL leaves origin set
+		# with no upstream. Asking has_remote there still answered -1 and still refused to leave.
+		# With nothing to compare against there is nothing unpushed: the only question is whether
+		# anything is uncommitted, which is the check above.
+		up = subprocess.run(["git", "-C", d, "rev-parse", "--abbrev-ref", "@{u}"],
+		                    capture_output=True, text=True, timeout=60)
+		if up.returncode != 0:
 			return 0
 		r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
 		                   capture_output=True, text=True, timeout=60)
@@ -288,7 +291,10 @@ def leave(slug=""):
 		return "not in that team" if slug else f"say which team: {', '.join(joined) or 'none joined'}"
 	ahead = unpushed(d)
 	if ahead != 0:  # ponytail: -1 (no upstream, no git) is also "do not delete" — the log may exist only here
-		return f"{slug} has {ahead if ahead > 0 else 'possibly'} unpushed reviews; push them first"
+		# ponytail: "push them first" is wrong for a team with nowhere to push — -1 means uncommitted
+		# work now, not unpushed commits, whenever there is no upstream to compare against.
+		return (f"{slug} has {ahead} unpushed reviews; push them first" if ahead > 0 else
+		        f"{slug} has uncommitted work in it; commit or discard it first")
 	# ponytail: a symlinked TEAM used to be resolved with realpath and deleted at the far end. If you
 	# pointed it at a checkout you actually work in, "leave the team" deleted that repo. The link is
 	# ours to remove; what it points at is yours, and it is said out loud rather than silently kept.

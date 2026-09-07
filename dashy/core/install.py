@@ -801,8 +801,10 @@ def setup(ask, corpus_home=None):
 	# reached in production, and its test reached it by monkeypatching team.on over an empty store: a
 	# test for a state the code cannot be in, which proves the message and not the behaviour.
 	if len(joined := team.joined()) > 1:
-		out.append(f"note   several teams joined ({', '.join(joined)}) — say which with --team; "
-		           "writing your own brief instead")
+		# ponytail: names a command that exists. `gitdashy setup` parses no arguments at all, so telling
+		# someone to "say which with --team" pointed at a flag this command does not have.
+		out.append(f"note   several teams joined ({', '.join(joined)}) — writing your own brief; edit a "
+		           f"team's with T then e in the dashboard")
 	dest = memory.brief_path(slug)
 	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
 	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")

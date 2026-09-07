@@ -496,7 +496,7 @@ def test_a_team_you_started_can_be_left(monkeypatch, tmp_path):
 	# uncommitted work still refuses, remote or not — that is the check that matters here
 	open(os.path.join(team.dir_of("acme-tools"), "memory", "general.md"), "w").write("- unsaved\n")
 	assert knowledge.unpushed(team.dir_of("acme-tools")) == -1
-	assert "unpushed" in knowledge.leave("acme-tools")
+	assert "uncommitted work" in knowledge.leave("acme-tools")  # nowhere to push, so that is the risk
 
 
 def test_a_join_that_cannot_publish_still_joined(monkeypatch, tmp_path):
@@ -511,10 +511,30 @@ def test_a_join_that_cannot_publish_still_joined(monkeypatch, tmp_path):
 	git("add", "-A", cwd=tmp_path / "seed")
 	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s", cwd=tmp_path / "seed")
 	git("push", "-q", "origin", "HEAD", cwd=tmp_path / "seed")
-	os.chmod(remote, 0o500)                     # clone yes, push no
-	try:
-		assert team.setup(str(remote)) == "", "a usable checkout was reported as a failed join"
-		assert team.joined() == ["read-only"]
-		assert team.ERROR                        # and the sync failure IS reported, on the Team row
-	finally:
-		os.chmod(remote, 0o700)
+	# ponytail: a pre-receive hook, not chmod. `os.chmod(remote, 0o500)` gates the TOP directory only —
+	# objects/ and refs/ stay writable — and mode bits are ignored for root, which CI may well be. A
+	# test that cannot fail proves nothing, and this one asserts the absence of an error.
+	hook = remote / "hooks" / "pre-receive"
+	hook.parent.mkdir(exist_ok=True)
+	hook.write_text("#!/bin/sh\nexit 1\n")
+	hook.chmod(0o755)
+	assert team.setup(str(remote)) == "", "a usable checkout was reported as a failed join"
+	assert team.joined() == ["read-only"]
+	assert team.ERROR                            # and the sync failure IS reported, on the Team row
+
+
+def test_a_teams_own_name_cannot_paint_the_header(monkeypatch, tmp_path):
+	"""team.json comes from a CLONED repo, so anyone with push access to the team writes it — and it
+	lands in the curses header and the CLI listing."""
+	shared = tmp_path / "teams" / "org-t"
+	(shared / ".git").mkdir(parents=True)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(shared / "team.json").write_text(
+		'{"name": "Evil\\nTeam\\u0007\\u001b[31m", "description": "line one\\nline two\\u0000"}')
+	it = team.info("org-t")
+	assert "\n" not in it["name"] and "\n" not in it["description"]
+	assert all(c.isprintable() for c in it["name"] + it["description"])
+	assert it["name"] == "EvilTeam[31m" and it["description"] == "line oneline two"
+	# and a name that is nothing but control bytes falls back to the key rather than rendering empty
+	(shared / "team.json").write_text('{"name": "\\u0007\\u0007", "description": ""}')
+	assert team.info("org-t")["name"] == "org-t"

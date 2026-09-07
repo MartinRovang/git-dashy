@@ -282,10 +282,21 @@ def info(key):
 		with open(os.path.join(d, INFO)) as f:
 			got = json.load(f)
 		if isinstance(got, dict):
-			return {"name": str(got.get("name") or key), "description": str(got.get("description") or "")}
+			return {"name": _clean(got.get("name"), key), "description": _clean(got.get("description"), "")}
 	except (OSError, ValueError):
 		pass
 	return {"name": key, "description": ""}
+
+
+def _clean(v, fallback):
+	"""One line of printable text, clipped. For anything read out of a team's own files.
+
+	ponytail: team.json comes from a CLONED repo, so anyone with push access to the team writes it, and
+	it lands in the curses header and the CLI listing. A newline or a control byte there is theirs to
+	choose and mine to refuse — this is the chokepoint every reader goes through.
+	"""
+	t = "".join(c for c in str(v or "") if c.isprintable()).strip()
+	return t[:120] or fallback
 
 
 def write_info(key, name, description):

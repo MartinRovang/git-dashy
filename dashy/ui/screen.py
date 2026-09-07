@@ -1174,8 +1174,13 @@ def _join_team(scr, state, sel):
 		return
 	if err := team.setup(repo):
 		confirm(scr, state, sel, f" {err}  [any key]")
-	else:
-		state.wake.set()  # reload REVIEWED, which now reads one more log
+		return
+	state.wake.set()  # reload REVIEWED, which now reads one more log
+	# ponytail: setup() returns "" for a join that worked but could not PUSH — read-only access clones
+	# fine — and puts the reason in ERROR. That is right for "did you join", and it left the join
+	# silent: the only sign was a clipped line on the T row that the next successful pull clears.
+	if team.ERROR:
+		confirm(scr, state, sel, f" joined, but could not publish: {team.ERROR[:70]}  [any key]")
 
 
 def _leave_team(scr, state, sel, joined):
