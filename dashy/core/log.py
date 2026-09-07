@@ -81,9 +81,10 @@ def mark_rereviews(sections):
 		if not e:
 			continue
 		if e.get("head"):
-			# ponytail: the entry knows its head but the row does not, so the graphql call that fills it
-			# failed on this fetch and nothing here can tell. Falling through to the timestamp would call
-			# it changed — posting a review is itself an update — and auto would re-review every tick.
+			# ponytail: the entry knows its head but the row does not — the graphql call failed on this
+			# fetch, or returned no node for this PR — and nothing here can tell. Falling through to the
+			# timestamp would call it changed — posting a review is itself an update — and auto would
+			# re-review every tick. Ceiling: a PR permanently missing from graphql is never re-reviewed.
 			if not p.get("head"):
 				continue
 			changed = p["head"] != e["head"]
