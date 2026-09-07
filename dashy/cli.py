@@ -5,7 +5,7 @@ import os
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import bind as bind_mod, install as install_mod, memory, mirror, review as review_mod, team
+from .core import bind as bind_mod, install as install_mod, knowledge, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -393,7 +393,6 @@ def teams(argv):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: joined {team.joined()[-1] if team.joined() else join}")
 	elif leave := arg("--leave", "", str, argv):
-		from .core import knowledge
 		if err := knowledge.leave(leave):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: left {leave}")

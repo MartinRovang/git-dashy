@@ -45,7 +45,12 @@ def _entries(path):
 def _parse(line):
 	try:
 		e = json.loads(line)
-		return e if isinstance(e, dict) and "pr" in e and e.get("verdict") in config.STATUS else None
+		# ponytail: every field reviewed() then reaches for. It does e["at"] in the sort key and **e["pr"]
+		# in the row, so a line missing "at" — or carrying "pr": 7 — took the dashboard down on every
+		# frame. The guard exists precisely so a half-written append cannot do that; checking two of the
+		# three fields is checking none of them.
+		return e if (isinstance(e, dict) and isinstance(e.get("pr"), dict)
+		             and isinstance(e.get("at"), str) and e.get("verdict") in config.STATUS) else None
 	except ValueError:
 		return None
 

@@ -33,7 +33,8 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	git("clone", "-q", str(remote), str(tmp_path / "mate"), cwd=tmp_path)
 	assert "merge=union" in open(tmp_path / "mate" / ".gitattributes").read()
 	open(tmp_path / "mate" / "reviewed.jsonl", "a").write('{"x":2}\n')
-	git("commit", "-qam", "mate", cwd=tmp_path / "mate")
+	git("add", "-A", cwd=tmp_path / "mate")
+	git("commit", "-qm", "mate", cwd=tmp_path / "mate")
 	git("push", "-q", cwd=tmp_path / "mate")
 	# ponytail: the TEAM's log, not yours. Reviews of a bound repo are logged inside the team checkout
 	# and merged on read; yours holds only the unbound ones, so appending here proved nothing about the
@@ -42,22 +43,25 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	open(theirs, "a").write('{"x":3}\n')
 	team.push("mine")
 	team.pull()
-	assert team.ERROR == "" and open(theirs).read() == '{"x":1}\n{"x":2}\n{"x":3}\n'
+	# ponytail: {"x":1} is gone — joining no longer copies your personal log into the team's repo, so
+	# the only entries here are the ones written FOR this team. The union driver is still what is
+	# under test: two people appending to the same file, merged without a conflict.
+	assert team.ERROR == "" and open(theirs).read() == '{"x":2}\n{"x":3}\n'
 
 
 def test_joining_binds_the_repos_the_log_already_names(monkeypatch, tmp_path):
-	"""The bootstrap, on the one path where it is hardest: the log arrives AFTER the team does.
+	"""Joining binds the repos the TEAM's shared log already names, so nothing you had stops working.
 
-	setup() clones, activates, and only then copies your own log in. Seeding hangs off activate(), so
-	the first run saw a checkout with no log at all and bound nothing — and the session in which you
-	joined was the one session where the team's brief would silently not appear.
+	ponytail: the team's log, not yours. It used to be yours, copied in on join — which also published
+	every private repo you had reviewed. Seeding hangs off activate(), which runs after the clone, so
+	the entries have to be in the repo being cloned.
 	"""
 	remote = tmp_path / "remote.git"
 	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	(mem := tmp_path / "mem").mkdir()
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
-	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/api"}}}\n')
+	_seed_remote_log(tmp_path, remote, '{"pr":{"repository":{"nameWithOwner":"acme/api"}}}\n')
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
@@ -163,7 +167,7 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 	monkeypatch.setattr(install, "REGISTRY", str(tmp_path / "mirrors"))
 	install.register(str(tmp_path / "wired"), "acme/only-wired")   # init'd, never reviewed
 	install.register(str(tmp_path / "mine"), "me/weekend-thing")   # init'd, and none of the team's business
-	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/reviewed"}}}\n')
+	_seed_remote_log(tmp_path, remote, '{"pr":{"repository":{"nameWithOwner":"acme/reviewed"}}}\n')
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
@@ -205,8 +209,12 @@ def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tm
 	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"me/mine"}}}\n')
 	assert team.setup(str(remote)) == ""
 	assert bind.of("acme/theirs") == team.joined()[0]       # seeded from the log that was already there
-	assert not os.path.exists(str(tmp_path / "me" / "reviewed.jsonl.bak"))
-	assert "acme/theirs" in open(config.LOG).read()  # and yours was NOT copied over theirs
+	# ponytail: and YOUR log is untouched and unpublished. It holds reviews of repos bound to other
+	# teams and of private work; copying it in would have committed and pushed all of it, so joining a
+	# team told them what else you review.
+	assert open(config.LOG).read() == '{"pr":{"repository":{"nameWithOwner":"me/mine"}}}\n'
+	assert "me/mine" not in open(team.log_of(team.joined()[0])).read()
+	assert bind.of("me/mine") == ""                         # and nothing of yours got bound to them
 
 
 def _old_layout(monkeypatch, tmp_path, remote=True):
@@ -292,6 +300,23 @@ def test_a_team_can_live_somewhere_else_and_be_linked(monkeypatch, tmp_path):
 	assert team.joined() == ["acme-mem"]        # and the slug still names it, not the directory it points at
 
 
+def _seed_remote_log(tmp_path, remote, text):
+	"""Put a shared review log in the team's own repo, which is where seeding reads it from.
+
+	ponytail: it used to go in YOUR log, because joining copied that into the team. It no longer does —
+	a personal log holds other teams' repos and private work — so a test about what the TEAM's log
+	seeds has to put the entries where the team's log actually is.
+	"""
+	mate = tmp_path / ("mate-" + os.path.basename(str(remote)))
+	git("clone", "-q", str(remote), str(mate), cwd=tmp_path)
+	(mate / "reviewed.jsonl").write_text(text)
+	git("add", "-A", cwd=mate)
+	# ponytail: its own identity, via -c. A caller that sets GIT_AUTHOR_* later in the test, or a
+	# machine with no global git config (CI), otherwise makes this commit fail with 128.
+	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed", cwd=mate)
+	git("push", "-q", "origin", "HEAD", cwd=mate)
+
+
 def _ident(monkeypatch):
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
@@ -363,3 +388,55 @@ def test_a_started_team_pins_its_branch(monkeypatch, tmp_path):
 	head = subprocess.run(["git", "-C", team.dirs()[0], "symbolic-ref", "--short", "HEAD"],
 	                      capture_output=True, text=True).stdout.strip()
 	assert head == team.BRANCH
+
+
+def test_migration_carries_the_bindings_across_the_rename(monkeypatch, tmp_path):
+	"""The shipped version (v1.30.0) keyed bindings on origin_slug — "owner/name", with a slash. The
+	directory is now "owner-name", so every one of them resolved to nothing: the team's facts stopped
+	being read, brief() said "not in team owner/name" about the team you were in, and pooling and
+	sharing went quiet with nothing on screen to say so."""
+	_ident(monkeypatch)
+	src = tmp_path / "prs_team"
+	(src / "memory").mkdir(parents=True)
+	git("init", "-q", str(src), cwd=tmp_path)
+	git("remote", "add", "origin", "git@github.com:org/mem.git", cwd=src)
+	(src / "memory" / "general.md").write_text("- the team knows this\n")
+	monkeypatch.setattr(config, "TEAM", str(src))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "prs_teams"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(knowledge, "unpushed", lambda d: 0)
+	bind.bind("acme/api", "org/mem")          # exactly as the shipped version wrote them
+	bind.bind_owner("acme", "org/mem")
+	bind.bind("other/repo", "someone/else")   # a team we are not migrating: left alone
+
+	report = team.migrate()
+	assert "repointed 2 bindings" in report
+	assert team.joined() == ["org-mem"]
+	assert bind.of("acme/api") == "org-mem" and bind.of("acme/anything") == "org-mem"
+	assert bind.of("other/repo") == "someone/else"
+	# and the whole point: the team's memory is readable again
+	assert [l for l, _ in memory.sources("acme/api")] == ["mine", "team org-mem"]
+	assert memory.team_visible("acme/api")
+
+
+def test_joining_never_publishes_your_own_review_log(monkeypatch, tmp_path):
+	"""A personal log holds reviews of repos bound to OTHER teams and of private work. Copying it into
+	the team committed and PUSHED all of it, so joining told them what else you review."""
+	_ident(monkeypatch)
+	remote = tmp_path / "teamB.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "mine").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	open(log.LOG, "w").write(
+		'{"at":"2026-09-01T10:00:00+00:00","verdict":"approve","model":"o","summary":"","body":"b",'
+		'"pr":{"repository":{"nameWithOwner":"acme/secret-side-project"},"number":1,"url":"u","title":"t"}}\n')
+
+	assert team.setup(str(remote)) == ""
+	files = subprocess.run(["git", "-C", str(remote), "ls-tree", "-r", "--name-only", "HEAD"],
+	                       capture_output=True, text=True).stdout
+	assert "team.json" not in files or "reviewed.jsonl" not in files.split()
+	theirs = team.log_of(team.joined()[0])
+	assert not os.path.exists(theirs) or "secret-side-project" not in open(theirs).read()
+	assert "secret-side-project" in open(log.LOG).read()   # still yours, still readable by you
+	assert bind.of("acme/secret-side-project") == ""       # and not bound to them either

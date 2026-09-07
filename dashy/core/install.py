@@ -42,7 +42,8 @@ def links():
 	"""(link, target) for the two paths a session reads memory through.
 
 	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
-	joined. With none or several it points inside TEAMS at a name no team can have — a dangling link,
+	joined. With none or several it points inside TEAMS at a name nothing will have started — a dangling
+	link (`key_of("no single team")` would collide, so it is a convention, not an impossibility) —
 	which the loader already degrades on (a missing @import target is skipped and its siblings still
 	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
 	into every session on the machine, which is the defect this whole line of work removes. Making the

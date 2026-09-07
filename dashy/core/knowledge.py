@@ -215,7 +215,7 @@ def set_store(new):
 	return repoint(config.TEAMS, new, "PRS_TEAMS")
 
 
-def unpushed(d=None):
+def unpushed(d):
 	"""Work in a team checkout the remote does not have. -1 when that cannot be told.
 
 	ponytail: commits ahead AND a dirty tree. A push that failed earlier — no git identity configured,
@@ -223,7 +223,8 @@ def unpushed(d=None):
 	leave() deletes this directory, so the question has to be "is anything here unsaved", not "how many
 	commits".
 	"""
-	d = d or (team.dirs() or [""])[0]
+	# ponytail: no default. _git lost its cwd default in this same change because a silent
+	# wrong-directory git call is worse than a TypeError at the call site; this one was the survivor.
 	r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
 	                   capture_output=True, text=True, timeout=60)
 	if r.returncode != 0:

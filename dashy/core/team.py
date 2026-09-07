@@ -312,15 +312,25 @@ def joined():
 		names = sorted(os.listdir(config.TEAMS))
 	except OSError:
 		return []
-	return [n for n in names if is_repo(os.path.join(config.TEAMS, n))]
+	# ponytail: a dotted name is never a team. setup() clones into TEAMS/.joining, and the moment git
+	# creates its .git the refresh thread would walk into a half-cloned checkout and pull inside it.
+	return [n for n in names if not n.startswith(".") and is_repo(os.path.join(config.TEAMS, n))]
 
 
 def dir_of(slug):
-	"""The checkout for `slug`, "" when this machine has not joined it."""
+	"""The checkout for `slug`, "" when this machine has not joined it.
+
+	ponytail: folded, as bind.team_dir already is. Everything above this — info, write_info, connect,
+	knowledge.leave, the CLI's --team — answered "not in Org-Mem" about a team you were in, because
+	only the resolver had been taught that a key is typed. Folding here covers all of them at once.
+	"""
 	if not slug:
 		return ""
-	d = os.path.join(config.TEAMS, dirname(slug))
-	return d if is_repo(d) else ""
+	want = slug.lower()
+	for n in joined():
+		if n.lower() == want:
+			return os.path.join(config.TEAMS, n)
+	return ""
 
 
 def dirs():
@@ -358,7 +368,8 @@ def migrate():
 		return ""  # nothing to migrate, which is every machine that installed after this
 	# ponytail: the old layout had no name of its own, so the origin is the only thing that can name it
 	# — through key_of, because a key is a directory name and owner/name has a slash in it.
-	key = key_of(origin_slug(src).replace("/", "-"))
+	was = origin_slug(src)  # ponytail: EXACTLY what the shipped version wrote into every binding
+	key = key_of(was.replace("/", "-"))
 	if not key:
 		return f"gitdashy: {src} has no origin to name it by — move it into {config.TEAMS} by hand"
 	dest = os.path.join(config.TEAMS, dirname(key))
@@ -376,7 +387,25 @@ def migrate():
 		os.rename(src, dest)
 	except OSError as e:
 		return f"gitdashy: could not move {src} to {dest}: {e}"
-	return f"gitdashy: moved your team checkout to {dest}"
+	# ponytail: and carry the BINDINGS. The shipped version keyed them on origin_slug — "owner/name",
+	# with a slash — and the directory is now "owner-name", so every one of them resolved to nothing:
+	# the team's facts stopped being read, brief() said "not in team owner/name" about the team you
+	# were in, and pooling and sharing went quiet, with nothing on screen to say so. seed() cannot
+	# repair it either, because every bound repo is already in `touched`.
+	# ponytail: a rewrite rather than teaching team_dir to also match the old shape — one migration
+	# that ends, instead of a fallback that lives in the resolver forever.
+	from . import bind
+	moved = 0
+	for repo, t in bind.bindings().items():
+		if t.lower() == was.lower():
+			bind.bind(repo, key)
+			moved += 1
+	for owner, t in bind.owners().items():
+		if t.lower() == was.lower():
+			bind.bind_owner(owner, key)
+			moved += 1
+	note = f", and repointed {moved} binding{'' if moved == 1 else 's'}" if moved else ""
+	return f"gitdashy: moved your team checkout to {dest}{note}"
 
 
 def activate():
@@ -505,6 +534,10 @@ def start(name, description="", at=""):
 		os.makedirs(config.TEAMS, exist_ok=True)
 		if at:
 			at = os.path.abspath(os.path.expanduser(at))
+			# ponytail: an existing checkout is somebody's repo, and write_info would overwrite its
+			# team.json with this name. Joining one is `teams --join`; this makes a new team.
+			if is_repo(at):
+				return f"{at} is already a git checkout — join it with `teams --join` instead"
 			os.makedirs(at, exist_ok=True)
 			os.symlink(at, dest)
 		else:
@@ -589,14 +622,13 @@ def setup(repo, name=""):
 		return f"already in {key}"
 	os.rename(tmp, dest)
 	union_attrs(dest)
-	old_log = config.LOCAL_LOG
-	activate()
 	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	seed_project(os.path.join(dest, "memory", "project.md"))
-	config.LOG = log_of(key)
-	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
-		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
-		# ponytail: again, because the log only exists NOW — activate() seeds bindings from it.
-		activate()
+	# ponytail: your own log is NOT copied in. It was, back when "a team" was singular and your log
+	# became the team's — but a personal log holds reviews of repos bound to OTHER teams and of private
+	# work, and copying it in committed and PUSHED all of it. Joining a team would have told them what
+	# else you review. log.reviewed() merges every log on read, so you still see your own history;
+	# they see only what was reviewed for them.
+	activate()
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))
 	return ERROR
