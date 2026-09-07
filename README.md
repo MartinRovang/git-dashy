@@ -28,7 +28,15 @@ curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/inst
 ```
 
 Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `gitdashy` in
-`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in place. Or do it by hand:
+`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in
+place — and always to the newest **tag**, whatever branch you happen to be standing in. To install a branch
+or an older release, name it:
+
+```sh
+REF=feat/drop-gh ./install.sh     # or REF=v1.31.1, or REF=main
+```
+
+Or do it by hand:
 
 ```sh
 git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
