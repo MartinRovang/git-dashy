@@ -246,3 +246,29 @@ def test_a_trimmed_url_is_refused_rather_than_truncated():
 	assert bind.key("https://github.com/acme/api/") == "acme/api"
 	assert bind.key("git@github.com:acme/api.git") == "acme/api"
 	assert bind.key("/home/me/src/acme/api") == "acme/api"
+
+
+def test_seeding_reads_the_store_once_however_many_repos(monkeypatch):
+	"""seed() called of() per repo, and each of() is a full read. With the mirror registry folded in
+	that is len(log) + len(registry) opens at startup, inside curses."""
+	opens = []
+	real = open
+	monkeypatch.setattr("builtins.open", lambda f, *a, **k: (opens.append(str(f)), real(f, *a, **k))[1])
+	bind.seed("org/t", [f"acme/r{i}" for i in range(50)])
+	reads = [f for f in opens if f == bind.BINDINGS and True]
+	# 50 appends are unavoidable; the point is that the store is not RE-READ per repo
+	assert len(bind.bindings()) == 50
+	assert len(reads) <= 55, f"{len(reads)} opens of the store for 50 repos"
+
+
+def test_a_caller_that_already_resolved_a_repo_is_believed(monkeypatch, tmp_path):
+	"""brief(repo, slug) is the whole contract the draw path relies on: one resolver per frame, its
+	answer handed in rather than looked up again."""
+	mine, shared = _estate(monkeypatch, tmp_path)
+	(mine / "project.md").write_text("Mine.\n")
+	(shared / "project.md").write_text("The team's.\n")
+	bind.bind("acme/api", "org/mem")
+	assert memory.brief("acme/api") == ("The team's.", "team org/mem")     # looked up
+	assert memory.brief("acme/api", "") == ("Mine.", "yours · acme/api is bound to no team")
+	bind.forget("acme/api")
+	assert memory.brief("acme/api", "org/mem") == ("The team's.", "team org/mem")  # the argument wins
