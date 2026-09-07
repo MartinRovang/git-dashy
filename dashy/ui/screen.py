@@ -633,9 +633,17 @@ def panel(scr, title, lines, footer, accent=4):
 	# a long body wrote past the last line on a short terminal — h <= 14 was enough. Reachable from the
 	# share screen already; the drafts screen feeds it model-authored text of unbounded length, which is
 	# the caller most likely to find it. Trim the body rather than draw outside the screen.
-	room = max(1, h - 6)  # the border, the two blank rows, the footer
+	# ponytail: a box needs 6 rows before any body — two borders, two blanks, a footer, and the row the
+	# title sits on. Below that there is no correct trim, so it does not draw at all: max(1, h - 6) kept
+	# one body line at h == 6 and put the bottom border on row 6 of a 6-row screen. `draw()` survives
+	# every height down to 2, so this is reachable rather than academic — my own sweep started at 8.
+	if h < 7 or w < 12:  # ponytail: and the width, where inner - 6 goes non-positive. popup() has the same gate.
+		return
+	room = h - 6  # rows left for the body: two borders, two blanks, the footer, the title row
 	if len(lines) > room:
-		lines = list(lines)[:room - 1] + [("…", "")]
+		# ponytail: the ellipsis COSTS a row. `[:max(1, room-1)] + […]` kept one line plus the marker at
+		# room == 1 — a trim that made the body longer than the space it was trimming to fit.
+		lines = (list(lines)[:room - 1] + [("…", "")]) if room > 1 else [("…", "")]
 	top = max(1, h // 2 - (len(lines) + 6) // 2)
 	x = max(0, (w - inner) // 2)
 	def row(y, left, right="", attr=0, attr2=None):

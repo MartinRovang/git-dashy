@@ -442,8 +442,7 @@ def _rewrite_counted(p, items):
 
 
 def _write_drafts(repo, items):
-	_history()
-	_rewrite_counted(queue_path(repo), items)
+	_rewrite_counted(queue_path(repo), items)  # ponytail: _rewrite reaches _history(); the call here was a second one
 
 
 def append(repo, text):

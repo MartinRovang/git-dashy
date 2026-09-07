@@ -1195,11 +1195,14 @@ def test_a_panels_right_value_never_lands_on_its_own_label(screen):
 def test_a_panel_never_writes_past_the_bottom_of_a_short_terminal():
 	"""top floored at 1 but the bottom row is top + 4 + len(lines). The drafts screen feeds panel()
 	model-authored text of unbounded length, which is the caller most likely to find it."""
-	body = [(f"line {i} of a long wrapped fact", "") for i in range(14)]
-	for h in range(8, 32):
-		for w in (40, 80, 128):
-			scr = FakeScr(h=h, w=w)
-			ui.panel(scr, "waiting", body, "[t] accept   [x] drop   [esc] close")  # must not raise
+	# ponytail: from h=2 and w=4, not from h=8. The first version of this swept 8..32 and passed while
+	# h<=6 still wrote its bottom border off the screen — the sweep's floor was the bug's hiding place.
+	for n in (0, 1, 14, 40):
+		body = [(f"line {i} of a long wrapped fact", "") for i in range(n)]
+		for h in range(2, 34):
+			for w in range(4, 60):
+				scr = FakeScr(h=h, w=w)
+				ui.panel(scr, "waiting", body, "[t] accept   [x] drop   [esc] close")  # must not raise
 
 
 def test_drafts_screen_pushes_both_the_fact_and_its_evidence(screen, monkeypatch, st, tmp_path):
