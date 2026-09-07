@@ -1100,13 +1100,28 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
+def _new_team(scr, state, sel):
+	"""Start a team that does not exist yet: a local checkout, no remote needed."""
+	slug = ask(scr, state, sel, " Name the new team (owner/name — the slug your repos will be bound to):")
+	if not slug:
+		return
+	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or a path to keep it somewhere else)")
+	if err := team.start(slug, at):
+		confirm(scr, state, sel, f" {err}  [any key]")
+	else:
+		state.wake.set()
+		confirm(scr, state, sel, f" started {slug} — bind repos to it with `gitdashy bind`  [any key]")
+
+
 def _join_team(scr, state, sel):
-	"""Ask for a repo and join it. owner/name is offered for creation when the clone fails."""
-	repo = ask(scr, state, sel, " Team repo (owner/name, a local path, or a git URL; owner/name is created if missing):")
+	"""Join a team that already exists: a GitHub repo, a git URL, or a checkout on this machine."""
+	repo = ask(scr, state, sel, " Existing team (owner/name, a local path, or a git URL):")
 	if not repo:
 		return
 	err = team.setup(repo)
-	if err and "/" in repo and not os.path.isdir(repo):  # ponytail: any clone failure of owner/name → offer to create
+	# ponytail: only for something that could BE a GitHub repo. A path that does not exist yet is not a
+	# repo somebody forgot to create — it is a new team, and `n` is the key for that.
+	if err and not team.looks_local(repo) and "/" in repo:
 		if confirm(scr, state, sel, f" {err} · create {repo} as a private repo? [y/n]"):
 			err = team.setup(repo, create=True)
 	if err:
@@ -1143,16 +1158,16 @@ def team_setup(scr, state, sel):
 	"""
 	while True:
 		joined = team.joined()
-		if not joined:
-			return _join_team(scr, state, sel)
 		draw(scr, state, sel, prompt=" ")
-		panel(scr, f"teams  ·  {len(joined)} joined",
-		      [(s, knowledge.tilde(team.dir_of(s))) for s in joined],
-		      "[a] join another   [x] leave one   [esc] close")
+		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
+		      [(s, knowledge.tilde(team.dir_of(s))) for s in joined] or [("a team is a git repo of shared memory", "")],
+		      "[n] start a new one   [a] join an existing   [x] leave one   [esc] close")
 		k = scr.getch()
-		if k == ord("a"):
+		if k == ord("n"):
+			_new_team(scr, state, sel)
+		elif k == ord("a"):
 			_join_team(scr, state, sel)
-		elif k == ord("x"):
+		elif k == ord("x") and joined:
 			_leave_team(scr, state, sel, joined)
 		elif k in (27, ord("q")):
 			return

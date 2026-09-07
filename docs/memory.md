@@ -264,6 +264,21 @@ arrive in time order. With several logs it never is.)
 **A general fact needs exactly one team.** It names no repo, so no binding selects a team for it, and
 with two joined that is two different claims — so it stays yours until you say where it goes.
 
+**Starting or joining one.** `T` in the dashboard: `n` starts a new team, `a` joins an existing one,
+`x` leaves one. From a shell:
+
+```sh
+gitdashy teams --new NeoMedSys/review-memory          # a fresh checkout here, no remote needed
+gitdashy teams --new acme/mem --at /srv/shared/mem    # kept elsewhere, linked by slug
+gitdashy teams --join NeoMedSys/review-memory         # clone one that exists
+gitdashy teams --join NeoMedSys/review-memory --create  # make it private on GitHub first
+gitdashy bind --owner neomedsys --team NeoMedSys/review-memory   # then add repos to it
+```
+
+A team needs **no remote to be useful** — memory works local-only the same way, and `git remote add`
+later turns it into something the rest of the team can pull. The name is `owner/name` because that
+slug is what bindings point at; it is the identity, not the directory.
+
 **Migration.** A pre-plural `~/.prs_team` moves to `~/.prs_teams/<slug>/` on first launch, after a
 backup. It refuses rather than coping: no origin to key it by, a destination that exists, or any
 uncommitted or unpushed work. `os.rename`, never copy-then-delete, so a failure leaves the source

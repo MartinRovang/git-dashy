@@ -365,11 +365,24 @@ def activate():
 		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known)
 
 
+def looks_local(repo):
+	"""True when `repo` names a place on this machine rather than a repo on GitHub.
+
+	ponytail: an existing directory always wins; beyond that a leading /, ./, ../ or ~ makes it a path
+	whether or not it exists yet. `os.path.isdir` alone meant a path you were about to CREATE was read
+	as owner/name and handed to gh, which answered "Could not resolve to a Repository" — the same
+	defect knowledge.is_remote was fixed for, in the function beside it, left unswept.
+	"""
+	repo = (repo or "").strip()
+	return bool(repo) and (os.path.isdir(os.path.expanduser(repo))
+	                       or repo.startswith(("/", "./", "../", "~")))
+
+
 def clone(repo, dest):
 	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
-	local = os.path.isdir(repo) or "://" in repo or "@" in repo
+	local = looks_local(repo) or "://" in repo or "@" in repo
 	cmd = ["git", "clone", "-q", repo, dest] if local else ["gh", "repo", "clone", repo, dest]
-	return "" if _note(_remote(cmd)) else ERROR
+	return "" if _note(_remote(cmd), "join") else ERROR
 
 
 def union_attrs(dest):
@@ -421,6 +434,40 @@ def seed_project(path):
 	if not os.path.exists(path):
 		with open(path, "w") as f:
 			f.write(PROJECT_TEMPLATE)
+
+
+def start(slug, at=""):
+	"""Create a NEW team: a fresh checkout with no remote, seeded and ready to push later. "" or an error.
+
+	ponytail: starting a team was not possible at all — every path here CLONED something that already
+	existed, so the first person on a team had to go and make the repo by hand first. A team needs no
+	remote to be useful: memory works local-only the same way, and `git remote add` later turns it into
+	something the rest of the team can pull.
+	ponytail: `at` symlinks rather than copies, so a team kept on a shared drive or in an existing repo
+	stays where it is. The slug still names the link, because the slug is the identity.
+	"""
+	if not (slug := slug_of(slug) if "/" in (slug or "") else ""):
+		return "a team is named owner/name — that is the slug bindings point at"
+	dest = os.path.join(config.TEAMS, dirname(slug))
+	if os.path.lexists(dest):
+		return f"already in {slug}" if is_repo(dest) else f"{dest} exists and is not a team"
+	try:
+		os.makedirs(config.TEAMS, exist_ok=True)
+		if at:
+			at = os.path.abspath(os.path.expanduser(at))
+			os.makedirs(at, exist_ok=True)
+			os.symlink(at, dest)
+		else:
+			os.makedirs(dest)
+		os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
+	except OSError as e:
+		return str(e)
+	if not is_repo(dest) and _git("init", "-q", cwd=dest).returncode != 0:
+		return f"could not git init {dest}"
+	union_attrs(dest)
+	seed_project(os.path.join(dest, "memory", "project.md"))
+	push_dir(dest, "gitdashy: new team " + slug, "join")
+	return ""
 
 
 def setup(repo, create=False):

@@ -84,7 +84,7 @@ def test_setup_accepts_a_url_and_never_waits_on_a_prompt(monkeypatch, tmp_path):
 	err = team.setup("https://github.com/org/review-team.git")
 	assert seen["cmd"][:2] == ["git", "clone"]  # a URL is not an owner/name, so gh is not involved
 	assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and "BatchMode=yes" in seen["env"]["GIT_SSH_COMMAND"]
-	assert seen["timeout"] == team.CLONE and err.startswith("sync: timed out after")  # reason first, not a clipped URL
+	assert seen["timeout"] == team.CLONE and err.startswith("join: timed out after")  # reason first, and labelled as a join, not a sync
 	assert not team.on()
 
 
@@ -254,3 +254,39 @@ def test_migration_refuses_a_checkout_it_cannot_key_or_a_taken_destination(monke
 	(tmp_path / "prs_teams" / "org__mem").mkdir(parents=True)
 	assert "already exists" in team.migrate()
 	assert src.exists() and (src / "memory" / "general.md").exists()   # and it is not merged over
+
+
+def test_a_path_that_does_not_exist_yet_is_still_a_path(monkeypatch, tmp_path):
+	"""os.path.isdir alone sent a path you were about to CREATE to gh, which answered
+	"Could not resolve to a Repository" — the sibling of the knowledge.is_remote fix, left unswept."""
+	assert team.looks_local(str(tmp_path / "nope-not-yet"))     # absolute, does not exist
+	assert team.looks_local("./notes") and team.looks_local("../x") and team.looks_local("~/mem")
+	assert team.looks_local(str(tmp_path))                       # and one that does
+	assert not team.looks_local("NeoMedSys/review-memory")       # still owner/name
+	assert not team.looks_local("NilsPontus")
+
+
+def test_starting_a_team_needs_no_remote_and_no_github(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.start("NeoMedSys/review-memory") == ""
+	assert team.joined() == ["NeoMedSys/review-memory"]
+	d = team.dirs()[0]
+	assert os.path.isdir(os.path.join(d, ".git"))                 # a real checkout, just with no origin
+	assert not team.has_remote(d)
+	assert os.path.exists(os.path.join(d, "memory", "project.md"))  # seeded, ready to fill in
+	assert "merge=union" in open(os.path.join(d, ".gitattributes")).read()
+	assert "already in" in team.start("NeoMedSys/review-memory")    # idempotent, and says so
+	assert "owner/name" in team.start("justaname")                  # the slug is the identity
+
+
+def test_a_team_can_live_somewhere_else_and_be_linked(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	share = tmp_path / "on-a-share"
+	assert team.start("acme/mem", str(share)) == ""
+	link = tmp_path / "teams" / "acme__mem"
+	assert os.path.islink(link) and os.path.realpath(link) == str(share)
+	assert team.joined() == ["acme/mem"]        # and the slug still names it, not the directory it points at

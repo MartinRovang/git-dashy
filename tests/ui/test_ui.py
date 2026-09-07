@@ -1240,8 +1240,23 @@ def test_t_can_still_join_once_you_are_already_in_a_team(screen, monkeypatch, st
 	screen.getch, screen.timeout = _keys(ord("a"), 27), lambda t: None
 	ui.team_setup(screen, st, 0)
 	assert joined == ["org/two"]                       # the join path is reachable
-	assert "Team repo" in asked[0]
+	assert "Existing team" in asked[0]
 	assert "org/one" in screen.text() and "1 joined" in screen.text()
+
+
+def test_t_can_start_a_team_that_does_not_exist_anywhere_yet(screen, monkeypatch, st, tmp_path):
+	"""Every other path CLONES something that already exists, so the first person on a team was stuck."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	answers, started = iter(["NeoMedSys/review-memory", ""]), []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: True)
+	monkeypatch.setattr(ui.team, "start", lambda slug, at="": started.append((slug, at)) or "")
+	screen.getch, screen.timeout = _keys(ord("n"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert started == [("NeoMedSys/review-memory", "")]
+	assert "none yet" in screen.text()          # and the empty state still offers both routes
+	assert "start a new one" in screen.text() and "join an existing" in screen.text()
 
 
 def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_path):

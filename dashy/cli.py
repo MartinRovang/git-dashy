@@ -20,7 +20,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name]
-       gitdashy teams [--join owner/name|PATH|URL [--create]] [--leave owner/name]
+       gitdashy teams [--new owner/name [--at DIR]] [--join owner/name|PATH|URL [--create]] [--leave owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -80,9 +80,12 @@ drafts shows what a review proposed and no second review has confirmed — the s
   promotes one by hand or drops it.
 
 teams lists the teams this machine has joined and what each one covers. A team is a git repo holding
-  shared memory — --join takes an owner/name, a local path or a git URL, and --create makes a private
-  one when owner/name does not exist yet. --leave drops one checkout, refusing while it holds unpushed
-  work. Several teams can be joined at once; which one applies to a repo is `gitdashy bind`.
+  shared memory, named owner/name — that name is the slug bindings point at.
+  --new starts one here with no remote (--at DIR keeps it somewhere else and links to it); add a remote
+  later and the rest of the team can pull it. --join takes an owner/name, a local path or a git URL,
+  and --create makes a private GitHub repo when owner/name does not exist yet. --leave drops one
+  checkout, refusing while it holds unpushed work.
+  Several teams can be joined at once; which one applies to a repo is `gitdashy bind`.
 
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
@@ -363,7 +366,13 @@ def teams(argv):
 	to run somewhere errors are visible rather than on a footer.
 	"""
 	team.activate()
-	if join := arg("--join", "", str, argv):
+	if new := arg("--new", "", str, argv):
+		# ponytail: START one, which nothing could do — every other path clones something that already
+		# exists, so the first person on a team had to go and create the repo by hand first.
+		if err := team.start(new, arg("--at", "", str, argv)):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: started {new} — bind repos to it with `gitdashy bind --owner OWNER --team {new}`")
+	elif join := arg("--join", "", str, argv):
 		if err := team.setup(join, create="--create" in argv):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: joined {team.joined()[-1] if team.joined() else join}")
