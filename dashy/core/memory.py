@@ -94,7 +94,7 @@ def _brief_text(p):
 	return "\n".join(l for l in _read(p).splitlines() if l.strip() != SETUP_MARK).strip()
 
 
-def brief(repo=None):
+def brief(repo=None, slug=None):
 	"""The ONE brief that applies to `repo`, and where it came from: (text, source).
 
 	Two values, deliberately. A caller cannot put a brief in front of a reviewer without also holding
@@ -108,7 +108,10 @@ def brief(repo=None):
 	Selection is by binding: declared, visible, and undoable. See core/bind.py for why not the log.
 	"""
 	mine = _brief_text(brief_path())
-	slug = bind.of(repo) if repo else ""
+	# ponytail: `slug` lets a caller that has ALREADY resolved this repo hand the answer in — the draw
+	# path resolves every visible row through one bind.resolver(), and asking again per frame reopens
+	# the store for an answer it is holding. None means "look it up", which every other caller wants.
+	slug = (bind.of(repo) if repo else "") if slug is None else slug
 	if slug:
 		d = bind.team_dir(slug)
 		if theirs := (_brief_text(os.path.join(d, PROJECT)) if d else ""):

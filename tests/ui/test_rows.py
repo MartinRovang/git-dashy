@@ -131,3 +131,22 @@ def test_one_team_gets_no_separator():
 	assert not [p for k, p in out if k == "group"]
 	out = rows([("MINE", [_pr("me/a", 1), _pr("me/b", 2)], None)])
 	assert not [p for k, p in out if k == "group"]  # and none when nothing is bound at all
+
+
+def test_a_group_rule_is_never_written_zero_wide():
+	"""ncurses treats n=0 as a no-op, so a real terminal shrugs and it stays invisible. FakeScr asserts
+	n >= 1, which is the bound every other write in screen.py honours via max(1, ...)."""
+	import sys, time
+	sys.path.insert(0, "tests")
+	from conftest import FakeScr
+	from dashy.core.state import State
+	from dashy.ui import screen as ui
+	ui.C = lambda n: 0
+	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	prs = [_pr("neomedsys/neo-api", 1), _pr("me/weekend", 2)]
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", prs, None)], time.time()
+	for w in range(8, 130):
+		for h in (5, 8, 12, 24, 40):
+			scr = FakeScr(h=h, w=w)
+			ui.draw(scr, st, 0, now=1000.0)  # must not raise at any width

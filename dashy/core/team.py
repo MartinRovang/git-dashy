@@ -248,8 +248,14 @@ def activate():
 	# import at the top is a cycle. Seeding lives HERE, on the one function that says "a team is now
 	# known", rather than at each of the six entry points that call it: a bootstrap only some callers
 	# perform is the bootstrap that is missing on the path nobody tested.
-	from . import bind, memory
-	bind.seed(NAME, memory.logged_repos())
+	from . import bind, install, memory
+	# ponytail: the review log AND the mirror registry. Seeding from the log alone missed the one route
+	# that is not reviewing — a repo wired with `gitdashy init` and never reviewed stayed unbound, so
+	# mirror._write resolved sources(repo) to yours alone and, because a mirror never outlives its
+	# source, DELETED the general.md and repo.md already sitting in that repo on the next refresh tick.
+	# An init-wired repo is one you declared an interest in; it is exactly what the seed is for.
+	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
+	bind.seed(NAME, sorted(memory.logged_repos()) + [r for _, r, *_ in install.registered() if r])
 
 
 def clone(repo, dest):

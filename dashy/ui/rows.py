@@ -25,11 +25,6 @@ def note(prs):
 	return " · ".join(bits)
 
 
-def team_of(p, resolve):
-	"""The team a PR's repo belongs to, through a resolver built once per draw. "" when unbound."""
-	return resolve(p.get("repository", {}).get("nameWithOwner", ""))
-
-
 def body(prs, err, summaries, subs, name, resolve=None):
 	"""The rows under one section heading: an error, an emptiness, or the PRs and their summaries.
 
@@ -43,7 +38,7 @@ def body(prs, err, summaries, subs, name, resolve=None):
 	if not prs:
 		return [("empty", "none")]
 	resolve = (lambda _r: "") if resolve is None else resolve
-	labels = {id(p): team_of(p, resolve) for p in prs}
+	labels = {id(p): resolve(p.get("repository", {}).get("nameWithOwner", "")) for p in prs}
 	# ponytail: unbound sorts last — it is the "everything else" pile, and a group with a name is the
 	# one you are looking for. Bound groups keep alphabetical order so the list does not reshuffle.
 	group = len({l for l in labels.values()}) > 1
@@ -61,7 +56,7 @@ def body(prs, err, summaries, subs, name, resolve=None):
 	return out
 
 
-def rows(sections, window=None, subs="all", drafts=True, expanded=()):
+def rows(sections, window=None, subs="all", drafts=True, expanded=(), resolve=None):
 	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
 
 	Your own PRs get a section of their own, because they are the ones you can act on. The other three
@@ -69,13 +64,10 @@ def rows(sections, window=None, subs="all", drafts=True, expanded=()):
 	the list you came for off the screen. A queue with anything in it opens back into a full section.
 	"""
 	out, queues, live = [("cols", None)], [], False
-	# ponytail: ONE read per draw, not one per row — bind.of() opens a file, and a section of thirty PRs
-	# would otherwise reopen ~/.prs_bindings thirty times on every keypress. A draw must also never fail
-	# over a settings file, so an unreadable store resolves everything to unbound rather than raising.
-	try:
-		resolve = bind.resolver()
-	except OSError:
-		resolve = lambda _r: ""
+	# ponytail: the resolver comes from the caller — screen.draw builds ONE per frame and the pane uses
+	# the same one. bind._read already turns an unreadable store into "", so nothing here can raise over
+	# a settings file; the try/except that used to sit here could not fire.
+	resolve = resolve or bind.resolver()
 	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
 	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
 	for name, prs, err in sections:

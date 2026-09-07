@@ -226,3 +226,14 @@ def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):
 		cli.bind(["gitdashy", "bind", "neo-api", "--team", "org/mem"])
 	assert "not owner/name" in str(e.value)
 	assert bind.bindings() == {}  # and nothing was bound in its place
+
+
+def test_bind_list_answers_even_when_the_positional_is_a_typo(monkeypatch, capsys):
+	"""--list is a read-only question; gating it behind a check on the thing you asked about turned it
+	into a SystemExit."""
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	bind.bind("acme/api", "org/mem")
+	cli.bind(["gitdashy", "bind", "not-a-slug", "--list"])
+	assert "acme/api" in capsys.readouterr().out

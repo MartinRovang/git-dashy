@@ -259,6 +259,13 @@ def bind(argv):
 			skip = True
 		elif not a.startswith("-"):
 			rest.append(a)
+	# ponytail: BEFORE the positional guard. --list is a read-only question, and gating it behind a check
+	# on the thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
+	if "--list" in argv:
+		rows = ([(o + "/*", t) for o, t in sorted(bind_mod.owners().items())] + sorted(bind_mod.bindings().items())
+		        + [(r, "excluded — kept out of the rule above") for r in bind_mod.excluded()])
+		print("\n".join(f"  {r:36}  →  {t}" for r, t in rows) if rows else "  no repo is bound to a team")
+		return
 	named = arg("--repo", "", str, argv) or next((a for a in rest if "/" in a), "")
 	# ponytail: a positional we cannot read is a TYPO, not an absence. `bind neo-api --team org/mem`
 	# used to fall through to this directory's origin and bind whatever repo you were standing in,
@@ -267,11 +274,6 @@ def bind(argv):
 	if not named and rest:
 		raise SystemExit(f"gitdashy: {rest[0]!r} is not owner/name — bind takes a full slug, or --owner OWNER")
 	repo = named or team.origin_slug(".")
-	if "--list" in argv:
-		rows = ([(o + "/*", t) for o, t in sorted(bind_mod.owners().items())] + sorted(bind_mod.bindings().items())
-		        + [(r, "excluded — kept out of the rule above") for r in bind_mod.excluded()])
-		print("\n".join(f"  {r:36}  →  {t}" for r, t in rows) if rows else "  no repo is bound to a team")
-		return
 	# ponytail: an owner rule is one line for a whole org, and a repo binding still overrides it — so the
 	# one repo under that owner which is NOT the project can be excluded with `--forget`, which a pattern
 	# on its own cannot express. Handled before the repo path, since --owner names no repo.
