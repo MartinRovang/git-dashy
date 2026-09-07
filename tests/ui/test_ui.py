@@ -1218,3 +1218,18 @@ def test_drafts_screen_pushes_both_the_fact_and_its_evidence(screen, monkeypatch
 	assert pushes[0][1] == config.MEMORY_DIR          # yours, by path, not "whatever push_dir defaults to"
 	assert "accepted" in pushes[0][2] and "a/b" in pushes[0][2]
 	assert "evidence" in pushes[1][1]
+
+
+def test_finished_review_row_stops_spinning():
+	"""c873852 unioned verdicts into `busy` so a reviewed draft stays visible — but `busy` also drove the
+	spinner, the elapsed counter and the agent count. A finished PR read "⠋ ✓ approved… 0s" forever."""
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "✓ approved"  # done: not in running, no started_at
+	ui.C = lambda n: 0
+	scr = FakeScr()
+	ui.draw(scr, st, 0, now=1000.0)
+	row = next(scr.line(y) for y in range(scr.h) if "✓ approved" in scr.line(y))
+	assert "approved…" not in row and "0s" not in row and "⠋" not in row, row
+	assert "0 agents running" in scr.text()

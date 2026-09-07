@@ -185,14 +185,16 @@ def draw(scr, state, sel, prompt=None, now=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
-		# ponytail: verdicts too, or a draft under review vanishes on the frame its answer lands
-		busy = set(state.running) | set(reviews)
+		busy = set(state.running)
+		# ponytail: verdicts too, or a draft under review vanishes on the frame its answer lands. Only for
+		# the row filter — as `busy` it spun every finished PR forever ("⠋ ✓ approved… 0s").
+		keep = busy | set(reviews)
 		since = dict(state.started_at)
 	# ponytail: ONE resolver for the whole frame — the rows group by it and the pane names the brief with
 	# it. The pane used to call memory.brief(), which opened ~/.prs_bindings itself on every draw, beside
 	# a resolver built for exactly this reason.
 	resolve = bind.resolver()
-	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded, busy, resolve)
+	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded, keep, resolve)
 	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
 		rs = [r for r in rs if r[0] != "cols"]
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
