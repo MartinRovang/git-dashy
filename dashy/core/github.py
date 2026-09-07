@@ -106,7 +106,9 @@ def fetch():
 			for name, prs, _ in out:
 				for p in prs or []:
 					n = nodes.get(p["url"], {})
-					p["head"], p["checks"] = n.get("headRefOid", ""), checks(n)
+					p["checks"] = checks(n)
+					if h := n.get("headRefOid"):  # ponytail: absent node reads like a failed call — no head, not ""
+						p["head"] = h
 					if name == "MINE":
 						p["status"], p["reviewers"] = own_status(n), reviewers(n)
 		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError, TypeError):
