@@ -1904,3 +1904,29 @@ def test_a_session_note_does_not_widen_the_k_popup(screen, monkeypatch, st):
 	# ponytail: a note is its own ROW, so it can only widen the popup if it is longer than the widest
 	# row already there — the paths. Glued onto Memory's value it widened it by ~80 every time.
 	assert noted == bare, (bare, noted)
+
+
+def test_a_failed_refresh_says_so_in_the_header(screen):
+	"""ponytail: the thread retries forever now instead of dying, so a refresh that cannot reach gh
+	would otherwise be indistinguishable from a quiet one — the header would just keep counting up
+	from the last good fetch. Same rule the Memory row follows: a net that is off says so."""
+	screen.w = 210
+	st = State(60)
+	st.sections, st.fetched_at = [("MINE", [dict(PR, url="m")], None)], time.time()
+	ui.draw(screen, st, 0)
+	assert "updated" in screen.text() and "refresh failed" not in screen.text()
+	st.error = "gh: could not resolve host"
+	ui.draw(screen, st, 0)
+	out = screen.text()
+	assert "✗ refresh failed: gh: could not resolve host" in out and "updated" not in out
+	st.error = ""
+	ui.draw(screen, st, 0)
+	assert "refresh failed" not in screen.text()
+
+
+def test_a_first_refresh_that_failed_still_draws(screen):
+	"""fetched_at is None, so the splash path and the countdown are both off — the error is all there is."""
+	st = State(60)
+	st.error = "gh: not logged in"
+	ui.draw(screen, st, 0)
+	assert "refresh failed: gh: not logged in" in screen.text()

@@ -507,3 +507,64 @@ def test_retry_survives_a_fetch_landing_while_it_runs(monkeypatch):
 		t.join(2)
 		sys.setswitchinterval(old_interval)
 	assert not boom, boom
+
+
+def ticks(st, monkeypatch, tick, stop_after=3):
+	"""Run loop() for `stop_after` waits, then break out. ponytail: SystemExit, so the guard under
+	test — which catches Exception — cannot swallow the thing ending the test."""
+	monkeypatch.setattr(State, "tick", tick)
+	seen = []
+	def wait(t):
+		seen.append(1)
+		if len(seen) >= stop_after:
+			raise SystemExit
+		return False
+	monkeypatch.setattr(st.wake, "wait", wait)
+	with pytest.raises(SystemExit):
+		st.loop()
+	return len(seen)
+
+
+def test_a_tick_that_raises_is_reported_and_retried(monkeypatch):
+	"""The refresh thread must outlive anything one tick can throw.
+
+	ponytail: it did not. One unreadable line in the review log unwound out of the thread's run() and
+	nothing restarts it — fetching stayed True, so the dashboard reported a refresh in progress
+	forever, and f only sets an event nobody was waiting on any more.
+	"""
+	st = State(0)
+	st.fetching = True
+	tried = []
+	def boom(self, t0):
+		tried.append(t0)
+		raise RuntimeError("gh: could not resolve host\nsecond line")
+	ticks(st, monkeypatch, boom)
+	assert len(tried) > 1                    # it kept trying
+	assert st.fetching is False              # and stopped claiming to be mid-refresh
+	assert st.error == "second line"         # ponytail: last line, like every other error surface here
+
+
+def test_a_first_tick_that_raises_still_schedules_the_next(monkeypatch):
+	"""ponytail: fetched_at is None until a tick lands, and `fetched_at + interval` raised TypeError
+	on the very line scheduling the retry — the second way this thread could die, and the one a guard
+	around the work alone would not have caught."""
+	st = State(60)
+	assert st.fetched_at is None
+	ticks(st, monkeypatch, lambda self, t0: (_ for _ in ()).throw(ValueError("nope")))
+	assert st.error == "nope"
+
+
+def test_a_tick_that_lands_clears_the_last_failure(monkeypatch):
+	st = State(0)
+	st.error = "gh: could not resolve host"
+	one_loop(st, monkeypatch, [("MINE", [], None)])
+	assert st.error == ""
+
+
+def test_fetch_survives_a_log_line_it_cannot_read(monkeypatch):
+	"""The end-to-end shape of the freeze: fetch() reads the log with no handler of its own."""
+	with open(log.LOG, "w") as f:
+		f.write('{"at":"2020-01-0\n')
+	monkeypatch.setattr(github.subprocess, "run",
+	                    lambda *a, **kw: (_ for _ in ()).throw(github.subprocess.TimeoutExpired("gh", 60)))
+	assert github.fetch()[-1] == ("REVIEWED", [], None)
