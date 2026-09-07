@@ -14,3 +14,28 @@ def test_saved_settings_load_unless_env_wins(tmp_path, monkeypatch):
 	assert config.THEME == "dashy" and config.NOTIFY is False and config.WINDOW is None  # env beats file, file beats default
 	(tmp_path / "s.json").write_text("{not json")
 	config.load()  # a broken file is ignored, not fatal
+
+
+def test_stale_checklist_values_are_dropped_on_load(tmp_path, monkeypatch):
+	"""ponytail was a voice before it was a hunter; a settings file from then must not stop startup."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "s.json"))
+	config.save({"voice": ["review", "ponytail", "caveman"], "hunter": ["ponytail", "gone"]})
+	monkeypatch.setattr(config, "VOICE", ["review"])
+	monkeypatch.setattr(config, "HUNTER", [])
+	config.load()
+	assert config.VOICE == ["review", "caveman"] and config.HUNTER == ["ponytail"]
+	config.save({"voice": ["ponytail"]})
+	config.load()
+	assert config.VOICE == ["review"]  # nothing valid left: the plain review, never an empty body
+	config.save({"voice": "caveman", "hunter": "tests"})  # hand-edited to a string
+	config.load()
+	assert config.VOICE == ["caveman"] and config.HUNTER == ["tests"]
+
+
+def test_env_checklist_is_normalised_even_without_a_settings_file(tmp_path, monkeypatch):
+	"""PRS_VOICE=ponytail on a first run: no file to load, but the value still has to be checked."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "missing.json"))
+	monkeypatch.setattr(config, "VOICE", ["ponytail"])  # what the env parse at import would have left
+	monkeypatch.setattr(config, "HUNTER", ["ponytail", "typo"])
+	config.load()
+	assert config.VOICE == ["review"] and config.HUNTER == ["ponytail"]
