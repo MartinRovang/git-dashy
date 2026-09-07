@@ -83,12 +83,12 @@ could correct it will ever see it happen.
   ┌─ project brief (declared, not learned) ───────────────────────┐
   │  <private>/project.md   and   <team>/memory/project.md        │
   │  What is being built, for whom, under what constraints.       │
-  │  Two sources like everything else: on your own it is yours,   │
-  │  in a team theirs joins it. Written by people, once. Read by  │
-  │  every session and every review — so a reviewer knows what    │
-  │  the code is FOR before judging whether a change serves it.   │
-  │  The promotion pipeline never touches it: not dreamt over,    │
-  │  not promoted into, never offered for sharing.                │
+  │  ONE per review, chosen by ~/.prs_bindings: the team a repo   │
+  │  is bound to, else yours. Never both — two statements of the  │
+  │  purpose in one prompt is worse than none. Written by people, │
+  │  so a reviewer knows what the code is FOR before judging      │
+  │  whether a change serves it. The promotion pipeline never     │
+  │  touches it: not dreamt over, not promoted into, not shared.  │
   └───────────────────────────────────────────────────────────────┘
 
   ┌─ log (separate axis) ─────────────────────────────────────────┐
@@ -206,9 +206,9 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 
 | reader | sees | never sees |
 |---|---|---|
-| review prompt | `project.md` (yours, then the team's), then the facts — every block labelled by source | drafts |
-| agent session, any repo | `general.md` live, through a symlink in the user's config | drafts |
-| agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored | drafts |
+| review prompt | ONE `project.md` — the bound team's, else yours, named in the prompt — then the facts, every block labelled by source | drafts, the other brief |
+| agent session, any repo | `general.md` live, through a symlink in the user's config — **and both briefs, unscoped** | drafts |
+| agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored, and so scoped by the binding | drafts |
 | `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
 
@@ -235,6 +235,76 @@ Because drafts are excluded everywhere, the review prompt's existing line —
 has either recurred across two independent reviews or been shared by a human.
 
 ---
+
+## 4b. Which brief a review gets
+
+Facts are keyed by repo (`owner__repo.md`) with `general.md` for what holds everywhere. The brief was
+the only store keyed by **nothing** — one file per person, injected into every review of every repo. In
+a team you got yours *and* theirs, concatenated: two statements of what the work is for, in one prompt.
+
+`~/.prs_bindings` fixes the selection. Same file shape as `~/.prs_mirrors` — one JSON object per line,
+deduplicated on read, removal by tombstone:
+
+```json
+{"repo": "acme/api", "team": "org/platform"}
+{"forget": "acme/api"}
+```
+
+An **owner rule** covers a whole org in one line, and an exact binding or a `--forget` tombstone
+overrides it — so the one repo under that owner which is not the project can be left out, which a
+pattern alone cannot express:
+
+```json
+{"owner": "neomedsys", "team": "neomedsys/review-memory"}
+{"forget": "neomedsys/someones-fork"}
+```
+
+Precedence lives in one function (`bind._pick`), so the team a review uses and the label a screen shows
+can never disagree: exact binding, then an explicit unbind, then the owner rule.
+
+Keyed by the origin slug, so a URL, an ssh remote and a bare `owner/name` all land on the same row and a
+binding survives a re-clone or a move. Selection for repo `R`:
+
+| | brief | what the surface says |
+|---|---|---|
+| bound to a team you are in, which has one | that team's | `team org/t` |
+| bound to a team you are in, which has none | yours | `yours · team org/t has no brief` |
+| bound to a team you are not in | yours | `yours · not in team org/t` |
+| bound to nothing | yours | `yours · acme/api is bound to no team` |
+| none anywhere | — | `no brief written` |
+
+> **The session path is not scoped yet.** Everything in this section describes the REVIEW path. The
+> corpus block `gitdashy install` writes still imports `@prs-memory/project.md`, `@prs-team/project.md`
+> and `@prs-team/general.md` into every agent session in every repo — so a session still gets both
+> briefs concatenated and one team's cross-repo facts everywhere, exactly as before. That is SPEC §5+§6
+> (the mirror gains `project.md`, the block drops the globals, and existing machines need the block
+> rewritten), and it is deliberately a separate change: the migration is where the risk lives. Said
+> here rather than left for a reader to discover, because a doc claiming a rule the wiring does not
+> keep is worse than no doc.
+
+**The binding decides everything the team knows about a repo**, not just the brief. `memory.sources(repo)`
+returns your memory alone for an unbound repo, so it reads no team facts — not even `general.md` — and
+`team_visible(repo)` follows the same rule, so a fact about private work is never pooled as evidence or
+offered for sharing. The repo argument is required: the unscoped set lives in `every_source()` under its
+own name, for the two readers that must see all of memory (the dream, and the backup). Making it a flag
+on `sources()` would have left the unscoped set one forgotten argument away.
+
+**Never two.** `memory.brief(repo)` returns the text *and* where it came from, so a caller cannot put a
+brief in front of a reviewer without holding the answer to "which one, and why that one" — the prompt
+says it, and so does the detail pane. The previous defect was invisible precisely because nothing named
+the brief that went into every prompt.
+
+**Why declared and not inferred.** Memory visibility used to use the covering rule: the team's shared
+review log names the repo. It bootstraps on its own and needs no upkeep — but a log entry is a side
+effect of reviewing one PR, nothing ever removes one, and two teams can both name a repo with no way to
+prefer either. An irreversible state change caused by a side effect, deciding both what a review is told
+and what gets published to other people. So it is **retired**, not kept beside this one: two mechanisms
+answering adjacent questions can disagree and nothing would notice.
+
+Joining a team seeds bindings from its log **once**, which is what makes retiring it affordable — the
+bootstrap still happens, into a store you can read and take back: `gitdashy bind`, `--owner`, `--forget`,
+`--list`. A `--forget` leaves a tombstone, so the next startup's seeding does not undo it, and seeding
+skips repos an owner rule already covers rather than pinning them to a team nobody chose repo by repo.
 
 ## 5. Writes and pushes
 

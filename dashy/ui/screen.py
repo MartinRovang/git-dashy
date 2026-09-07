@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import github, knowledge, log, memory, review as review_mod, team, update
+from ..core import bind, github, knowledge, log, memory, review as review_mod, team, update
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
@@ -188,7 +188,11 @@ def draw(scr, state, sel, prompt=None, now=None):
 		# ponytail: verdicts too, or a draft under review vanishes on the frame its answer lands
 		busy = set(state.running) | set(reviews)
 		since = dict(state.started_at)
-	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded, busy)
+	# ponytail: ONE resolver for the whole frame — the rows group by it and the pane names the brief with
+	# it. The pane used to call memory.brief(), which opened ~/.prs_bindings itself on every draw, beside
+	# a resolver built for exactly this reason.
+	resolve = bind.resolver()
+	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded, busy, resolve)
 	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
 		rs = [r for r in rs if r[0] != "cols"]
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]
@@ -344,6 +348,18 @@ def draw(scr, state, sel, prompt=None, now=None):
 			scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
 			if lw - 2 > x + 3:
 				scr.addnstr(y, x + 3, note_, lw - 3 - x, C(25))
+		elif kind == "group":
+			# ponytail: indented under the section heading and dimmer than it, because it divides a
+			# section rather than being one. Only drawn when a section holds more than one team — see
+			# rows.body: a separator above a single group labels what the whole list already is.
+			t = f"─ {payload} "
+			scr.addnstr(y, 3, t, lw - 4, C(25))
+			# ponytail: > 0 on the WIDTH, not on a proxy for it. `lw - 4 > len(t) + 3` let the width come
+			# out exactly 0, and every other write in this file goes through max(1, …) for that reason.
+			# ncurses treats n=0 as a no-op so a real terminal shrugs, which is what makes it survivable
+			# and invisible — the suite's own FakeScr asserts n >= 1 and faults on a width sweep.
+			if (rule := lw - 5 - len(t) - 3) > 0:
+				scr.addnstr(y, 3 + len(t), "─" * rule, rule, C(25))
 		elif kind == "err":
 			scr.addnstr(y, 3, payload, lw - 4, C(3))
 		elif kind == "empty":
@@ -428,7 +444,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 				x += (title_w if width_ == 0 else width_) + 1
 
 	if pane_w:
-		detail(scr, state, h, w - pane_w, pane_w, current)
+		detail(scr, state, h, w - pane_w, pane_w, current, resolve)
 
 	for fy in (h - 2, h - 1):
 		scr.addnstr(fy, 0, " " * (w - 1), w - 1, C(7))
@@ -464,7 +480,7 @@ TONE = {"ok": (4, "✓"), "fail": (3, "✗"), "run": (5, "~"), "skip": (1, "·")
 FIND = {"blocking": 3, "note": 5, "nit": 1}
 
 
-def detail(scr, state, h, x0, width, pr):
+def detail(scr, state, h, x0, width, pr, resolve=None):
 	"""The selected PR, beside the list: what it is, what CI thinks, what the review found, what you can do.
 
 	ponytail: draws only what it has. Branch and checks arrive from a background fetch, findings only
@@ -517,6 +533,13 @@ def detail(scr, state, h, x0, width, pr):
 	if d.get("add") is not None:
 		stats = [("+" + str(d["add"]), C(4)), ("−" + str(d["del"]), C(3)), (str(d["files"]) + " files", C(1))]
 	line(y, [(who, C(1))] + ([(d["branch"], C(23))] if d.get("branch") else []) + stats)
+	y += 2
+	# ponytail: which brief a review of THIS repo will be told, and why that one. A thing that silently
+	# selects your context has to say what it selected — the defect this replaces was invisible exactly
+	# because no screen ever named the brief that went into every prompt. Same value the prompt carries.
+	repo_name = pr.get("repository", {}).get("nameWithOwner", "")
+	text, whose = memory.brief(repo_name, resolve(repo_name) if resolve else None)
+	line(y, [("BRIEF", C(25)), (whose if text else whose + " · none", C(1))])
 	y += 2
 	if d.get("checks"):
 		line(y, [("CHECKS", C(25))])

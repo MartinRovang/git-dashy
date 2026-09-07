@@ -522,8 +522,9 @@ def test_the_setup_marker_never_reaches_a_review(monkeypatch, tmp_path):
 	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "project.md").write_text(install.compose("What is being built", "lead", [("The project", "a thing")]))
-	got = memory.project()
+	got, whose = memory.brief()
 	assert "a thing" in got and install.SETUP_MARK not in got and "<!--" not in got
+	assert whose == "yours"
 
 
 # ---- siblings of guards that were fixed one case at a time ----
@@ -825,3 +826,17 @@ def test_setup_still_refuses_a_file_you_wrote_yourself(monkeypatch, tmp_path):
 
 	assert user.read_text() == "# mine\n\nhand written\n"
 	assert any("is yours already" in l for l in out)
+
+
+def test_setup_says_so_when_the_team_cannot_be_bound_to(monkeypatch, tmp_path):
+	"""In a team whose origin does not resolve, the brief goes to YOUR file — the right one, since
+	nothing can bind to a nameless team, but a different one from what the last version chose."""
+	from dashy.core import memory, team
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(team, "NAME", "")          # a checkout with no origin
+	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
+	assert any("no origin" in l for l in out)
+	assert any("wrote" in l for l in out)
+	assert os.path.exists(memory.brief_path())     # yours, and it says which

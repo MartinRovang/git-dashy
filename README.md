@@ -138,6 +138,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
+| `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 
@@ -255,13 +256,27 @@ The whole model — every store, promotion rule and discard rule — is written 
 
 ### What the team is building
 
-`project.md` says what is being built, for whom, and under what constraints. It has two sources like
-everything else: on your own it is yours, in a team theirs joins it — seeded with a template when a team
-repo is created, and `gitdashy setup` will ask you for either.
+`project.md` says what is being built, for whom, and under what constraints. It goes into a review ahead
+of the learned facts, so a reviewer knows what the code is *for* before judging whether a change serves
+it. It is declared, not learned — the promotion pipeline never touches it, the dream never rewrites it,
+and it is never offered for sharing.
 
-It goes into **every review** and every session, ahead of the learned facts, so a reviewer knows what
-the code is *for* before judging whether a change serves it. It is declared, not learned — the
-promotion pipeline never touches it, the dream never rewrites it, and it is never offered for sharing.
+**A repo belongs to a team, and that decides everything the team knows about it.**
+`gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its
+reviews are told, which facts they read, and whether a fact about it may be shared. **A repo bound to
+nothing is private:** your own memory and nothing else, so a side project is never told how somebody
+else's team conducts reviews. An exact binding or `--forget` overrides an owner rule, so the one repo in
+the org that is not the project can be left out. When a section holds more than one team, the list
+separates them under a header for each.
+Joining a team binds the repos already named in its shared review log — once, so nothing you had
+yesterday disappears — and after that it is yours to change; `--forget` sticks. `gitdashy bind --list`
+shows every binding, and the detail pane names the brief a review of the selected PR will get.
+
+Selection is **declared**, deliberately. The alternative was to infer it from the shared review log, the
+way memory visibility is decided. That is wrong for a brief: a log entry is a side effect of reviewing
+one PR, nothing ever removes one, two teams can both name a repo with no way to prefer either, and
+nothing on screen says which brief you are about to get. Before this, every review of every repo was
+given *both* briefs concatenated — two statements of what the work is for, in one prompt.
 
 That split keeps two things apart: `project.md` is what the team is doing, and a corpus's `USER.md` is
 who *you* are. Nobody should have to restate the project in their own file.

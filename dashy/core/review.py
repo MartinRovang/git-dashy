@@ -162,9 +162,13 @@ def _verdict(repo, n, model, prev=None):
 	ponytail: one implementation, because a pre-review that reasons differently from the real one is
 	worth nothing as a preview of it. The only differences are what the caller does with the result.
 	"""
-	mem, brief = memory.read(repo), memory.project()
+	# ponytail: the repo SELECTS the brief now — one, by binding, instead of yours and the team's
+	# concatenated into every review of every repo. `whose` goes into the prompt rather than being
+	# dropped: a reviewer weighs "the team that owns this repo says" differently from "the person
+	# running me says, about their work in general", and it is the same value the UI shows.
+	mem, (brief, whose) = memory.read(repo), memory.brief(repo)
 	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + tail(),
-	                       project="\n\nWhat this is being built for, and for whom:\n" + brief if brief else "",
+	                       project=f"\n\nWhat this is being built for, and for whom ({whose}):\n" + brief if brief else "",
 	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
 	if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs

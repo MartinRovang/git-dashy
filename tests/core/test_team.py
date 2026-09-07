@@ -2,7 +2,7 @@ import os
 import subprocess
 
 from dashy import config
-from dashy.core import log, memory, team
+from dashy.core import bind, log, memory, team
 
 
 def git(*a, cwd):
@@ -36,6 +36,28 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	team.push("mine")
 	team.pull()
 	assert team.ERROR == "" and open(log.LOG).read() == '{"x":1}\n{"x":2}\n{"x":3}\n'
+
+
+def test_joining_binds_the_repos_the_log_already_names(monkeypatch, tmp_path):
+	"""The bootstrap, on the one path where it is hardest: the log arrives AFTER the team does.
+
+	setup() clones, activates, and only then copies your own log in. Seeding hangs off activate(), so
+	the first run saw a checkout with no log at all and bound nothing — and the session in which you
+	joined was the one session where the team's brief would silently not appear.
+	"""
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/api"}}}\n')
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.setup(str(remote)) == ""
+	assert bind.of("acme/api") == team.NAME and team.NAME  # bound to the team we just joined
+	# and the team's brief is what a review of it now reads — the whole point of the binding
+	(tmp_path / "me" / "memory" / "project.md").write_text("What we build together.\n")
+	assert memory.brief("acme/api") == ("What we build together.", f"team {team.NAME}")
 
 
 def test_off_is_a_noop(tmp_path, monkeypatch):
@@ -120,3 +142,61 @@ def test_a_new_team_repo_gets_a_brief_to_fill_in(monkeypatch, tmp_path):
 	p.write_text("ours, written\n")
 	team.seed_project(str(p))
 	assert p.read_text() == "ours, written\n"  # never overwritten
+
+
+def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch, tmp_path):
+	"""The route that is not reviewing. A repo wired with `gitdashy init` and never reviewed was left
+	unbound, so its mirror — which never outlives its source — deleted the team files already in it."""
+	from dashy.core import install
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	monkeypatch.setattr(install, "REGISTRY", str(tmp_path / "mirrors"))
+	install.register(str(tmp_path / "wired"), "acme/only-wired")   # init'd, never reviewed
+	install.register(str(tmp_path / "mine"), "me/weekend-thing")   # init'd, and none of the team's business
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/reviewed"}}}\n')
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.setup(str(remote)) == ""
+	# the team holds facts for one of the wired repos; the mirror would strip them if it stayed unbound
+	shared = tmp_path / "me" / "memory"
+	shared.mkdir(parents=True, exist_ok=True)
+	(shared / "acme__only-wired.md").write_text("- the team knows this repo\n")
+	team.activate()
+	assert bind.of("acme/reviewed") == team.NAME    # the log route
+	assert bind.of("acme/only-wired") == team.NAME  # and the mirror route, for a repo they can see
+
+	# ponytail: and NOT the other way. The registry is every repo `gitdashy init` ever wired, personal
+	# ones included; binding one makes its facts poolable and shareable, which neither old rule did.
+	assert bind.of("me/weekend-thing") == ""
+	assert not memory.team_visible("me/weekend-thing")
+	memory.append("me/weekend-thing", "my side project uses bun")
+	memory.append("me/weekend-thing", "my side project uses bun")   # promoted for me
+	assert ("me/weekend-thing", "my side project uses bun") not in memory.shareable()
+	assert not os.path.exists(memory.pool_path(memory.whoami(), "me/weekend-thing"))
+
+
+def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tmp_path):
+	"""Only the copy-my-log branch was covered. When the team HAS a log, yours is never copied — so the
+	seed has to come off the first activate(), before that branch is even considered."""
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	# a teammate has already reviewed things and pushed the shared log
+	git("clone", "-q", str(remote), str(tmp_path / "mate"), cwd=tmp_path)
+	(tmp_path / "mate" / "reviewed.jsonl").write_text('{"pr":{"repository":{"nameWithOwner":"acme/theirs"}}}\n')
+	git("add", "-A", cwd=tmp_path / "mate")
+	git("commit", "-qm", "mate", cwd=tmp_path / "mate")
+	git("push", "-q", cwd=tmp_path / "mate")
+
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"me/mine"}}}\n')
+	assert team.setup(str(remote)) == ""
+	assert bind.of("acme/theirs") == team.NAME       # seeded from the log that was already there
+	assert not os.path.exists(str(tmp_path / "me" / "reviewed.jsonl.bak"))
+	assert "acme/theirs" in open(config.LOG).read()  # and yours was NOT copied over theirs

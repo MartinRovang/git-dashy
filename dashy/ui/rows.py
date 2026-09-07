@@ -1,6 +1,8 @@
 """Sections -> flat draw rows, plus the age helper the rows are labelled with."""
 from datetime import datetime, timedelta, timezone
 
+from ..core import bind
+
 QUEUE = {"REVIEW REQUESTED": "review requested", "ASSIGNED": "assigned", "REVIEWED": "reviewed"}
 
 
@@ -23,14 +25,30 @@ def note(prs):
 	return " · ".join(bits)
 
 
-def body(prs, err, summaries, subs, name):
-	"""The rows under one section heading: an error, an emptiness, or the PRs and their summaries."""
+def body(prs, err, summaries, subs, name, resolve=None):
+	"""The rows under one section heading: an error, an emptiness, or the PRs and their summaries.
+
+	ponytail: grouped by team, and ONLY when more than one is present. A separator above a single group
+	is a label restating what the whole list already is; two or more is the case you cannot read without
+	it. Which team a repo's reviews use is otherwise invisible until you open the pane on every row.
+	ponytail: the sort is stable, so within a group the order gh returned is untouched.
+	"""
 	if err:
 		return [("err", err.splitlines()[0][:200])]
 	if not prs:
 		return [("empty", "none")]
-	out = []
+	resolve = (lambda _r: "") if resolve is None else resolve
+	labels = {id(p): resolve(p.get("repository", {}).get("nameWithOwner", "")) for p in prs}
+	# ponytail: unbound sorts last — it is the "everything else" pile, and a group with a name is the
+	# one you are looking for. Bound groups keep alphabetical order so the list does not reshuffle.
+	group = len({l for l in labels.values()}) > 1
+	if group:
+		prs = sorted(prs, key=lambda p: (labels[id(p)] == "", labels[id(p)]))
+	out, seen = [], None
 	for p in prs:
+		if group and labels[id(p)] != seen:
+			seen = labels[id(p)]
+			out.append(("group", seen or "not bound to a team"))
 		out.append(("pr", p))
 		summary = p["review"]["summary"] if name == "REVIEWED" else summaries.get(p["url"])
 		if summary and (subs == "all" or (subs == "open" and name != "REVIEWED")):
@@ -38,7 +56,7 @@ def body(prs, err, summaries, subs, name):
 	return out
 
 
-def rows(sections, window=None, subs="all", drafts=True, expanded=(), busy=()):
+def rows(sections, window=None, subs="all", drafts=True, expanded=(), busy=(), resolve=None):
 	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
 
 	Your own PRs get a section of their own, because they are the ones you can act on. The other three
@@ -46,6 +64,10 @@ def rows(sections, window=None, subs="all", drafts=True, expanded=(), busy=()):
 	the list you came for off the screen. A queue with anything in it opens back into a full section.
 	"""
 	out, queues, live = [("cols", None)], [], False
+	# ponytail: the resolver comes from the caller — screen.draw builds ONE per frame and the pane uses
+	# the same one. bind._read already turns an unreadable store into "", so nothing here can raise over
+	# a settings file; the try/except that used to sit here could not fire.
+	resolve = resolve or bind.resolver()
 	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
 	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
 	for name, prs, err in sections:
@@ -59,12 +81,12 @@ def rows(sections, window=None, subs="all", drafts=True, expanded=(), busy=()):
 			p["section"] = name
 		if name == "MINE":
 			out.append(("head", ("MINE", "!" if prs is None else f"{len(prs)} open", note(prs))))
-			out += body(prs, err, summaries, subs, name)
+			out += body(prs, err, summaries, subs, name, resolve)
 			out.append(("blank", ""))
 		elif err or prs:
 			live = True
 			queues.append(("head", (QUEUE.get(name, name.lower()), "!" if prs is None else str(len(prs)), "")))
-			queues += body(prs, err, summaries, subs, name)
+			queues += body(prs, err, summaries, subs, name, resolve)
 			queues.append(("blank", ""))
 		else:
 			last = f"none in the last {window}h" if name == "REVIEWED" and window else "none"

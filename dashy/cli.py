@@ -4,7 +4,7 @@ import os
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import install as install_mod, memory, mirror, review as review_mod, team
+from .core import bind as bind_mod, install as install_mod, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -17,6 +17,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy self-check [--model NAME]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
+       gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -61,9 +62,18 @@ init wires one repo, so a session there also reads that repo's own facts: it exc
   path so the running dashboard re-mirrors it on every refresh. No hooks. --into DIR --forget stops
   refreshing one; the files stay, they just go still.
 
+bind says which team a repo belongs to, and that decides everything the team knows about it: which
+  project brief its reviews are told (one, never two), which facts they read, and whether a fact about it
+  may be shared. A repo bound to nothing is private — your own memory and nothing else. --owner OWNER
+  binds a whole org in one line, and a repo binding or --forget still overrides it, so the one repo that
+  is not the project can be left out. Joining a team binds the repos already named in its shared review
+  log, once, so nothing you had yesterday disappears; after that it is yours to change and --forget
+  sticks. Defaults to this directory\'s origin; --list shows every rule. A bare `bind` reports and changes
+  no binding of its own — though joining a team seeds from its log on any command, including this one.
+
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
-  one, and every review reads the brief. Re-runnable: a blank answer KEEPS what is already there rather
+  one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
   than clearing it, the prompt shows you what that is, and sections you added by hand are left alone.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
@@ -235,6 +245,79 @@ def remember(argv):
 	print(f"gitdashy: {where} — drafted; one more independent observation confirms it")
 
 
+def bind(argv):
+	"""Bind a repo to a team, so reviews of it are told that team\'s brief and no other."""
+	team.activate()  # ponytail: names the team, and seeds bindings from the shared log the first time
+	# ponytail: a flag's VALUE is not a positional. Scanning argv for the first thing containing "/"
+	# matched `--team org/mem` and bound the team to itself, from inside the repo you meant to bind —
+	# reported as success, with the right words and the wrong repo. `remember` already skips this way.
+	rest, skip = [], False
+	for a in argv[2:]:
+		if skip:
+			skip = False
+		elif a in ("--repo", "--team", "--owner"):
+			skip = True
+		elif not a.startswith("-"):
+			rest.append(a)
+	# ponytail: BEFORE the positional guard. --list is a read-only question, and gating it behind a check
+	# on the thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
+	if "--list" in argv:
+		rows = ([(o + "/*", t) for o, t in sorted(bind_mod.owners().items())] + sorted(bind_mod.bindings().items())
+		        + [(r, "excluded — kept out of the rule above") for r in bind_mod.excluded()])
+		print("\n".join(f"  {r:36}  →  {t}" for r, t in rows) if rows else "  no repo is bound to a team")
+		return
+	named = arg("--repo", "", str, argv) or next((a for a in rest if "/" in a), "")
+	# ponytail: a positional we cannot read is a TYPO, not an absence. `bind neo-api --team org/mem`
+	# used to fall through to this directory's origin and bind whatever repo you were standing in,
+	# reporting success with the wrong name — the same silent-wrong-repo shape as the flag-value bug
+	# above it, reached by a different route.
+	if not named and rest:
+		raise SystemExit(f"gitdashy: {rest[0]!r} is not owner/name — bind takes a full slug, or --owner OWNER")
+	repo = named or team.origin_slug(".")
+	# ponytail: an owner rule is one line for a whole org, and a repo binding still overrides it — so the
+	# one repo under that owner which is NOT the project can be excluded with `--forget`, which a pattern
+	# on its own cannot express. Handled before the repo path, since --owner names no repo.
+	if owner := arg("--owner", "", str, argv):
+		if "--forget" in argv:
+			if err := bind_mod.forget_owner(owner):
+				raise SystemExit("gitdashy: " + err)
+			return print(f"gitdashy: {bind_mod.owner_key(owner)}/* is no longer bound")
+		to = arg("--team", "", str, argv) or bind_mod.team_key()
+		if not to:
+			raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
+		if err := bind_mod.bind_owner(owner, to):
+			raise SystemExit("gitdashy: " + err)
+		return print(f"gitdashy: {bind_mod.owner_key(owner)}/* → {to}  (a repo binding still overrides it)")
+	if not repo:
+		raise SystemExit("gitdashy: no git origin here — pass owner/name, or --list")
+	# ponytail: a bare `gitdashy bind` REPORTS — it changes no binding of its own. Naming no repo and
+	# asking for no change is a question, and answering it by binding this directory to whatever team
+	# you are in is a write nobody asked for. It is not a read-only command, though, and saying so would
+	# be false: team.activate() above seeds bindings from the shared log, on this and every other
+	# command. That is the bootstrap, and a bootstrap only some entry points perform is the one missing
+	# on the path nobody tested.
+	if not named and not arg("--team", "", str, argv) and "--forget" not in argv:
+		text, whose = memory.brief(repo)
+		print(f"gitdashy: {bind_mod.key(repo)} → {bind_mod.of(repo) or 'no team'}")
+		return print(f"  reviews of it read: {whose}" + ("" if text else " (nothing to read)"))
+	if "--forget" in argv:
+		was = bind_mod.of(repo)
+		if err := bind_mod.forget(repo):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {bind_mod.key(repo)} " + (f'unbound from {was}' if was else 'was not bound to anything'))
+	else:
+		to = arg("--team", "", str, argv) or bind_mod.team_key()
+		if not to:
+			raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
+		if err := bind_mod.bind(repo, to):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {bind_mod.key(repo)} → {to}")
+	# ponytail: says what the repo GETS, not that a row was written. A binding is only ever a means to
+	# selecting a brief, and the one thing worth confirming is which brief a review will now be given.
+	text, whose = memory.brief(repo)
+	print(f"  reviews of {bind_mod.key(repo) or repo} read: {whose}" + ("" if text else " (nothing to read)"))
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -253,6 +336,8 @@ def run(argv=None):
 		return setup(argv)
 	if len(argv) > 1 and argv[1] == "init":
 		return init(argv)
+	if len(argv) > 1 and argv[1] == "bind":
+		return bind(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:

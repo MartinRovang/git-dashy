@@ -66,11 +66,11 @@ def sync(into, repo="", pull=True, general=False):
 
 
 def _write(into, repo, general, at):
-	src = " + ".join(label for label, _ in memory.sources())  # ponytail: the mirror shows what a review sees
+	src = " + ".join(label for label, _ in memory.sources(repo))  # ponytail: what a review OF THIS REPO sees
 	wrote = []
 	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):
 		dst = os.path.join(into, name)
-		text = memory.scope_text(scope) if scope is None or scope else ""
+		text = memory.scope_text(scope, repo) if scope is None or scope else ""
 		if text:
 			with open(dst, "w") as f:
 				f.write(HEADER.format(src=src, at=at) + text + "\n")

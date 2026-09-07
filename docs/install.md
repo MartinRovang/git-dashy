@@ -243,8 +243,9 @@ inherits that terminal, so `isatty` alone would still have stopped it.
 
 Plain `install` does not offer them. It puts no corpus on the machine, so there is no
 `USER.md` to fill in, and staying out of the way is the whole promise of that tier. The
-project brief still applies there — every review reads it — and `gitdashy setup` writes
-it on its own, skipping the identity half with a message when no corpus is installed.
+project brief still applies there — reviews of the repos it covers read it — and
+`gitdashy setup` writes it on its own, skipping the identity half with a message when no
+corpus is installed.
 
 ### When it stops
 
