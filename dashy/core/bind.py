@@ -135,6 +135,16 @@ def of(repo):
 	return _pick(_entries(), repo)[1]
 
 
+def why(repo):
+	"""How `repo` resolved: ("team", key) / ("owner", key) / ("", "").
+
+	ponytail: deleted once for having no production caller, and correctly — I had written it for a
+	surface that did not exist yet. The bind screen is that surface: it has to show whether this repo
+	is bound in its own right or covered by an owner rule, because `x` unbinds only the first kind.
+	"""
+	return _pick(_entries(), repo)
+
+
 def _append(entry):
 	"""Add one line. Returns "" or why it could not — never raises.
 
@@ -238,19 +248,31 @@ def seed(to, repos):
 
 
 def team_dir(slug):
-	"""The memory directory of the team `slug` names, "" when that team is not on this machine.
+	"""The memory directory of the team `slug` names, "" when this machine has not joined it.
 
-	ponytail: a FUNCTION, though today it is one comparison. Multi-team replaces its body and nothing
-	else — every caller already asks "which directory does this slug mean" instead of reaching for
-	config.TEAM itself, which is the shape that makes 35 call sites into one.
+	ponytail: THE seam. Every read and every write asks this one question — "which directory does this
+	slug mean" — instead of reaching for a single config.TEAM, which is what turned many-teams from a
+	36-site rewrite into a change of this function's body.
+	ponytail: folded on both sides. Repo keys are lowercased because they are typed; a team slug is
+	typed too — `--team Org/Mem` while in org/mem used to resolve to nothing and fall back to your own
+	brief, reporting "not in team Org/Mem" about a team you had joined. Compared rather than stored
+	folded, so a listing still shows the slug as GitHub spells it.
 	"""
-	# ponytail: folded on BOTH sides. Repo keys are lowercased because they are typed; a team slug is
-	# typed too — `--team Org/Mem` while in org/mem resolved to no team dir at all and fell back to your
-	# own brief, reporting "not in team Org/Mem" about the team you were sitting in. Compared rather
-	# than stored folded, so --list still shows the slug as GitHub spells it.
-	return os.path.join(config.TEAM, "memory") if slug and team.on() and slug.lower() == (team.NAME or "").lower() else ""
+	if not slug:
+		return ""
+	want = slug.lower()
+	for s in team.joined():
+		if s.lower() == want:
+			return os.path.join(team.dir_of(s), "memory")
+	return ""
 
 
 def team_key():
-	"""The slug a binding would name for the team we are in, "" when there is none to bind to."""
-	return team.NAME if team.on() else ""
+	"""The slug a binding names when you do not say which team. "" when that is not a single answer.
+
+	ponytail: "" when you are in NONE and also when you are in SEVERAL — with more than one joined team
+	there is no default, and picking one would be the silent selection this whole store exists to
+	remove. The caller says so: `bind --team SLUG` names it, and the CLI refuses without one.
+	"""
+	got = team.joined()
+	return got[0] if len(got) == 1 else ""

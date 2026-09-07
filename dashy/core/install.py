@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 from .. import HERE, config
-from . import knowledge, mirror
+from . import knowledge, mirror, team
 
 BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
 CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->"  # a separate block: one can go without the other
@@ -39,10 +39,25 @@ def claude_dir():
 
 
 def links():
-	"""(link, target) for the two paths a session reads memory through."""
+	"""(link, target) for the two paths a session reads memory through.
+
+	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
+	joined. With none or several it points inside TEAMS at a DOTTED name, which key_of can never produce
+	and joined() skips — so no team can ever occupy it. It dangles, which the loader already degrades on (a missing @import target is skipped and its siblings still
+	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
+	into every session on the machine, which is the defect this whole line of work removes. Making the
+	route itself per-repo is the deferred session-scoping work, SPEC 5+6.
+	"""
 	d = claude_dir()
 	return [(os.path.join(d, "prs-memory"), config.LOCAL_MEMORY),
-	        (os.path.join(d, "prs-team"), os.path.join(config.TEAM, "memory"))]
+	        # ponytail: the FIRST joined team, and only when there is exactly one. A symlink names one
+	        # directory; with several joined there is no honest answer, and pointing it at whichever
+	        # sorted first would put one team's cross-repo facts into every session on the machine.
+	        # That whole route is the deferred session-scoping work (SPEC 5+6) — this just refuses to
+	        # guess in the meantime.
+	        (os.path.join(d, "prs-team"),
+	         os.path.join(team.dirs()[0], "memory") if len(team.dirs()) == 1
+	         else os.path.join(config.TEAMS, ".no-single-team", "memory"))]
 
 
 def _fence(line, open_at):
@@ -781,9 +796,15 @@ def setup(ask, corpus_home=None):
 	# where it used to write the team's. That is the right file — nothing can be bound to a nameless
 	# team, so its project.md could never be selected by anything — but it is a different file from the
 	# one the last version chose, so it is said out loud rather than swapped silently.
-	if team.on() and not slug:
-		out.append("note   the team checkout has no origin, so nothing can be bound to it — "
-		           "writing your own brief instead")
+	# ponytail: team.on() IS joined() being non-empty, and team_key() is "" only when there is more than
+	# one — so "several" is the only way to get here. The other branch this used to carry could not be
+	# reached in production, and its test reached it by monkeypatching team.on over an empty store: a
+	# test for a state the code cannot be in, which proves the message and not the behaviour.
+	if len(joined := team.joined()) > 1:
+		# ponytail: names a command that exists. `gitdashy setup` parses no arguments at all, so telling
+		# someone to "say which with --team" pointed at a flag this command does not have.
+		out.append(f"note   several teams joined ({', '.join(joined)}) — writing your own brief; edit a "
+		           f"team's with T then e in the dashboard")
 	dest = memory.brief_path(slug)
 	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
 	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")
@@ -805,5 +826,5 @@ def setup(ask, corpus_home=None):
 	_write_text(dest, text)
 	out.append(f"wrote  {knowledge.tilde(dest)}")
 	if not mine:
-		team.push_dir(config.TEAM, "memory: the project brief", "sync")
+		team.push_dir(team.dir_of(slug), "memory: the project brief", "sync")
 	return out

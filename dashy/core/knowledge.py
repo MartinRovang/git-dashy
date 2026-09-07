@@ -13,7 +13,7 @@ import time
 from .. import config
 from . import log, mirror, team
 
-DEFAULT_STORE = os.path.expanduser("~/.prs_team")
+DEFAULT_STORE = os.path.expanduser("~/.prs_teams")
 
 
 def tilde(path):
@@ -38,8 +38,8 @@ def history_note():
 
 
 def store_moved():
-	"""True when the team checkout is not where it would be by default — only then is it worth a header row."""
-	return os.path.islink(config.TEAM) or config.TEAM != DEFAULT_STORE
+	"""True when the team home is not where it would be by default — only then is it worth a header row."""
+	return os.path.islink(config.TEAMS) or config.TEAMS != DEFAULT_STORE
 
 
 def effective():
@@ -144,8 +144,11 @@ def adopt(url, dest=None):
 		return f"{tilde(dest)} points at {tilde(os.path.realpath(dest))}; point it back to a plain directory first"
 	# ponytail: your memory dir gets pushed, and it holds drafts/. Making it the TEAM repo would publish
 	# every unconfirmed guess to everyone — the one thing the whole design promises never happens.
-	if url and team.on() and team.same_remote(url, team._url(config.TEAM)):
-		return "that is the team repo — your memory holds drafts, which are yours alone. Use a different one."
+	# ponytail: ANY joined team, not "the" one. Your memory holds drafts and is pushed; making it a team
+	# repo publishes every unconfirmed guess to everyone in it, and with several joined the wrong one is
+	# just as bad as the right one.
+	if url and any(team.same_remote(url, team._url(d)) for d in team.dirs()):
+		return "that is a team repo — your memory holds drafts, which are yours alone. Use a different one."
 	keep = sorted(n for n in os.listdir(dest) if n != ".git") if os.path.isdir(dest) else []
 	tmp = dest + ".incoming"
 	shutil.rmtree(tmp, ignore_errors=True)
@@ -208,26 +211,44 @@ def set_local(new):
 def set_store(new):
 	"""Point the team checkout dir at `new`. Returns "" or an error string."""
 	if team.on():
-		return "leave the team first — the refresh thread is pulling in that folder"
-	return repoint(config.TEAM, new, "PRS_TEAM")
+		return "leave every team first — the refresh thread is pulling in those folders"
+	return repoint(config.TEAMS, new, "PRS_TEAMS")
 
 
-def unpushed():
-	"""Work in the team checkout the remote does not have. -1 when that cannot be told.
+def unpushed(d):
+	"""Work in a team checkout the remote does not have. -1 when that cannot be told.
 
 	ponytail: commits ahead AND a dirty tree. A push that failed earlier — no git identity configured,
 	say — leaves files staged but uncommitted, which is zero commits ahead and still someone's work.
 	leave() deletes this directory, so the question has to be "is anything here unsaved", not "how many
 	commits".
 	"""
-	r = subprocess.run(["git", "-C", config.TEAM, "log", "--oneline", "@{u}..HEAD"],
-	                   capture_output=True, text=True, timeout=60)
-	if r.returncode != 0:
+	# ponytail: no default. _git lost its cwd default in this same change because a silent
+	# wrong-directory git call is worse than a TypeError at the call site; this one was the survivor.
+	# ponytail: NEVER raises. team.migrate() documents that it cannot — it runs before the first draw,
+	# and an exception there is a dashboard that never appears — but it calls this, and a bare
+	# subprocess.run lets TimeoutExpired and OSError straight through. -1 already means "cannot tell",
+	# which is the same answer a hung git should give, and every caller treats it as "do not delete".
+	try:
+		dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
+		                       capture_output=True, text=True, timeout=60)
+		if dirty.returncode != 0 or dirty.stdout.strip():
+			return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
+		# ponytail: the check has to match the COMMAND. `git log @{u}..HEAD` needs an UPSTREAM, not a
+		# remote — and `connect` does `remote add` before it pushes, so a typo'd URL leaves origin set
+		# with no upstream. Asking has_remote there still answered -1 and still refused to leave.
+		# With nothing to compare against there is nothing unpushed: the only question is whether
+		# anything is uncommitted, which is the check above.
+		up = subprocess.run(["git", "-C", d, "rev-parse", "--abbrev-ref", "@{u}"],
+		                    capture_output=True, text=True, timeout=60)
+		if up.returncode != 0:
+			return 0
+		r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
+		                   capture_output=True, text=True, timeout=60)
+		if r.returncode != 0:
+			return -1
+	except (subprocess.TimeoutExpired, OSError):
 		return -1
-	dirty = subprocess.run(["git", "-C", config.TEAM, "status", "--porcelain"],
-	                       capture_output=True, text=True, timeout=60)
-	if dirty.returncode != 0 or dirty.stdout.strip():
-		return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
 	return len(r.stdout.strip().splitlines())
 
 
@@ -257,25 +278,37 @@ def rmtree_owned(path):
 	return ""
 
 
-def leave():
-	"""Drop the team checkout and go back to solo memory. Returns "" or an error string."""
-	if not team.on():
-		return "not in a team"
-	ahead = unpushed()
+def leave(slug=""):
+	"""Drop ONE team's checkout. Returns "" or an error string.
+
+	ponytail: takes a slug now. Leaving used to mean "the team", and with several joined an unqualified
+	verb would delete whichever happened to be first — the caller says which, and the confirm prompt
+	names it, because this is the one action here that removes files.
+	"""
+	joined = team.joined()
+	slug = slug or (joined[0] if len(joined) == 1 else "")
+	if not slug or not (d := team.dir_of(slug)):
+		return "not in that team" if slug else f"say which team: {', '.join(joined) or 'none joined'}"
+	ahead = unpushed(d)
 	if ahead != 0:  # ponytail: -1 (no upstream, no git) is also "do not delete" — the log may exist only here
-		return f"{config.TEAM} has {ahead if ahead > 0 else 'possibly'} unpushed reviews; push them first"
+		# ponytail: "push them first" is wrong for a team with nowhere to push — -1 means uncommitted
+		# work now, not unpushed commits, whenever there is no upstream to compare against.
+		return (f"{slug} has {ahead} unpushed reviews; push them first" if ahead > 0 else
+		        f"{slug} has uncommitted work in it; commit or discard it first")
 	# ponytail: a symlinked TEAM used to be resolved with realpath and deleted at the far end. If you
 	# pointed it at a checkout you actually work in, "leave the team" deleted that repo. The link is
 	# ours to remove; what it points at is yours, and it is said out loud rather than silently kept.
-	if os.path.islink(config.TEAM):
+	if os.path.islink(d):
 		try:
-			os.remove(config.TEAM)
+			os.remove(d)
 		except OSError as e:
 			return str(e)
 	else:
-		err = rmtree_owned(config.TEAM)
+		err = rmtree_owned(d)
 		if err:
 			return err
-	config.LOG = log.LOG = config.LOCAL_LOG  # MEMORY_DIR never moved, so there is nothing to move back
-	team.NAME = team.ERROR = ""
+	# ponytail: nothing to move back. The log was never repointed — each team keeps its own and yours
+	# holds the unbound repos, so leaving one just removes a source that log.logs() stops listing.
+	team.NAME = ", ".join(team.joined())
+	team.ERROR = ""
 	return ""

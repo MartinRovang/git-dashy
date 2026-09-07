@@ -178,8 +178,7 @@ def _history():
 def _everything():
 	"""[(arcname, path)] for every file worth keeping a copy of — facts, drafts, both sources."""
 	out = []
-	for label, base in [("mine", config.MEMORY_DIR)] + ([("team", os.path.join(config.TEAM, "memory"))]
-	                                                    if team.on() else []):
+	for label, base in every_source():  # ponytail: a backup copies ALL memory, not one repo's view of it
 		if not base:
 			continue  # ponytail: PRS_MEMORY= (set but empty) once made os.walk(".") tar up the cwd
 		for root, dirs, names in os.walk(base):
@@ -259,10 +258,8 @@ def every_source():
 	deliberate: giving sources() an "all" flag would make the unscoped set one forgotten argument away,
 	and the whole point of the scoping is that it cannot be skipped by accident.
 	"""
-	out = [("mine", config.MEMORY_DIR)]
-	if team.on():
-		out.append(("team " + (team.NAME or "shared"), os.path.join(config.TEAM, "memory")))
-	return out
+	return [("mine", config.MEMORY_DIR)] + [(f"team {s}", os.path.join(d, "memory"))
+	                                         for s, d in zip(team.joined(), team.dirs())]
 
 
 def _read(p):
@@ -348,15 +345,31 @@ def whoami():
 	return re.sub(r"[^A-Za-z0-9_-]", "", os.environ.get("USER", "")) or "someone"
 
 
+def _the_one_team():
+	"""The memory dir for a fact that names no repo. "" when you are in none, or in several.
+
+	ponytail: "" for several on purpose. A general fact is true of every repo a source covers, and with
+	two teams that is two different claims; picking one would publish to a team that never asked.
+	"""
+	got = team.dirs()
+	return os.path.join(got[0], "memory") if len(got) == 1 else ""
+
+
 def pool_path(user, repo):
-	return os.path.join(config.TEAM, "memory", POOL, user, slug(repo))
+	"""Your evidence for `repo`, inside the team it is BOUND to. "" when nothing selects one.
+
+	ponytail: evidence is a disclosure, so it goes exactly where the facts go and nowhere else. With
+	several teams, publishing to the wrong one is the same error as publishing at all.
+	"""
+	d = bind.team_dir(bind.of(repo)) if repo else _the_one_team()
+	return os.path.join(d, POOL, user, slug(repo)) if d else ""
 
 
-def logged_repos():
-	"""Repos named in the shared review log — the team can already see these names."""
+def logged_repos(where=None):
+	"""Repos named in a review log — the team whose log it is can already see these names."""
 	out = set()
 	try:
-		with open(log.LOG) as f:
+		with open(where or log.LOG) as f:
 			for line in f:
 				try:
 					out.add(json.loads(line)["pr"]["repository"]["nameWithOwner"])
@@ -376,10 +389,10 @@ def team_visible(repo):
 	place an irreversible side effect belongs. Joining still seeds bindings from the log, so nothing
 	stops working; it just becomes something you can see and take back.
 	"""
-	if not team.on():
+	if not team.joined():
 		return False
 	if repo is None:
-		return True  # a general fact names no repo, so there is nothing to disclose
+		return bool(_the_one_team())  # names no repo, so no binding selects a team for it
 	# ponytail: through team_dir, exactly as every READ resolves it. bool(bind.of(repo)) was true for a
 	# binding to ANY team, including one this machine is not in — so a repo bound to org/other had its
 	# name and facts written into org/mem's pool and offered for sharing, while sources() and brief()
@@ -390,24 +403,25 @@ def team_visible(repo):
 
 def _pool(repo, fact):
 	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt."""
-	if team_visible(repo):
-		_append_line(pool_path(whoami(), repo), fact)
+	if team_visible(repo) and (p := pool_path(whoami(), repo)):
+		_append_line(p, fact)
 
 
 def pools():
 	"""{user: [(repo, fact)]} across everyone's pool. {} when you are not in a team."""
-	root = os.path.join(config.TEAM, "memory", POOL)
 	out = {}
-	for user in sorted(os.listdir(root)) if team.on() and os.path.isdir(root) else []:
-		d = os.path.join(root, user)
-		if not os.path.isdir(d):
-			continue
-		items = []
-		for name in sorted(os.listdir(d)):
-			if name.endswith(".md"):
-				items += [(_repo_of(name), f) for f in _facts(os.path.join(d, name))]
-		if items:
-			out[user] = items
+	for base in team.dirs():  # ponytail: every joined team — corroboration is per fact, not per team
+		root = os.path.join(base, "memory", POOL)
+		for user in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+			d = os.path.join(root, user)
+			if not os.path.isdir(d):
+				continue
+			items = []
+			for name in sorted(os.listdir(d)):
+				if name.endswith(".md"):
+					items += [(_repo_of(name), f) for f in _facts(os.path.join(d, name))]
+			if items:
+				out.setdefault(user, []).extend(items)
 	return out
 
 
@@ -486,31 +500,38 @@ def append(repo, text):
 
 def shareable():
 	"""[(repo, fact)] — facts of yours the team does not have. repo None is the general file."""
-	if not team.on():
+	if not team.joined():
 		return []
-	base = os.path.join(config.TEAM, "memory")
 	out = []
 	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
 		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = _repo_of(name)
-		if not team_visible(repo):
+		if not team_visible(repo) or not (base := _dest(repo)):
 			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
 		theirs = _facts(path(repo, base))
 		out += [(repo, f) for f in _facts(path(repo)) if not any(_same(f, t) for t in theirs)]
 	return out
 
 
+def _dest(repo):
+	"""The memory dir a fact about `repo` would be shared into. "" when nothing selects one."""
+	return (bind.team_dir(bind.of(repo)) if repo else _the_one_team()) or ""
+
+
 def share(repo, fact):
-	"""Put one of your facts into the team's memory. Returns the file written."""
-	dest = path(repo, os.path.join(config.TEAM, "memory"))
+	"""Put one of your facts into the BOUND team's memory. Returns the file written, or ""."""
+	if not (base := _dest(repo)):
+		return ""
+	dest = path(repo, base)
 	_append_line(dest, fact)
 	_unpool(repo, fact)  # it is memory now; keeping the evidence would just grow forever
 	return dest
 
 
 def _unpool(repo, fact):
-	p = pool_path(whoami(), repo)
+	if not (p := pool_path(whoami(), repo)):
+		return
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
@@ -594,15 +615,15 @@ def promote(repo, fact):
 
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files: "mine/" are one
-reviewer's private notes, "team/" are shared with their whole team, and each source has a general file plus one
-per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
+reviewer's private notes, "team:<key>/" are shared with one of their teams (there may be several, and they
+are different groups of people), and each source has a general file plus one per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
 fact, move repo-independent lines to that source's general file. Keep only overarching knowledge: how a repo is
 structured and why, conventions, how it affects other repos or the database, which authors own which areas, and —
 in a general file — how reviews are conducted here at all: what blocks and what does not, what must be verified
 rather than assumed, which classes of change get extra scrutiny. Drop per-PR trivia (what one PR changed, one-off
 bugs, "X is dead after #N") and anything derivable from git history.
 A general file is EXPECTED to hold lines that name no repo. That is what it is for, not a sign they are stale.
-Never move a line from mine/ into team/ — sharing is the reviewer's decision, not yours. Keep the "- " bullet
+Never move a line from mine/ into a team/, or between two teams — sharing is the reviewer's decision, not yours. Keep the "- " bullet
 style, one fact per line. Files not listed below must not be invented.
 Returning a file with empty content DELETES it and everything in it. Do that only when every line in it is
 genuinely worthless — never merely because the file does not match a category above.
@@ -610,9 +631,9 @@ genuinely worthless — never merely because the file does not match a category 
 {files}
 
 Respond with ONLY a JSON object, no prose, no code fences. Every key must be a file name exactly as
-listed above, including its "mine/" or "team/" prefix — a key without one names no file and is ignored:
+listed above, including its "mine/" or "team:<key>/" prefix — a key without one names no file and is ignored:
 {{"summary": "<2-5 short lines: what you merged, dropped or moved>",
- "files": {{"mine/general.md": "<new content>", "team/<owner>__<repo>.md": "<new content>", ...}}}}"""
+ "files": {{"mine/general.md": "<new content>", "team:<key>/<owner>__<repo>.md": "<new content>", ...}}}}"""
 TIMEOUT = 600
 
 
@@ -620,7 +641,9 @@ def files():
 	"""{"<source>/<file>": content} for every approved memory file, general first. proposed/ is never included."""
 	out = {}
 	for label, base in every_source():  # ponytail: the dream tidies ALL memory, not one repo's view of it
-		key = "mine" if label == "mine" else "team"
+		# ponytail: the SLUG is in the key. With one team "team/" was unambiguous; with several, two
+		# teams' general.md would collide on one key and the dream would write one over the other.
+		key = "mine" if label == "mine" else "team:" + label[5:]
 		for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
 			if n.endswith(".md") and n != PROJECT:  # the dream tidies learned facts, not a stated brief
 				out[f"{key}/{n}"] = open(os.path.join(base, n)).read()
@@ -629,10 +652,13 @@ def files():
 
 def _base(key):
 	"""The directory a files() key belongs to, or "" when it names a source that is not there."""
-	where, _, name = key.partition("/")
+	# ponytail: "mine/x.md" or "team:<key>/x.md". key_of strips everything outside [a-z0-9-], so a key
+	# never contains a slash — but split from the RIGHT anyway, so the file name is the last component
+	# whatever the source is. An unknown source resolves to "" and is dropped, as before.
+	where, _, name = key.rpartition("/")
 	if where == "mine":
 		return config.MEMORY_DIR
-	return os.path.join(config.TEAM, "memory") if where == "team" and team.on() else ""
+	return bind.team_dir(where[5:]) if where.startswith("team:") else ""
 
 
 def dream(model):

@@ -1,8 +1,11 @@
 import os
+import shutil
 import subprocess
 
 from dashy import config
 from dashy.core import bind, memory, mirror, team
+
+from conftest import a_team
 
 
 def seed(repo, text, base=None):
@@ -39,20 +42,16 @@ def test_sync_general_mirrors_the_cross_repo_facts_too(monkeypatch, tmp_path):
 
 
 def test_sync_mirrors_what_a_review_sees_from_both_sources(monkeypatch, tmp_path):
-	shared = tmp_path / "team" / "memory"
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
-	bind.bind("a/b", "org/t")  # the mirror shows what a review of THIS repo sees, which the binding decides
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")  # the mirror shows what a review of THIS repo sees, which the binding decides
 	seed("a/b", "mine about a/b")
 	seed("a/b", "team about a/b", str(shared))
 	into = tmp_path / "out"
 	mirror.sync(str(into), "a/b")
 	repo = (into / "repo.md").read_text()
 	assert "mine about a/b" in repo and "team about a/b" in repo
-	assert "### mine" in repo and "### team org/t" in repo
+	assert "### mine" in repo and "### team org-t" in repo
 
 
 def test_sync_never_mirrors_a_draft(monkeypatch, tmp_path):
@@ -171,19 +170,43 @@ def test_an_unbound_repos_mirror_loses_the_teams_files(monkeypatch, tmp_path):
 	That is correct behaviour and it is why seeding has to cover every route into the mirror, not just
 	the review log. Pinned here so the deletion is a decision someone made rather than a surprise.
 	"""
-	shared = tmp_path / "team" / "memory"
-	shared.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
 	seed("a/b", "team about a/b", str(shared))
 	seed(None, "team general", str(shared))
 	into = tmp_path / "out"
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	mirror.sync(str(into), "a/b", pull=False, general=True)
 	assert sorted(p.name for p in into.iterdir()) == ["general.md", "repo.md"]
 
 	bind.forget("a/b")
 	mirror.sync(str(into), "a/b", pull=False, general=True)
 	assert sorted(p.name for p in into.iterdir()) == []  # both go: nothing of yours, nothing of theirs
+
+
+def test_the_report_names_the_team_it_actually_read(monkeypatch, tmp_path):
+	"""team.NAME is a comma-joined list now, so a sync for a repo bound to ONE team reported
+	"from team org-a, org-b" — the report naming a source the write did not come from."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-a")
+	(tmp_path / "teams" / "org-b" / ".git").mkdir(parents=True)
+	monkeypatch.setattr(team, "NAME", "org-a, org-b")
+	seed("a/b", "team about a/b", str(shared))
+	bind.bind("a/b", "org-a")
+	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "from team org-a" in out and "org-b" not in out
+
+
+def test_the_report_falls_back_when_the_team_has_been_left(monkeypatch, tmp_path):
+	"""The case the label fix was made for and did not cover: a repo still bound to a team whose
+	checkout is gone. sources() drops to yours alone, so the report must say so too."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-a")
+	seed("a/b", "team about a/b", str(shared))
+	seed("a/b", "mine about a/b")
+	bind.bind("a/b", "org-a")
+	assert "from team org-a" in mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+
+	shutil.rmtree(tmp_path / "teams" / "org-a")     # left, while the binding remains
+	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "from team org-a" not in out and str(tmp_path / "mem") in out

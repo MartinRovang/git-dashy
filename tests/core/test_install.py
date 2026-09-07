@@ -664,13 +664,14 @@ def test_leaving_a_team_does_not_delete_through_a_symlink(monkeypatch, tmp_path)
 	work = tmp_path / "my-real-checkout"
 	work.mkdir()
 	(work / "important.md").write_text("mine")
-	link = tmp_path / "team"
+	(work / ".git").mkdir()   # ponytail: a checkout, since "joined" is now "a directory with a .git"
+	teams = tmp_path / "teams"
+	teams.mkdir()
+	link = teams / "org-t"
 	os.symlink(work, link)
-	monkeypatch.setattr(config, "TEAM", str(link))
-	monkeypatch.setattr(knowledge.team, "on", lambda: True)
-	monkeypatch.setattr(knowledge, "unpushed", lambda: 0)
-	monkeypatch.setattr(knowledge.team, "NAME", "t", raising=False)
-	assert knowledge.leave() == ""
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
+	assert knowledge.leave("org-t") == ""
 	assert not os.path.lexists(link)          # the link is ours
 	assert (work / "important.md").exists()   # what it pointed at is not
 
@@ -828,15 +829,17 @@ def test_setup_still_refuses_a_file_you_wrote_yourself(monkeypatch, tmp_path):
 	assert any("is yours already" in l for l in out)
 
 
-def test_setup_says_so_when_the_team_cannot_be_bound_to(monkeypatch, tmp_path):
-	"""In a team whose origin does not resolve, the brief goes to YOUR file — the right one, since
-	nothing can bind to a nameless team, but a different one from what the last version chose."""
+def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
+	"""bind.team_key() is "" for NONE and for SEVERAL, and those are different problems. Two joined
+	teams is the normal state this whole change exists to create."""
 	from dashy.core import memory, team
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
-	monkeypatch.setattr(team, "on", lambda: True)
-	monkeypatch.setattr(team, "NAME", "")          # a checkout with no origin
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("org-one", "org-two"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
 	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
-	assert any("no origin" in l for l in out)
-	assert any("wrote" in l for l in out)
-	assert os.path.exists(memory.brief_path())     # yours, and it says which
+	note = next(l for l in out if l.startswith("note"))
+	assert "several teams joined" in note and "org-one, org-two" in note
+	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
+	assert "no origin" not in note and "no name" not in note
+	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says

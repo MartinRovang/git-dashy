@@ -37,7 +37,10 @@ def install():
 
 	ponytail: EVERY one. A new call-out that is not swapped here reaches the real thing, and the demo
 	promises no gh and no claude — `p` shipped for one commit doing exactly that."""
-	config.TEAM = ""  # never sync the demo
+	# ponytail: BOTH homes. team.joined() lists directories under TEAMS, so blanking the old singular
+	# path alone left the demo reading whatever real teams this machine had joined — and the demo's
+	# whole promise is that it touches nothing real.
+	config.TEAM = config.TEAMS = ""  # never sync the demo
 	config.SETTINGS = ""  # never read or write the real settings
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
 	config.MEMORY_DIR = log.LOG[:-6] + "-memory"  # Z dream must never rewrite the real memory

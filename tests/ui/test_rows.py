@@ -118,23 +118,23 @@ def _pr(repo, n):
 
 def test_rows_separate_a_section_by_team():
 	"""Which team a repo's reviews use was invisible until you opened the pane on every single row."""
-	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	bind.bind_owner("neomedsys", "neomedsys-review-memory")
 	bind.bind("acme/tool", "acme/mem")
 	prs = [_pr("me/weekend", 1), _pr("neomedsys/neo-api", 2), _pr("acme/tool", 3),
 	       _pr("neomedsys/nms-platform-v2", 4)]
 	out = rows([("MINE", prs, None)])
 	groups = [p for k, p in out if k == "group"]
-	assert groups == ["acme/mem", "neomedsys/review-memory", "not bound to a team"]
+	assert groups == ["acme/mem", "neomedsys-review-memory", "not bound to a team"]
 	# each PR sits under its own team's separator, and unbound is the last pile
 	order = [p if k == "group" else p["repository"]["nameWithOwner"] for k, p in out if k in ("group", "pr")]
 	assert order == ["acme/mem", "acme/tool",
-	                 "neomedsys/review-memory", "neomedsys/neo-api", "neomedsys/nms-platform-v2",
+	                 "neomedsys-review-memory", "neomedsys/neo-api", "neomedsys/nms-platform-v2",
 	                 "not bound to a team", "me/weekend"]
 
 
 def test_one_team_gets_no_separator():
 	"""A separator above a single group labels what the whole list already is."""
-	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	bind.bind_owner("neomedsys", "neomedsys-review-memory")
 	out = rows([("MINE", [_pr("neomedsys/neo-api", 2), _pr("neomedsys/neo-access", 3)], None)])
 	assert not [p for k, p in out if k == "group"]
 	out = rows([("MINE", [_pr("me/a", 1), _pr("me/b", 2)], None)])
@@ -150,7 +150,7 @@ def test_a_group_rule_is_never_written_zero_wide():
 	from dashy.core.state import State
 	from dashy.ui import screen as ui
 	ui.C = lambda n: 0
-	bind.bind_owner("neomedsys", "neomedsys/review-memory")
+	bind.bind_owner("neomedsys", "neomedsys-review-memory")
 	prs = [_pr("neomedsys/neo-api", 1), _pr("me/weekend", 2)]
 	st = State(60)
 	st.sections, st.fetched_at = [("MINE", prs, None)], time.time()
