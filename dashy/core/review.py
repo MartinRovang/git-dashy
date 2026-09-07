@@ -27,7 +27,9 @@ This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}
 Your earlier review was:
 {body}
 
-Do not treat the PR as new. Say which earlier findings are fixed and which still stand, then review what changed since."""
+Do not treat the PR as new. Say which earlier findings are fixed and which still stand, then review what changed since.
+Anything that review said about your tools or the machine may since have been fixed — it was written against
+an older environment. Re-run the command before repeating a claim that one is missing or broken."""
 DEPTH = {
 	"low": "Depth: minimal. Skim the diff once, flag only obvious defects, keep the body to a few lines.",
 	"medium": "Depth: medium. Read the whole diff carefully, check the changed logic and its tests.",
