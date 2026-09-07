@@ -38,7 +38,7 @@ def body(prs, err, summaries, subs, name):
 	return out
 
 
-def rows(sections, window=None, subs="all", drafts=True, expanded=()):
+def rows(sections, window=None, subs="all", drafts=True, expanded=(), busy=()):
 	"""Flatten to draw rows: (kind, payload). Selectable rows are ('pr', pr).
 
 	Your own PRs get a section of their own, because they are the ones you can act on. The other three
@@ -49,8 +49,8 @@ def rows(sections, window=None, subs="all", drafts=True, expanded=()):
 	summaries = {p["url"]: p["review"]["summary"] for n, prs, _ in sections if n == "REVIEWED" for p in prs or []}
 	cutoff = datetime.now(timezone.utc) - timedelta(hours=window) if window else None
 	for name, prs, err in sections:
-		if not drafts and prs:
-			prs = [p for p in prs if not p.get("isDraft")]
+		if not drafts and prs:  # ponytail: a draft under review stays visible, still tagged "draft"
+			prs = [p for p in prs if not p.get("isDraft") or p["url"] in busy]
 		if name == "REVIEWED" and cutoff:
 			prs = [p for p in prs or [] if datetime.fromisoformat(p["review"]["at"]) >= cutoff]
 		if name == "REVIEWED" and prs:
