@@ -723,7 +723,7 @@ def setup_done(corpus_home=None):
 	user = os.path.join(home, "identity", "USER.md")
 	tmpl = os.path.join(home, "identity", "USER.md.template")
 	mine = _read(user).strip() and _read(user).strip() != _read(tmpl).strip()  # a seeded template is not done
-	return bool(mine) and bool(memory.project().strip())
+	return bool(mine) and memory.brief_written()
 
 
 def setup(ask, corpus_home=None):
@@ -771,17 +771,27 @@ def setup(ask, corpus_home=None):
 			out.append(f"ok     {knowledge.tilde(user)} left as it was — nothing answered")
 	else:
 		out.append(f"SKIP   no corpus at {knowledge.tilde(home)} — run `gitdashy install --full` first")
-	from . import memory, team
-	mine = not team.on()
-	dest = memory.project_path(mine=mine)
-	whose = "yours" if mine else f"the team's, shared with everyone in {team.NAME or 'it'}"
+	from . import bind, memory, team
+	# ponytail: a team brief now reaches only the repos BOUND to that team, so the old line — "every
+	# review reads it" — became false the moment selection stopped being "yours and theirs, always".
+	# Saying which reviews read it is the part someone acts on.
+	slug = bind.team_key()
+	mine = not slug
+	dest = memory.brief_path(slug)
+	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
+	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")
+	if slug and not dest:
+		# ponytail: brief_path returns "" for a team this machine does not have. It cannot happen while
+		# team_key and team_dir agree, and that is exactly the kind of invariant that stops holding when
+		# one of the two grows a case. os.makedirs("") raises, so the cost of checking is one line.
+		return out + [f"SKIP   no memory directory for team {slug} — cannot write its brief"]
 	if os.path.exists(dest):
 		out.append(f"ok     {knowledge.tilde(dest)} already written — edit it directly to change it")
 		return out
 	out.append("")
-	out.append(f"Now what the work is for. This brief is {whose}, and every review reads it.")
+	out.append(f"Now what the work is for. This brief is {whose}.")
 	got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_PROJECT]
-	text = compose("What is being built", "Written by `gitdashy setup`. Every review reads this.", got)
+	text = compose("What is being built", "Written by `gitdashy setup`. Reviews of the repos it covers read this.", got)
 	if not text:
 		return out + [f"ok     no brief written — `gitdashy setup` again whenever you want one"]
 	os.makedirs(os.path.dirname(dest), exist_ok=True)

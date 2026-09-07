@@ -5,7 +5,7 @@ import time
 import pytest
 
 from dashy import config
-from dashy.core import log
+from dashy.core import bind, log
 from dashy.ui import screen as ui
 from dashy.core.review import review
 from dashy.core.state import State
@@ -396,6 +396,7 @@ def _team(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
 	monkeypatch.setattr(ui.team, "on", lambda: True)
 	monkeypatch.setattr(ui.team, "NAME", "org/t")
+	bind.bind("a/b", "org/t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
 	return mine, shared
 
 
@@ -1019,3 +1020,33 @@ def test_a_dream_that_only_tidies_still_takes_one_yes(screen, monkeypatch, st, t
 
 	assert not asked, "no deletion, so no second prompt"
 	assert open(ui.memory.path("a/b")).read() == "- x\n"
+
+
+def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, tmp_path):
+	"""A thing that silently selects your context must name what it selected, and why that one."""
+	from dashy.core import bind, team
+	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine.mkdir(parents=True)
+	shared.mkdir(parents=True)
+	(tmp_path / "team" / ".git").mkdir()
+	(mine / "project.md").write_text("My own work.\n")
+	(shared / "project.md").write_text("What the team builds.\n")
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "NAME", "org/t")
+	st = State(60)
+	monkeypatch.setattr(st, "want_detail", lambda pr: {})  # no background fetch from a draw test
+	pr = dict(PR)
+
+	ui.detail(screen, st, 30, 40, 60, pr)
+	assert "BRIEF yours · a/b is bound to no team" in screen.text()
+
+	screen.erase()
+	bind.bind("a/b", "org/t")
+	ui.detail(screen, st, 30, 40, 60, pr)
+	assert "BRIEF team org/t" in screen.text()
+
+	screen.erase()
+	(shared / "project.md").unlink()
+	ui.detail(screen, st, 30, 40, 60, pr)
+	assert "BRIEF yours · team org/t has no brief" in screen.text()

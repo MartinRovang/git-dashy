@@ -2,7 +2,7 @@ import os
 import subprocess
 
 from dashy import config
-from dashy.core import memory, mirror, team
+from dashy.core import bind, memory, mirror, team
 
 
 def seed(repo, text, base=None):
@@ -45,6 +45,7 @@ def test_sync_mirrors_what_a_review_sees_from_both_sources(monkeypatch, tmp_path
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
 	monkeypatch.setattr(team, "on", lambda: True)
 	monkeypatch.setattr(team, "NAME", "org/t")
+	bind.bind("a/b", "org/t")  # the mirror shows what a review of THIS repo sees, which the binding decides
 	seed("a/b", "mine about a/b")
 	seed("a/b", "team about a/b", str(shared))
 	into = tmp_path / "out"

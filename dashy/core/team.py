@@ -244,6 +244,12 @@ def activate():
 		return
 	config.LOG = log.LOG = os.path.join(config.TEAM, "reviewed.jsonl")  # the review log really is shared
 	NAME = origin_slug(config.TEAM)  # ponytail: MEMORY_DIR stays yours — memory.sources() reads both
+	# ponytail: lazy, and only these two lines need it — bind and memory both import this module, so an
+	# import at the top is a cycle. Seeding lives HERE, on the one function that says "a team is now
+	# known", rather than at each of the six entry points that call it: a bootstrap only some callers
+	# perform is the bootstrap that is missing on the path nobody tested.
+	from . import bind, memory
+	bind.seed(NAME, memory.logged_repos())
 
 
 def clone(repo, dest):
@@ -320,5 +326,9 @@ def setup(repo, create=False):
 	seed_project(os.path.join(config.TEAM, "memory", "project.md"))
 	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
 		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
+		# ponytail: again, because the log only exists NOW. activate() seeds bindings from it, and on a
+		# first join it ran against a checkout that had none — so the repos you review would stay bound to
+		# nothing until the next launch, which is the one session where you would notice and blame the join.
+		activate()
 	push("gitdashy: join " + (os.environ.get("USER") or "team"))
 	return ERROR

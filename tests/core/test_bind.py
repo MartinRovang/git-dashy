@@ -1,0 +1,205 @@
+"""The binding store: which team a repo belongs to, declared rather than inferred."""
+from dashy import config
+from dashy.core import bind, memory, team
+
+
+def test_one_repo_is_named_the_same_way_however_you_spell_it():
+	"""A binding must survive a re-clone and a move, so it keys on the slug, not on a path or a URL."""
+	for spelling in ("acme/api", "git@github.com:acme/api.git", "https://github.com/acme/api",
+	                 "https://github.com/acme/api.git", "/home/me/src/acme/api"):
+		assert bind.key(spelling) == "acme/api", spelling
+
+
+def test_a_key_that_is_not_an_owner_and_a_name_is_refused():
+	"""It would key a row nothing ever matches, which reads back as unbound with no way to tell."""
+	for bad in ("", "notes", "/", "a/", "/b"):
+		assert bind.key(bad) == "", bad
+	assert bind.bind("notes", "org/t") == "'notes' is not an owner/name"
+	assert bind.bindings() == {}
+
+
+def test_binding_and_unbinding_round_trip():
+	assert bind.bind("acme/api", "org/t") == ""
+	assert bind.of("acme/api") == "org/t"
+	assert bind.of("git@github.com:acme/api.git") == "org/t"  # same repo, another spelling
+	assert bind.of("acme/other") == ""
+	assert bind.forget("acme/api") == ""
+	assert bind.of("acme/api") == ""
+	assert bind.forget("acme/api") == ""  # already gone, and saying so again is not an error
+
+
+def test_the_last_line_wins_and_the_file_only_ever_grows():
+	"""Appending without a lock is what makes two processes safe; the read resolves the order."""
+	bind.bind("acme/api", "org/one")
+	bind.bind("acme/api", "org/two")
+	assert bind.of("acme/api") == "org/two"
+	assert bind.bind("acme/api", "org/two") == ""
+	assert open(bind.BINDINGS).read().count("\n") == 2  # asked for what it already had, wrote nothing
+
+
+def test_one_unreadable_line_does_not_lose_the_rest():
+	"""install.registered() lost a whole registry to this once; the shape is copied, so is the guard."""
+	bind.bind("acme/api", "org/t")
+	with open(bind.BINDINGS, "a") as f:
+		f.write("this is not json\n{}\n" + '{"repo": 7}\n' + '{"repo": "acme/two"}\n')
+	bind.bind("acme/three", "org/t")
+	assert bind.bindings() == {"acme/api": "org/t", "acme/three": "org/t"}  # a team-less line binds nothing
+
+
+def test_seeding_binds_what_the_log_already_named(monkeypatch, tmp_path):
+	"""The bootstrap: upgrading into bindings must not silently drop the brief you had yesterday."""
+	assert bind.seed("org/t", ["acme/api", "acme/web", "acme/api"]) == ["acme/api", "acme/web"]
+	assert bind.bindings() == {"acme/api": "org/t", "acme/web": "org/t"}
+	assert bind.seed("org/t", ["acme/api", "acme/web"]) == []  # idempotent
+	assert bind.seed("", ["acme/x"]) == []  # a team with no slug is not something to bind to
+
+
+def test_unbinding_something_never_bound_still_keeps_it_unbound():
+	"""The tombstone is the record of a decision, not of a deletion — seed() reads it, not the live map."""
+	assert bind.forget("acme/api") == "" and bind.of("acme/api") == ""  # nothing to remove
+	assert bind.seed("org/t", ["acme/api", "acme/web"]) == ["acme/web"]
+	assert bind.of("acme/api") == ""
+
+
+def test_an_unbinding_survives_the_next_seed():
+	"""Seeding off the live map would re-bind it at every startup, and the unbind would look inert."""
+	bind.seed("org/t", ["acme/api"])
+	bind.forget("acme/api")
+	assert bind.seed("org/t", ["acme/api"]) == []
+	assert bind.of("acme/api") == ""
+
+
+def test_a_binding_names_a_team_this_machine_may_not_have(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	(tmp_path / "team" / ".git").mkdir(parents=True)
+	monkeypatch.setattr(team, "NAME", "org/t")
+	assert bind.team_dir("org/t") == str(tmp_path / "team" / "memory")
+	assert bind.team_dir("org/other") == ""  # a team we are not in resolves to nothing, never to ours
+	assert bind.team_dir("") == ""
+	assert bind.team_key() == "org/t"
+
+
+def test_the_brief_a_repo_gets_is_the_one_its_binding_names(monkeypatch, tmp_path):
+	"""End to end, through the function reviews actually call."""
+	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	shared.mkdir(parents=True)
+	mine.mkdir()
+	(mine / "project.md").write_text("My own work.\n")
+	(shared / "project.md").write_text("What the team builds.\n")
+	(tmp_path / "team" / ".git").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "NAME", "org/t")
+	assert memory.brief("acme/api")[0] == "My own work."
+	bind.bind("acme/api", "org/t")
+	assert memory.brief("acme/api") == ("What the team builds.", "team org/t")
+	bind.forget("acme/api")
+	assert memory.brief("acme/api")[0] == "My own work."  # and it is undoable, which the log never was
+
+
+def test_a_hand_typed_repo_finds_the_row_a_review_looks_up():
+	"""bind is the one store fed by typing; every other key arrives as GitHub's own nameWithOwner."""
+	assert bind.bind("NeoMedSys/Neo-API", "org/t") == ""
+	assert bind.of("neomedsys/neo-api") == "org/t"
+	assert bind.forget("NEOMEDSYS/NEO-API") == ""
+	assert bind.of("neomedsys/neo-api") == ""
+
+
+def test_an_unwritable_store_reports_instead_of_taking_the_dashboard_down(monkeypatch, tmp_path):
+	"""seed() runs from team.activate(), which runs at startup inside curses. A raise there draws nothing."""
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "as-a-dir"))
+	(tmp_path / "as-a-dir").mkdir()
+	err = bind.bind("acme/api", "org/t")
+	assert err and "Is a directory" in err  # the real reason, not a swallowed one
+	assert bind.seed("org/t", ["acme/api"]) == []  # nothing is claimed as written
+	assert bind.bindings() == {} and bind.of("acme/api") == ""
+	assert bind.forget("acme/api")  # a reason, not an exception out of the curses wrapper
+
+
+def test_the_cli_never_reads_a_flags_value_as_the_repo(monkeypatch, tmp_path):
+	"""`bind --team org/mem` inside a repo bound the TEAM to itself, and reported success doing it."""
+	from dashy import cli
+	from dashy.core import team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/api")  # the repo we are standing in
+	monkeypatch.setattr(bind, "team_key", lambda: "org/mem")
+	cli.bind(["gitdashy", "bind", "--team", "org/mem"])
+	assert bind.bindings() == {"acme/api": "org/mem"}  # the cwd repo, not the flag's value
+	# and an explicit positional still wins over the directory we happen to be in
+	cli.bind(["gitdashy", "bind", "other/thing", "--team", "org/mem"])
+	assert bind.of("other/thing") == "org/mem"
+
+
+def _estate(monkeypatch, tmp_path):
+	"""A team with facts and a brief, plus your own memory. Returns (mine, team memory)."""
+	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
+	mine.mkdir(parents=True)
+	shared.mkdir(parents=True)
+	(shared / "general.md").write_text("- the team reviews python with 4 spaces\n")
+	(shared / "neomedsys__neo-api.md").write_text("- neo-api holds no DDL\n")
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
+	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(team, "NAME", "org/mem")
+	return mine, shared
+
+
+def test_an_unbound_repo_is_private(monkeypatch, tmp_path):
+	"""What the whole feature is for: a side project is not told how somebody else's team reviews."""
+	_estate(monkeypatch, tmp_path)
+	bind.bind("neomedsys/neo-api", "org/mem")
+	got = memory.read("neomedsys/neo-api")
+	assert "4 spaces" in got and "no DDL" in got          # bound: the team's general AND repo facts
+	assert [l for l, _ in memory.sources("neomedsys/neo-api")] == ["mine", "team org/mem"]
+
+	assert memory.read("me/weekend-thing") == ""          # unbound: nothing of the team's, not even general
+	assert [l for l, _ in memory.sources("me/weekend-thing")] == ["mine"]
+
+
+def test_an_owner_rule_covers_every_repo_under_it(monkeypatch, tmp_path):
+	"""~15 repos in one org is 15 commands and one more per new repo; a pattern is one line."""
+	_estate(monkeypatch, tmp_path)
+	assert bind.bind_owner("neomedsys", "org/mem") == ""
+	for repo in ("neomedsys/neo-api", "neomedsys/nms-platform-v2", "neomedsys/a-repo-created-tomorrow"):
+		assert bind.of(repo) == "org/mem", repo
+	assert bind.why("neomedsys/neo-api") == ("owner", "org/mem")
+	assert bind.of("someone-else/tool") == ""            # the pattern covers one owner, not everything
+	assert "4 spaces" in memory.read("neomedsys/nms-platform-v2")
+	assert memory.read("someone-else/tool") == ""
+
+
+def test_an_explicit_binding_beats_the_owner_rule():
+	"""Explicit always wins over a pattern, in both directions."""
+	bind.bind_owner("neomedsys", "org/mem")
+	bind.bind("neomedsys/joint-venture", "org/other")
+	assert bind.of("neomedsys/joint-venture") == "org/other"
+	assert bind.why("neomedsys/joint-venture") == ("team", "org/other")
+	# and a repo in the org that is NOT the project can be excluded, which a pattern alone cannot express
+	bind.forget("neomedsys/someones-fork")
+	assert bind.of("neomedsys/someones-fork") == ""
+	assert bind.of("neomedsys/neo-api") == "org/mem"     # the rule still covers the rest
+
+
+def test_dropping_the_owner_rule_releases_the_repos_it_covered():
+	bind.bind_owner("neomedsys", "org/mem")
+	assert bind.of("neomedsys/neo-api") == "org/mem"
+	assert bind.forget_owner("neomedsys/*") == ""        # the glob spelling is accepted too
+	assert bind.of("neomedsys/neo-api") == "" and bind.owners() == {}
+
+
+def test_seeding_does_not_pin_repos_an_owner_rule_already_covers():
+	"""A redundant row would survive the rule's removal and pin repos nobody chose one by one."""
+	bind.bind_owner("neomedsys", "org/mem")
+	assert bind.seed("org/mem", ["neomedsys/neo-api", "other/thing"]) == ["other/thing"]
+	assert bind.bindings() == {"other/thing": "org/mem"}
+
+
+def test_an_unbound_repo_never_pools_or_offers_a_fact(monkeypatch, tmp_path):
+	"""Disclosure is the sharper half: a fact about private work must not reach other people."""
+	mine, _ = _estate(monkeypatch, tmp_path)
+	bind.bind("neomedsys/neo-api", "org/mem")
+	(mine / "me__weekend.md").write_text("- my side project uses bun\n")
+	(mine / "neomedsys__neo-api.md").write_text("- worth telling the team\n")
+	assert memory.team_visible("neomedsys/neo-api") and not memory.team_visible("me/weekend")
+	assert ("me/weekend", "my side project uses bun") not in memory.shareable()
+	assert ("neomedsys/neo-api", "worth telling the team") in memory.shareable()

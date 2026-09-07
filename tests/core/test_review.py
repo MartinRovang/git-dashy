@@ -205,23 +205,40 @@ def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
 	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt
 
 
-def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
-	from dashy.core import memory, team
+def _briefed(monkeypatch, tmp_path):
+	"""A team with a brief, and a recorder for the prompts a review builds. Returns the prompt list."""
+	from dashy.core import team
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
 	(tmp_path / "team" / "memory").mkdir(parents=True)
 	(tmp_path / "team" / "memory" / "project.md").write_text("We build X for surgeons.\n")
 	monkeypatch.setattr(team, "on", lambda: True)
+	monkeypatch.setattr(team, "NAME", "org/t")
 	prompts = []
 	def fake_run(cmd, **kw):
 		if cmd[0] == "claude":
 			prompts.append(cmd[2])
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
+	return prompts
+
+
+def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
+	from dashy.core import bind
+	prompts = _briefed(monkeypatch, tmp_path)
+	bind.bind("a/b", "org/t")
 	review(dict(PR), "opus")
-	assert "What this is being built for, and for whom:" in prompts[0]
-	assert "### team" in prompts[0] and "We build X for surgeons." in prompts[0]  # labelled, like any source
+	assert "What this is being built for, and for whom (team org/t):" in prompts[0]
+	assert "We build X for surgeons." in prompts[0]
 	assert prompts[0].index("being built for") < prompts[0].index("Respond with ONLY")
+
+
+def test_an_unbound_repo_is_not_told_another_products_purpose(monkeypatch, tmp_path):
+	"""The defect this exists for: one team\'s brief reached every review of every repo, unasked."""
+	prompts = _briefed(monkeypatch, tmp_path)
+	review(dict(PR), "opus")  # a/b is bound to nothing
+	assert "We build X for surgeons." not in prompts[0]
+	assert "being built for" not in prompts[0]  # no brief at all, rather than someone else\'s
 
 
 def test_a_review_does_not_care_where_the_dashboard_was_started(monkeypatch, tmp_path):

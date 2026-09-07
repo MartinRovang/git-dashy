@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 from dashy import config
-from dashy.core import memory, team
+from dashy.core import bind, memory, team
 
 from conftest import claude_out
 
@@ -13,8 +13,13 @@ def facts(p):
 	return [l.strip() for l in open(p).read().splitlines() if l.strip()]
 
 
-def in_a_team(monkeypatch, tmp_path):
-	"""mine/ and team/memory/ side by side, with team mode on. Returns (mine, team memory)."""
+def in_a_team(monkeypatch, tmp_path, *repos):
+	"""mine/ and team/memory/ side by side, team mode on, and the team BOUND to `repos`.
+
+	ponytail: binding is what makes a repo the team's now, so a test about team behaviour has to say
+	which repos those are. It defaults to a/b — the PR every other fixture uses — which is what these
+	tests always meant by "in a team"; it just used to be true of every repo on the machine.
+	"""
 	mine, shared = tmp_path / "mine", tmp_path / "team" / "memory"
 	mine.mkdir(parents=True, exist_ok=True)
 	shared.mkdir(parents=True, exist_ok=True)
@@ -22,6 +27,8 @@ def in_a_team(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "team"))
 	monkeypatch.setattr(team, "on", lambda: True)
 	monkeypatch.setattr(team, "NAME", "org/t")
+	for r in (repos or ("a/b",)):
+		bind.bind(r, "org/t")
 	return mine, shared
 
 
@@ -139,9 +146,9 @@ def logged(tmp_path, *repos):
 			f.write('{"pr": {"repository": {"nameWithOwner": "%s"}}}\n' % r)
 
 
-def test_a_promoted_fact_is_pooled_only_for_a_repo_the_team_can_already_see(monkeypatch, tmp_path):
-	mine, _ = in_a_team(monkeypatch, tmp_path)
-	logged(tmp_path, "a/b")
+def test_a_promoted_fact_is_pooled_only_for_a_repo_bound_to_the_team(monkeypatch, tmp_path):
+	"""Disclosure follows the binding: an unbound repo's name never reaches other people."""
+	mine, _ = in_a_team(monkeypatch, tmp_path)  # binds a/b, and nothing else
 	memory.append("a/b", "CI skips the DB tests")
 	memory.append("a/b", "CI skips the DB tests")  # promoted
 	memory.append("secret/side", "my weekend project uses bun")
@@ -197,13 +204,17 @@ def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
 	assert not any("pool" in k for k in memory.files())  # nor into the dream
 
 
-def test_a_repo_the_team_holds_memory_for_is_visible_even_if_never_reviewed(monkeypatch, tmp_path):
-	"""A repo you only ever code in still corroborates, as long as the team already has facts for it."""
-	mine, shared = in_a_team(monkeypatch, tmp_path)
-	logged(tmp_path)  # nothing in the review log at all
-	assert not memory.team_visible("a/b")
-	(shared / "a__b.md").write_text("- the team already knows this repo\n")
-	assert memory.team_visible("a/b")
+def test_visibility_follows_the_binding_and_nothing_else(monkeypatch, tmp_path):
+	"""The retired rule: a repo in the shared log, or one the team held facts for, was visible forever.
+
+	Both were side effects with no undo, deciding whether a fact about your work is published to other
+	people. Now it is the binding, which you can see and take back.
+	"""
+	mine, shared = in_a_team(monkeypatch, tmp_path, "a/b")
+	logged(tmp_path, "other/repo")            # in the shared review log...
+	(shared / "other__repo.md").write_text("- the team holds facts for it\n")  # ...and the team has facts
+	assert not memory.team_visible("other/repo")  # neither counts any more
+	assert memory.team_visible("a/b")             # only the binding does
 	memory.append("a/b", "coding taught me this")
 	memory.append("a/b", "coding taught me this")
 	assert facts(memory.pool_path(memory.whoami(), "a/b")) == ["- coding taught me this"]
@@ -322,7 +333,8 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	(shared / "project.md").write_text("# What we are building\n\nA thing, for someone.\n")
 	(shared / "general.md").write_text("- a learned fact\n")
-	assert "A thing, for someone" in memory.project()
+	bind.bind("a/b", "org/t")
+	assert "A thing, for someone" in memory.brief("a/b")[0]
 	assert "A thing" not in memory.read("a/b")          # not a fact, so not in the memory block
 	assert "project.md" not in " ".join(memory.files())  # the dream tidies facts, not a brief
 	assert memory.shareable() == []                     # and it is never offered for sharing
@@ -333,25 +345,52 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 
 def test_no_team_means_no_brief(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
-	assert memory.project() == ""
+	assert memory.brief("a/b") == ("", "no brief written")
 
 
 def test_a_brief_belongs_to_whoever_wrote_it(monkeypatch, tmp_path):
 	"""It used to be the team's alone, which left anyone working solo with nowhere to put it."""
-	mine, shared = in_a_team(monkeypatch, tmp_path)
+	mine, shared = in_a_team(monkeypatch, tmp_path, "someone/else")  # a/b stays UNBOUND on purpose
 	(mine / "project.md").write_text("A tool for one person.\n")
-	assert memory.project() == "### mine\nA tool for one person."
-	(shared / "project.md").write_text("What we build together.\n")
-	both = memory.project()
-	assert "### mine" in both and "### team org/t" in both and both.index("mine") < both.index("team")
+	assert memory.brief("a/b") == ("A tool for one person.", "yours · a/b is bound to no team")
 	assert memory.shareable() == []          # still never offered for sharing
 	assert not any("project" in k for k in memory.files())  # and still not dreamt over
+
+
+def test_two_briefs_are_never_concatenated(monkeypatch, tmp_path):
+	"""The defect: yours AND the team\'s went into every review of every repo, contradicting each other."""
+	mine, shared = in_a_team(monkeypatch, tmp_path, "someone/else")  # a/b stays UNBOUND on purpose
+	(mine / "project.md").write_text("A tool for one person.\n")
+	(shared / "project.md").write_text("What we build together.\n")
+	assert memory.brief("a/b") == ("A tool for one person.", "yours · a/b is bound to no team")
+	bind.bind("a/b", "org/t")
+	text, whose = memory.brief("a/b")
+	assert text == "What we build together." and whose == "team org/t"
+	assert "one person" not in text  # exactly one brief, never both
+
+
+def test_a_binding_to_a_team_we_are_not_in_says_so(monkeypatch, tmp_path):
+	"""Falling back silently is the defect with extra steps: the source has to name the reason."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "project.md").write_text("Just me.\n")
+	bind.bind("a/b", "org/gone")
+	assert memory.brief("a/b") == ("Just me.", "yours · not in team org/gone")
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "empty"))
+	assert memory.brief("a/b") == ("", "not in team org/gone")
+
+
+def test_a_bound_team_with_no_brief_falls_back_and_names_why(monkeypatch, tmp_path):
+	mine, shared = in_a_team(monkeypatch, tmp_path)
+	(mine / "project.md").write_text("Just me.\n")
+	bind.bind("a/b", "org/t")
+	assert memory.brief("a/b") == ("Just me.", "yours · team org/t has no brief")
 
 
 def test_a_solo_brief_reaches_a_review_with_no_team_at_all(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "project.md").write_text("Just me, building a thing.\n")
-	assert memory.project() == "### mine\nJust me, building a thing."
+	assert memory.brief() == ("Just me, building a thing.", "yours")
+	assert memory.brief("a/b") == ("Just me, building a thing.", "yours · a/b is bound to no team")
 
 
 def _mem(monkeypatch, tmp_path):

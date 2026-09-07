@@ -522,8 +522,9 @@ def test_the_setup_marker_never_reaches_a_review(monkeypatch, tmp_path):
 	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "project.md").write_text(install.compose("What is being built", "lead", [("The project", "a thing")]))
-	got = memory.project()
+	got, whose = memory.brief()
 	assert "a thing" in got and install.SETUP_MARK not in got and "<!--" not in got
+	assert whose == "yours"
 
 
 # ---- siblings of guards that were fixed one case at a time ----

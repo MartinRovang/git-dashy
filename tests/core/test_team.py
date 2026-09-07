@@ -2,7 +2,7 @@ import os
 import subprocess
 
 from dashy import config
-from dashy.core import log, memory, team
+from dashy.core import bind, log, memory, team
 
 
 def git(*a, cwd):
@@ -36,6 +36,28 @@ def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	team.push("mine")
 	team.pull()
 	assert team.ERROR == "" and open(log.LOG).read() == '{"x":1}\n{"x":2}\n{"x":3}\n'
+
+
+def test_joining_binds_the_repos_the_log_already_names(monkeypatch, tmp_path):
+	"""The bootstrap, on the one path where it is hardest: the log arrives AFTER the team does.
+
+	setup() clones, activates, and only then copies your own log in. Seeding hangs off activate(), so
+	the first run saw a checkout with no log at all and bound nothing — and the session in which you
+	joined was the one session where the team's brief would silently not appear.
+	"""
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	(mem := tmp_path / "mem").mkdir()
+	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
+	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/api"}}}\n')
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.setup(str(remote)) == ""
+	assert bind.of("acme/api") == team.NAME and team.NAME  # bound to the team we just joined
+	# and the team's brief is what a review of it now reads — the whole point of the binding
+	(tmp_path / "me" / "memory" / "project.md").write_text("What we build together.\n")
+	assert memory.brief("acme/api") == ("What we build together.", f"team {team.NAME}")
 
 
 def test_off_is_a_noop(tmp_path, monkeypatch):

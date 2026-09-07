@@ -340,6 +340,14 @@ def draw(scr, state, sel, prompt=None, now=None):
 			scr.addnstr(y, x, count, max(1, lw - 1 - x), C(1))
 			if lw - 2 > x + 3:
 				scr.addnstr(y, x + 3, note_, lw - 3 - x, C(25))
+		elif kind == "group":
+			# ponytail: indented under the section heading and dimmer than it, because it divides a
+			# section rather than being one. Only drawn when a section holds more than one team — see
+			# rows.body: a separator above a single group labels what the whole list already is.
+			t = f"─ {payload} "
+			scr.addnstr(y, 3, t, lw - 4, C(25))
+			if lw - 4 > len(t) + 3:
+				scr.addnstr(y, 3 + len(t), "─" * (lw - 5 - len(t) - 3), lw - 5 - len(t) - 3, C(25))
 		elif kind == "err":
 			scr.addnstr(y, 3, payload, lw - 4, C(3))
 		elif kind == "empty":
@@ -507,6 +515,12 @@ def detail(scr, state, h, x0, width, pr):
 	if d.get("add") is not None:
 		stats = [("+" + str(d["add"]), C(4)), ("−" + str(d["del"]), C(3)), (str(d["files"]) + " files", C(1))]
 	line(y, [(who, C(1))] + ([(d["branch"], C(23))] if d.get("branch") else []) + stats)
+	y += 2
+	# ponytail: which brief a review of THIS repo will be told, and why that one. A thing that silently
+	# selects your context has to say what it selected — the defect this replaces was invisible exactly
+	# because no screen ever named the brief that went into every prompt. Same value the prompt carries.
+	text, whose = memory.brief(pr.get("repository", {}).get("nameWithOwner", ""))
+	line(y, [("BRIEF", C(25)), (whose if text else whose + " · none", C(1))])
 	y += 2
 	if d.get("checks"):
 		line(y, [("CHECKS", C(25))])

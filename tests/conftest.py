@@ -3,7 +3,7 @@ import json
 import pytest
 
 from dashy import demo, config
-from dashy.core import github, log, memory, review, state, team, update
+from dashy.core import bind, github, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
@@ -17,6 +17,9 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
 	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "no-team"))
+	# ponytail: a real ~/.prs_bindings on the machine running the suite would SELECT briefs during it,
+	# so a test asserting "unbound falls back to yours" would pass or fail on whose laptop it ran.
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "bindings"))
 	# ponytail: demo.install() and team.activate() write these globals directly, so without pinning them here
 	# one test's temp paths leak into the next — the header reads both on every draw
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
