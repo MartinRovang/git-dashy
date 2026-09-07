@@ -4,6 +4,7 @@ import curses
 import itertools
 import json
 import os
+import signal
 import sys
 
 from . import HERE, VERSION, config, demo
@@ -338,6 +339,7 @@ def api(argv):
 	that talks it into `gitdashy api https://elsewhere/…` must not be able to send anything anywhere.
 	github.call() withholds the token off-host as well — two locks, because this one is worth two.
 	"""
+	signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `| head` is a closed pipe, not a BrokenPipeError to print
 	path = next((a for a in argv[2:] if not a.startswith("-")), "")
 	if not path:
 		raise SystemExit("gitdashy: api needs a path, e.g. /repos/owner/name/contents/src/app.py")
