@@ -1,4 +1,3 @@
-import pytest
 
 from dashy.ui.rows import age, rows
 

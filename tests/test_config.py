@@ -1,4 +1,3 @@
-import json
 
 from dashy import config
 

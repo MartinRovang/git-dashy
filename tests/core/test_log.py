@@ -1,7 +1,6 @@
 import json
 import subprocess
 
-import pytest
 
 from dashy.core import log
 from dashy.core.review import review
