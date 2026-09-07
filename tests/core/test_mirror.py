@@ -42,15 +42,15 @@ def test_sync_general_mirrors_the_cross_repo_facts_too(monkeypatch, tmp_path):
 
 def test_sync_mirrors_what_a_review_sees_from_both_sources(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
-	bind.bind("a/b", "org/t")  # the mirror shows what a review of THIS repo sees, which the binding decides
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")  # the mirror shows what a review of THIS repo sees, which the binding decides
 	seed("a/b", "mine about a/b")
 	seed("a/b", "team about a/b", str(shared))
 	into = tmp_path / "out"
 	mirror.sync(str(into), "a/b")
 	repo = (into / "repo.md").read_text()
 	assert "mine about a/b" in repo and "team about a/b" in repo
-	assert "### mine" in repo and "### team org/t" in repo
+	assert "### mine" in repo and "### team org-t" in repo
 
 
 def test_sync_never_mirrors_a_draft(monkeypatch, tmp_path):
@@ -170,11 +170,11 @@ def test_an_unbound_repos_mirror_loses_the_teams_files(monkeypatch, tmp_path):
 	the review log. Pinned here so the deletion is a decision someone made rather than a surprise.
 	"""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
 	seed("a/b", "team about a/b", str(shared))
 	seed(None, "team general", str(shared))
 	into = tmp_path / "out"
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	mirror.sync(str(into), "a/b", pull=False, general=True)
 	assert sorted(p.name for p in into.iterdir()) == ["general.md", "repo.md"]
 

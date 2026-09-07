@@ -1101,30 +1101,39 @@ def pre_review(scr, state, sel, pr):
 
 
 def _new_team(scr, state, sel):
-	"""Start a team that does not exist yet: a local checkout, no remote needed."""
-	slug = ask(scr, state, sel, " Name the new team (owner/name — the slug your repos will be bound to):")
-	if not slug:
+	"""Start a team that does not exist anywhere yet: a name, a description, a place. No host."""
+	name = ask(scr, state, sel, " Name the new team (this is what your repos get bound to):")
+	if not name:
 		return
+	desc = ask(scr, state, sel, " One line: what is this team for? (shared with everyone who joins)")
 	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or a path to keep it somewhere else)")
-	if err := team.start(slug, at):
+	if err := team.start(name, desc, at):
+		return confirm(scr, state, sel, f" {err}  [any key]") and None
+	state.wake.set()
+	key = team.key_of(name)
+	confirm(scr, state, sel, f" started {key} · no remote yet — c connects one when you have it  [any key]")
+
+
+def _connect_team(scr, state, sel, joined):
+	"""Point a team at a git repo, once there is one. The key does not change, so bindings hold."""
+	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Connect which team? ({', '.join(joined)})")
+	if not key or not team.dir_of(key):
+		return
+	url = ask(scr, state, sel, f" Git URL for {key} (any host — it just has to be a repo you can push to):")
+	if not url:
+		return
+	if err := team.connect(key, url):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
-		state.wake.set()
-		confirm(scr, state, sel, f" started {slug} — bind repos to it with `gitdashy bind`  [any key]")
+		confirm(scr, state, sel, f" {key} now pushes to {url}  [any key]")
 
 
 def _join_team(scr, state, sel):
-	"""Join a team that already exists: a GitHub repo, a git URL, or a checkout on this machine."""
-	repo = ask(scr, state, sel, " Existing team (owner/name, a local path, or a git URL):")
+	"""Join a team that already exists: any git URL, or a checkout on this machine."""
+	repo = ask(scr, state, sel, " Existing team (a git URL, a path, or owner/name on GitHub):")
 	if not repo:
 		return
-	err = team.setup(repo)
-	# ponytail: only for something that could BE a GitHub repo. A path that does not exist yet is not a
-	# repo somebody forgot to create — it is a new team, and `n` is the key for that.
-	if err and not team.looks_local(repo) and "/" in repo:
-		if confirm(scr, state, sel, f" {err} · create {repo} as a private repo? [y/n]"):
-			err = team.setup(repo, create=True)
-	if err:
+	if err := team.setup(repo):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
 		state.wake.set()  # reload REVIEWED, which now reads one more log
@@ -1160,11 +1169,14 @@ def team_setup(scr, state, sel):
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
-		      [(s, knowledge.tilde(team.dir_of(s))) for s in joined] or [("a team is a git repo of shared memory", "")],
-		      "[n] start a new one   [a] join an existing   [x] leave one   [esc] close")
+		      [(team.info(s)["name"], "no remote yet" if not team.has_remote(team.dir_of(s)) else "")
+		       for s in joined] or [("a team is a git repo of shared memory", "")],
+		      "[n] start one   [a] join one   [c] connect a remote   [x] leave one   [esc] close")
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel)
+		elif k == ord("c") and joined:
+			_connect_team(scr, state, sel, joined)
 		elif k == ord("a"):
 			_join_team(scr, state, sel)
 		elif k == ord("x") and joined:

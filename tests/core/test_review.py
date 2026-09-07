@@ -211,7 +211,7 @@ def _briefed(monkeypatch, tmp_path):
 	"""A team with a brief, and a recorder for the prompts a review builds. Returns the prompt list."""
 	from dashy.core import team
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
 	(shared / "project.md").write_text("We build X for surgeons.\n")
 	prompts = []
 	def fake_run(cmd, **kw):
@@ -225,9 +225,9 @@ def _briefed(monkeypatch, tmp_path):
 def test_a_review_is_told_what_the_team_is_building(monkeypatch, tmp_path):
 	from dashy.core import bind
 	prompts = _briefed(monkeypatch, tmp_path)
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	review(dict(PR), "opus")
-	assert "What this is being built for, and for whom (team org/t):" in prompts[0]
+	assert "What this is being built for, and for whom (team org-t):" in prompts[0]
 	assert "We build X for surgeons." in prompts[0]
 	assert prompts[0].index("being built for") < prompts[0].index("Respond with ONLY")
 

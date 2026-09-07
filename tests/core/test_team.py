@@ -121,7 +121,7 @@ def test_every_git_call_is_bounded_and_never_prompts(monkeypatch, tmp_path):
 def test_same_remote_does_not_ignore_the_host():
 	assert team.same_remote("git@github.com:org/mem.git", "https://github.com/org/mem")
 	assert team.same_remote("ssh://git@github.com/org/mem", "git@github.com:org/mem.git")
-	assert not team.same_remote("git@gitlab.com:org/mem.git", "https://github.com/org/mem")
+	assert not team.same_remote("git@gitlab.com:org-mem.git", "https://github.com/org/mem")
 	assert team.same_remote("org/mem", "https://github.com/org/mem")  # a bare name names no host
 	assert not team.same_remote("other/mem", "https://github.com/org/mem")
 	assert not team.same_remote("", "https://github.com/org/mem")
@@ -229,7 +229,7 @@ def test_an_old_single_checkout_moves_into_the_plural_home(monkeypatch, tmp_path
 	report = team.migrate()
 	assert "moved your team checkout" in report
 	assert not src.exists()
-	assert team.joined() == ["org/mem"]
+	assert team.joined() == ["org-mem"]
 	assert open(os.path.join(team.dirs()[0], "memory", "general.md")).read() == "- the team knows this\n"
 	assert team.migrate() == ""            # idempotent: nothing left at the old path
 
@@ -251,7 +251,7 @@ def test_migration_refuses_a_checkout_it_cannot_key_or_a_taken_destination(monke
 	assert "no origin" in team.migrate() and src.exists()   # nothing to name the directory by
 
 	git("remote", "add", "origin", "git@github.com:org/mem.git", cwd=src)
-	(tmp_path / "prs_teams" / "org__mem").mkdir(parents=True)
+	(tmp_path / "prs_teams" / "org-mem").mkdir(parents=True)
 	assert "already exists" in team.migrate()
 	assert src.exists() and (src / "memory" / "general.md").exists()   # and it is not merged over
 
@@ -270,15 +270,15 @@ def test_starting_a_team_needs_no_remote_and_no_github(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
-	assert team.start("NeoMedSys/review-memory") == ""
-	assert team.joined() == ["NeoMedSys/review-memory"]
+	assert team.start("NeoMedSys review memory", "what we build") == ""
+	assert team.joined() == ["neomedsys-review-memory"]
 	d = team.dirs()[0]
 	assert os.path.isdir(os.path.join(d, ".git"))                 # a real checkout, just with no origin
 	assert not team.has_remote(d)
 	assert os.path.exists(os.path.join(d, "memory", "project.md"))  # seeded, ready to fill in
 	assert "merge=union" in open(os.path.join(d, ".gitattributes")).read()
-	assert "already in" in team.start("NeoMedSys/review-memory")    # idempotent, and says so
-	assert "owner/name" in team.start("justaname")                  # the slug is the identity
+	assert "already in" in team.start("NeoMedSys review memory")    # idempotent, and says so
+	assert "needs a name" in team.start("   ")                  # the slug is the identity
 
 
 def test_a_team_can_live_somewhere_else_and_be_linked(monkeypatch, tmp_path):
@@ -286,7 +286,66 @@ def test_a_team_can_live_somewhere_else_and_be_linked(monkeypatch, tmp_path):
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	share = tmp_path / "on-a-share"
-	assert team.start("acme/mem", str(share)) == ""
-	link = tmp_path / "teams" / "acme__mem"
+	assert team.start("acme mem", "", str(share)) == ""
+	link = tmp_path / "teams" / "acme-mem"
 	assert os.path.islink(link) and os.path.realpath(link) == str(share)
-	assert team.joined() == ["acme/mem"]        # and the slug still names it, not the directory it points at
+	assert team.joined() == ["acme-mem"]        # and the slug still names it, not the directory it points at
+
+
+def _ident(monkeypatch):
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+
+
+def test_a_team_is_named_by_its_own_files_not_by_where_it_is_hosted(monkeypatch, tmp_path):
+	"""Start local, get a repo later, and everyone who clones it agrees on the key bindings point at.
+
+	The key is fixed at creation and never derived from a remote — that is what makes the local-then-
+	hosted move safe. An origin-derived key does not exist until the team is hosted, so every binding
+	would have gone dead at exactly the moment the team got a URL.
+	"""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "eventual.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+
+	assert team.start("NeoMedSys Platform", "Precision-medicine platform.") == ""
+	assert team.joined() == ["neomedsys-platform"]
+	assert team.info("neomedsys-platform") == {"name": "NeoMedSys Platform",
+	                                           "description": "Precision-medicine platform."}
+	assert not team.has_remote(team.dirs()[0])         # nothing hosted anywhere yet
+
+	assert team.connect("neomedsys-platform", str(remote)) == ""
+	assert team.joined() == ["neomedsys-platform"]     # the key did not move, so bindings still hold
+
+	# a colleague clones the same repo and lands on the same key, from the team's own team.json
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "other"))
+	assert team.setup(str(remote)) == ""
+	assert team.joined() == ["neomedsys-platform"]
+	assert team.info("neomedsys-platform")["name"] == "NeoMedSys Platform"
+
+
+def test_connect_pushes_even_when_there_is_nothing_new_to_commit(monkeypatch, tmp_path):
+	"""push_dir returns early with nothing staged — which is exactly a team's state when you connect it.
+	The remote stayed empty, so the next person to clone got no team.json and a key from the URL."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "r.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.start("Acme Tools", "internal") == ""
+	assert team.connect("acme-tools", str(remote)) == ""
+	out = subprocess.run(["git", "-C", str(remote), "ls-tree", "-r", "--name-only", "HEAD"],
+	                     capture_output=True, text=True).stdout
+	assert "team.json" in out and "memory/project.md" in out   # it actually reached the remote
+
+
+def test_nothing_in_the_team_path_shells_out_to_github():
+	"""A team is a git repo people can reach. `gh repo create` made GitHub the only place one could be
+	born, and `gh repo clone` made it the only place one could live."""
+	# ponytail: the code, not the prose. The ponytails explaining why gh is gone naturally say "gh".
+	import ast as _ast, pathlib as _p
+	src = _p.Path(team.__file__).read_text()
+	strings = [n.value for n in _ast.walk(_ast.parse(src))
+	           if isinstance(n, _ast.Constant) and isinstance(n.value, str)]
+	cmds = [t for t in strings if t == "gh" or t.startswith("gh ")]
+	assert cmds == [], f"team.py still invokes gh: {cmds}"

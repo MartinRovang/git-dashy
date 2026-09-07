@@ -392,8 +392,8 @@ def _team(monkeypatch, tmp_path):
 	mine = tmp_path / "mine"
 	mine.mkdir(parents=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
-	bind.bind("a/b", "org/t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")  # ponytail: sharing and pooling follow the binding, so the team must own a/b
 	return mine, shared
 
 
@@ -410,7 +410,7 @@ def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, s
 	keys = iter([ord("t"), ord("x"), 27])
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "share with org/t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "share with org-t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
 	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
 	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
 	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
@@ -464,7 +464,7 @@ def test_set_path_clones_a_git_url_and_asks_first(screen, monkeypatch, st, tmp_p
 def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
 	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("must not clone after n"))
-	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org/mem.git")
+	monkeypatch.setattr(ui, "ask", lambda *a: "https://github.com/org-mem.git")
 	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
 	ui.set_path(screen, st, 0, "L")
 
@@ -472,7 +472,7 @@ def test_set_path_declining_the_clone_changes_nothing(screen, monkeypatch, st, t
 def test_set_path_sends_a_url_for_the_store_back_to_T(screen, monkeypatch, st, tmp_path):
 	monkeypatch.setattr(ui.knowledge, "adopt", lambda u: pytest.fail("the store is not cloned here"))
 	monkeypatch.setattr(ui.knowledge, "set_store", lambda p: pytest.fail("a URL is not a directory"))
-	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org/team.git")
+	monkeypatch.setattr(ui, "ask", lambda *a: "git@github.com:org-team.git")
 	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
 	ui.set_path(screen, st, 0, "C")
 	assert "T is what clones a team repo" in screen.text()
@@ -1046,7 +1046,7 @@ def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, t
 	mine.mkdir(parents=True)
 	(mine / "project.md").write_text("My own work.\n")
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
 	(shared / "project.md").write_text("What the team builds.\n")
 	st = State(60)
 	monkeypatch.setattr(st, "want_detail", lambda pr: {})  # no background fetch from a draw test
@@ -1056,14 +1056,14 @@ def test_the_pane_says_which_brief_this_repos_reviews_get(screen, monkeypatch, t
 	assert "BRIEF yours · a/b is bound to no team" in screen.text()
 
 	screen.erase()
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	ui.detail(screen, st, 30, 40, 60, pr)
-	assert "BRIEF team org/t" in screen.text()
+	assert "BRIEF team org-t" in screen.text()
 
 	screen.erase()
 	(shared / "project.md").unlink()
 	ui.detail(screen, st, 30, 40, 60, pr)
-	assert "BRIEF yours · team org/t has no brief" in screen.text()
+	assert "BRIEF yours · team org-t has no brief" in screen.text()
 
 
 def test_every_setting_key_opens_its_dropdown(screen, monkeypatch):
@@ -1233,42 +1233,42 @@ def test_t_can_still_join_once_you_are_already_in_a_team(screen, monkeypatch, st
 	"""It used to return after offering to LEAVE, so a second team could not be joined from anywhere —
 	the store, the resolution and the log all handled several while no surface could produce one."""
 	from dashy.core import team
-	a_team(monkeypatch, tmp_path, "org/one")
+	a_team(monkeypatch, tmp_path, "org-one")
 	asked, joined = [], []
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (asked.append(prompt), "org/two")[1])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (asked.append(prompt), "org-two")[1])
 	monkeypatch.setattr(ui.team, "setup", lambda repo, create=False: joined.append(repo) or "")
 	screen.getch, screen.timeout = _keys(ord("a"), 27), lambda t: None
 	ui.team_setup(screen, st, 0)
-	assert joined == ["org/two"]                       # the join path is reachable
+	assert joined == ["org-two"]                       # the join path is reachable
 	assert "Existing team" in asked[0]
-	assert "org/one" in screen.text() and "1 joined" in screen.text()
+	assert "org-one" in screen.text() and "1 joined" in screen.text()
 
 
 def test_t_can_start_a_team_that_does_not_exist_anywhere_yet(screen, monkeypatch, st, tmp_path):
 	"""Every other path CLONES something that already exists, so the first person on a team was stuck."""
 	from dashy.core import team
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
-	answers, started = iter(["NeoMedSys/review-memory", ""]), []
+	answers, started = iter(["NeoMedSys review memory", "what we build", ""]), []
 	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
 	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: True)
-	monkeypatch.setattr(ui.team, "start", lambda slug, at="": started.append((slug, at)) or "")
+	monkeypatch.setattr(ui.team, "start", lambda name, desc="", at="": started.append((name, desc, at)) or "")
 	screen.getch, screen.timeout = _keys(ord("n"), 27), lambda t: None
 	ui.team_setup(screen, st, 0)
-	assert started == [("NeoMedSys/review-memory", "")]
+	assert started == [("NeoMedSys review memory", "what we build", "")]
 	assert "none yet" in screen.text()          # and the empty state still offers both routes
-	assert "start a new one" in screen.text() and "join an existing" in screen.text()
+	assert "start one" in screen.text() and "join one" in screen.text()
 
 
 def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_path):
 	from dashy.core import knowledge
-	a_team(monkeypatch, tmp_path, "org/one")
-	(tmp_path / "teams" / "org__two" / ".git").mkdir(parents=True)
+	a_team(monkeypatch, tmp_path, "org-one")
+	(tmp_path / "teams" / "org-two" / ".git").mkdir(parents=True)
 	prompts, left = [], []
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), "org/two")[1])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), "org-two")[1])
 	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: prompts.append(prompt) or True)
 	monkeypatch.setattr(ui.knowledge, "leave", lambda slug: left.append(slug) or "")
 	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
 	ui.team_setup(screen, st, 0)
-	assert left == ["org/two"]
-	assert "Leave which team?" in prompts[0] and "org/one, org/two" in prompts[0]
-	assert "team org/two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes
+	assert left == ["org-two"]
+	assert "Leave which team?" in prompts[0] and "org-one, org-two" in prompts[0]
+	assert "team org-two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes

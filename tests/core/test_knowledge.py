@@ -48,25 +48,25 @@ def test_set_store_refuses_while_the_refresh_thread_is_in_there(monkeypatch, tmp
 
 
 def test_leave_refuses_to_delete_unpushed_reviews(monkeypatch, tmp_path):
-	store = tmp_path / "teams" / "org__t"
+	store = tmp_path / "teams" / "org-t"
 	(store / ".git").mkdir(parents=True)
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 2)
-	assert "2 unpushed reviews" in knowledge.leave("org/t")
+	assert "2 unpushed reviews" in knowledge.leave("org-t")
 	assert store.exists()
 	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: -1)  # no upstream: also refuse, the log may exist only here
-	assert "possibly unpushed" in knowledge.leave("org/t")
+	assert "possibly unpushed" in knowledge.leave("org-t")
 	assert store.exists()
 
 
 def test_leave_goes_back_to_the_solo_locations(monkeypatch, tmp_path):
-	store = tmp_path / "teams" / "org__t"
+	store = tmp_path / "teams" / "org-t"
 	(store / ".git").mkdir(parents=True)
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
-	assert team.joined() == ["org/t"]
-	assert knowledge.leave("org/t") == ""
+	assert team.joined() == ["org-t"]
+	assert knowledge.leave("org-t") == ""
 	assert not store.exists()
 	# ponytail: nothing to move back — each team keeps its own log and yours holds the unbound repos,
 	# so leaving one just removes a source that log.logs() stops listing.
@@ -105,11 +105,11 @@ def test_is_remote_tells_a_repo_from_a_directory(tmp_path):
 	real = tmp_path / "here"
 	real.mkdir()
 	assert knowledge.is_remote("git@github.com:NilsPontus/Np_Claude_Agentic.git")
-	assert knowledge.is_remote("https://github.com/org/mem.git")
-	assert knowledge.is_remote("ssh://git@host/org/mem")
+	assert knowledge.is_remote("https://github.com/org-mem.git")
+	assert knowledge.is_remote("ssh://git@host/org-mem")
 	assert knowledge.is_remote("org/mem")  # owner/name, as T accepts
 	assert not knowledge.is_remote(str(real))  # an existing directory always wins
-	assert not knowledge.is_remote("./org/mem")  # the dot makes it a path
+	assert not knowledge.is_remote("./org-mem")  # the dot makes it a path
 	assert not knowledge.is_remote("/abs/path/mem")
 	assert not knowledge.is_remote("~/work/mem")
 	assert not knowledge.is_remote("")
@@ -176,31 +176,31 @@ def test_adopt_refuses_an_existing_checkout_or_a_symlink(monkeypatch, tmp_path):
 	subprocess.run(["git", "init", "-q", str(mine)], check=True)
 	# ponytail: with an ORIGIN. Local-only history is no longer "already a checkout" — every memory dir
 	# has it now, because that is what makes a bad dream recoverable.
-	subprocess.run(["git", "-C", str(mine), "remote", "add", "origin", "git@github.com:org/other.git"], check=True)
+	subprocess.run(["git", "-C", str(mine), "remote", "add", "origin", "git@github.com:org-other.git"], check=True)
 	monkeypatch.delenv("PRS_MEMORY", raising=False)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(mine))
-	assert "already a checkout of" in knowledge.adopt("git@github.com:org/mem.git")
+	assert "already a checkout of" in knowledge.adopt("git@github.com:org-mem.git")
 	link = tmp_path / "link"
 	os.symlink(tmp_path / "elsewhere", link)
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(link))
-	assert "point it back" in knowledge.adopt("git@github.com:org/mem.git")
+	assert "point it back" in knowledge.adopt("git@github.com:org-mem.git")
 
 
 def test_adopt_defers_to_the_env_var(monkeypatch, tmp_path):
 	monkeypatch.setenv("PRS_MEMORY", str(tmp_path / "env"))
 	monkeypatch.setattr(config, "LOCAL_MEMORY", str(tmp_path / "mine"))
-	assert "PRS_MEMORY" in knowledge.adopt("git@github.com:org/mem.git")
+	assert "PRS_MEMORY" in knowledge.adopt("git@github.com:org-mem.git")
 
 
 def test_leave_refuses_a_dirty_tree_even_with_nothing_unpushed(monkeypatch, tmp_path):
 	"""A push that failed earlier leaves work staged but uncommitted: zero commits ahead, still someone's."""
-	store = tmp_path / "teams" / "org__t"
+	store = tmp_path / "teams" / "org-t"
 	store.mkdir(parents=True)
 	subprocess.run(["git", "init", "-q", str(store)], check=True)
 	(store / "reviewed.jsonl").write_text('{"x":1}\n')
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	assert knowledge.unpushed(str(store)) == -1  # no upstream AND dirty
-	assert "unpushed" in knowledge.leave("org/t")
+	assert "unpushed" in knowledge.leave("org-t")
 	assert store.exists() and (store / "reviewed.jsonl").exists()
 
 

@@ -20,7 +20,8 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name]
-       gitdashy teams [--new owner/name [--at DIR]] [--join owner/name|PATH|URL [--create]] [--leave owner/name]
+       gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
+                      [--team KEY --connect URL] [--leave KEY]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -79,13 +80,17 @@ drafts shows what a review proposed and no second review has confirmed — the s
   because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
   promotes one by hand or drops it.
 
-teams lists the teams this machine has joined and what each one covers. A team is a git repo holding
-  shared memory, named owner/name — that name is the slug bindings point at.
-  --new starts one here with no remote (--at DIR keeps it somewhere else and links to it); add a remote
-  later and the rest of the team can pull it. --join takes an owner/name, a local path or a git URL,
-  and --create makes a private GitHub repo when owner/name does not exist yet. --leave drops one
-  checkout, refusing while it holds unpushed work.
-  Several teams can be joined at once; which one applies to a repo is `gitdashy bind`.
+teams lists the teams this machine has joined, what each calls itself, and what it covers.
+  A team is a git repo — or just a directory — that pools what reviews learn. Whoever can reach it is
+  on the team; there is no service and no account. Its name and description live in team.json inside
+  it, so everyone who clones it sees the same ones.
+  --new starts one right here with no remote at all: a name, a description, and files. --at DIR keeps
+  it somewhere else and links to it. When you have a repo for it, --team KEY --connect URL points it
+  there and pushes; the key does not change, so every binding still holds.
+  --join clones one that exists, from any git URL or a path (a bare owner/name is expanded to GitHub
+  as a convenience, nothing more). It takes its key from the team's own name.
+  --leave drops one checkout, refusing while it holds unpushed work.
+  Several teams at once; which one applies to a repo is `gitdashy bind`.
 
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
@@ -367,13 +372,23 @@ def teams(argv):
 	"""
 	team.activate()
 	if new := arg("--new", "", str, argv):
-		# ponytail: START one, which nothing could do — every other path clones something that already
-		# exists, so the first person on a team had to go and create the repo by hand first.
-		if err := team.start(new, arg("--at", "", str, argv)):
+		# ponytail: START one, with nothing hosted anywhere. Every other path clones a repo that already
+		# exists, so the first person on a team was stuck waiting for somebody to make one.
+		if err := team.start(new, arg("--desc", "", str, argv), arg("--at", "", str, argv)):
 			raise SystemExit("gitdashy: " + err)
-		print(f"gitdashy: started {new} — bind repos to it with `gitdashy bind --owner OWNER --team {new}`")
+		key = team.key_of(new)
+		print(f"gitdashy: started {new} ({key}) at {team.dir_of(key)}")
+		print(f"  bind repos to it: gitdashy bind --owner OWNER --team {key}")
+		print(f"  give it a remote when you have one: gitdashy teams --team {key} --connect URL")
+	elif url := arg("--connect", "", str, argv):
+		key = arg("--team", "", str, argv) or (team.joined()[0] if len(team.joined()) == 1 else "")
+		if not key:
+			raise SystemExit(f"gitdashy: say which team: --team {' | --team '.join(team.joined()) or 'NAME'}")
+		if err := team.connect(key, url):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {key} now pushes to {url}")
 	elif join := arg("--join", "", str, argv):
-		if err := team.setup(join, create="--create" in argv):
+		if err := team.setup(join, arg("--name", "", str, argv)):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: joined {team.joined()[-1] if team.joined() else join}")
 	elif leave := arg("--leave", "", str, argv):
@@ -384,11 +399,16 @@ def teams(argv):
 	got = team.joined()
 	if not got:
 		return print("  no teams joined — `gitdashy teams --join owner/name` or T in the dashboard")
-	for slug in got:
-		bound = sorted(r for r, t in bind_mod.bindings().items() if t == slug)
-		owners = sorted(o + "/*" for o, t in bind_mod.owners().items() if t == slug)
-		cover = ", ".join(owners + bound) or "no repos bound to it yet"
-		print(f"  {slug:28}  {team.dir_of(slug)}\n  {'':28}  {cover}")
+	for key in got:
+		it = team.info(key)
+		bound = sorted(r for r, t in bind_mod.bindings().items() if t == key)
+		owners = sorted(o + "/*" for o, t in bind_mod.owners().items() if t == key)
+		d = team.dir_of(key)
+		print(f"  {it['name']}  ({key})")
+		if it["description"]:
+			print(f"      {it['description']}")
+		print(f"      {d}{'' if team.has_remote(d) else '   · no remote yet'}")
+		print(f"      {', '.join(owners + bound) or 'no repos bound to it yet'}")
 
 
 def run(argv=None):

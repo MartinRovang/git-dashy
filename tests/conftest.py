@@ -47,7 +47,7 @@ def isolated(monkeypatch, tmp_path):
 	demo.restore()
 
 
-def a_team(monkeypatch, tmp_path, slug="org/t"):
+def a_team(monkeypatch, tmp_path, key="org-t"):
 	"""A joined team at ~/.prs_teams/<slug>/. Returns its memory dir.
 
 	ponytail: a real directory with a .git in it, because that is what "joined" MEANS now — the
@@ -55,7 +55,7 @@ def a_team(monkeypatch, tmp_path, slug="org/t"):
 	slug had to resolve to one checkout among several, which is the whole point of the change.
 	"""
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
-	d = tmp_path / "teams" / slug.replace("/", "__")
+	d = tmp_path / "teams" / key
 	(d / ".git").mkdir(parents=True, exist_ok=True)
 	(d / "memory").mkdir(parents=True, exist_ok=True)
 	return d / "memory"

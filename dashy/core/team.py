@@ -1,6 +1,8 @@
 """Team sync: log + memory live in a git checkout (~/.prs_team) that everyone pushes to.
 ponytail: git is the sync server. Appends merge with the union driver, so parallel reviews never conflict."""
+import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -246,14 +248,56 @@ def origin_slug(path):
 	return slug_of(_url(path))
 
 
-def dirname(slug):
-	"""The directory name a team slug lives under. ponytail: the same __ convention as memory.slug()."""
-	return (slug or "").replace("/", "__")
+INFO = "team.json"  # inside the checkout: the team's own name and description, shared with everyone
 
 
-def slug_of_dir(name):
-	""""owner__name" -> "owner/name"."""
-	return (name or "").replace("__", "/")
+def dirname(key):
+	"""The directory a team key lives in. ponytail: keys are already filesystem-safe; this is identity."""
+	return key or ""
+
+
+def key_of(name):
+	"""A stable key from a team's name: lowercase, one dash between words. "" when there is no name.
+
+	ponytail: the key is fixed when the team is created and never derived from a remote again. A team
+	is local today and gets a git URL tomorrow — that was the exact moment an origin-derived slug broke,
+	because bindings point at the team and the team had no identity until it was hosted somewhere. The
+	NAME is the identity; the location is a separate, changeable fact.
+	ponytail: the display name lives in team.json and can be edited freely, because it is not this.
+	"""
+	out = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+	return out[:64]
+
+
+def info(key):
+	"""{"name", "description"} the team says about itself, from its own checkout. Falls back to the key.
+
+	ponytail: read from the TEAM, not from local config, so everyone who clones it sees the same name
+	and the same description. A checkout written before this file existed still reads — the key is the
+	fallback, and the key is what everything resolves by anyway.
+	"""
+	d = dir_of(key)
+	try:
+		with open(os.path.join(d, INFO)) as f:
+			got = json.load(f)
+		if isinstance(got, dict):
+			return {"name": str(got.get("name") or key), "description": str(got.get("description") or "")}
+	except (OSError, ValueError):
+		pass
+	return {"name": key, "description": ""}
+
+
+def write_info(key, name, description):
+	"""Record what the team calls itself. Returns "" or why it could not."""
+	if not (d := dir_of(key)):
+		return f"not in {key}"
+	try:
+		with open(os.path.join(d, INFO), "w") as f:
+			json.dump({"name": name or key, "description": description or ""}, f, indent=1)
+			f.write("\n")
+	except OSError as e:
+		return str(e)
+	return ""
 
 
 def joined():
@@ -267,7 +311,7 @@ def joined():
 		names = sorted(os.listdir(config.TEAMS))
 	except OSError:
 		return []
-	return [slug_of_dir(n) for n in names if is_repo(os.path.join(config.TEAMS, n))]
+	return [n for n in names if is_repo(os.path.join(config.TEAMS, n))]
 
 
 def dir_of(slug):
@@ -311,10 +355,12 @@ def migrate():
 	src = config.TEAM
 	if not is_repo(src) or not config.TEAMS:
 		return ""  # nothing to migrate, which is every machine that installed after this
-	slug = origin_slug(src)
-	if not slug:
-		return f"gitdashy: {src} has no origin, so it cannot be keyed by slug — move it by hand"
-	dest = os.path.join(config.TEAMS, dirname(slug))
+	# ponytail: the old layout had no name of its own, so the origin is the only thing that can name it
+	# — through key_of, because a key is a directory name and owner/name has a slash in it.
+	key = key_of(origin_slug(src).replace("/", "-"))
+	if not key:
+		return f"gitdashy: {src} has no origin to name it by — move it into {config.TEAMS} by hand"
+	dest = os.path.join(config.TEAMS, dirname(key))
 	if os.path.lexists(dest):
 		return f"gitdashy: {dest} already exists — {src} was left alone"
 	# ponytail: the same test knowledge.leave() uses before it deletes anything. A migration that moves
@@ -381,8 +427,12 @@ def looks_local(repo):
 def clone(repo, dest):
 	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
 	local = looks_local(repo) or "://" in repo or "@" in repo
-	cmd = ["git", "clone", "-q", repo, dest] if local else ["gh", "repo", "clone", repo, dest]
-	return "" if _note(_remote(cmd), "join") else ERROR
+	# ponytail: git clone, whatever it is. `gh repo clone` was here so that a bare owner/name would
+	# work, which quietly made GitHub the only host a team could live on — and a team is just a repo
+	# people can reach. A bare owner/name is now expanded to a GitHub URL as a CONVENIENCE, and any
+	# other URL, ssh remote or path goes straight through untouched.
+	url = repo if (local or "://" in repo or "@" in repo) else f"https://github.com/{repo}.git"
+	return "" if _note(_remote(["git", "clone", "-q", url, dest]), "join") else ERROR
 
 
 def union_attrs(dest):
@@ -436,21 +486,20 @@ def seed_project(path):
 			f.write(PROJECT_TEMPLATE)
 
 
-def start(slug, at=""):
-	"""Create a NEW team: a fresh checkout with no remote, seeded and ready to push later. "" or an error.
+def start(name, description="", at=""):
+	"""Start a team here: a checkout, a name, a description. No remote, no host. "" or an error.
 
-	ponytail: starting a team was not possible at all — every path here CLONED something that already
-	existed, so the first person on a team had to go and make the repo by hand first. A team needs no
-	remote to be useful: memory works local-only the same way, and `git remote add` later turns it into
-	something the rest of the team can pull.
-	ponytail: `at` symlinks rather than copies, so a team kept on a shared drive or in an existing repo
-	stays where it is. The slug still names the link, because the slug is the identity.
+	ponytail: nothing external is involved. A team is a place people can reach that pools what reviews
+	learn; git is the only technology it needs, and a remote is something you add when you have one —
+	`connect()`. Requiring a repo to exist first meant the first person on a team was stuck.
+	ponytail: `at` symlinks rather than copies, so a team kept on a shared drive, or inside a repo you
+	already have, stays where it is. The key still names the link, because the key is the identity.
 	"""
-	if not (slug := slug_of(slug) if "/" in (slug or "") else ""):
-		return "a team is named owner/name — that is the slug bindings point at"
-	dest = os.path.join(config.TEAMS, dirname(slug))
+	if not (key := key_of(name)):
+		return "a team needs a name"
+	dest = os.path.join(config.TEAMS, dirname(key))
 	if os.path.lexists(dest):
-		return f"already in {slug}" if is_repo(dest) else f"{dest} exists and is not a team"
+		return f"already in {key}" if is_repo(dest) else f"{dest} exists and is not a team"
 	try:
 		os.makedirs(config.TEAMS, exist_ok=True)
 		if at:
@@ -465,15 +514,84 @@ def start(slug, at=""):
 	if not is_repo(dest) and _git("init", "-q", cwd=dest).returncode != 0:
 		return f"could not git init {dest}"
 	union_attrs(dest)
+	write_info(key, name, description)
 	seed_project(os.path.join(dest, "memory", "project.md"))
-	push_dir(dest, "gitdashy: new team " + slug, "join")
+	push_dir(dest, "gitdashy: new team " + name, "join")
 	return ""
 
 
-def setup(repo, create=False):
-	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
-	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
-		return ERROR
+def connect(key, url):
+	"""Give a local team a remote and push it, or repoint one it already has. "" or an error.
+
+	ponytail: the other half of starting local. You make a repo wherever you keep repos, paste its URL
+	here, and the team you have been using becomes the one everybody pulls — without the key changing,
+	so every binding pointing at it still does.
+	"""
+	if not (d := dir_of(key)):
+		return f"not in {key}"
+	if not url.strip():
+		return "a remote needs a URL"
+	had = has_remote(d)
+	r = _git("remote", "set-url" if had else "add", "origin", url.strip(), cwd=d)
+	if r.returncode != 0:
+		return (r.stderr or r.stdout).strip().splitlines()[-1][:120] if (r.stderr or r.stdout).strip() else "could not set the remote"
+	if err := push_dir(d, "gitdashy: connect " + key, "join"):
+		return err
+	# ponytail: push EXPLICITLY. push_dir returns early when there is nothing new to commit, which is
+	# exactly the state a team is in when you connect it — everything was committed locally already. So
+	# the remote stayed empty, and the next person to clone it got no team.json, no name, and a key
+	# derived from the URL instead of the one every binding points at.
+	with _lock:
+		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), "join"):
+			return f"connected, but the push failed: {ERROR}" if ERROR else "connected, but the push failed"
+	return ""
+
+
+def setup(repo, name=""):
+	"""Join a team that already exists: clone it and name it locally. Returns "" or an error.
+
+	ponytail: no `create` any more. Making a repo is something you do wherever you keep repos, with
+	whatever host you use; this clones one that exists. `gh repo create` made GitHub the only place a
+	team could be born, which is not what a team is.
+	ponytail: the key comes from the CLONED team.json when it has one, so everybody who joins the same
+	repo agrees on the key their bindings point at. Only a repo that predates team.json needs `name`.
+	"""
+	if is_own_memory(repo):
+		return "that is your own memory directory, which holds drafts — use a different repo for the team"
+	tmp = os.path.join(config.TEAMS, ".joining")
+	shutil.rmtree(tmp, ignore_errors=True)
+	os.makedirs(config.TEAMS, exist_ok=True)
+	if err := clone(repo, tmp):
+		shutil.rmtree(tmp, ignore_errors=True)
+		return err
+	# ponytail: the team's own name first, then what you called it, then the last path segment. A repo
+	# that already carries a name must not get a second one because two people typed differently.
+	try:
+		with open(os.path.join(tmp, INFO)) as f:
+			theirs = str((json.load(f) or {}).get("name") or "")
+	except (OSError, ValueError):
+		theirs = ""
+	key = key_of(theirs) or key_of(name) or key_of(slug_of(repo).split("/")[-1])
+	if not key:
+		shutil.rmtree(tmp, ignore_errors=True)
+		return "that repo does not name a team — pass a name to call it by"
+	dest = os.path.join(config.TEAMS, dirname(key))
+	if os.path.lexists(dest):
+		shutil.rmtree(tmp, ignore_errors=True)
+		return f"already in {key}"
+	os.rename(tmp, dest)
+	union_attrs(dest)
+	old_log = config.LOCAL_LOG
+	activate()
+	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
+	seed_project(os.path.join(dest, "memory", "project.md"))
+	config.LOG = log_of(key)
+	if os.path.isfile(old_log) and not os.path.exists(config.LOG):
+		shutil.copy(old_log, config.LOG)  # the log is shared history; memory is not seeded, it is proposed
+		# ponytail: again, because the log only exists NOW — activate() seeds bindings from it.
+		activate()
+	push("gitdashy: join " + (os.environ.get("USER") or "team"))
+	return ERROR
 	if is_own_memory(repo):
 		return "that is your own memory directory, which holds drafts — use a different repo for the team"
 	# ponytail: the slug decides the directory, so a team is found by name rather than by being THE one.

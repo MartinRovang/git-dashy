@@ -264,20 +264,32 @@ arrive in time order. With several logs it never is.)
 **A general fact needs exactly one team.** It names no repo, so no binding selects a team for it, and
 with two joined that is two different claims — so it stays yours until you say where it goes.
 
-**Starting or joining one.** `T` in the dashboard: `n` starts a new team, `a` joins an existing one,
-`x` leaves one. From a shell:
+**A team is a git repo — or just a directory — that pools what reviews learn.** Whoever can reach it is
+on the team. There is no service and no account, and nothing here assumes GitHub: `git clone` takes any
+URL, and a bare `owner/name` is expanded to a GitHub URL as a convenience and nothing more.
+
+**Its name and description live inside it**, in `team.json`, so everyone who clones it sees the same
+ones. `memory/project.md` beside it is the brief — what the work is for, its constraints, its shape.
+
+**The key is the name you gave it, fixed at creation.** The *location* — a path today, a git URL
+tomorrow — is separate and changeable. That split is what makes the local-then-hosted move safe: an
+origin-derived key does not exist until the team is hosted, so every binding pointing at the team would
+have gone dead at exactly the moment it got a URL. The display name in `team.json` can be edited
+freely, because it is not the key.
 
 ```sh
-gitdashy teams --new NeoMedSys/review-memory          # a fresh checkout here, no remote needed
-gitdashy teams --new acme/mem --at /srv/shared/mem    # kept elsewhere, linked by slug
-gitdashy teams --join NeoMedSys/review-memory         # clone one that exists
-gitdashy teams --join NeoMedSys/review-memory --create  # make it private on GitHub first
-gitdashy bind --owner neomedsys --team NeoMedSys/review-memory   # then add repos to it
+gitdashy teams --new "NeoMedSys Platform" --desc "Precision-medicine platform."
+gitdashy teams --new "Acme" --at /srv/shared/acme-mem     # kept elsewhere, linked
+gitdashy bind --owner neomedsys --team neomedsys-platform # add repos to it
+gitdashy teams --team neomedsys-platform --connect git@somewhere:us/mem.git   # when you have a repo
+gitdashy teams --join git@somewhere:us/mem.git            # a colleague, from any host
 ```
 
-A team needs **no remote to be useful** — memory works local-only the same way, and `git remote add`
-later turns it into something the rest of the team can pull. The name is `owner/name` because that
-slug is what bindings point at; it is the identity, not the directory.
+`T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
+
+A team needs **no remote to be useful** — memory works local-only the same way. `connect` pushes what
+is already committed, so the `team.json` you wrote before you had a repo is what the next person clones
+and keys by.
 
 **Migration.** A pre-plural `~/.prs_team` moves to `~/.prs_teams/<slug>/` on first launch, after a
 backup. It refuses rather than coping: no origin to key it by, a destination that exists, or any

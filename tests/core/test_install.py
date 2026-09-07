@@ -667,11 +667,11 @@ def test_leaving_a_team_does_not_delete_through_a_symlink(monkeypatch, tmp_path)
 	(work / ".git").mkdir()   # ponytail: a checkout, since "joined" is now "a directory with a .git"
 	teams = tmp_path / "teams"
 	teams.mkdir()
-	link = teams / "org__t"
+	link = teams / "org-t"
 	os.symlink(work, link)
 	monkeypatch.setattr(config, "TEAMS", str(teams))
 	monkeypatch.setattr(knowledge, "unpushed", lambda d=None: 0)
-	assert knowledge.leave("org/t") == ""
+	assert knowledge.leave("org-t") == ""
 	assert not os.path.lexists(link)          # the link is ours
 	assert (work / "important.md").exists()   # what it pointed at is not
 

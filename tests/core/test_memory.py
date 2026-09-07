@@ -23,9 +23,9 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 	mine = tmp_path / "mine"
 	mine.mkdir(parents=True, exist_ok=True)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mine))
-	shared = a_team(monkeypatch, tmp_path, "org/t")
+	shared = a_team(monkeypatch, tmp_path, "org-t")
 	for r in (repos or ("a/b",)):
-		bind.bind(r, "org/t")
+		bind.bind(r, "org-t")
 	return mine, shared
 
 
@@ -66,7 +66,7 @@ def test_reads_merge_both_sources_and_never_drafts(monkeypatch, tmp_path):
 	memory.append("a/b", "a draft nobody confirmed")
 	out = memory.read("a/b")
 	assert "mine about a/b" in out and "team about a/b" in out and "team general" in out
-	assert "### mine" in out and "### team org/t" in out  # a review can tell whose fact it is reading
+	assert "### mine" in out and "### team org-t" in out  # a review can tell whose fact it is reading
 	assert "draft nobody confirmed" not in out
 
 
@@ -103,19 +103,19 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 	calls = []
 	def fake_run(cmd, **kw):
 		calls.append(cmd)
-		return claude_out(summary="tidied", files={"mine/a__b.md": "- uses tabs", "team:org/t/general.md": "",
+		return claude_out(summary="tidied", files={"mine/a__b.md": "- uses tabs", "team:org-t/general.md": "",
 		                                           "bogus.md": "- nope"})
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	summary, _before, new = memory.dream("sonnet")
 	assert calls[0][:2] == ["claude", "-p"] and "--model" in calls[0]
 	assert "--safe-mode" in calls[0]  # dream has a JSON contract too, no ambient CLAUDE.md
-	assert "### mine/general.md" in calls[0][2] and "### team:org/t/general.md" in calls[0][2]
+	assert "### mine/general.md" in calls[0][2] and "### team:org-t/general.md" in calls[0][2]
 	# ponytail: the phrase is pinned on purpose — this prompt emptied general.md once, and a reword of
 	# it is a change to what the model is allowed to delete. It now also forbids moving BETWEEN teams.
 	assert "Never move a line from mine/ into a team/, or between two teams" in calls[0][2]
 	assert summary.startswith("tidied")
 	assert "ignored bogus.md" in summary  # a dropped edit is reported, not silently discarded
-	assert set(new) == {"mine/general.md", "mine/a__b.md", "team:org/t/general.md"}
+	assert set(new) == {"mine/general.md", "mine/a__b.md", "team:org-t/general.md"}
 	assert new["mine/general.md"] == "- run make lint\n"  # untouched files keep what they had
 	memory.write(new)
 	assert facts(mine / "a__b.md") == ["- uses tabs"]
@@ -126,7 +126,7 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 def test_dream_never_writes_a_team_file_when_you_are_not_in_one(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "general.md").write_text("- solo\n")
-	memory.write({"team:org/t/general.md": "- should not appear"})
+	memory.write({"team:org-t/general.md": "- should not appear"})
 	assert not (tmp_path / "general.md").read_text().startswith("- should not appear")
 	assert team.joined() == [] and not team.dirs()  # there is no team checkout to have written to
 
@@ -332,7 +332,7 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	(shared / "project.md").write_text("# What we are building\n\nA thing, for someone.\n")
 	(shared / "general.md").write_text("- a learned fact\n")
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	assert "A thing, for someone" in memory.brief("a/b")[0]
 	assert "A thing" not in memory.read("a/b")          # not a fact, so not in the memory block
 	assert "project.md" not in " ".join(memory.files())  # the dream tidies facts, not a brief
@@ -362,9 +362,9 @@ def test_two_briefs_are_never_concatenated(monkeypatch, tmp_path):
 	(mine / "project.md").write_text("A tool for one person.\n")
 	(shared / "project.md").write_text("What we build together.\n")
 	assert memory.brief("a/b") == ("A tool for one person.", "yours · a/b is bound to no team")
-	bind.bind("a/b", "org/t")
+	bind.bind("a/b", "org-t")
 	text, whose = memory.brief("a/b")
-	assert text == "What we build together." and whose == "team org/t"
+	assert text == "What we build together." and whose == "team org-t"
 	assert "one person" not in text  # exactly one brief, never both
 
 
@@ -372,17 +372,17 @@ def test_a_binding_to_a_team_we_are_not_in_says_so(monkeypatch, tmp_path):
 	"""Falling back silently is the defect with extra steps: the source has to name the reason."""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "project.md").write_text("Just me.\n")
-	bind.bind("a/b", "org/gone")
-	assert memory.brief("a/b") == ("Just me.", "yours · not in team org/gone")
+	bind.bind("a/b", "org-gone")
+	assert memory.brief("a/b") == ("Just me.", "yours · not in team org-gone")
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "empty"))
-	assert memory.brief("a/b") == ("", "not in team org/gone")
+	assert memory.brief("a/b") == ("", "not in team org-gone")
 
 
 def test_a_bound_team_with_no_brief_falls_back_and_names_why(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	(mine / "project.md").write_text("Just me.\n")
-	bind.bind("a/b", "org/t")
-	assert memory.brief("a/b") == ("Just me.", "yours · team org/t has no brief")
+	bind.bind("a/b", "org-t")
+	assert memory.brief("a/b") == ("Just me.", "yours · team org-t has no brief")
 
 
 def test_a_solo_brief_reaches_a_review_with_no_team_at_all(monkeypatch, tmp_path):
@@ -514,13 +514,13 @@ def test_push_reports_a_team_failure_but_not_the_absence_of_a_team(monkeypatch, 
 	assert team.push("x") == "", "no team is not a failure"
 
 	import subprocess as sp
-	d = tmp_path / "teams" / "org__t"   # ponytail: a checkout under TEAMS is what "joined" means now
+	d = tmp_path / "teams" / "org-t"   # ponytail: a checkout under TEAMS is what "joined" means now
 	(d / "memory").mkdir(parents=True)
 	sp.run(["git", "init", "-q", str(d)], check=True)
 	sp.run(["git", "-C", str(d), "config", "user.email", "t@t"], check=True)
 	sp.run(["git", "-C", str(d), "config", "user.name", "t"], check=True)
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
-	assert team.on() and team.joined() == ["org/t"]
+	assert team.on() and team.joined() == ["org-t"]
 	(d / "memory" / "general.md").write_text("- shared\n")
 	assert team.push("memory: real") == ""            # a real team commits, and says nothing
 
