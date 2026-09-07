@@ -329,6 +329,21 @@ def bind(argv):
 	print(f"  reviews of {bind_mod.key(repo) or repo} read: {whose}" + ("" if text else " (nothing to read)"))
 
 
+NO_TOKEN = """  gitdashy: no GitHub token.
+
+  Set one and run again — a classic token with the `repo` scope, or a fine-grained
+  token with read access to the repos you review and write access to pull requests:
+
+      export GH_TOKEN=…          (or $GITHUB_TOKEN)
+      https://github.com/settings/tokens
+
+  Put it in your shell rc to keep it. Nothing else is needed: gitdashy talks to the
+  GitHub API itself and does not use the gh CLI.
+
+  To look around without one:  gitdashy --demo
+"""
+
+
 def api(argv):
 	"""GET one GitHub API path and print it, `--diff` for a unified diff. This is how a review reads the
 	repo now that gh is gone.
@@ -431,5 +446,10 @@ def run(argv=None):
 	if set(config.HUNTER) - set(config.HUNTERS):
 		return print(f"gitdashy: --hunter must be from {', '.join(config.HUNTERS)}, not {config.HUNTER!r}")
 	config.INSTRUCTIONS = arg("--instructions", config.INSTRUCTIONS, str, argv)
+	# ponytail: last check before the screen goes up, and after the flags — a typo in --voice is still a
+	# typo without a token. Nothing in the dashboard works without one, and three rows of "401 Bad
+	# credentials" under curses is a worse way to learn that than a message with the fix in it.
+	if "--demo" not in argv and not github.token():
+		return print(NO_TOKEN)
 	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
 	               arg("--model", config.DEFAULT_MODEL, str, argv))

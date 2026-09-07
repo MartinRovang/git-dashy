@@ -279,6 +279,20 @@ def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
 		cli.api(["gitdashy", "api"])
 
 
+def test_no_token_says_so_instead_of_opening_the_dashboard(monkeypatch, capsys):
+	"""Every call needs one, so without it the dashboard is three rows of 401 under curses."""
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(config, "SETTINGS", "")
+	cli.run(["gitdashy"])
+	out = capsys.readouterr().out
+	assert "no GitHub token" in out and "export GH_TOKEN" in out and "--demo" in out
+	monkeypatch.setenv("GH_TOKEN", "gho_x")
+	opened = []
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: opened.append(a))
+	cli.run(["gitdashy"])
+	assert opened  # with one, it starts
+
+
 def test_an_unknown_command_is_an_error_not_the_dashboard(monkeypatch):
 	"""`gitdashy api …` against a build with no api command fell through into curses.wrapper, so a review
 	whose first tool call hit an older install crashed instead of being told the command was not there."""
