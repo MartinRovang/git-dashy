@@ -242,8 +242,9 @@ def sources(repo):
 	ponytail: drafts/ is deliberately not a source.
 	"""
 	out = [("mine", config.MEMORY_DIR)]
-	if d := bind.team_dir(bind.of(repo)) if repo else "":
-		out.append(("team " + (bind.of(repo) or "shared"), d))
+	slug = bind.of(repo) if repo else ""  # ponytail: asked once — every bind.of() is a read of the store
+	if d := bind.team_dir(slug):
+		out.append(("team " + (slug or "shared"), d))
 	return out
 
 
@@ -376,7 +377,12 @@ def team_visible(repo):
 		return False
 	if repo is None:
 		return True  # a general fact names no repo, so there is nothing to disclose
-	return bool(bind.of(repo))
+	# ponytail: through team_dir, exactly as every READ resolves it. bool(bind.of(repo)) was true for a
+	# binding to ANY team, including one this machine is not in — so a repo bound to org/other had its
+	# name and facts written into org/mem's pool and offered for sharing, while sources() and brief()
+	# both said it was not ours. One binding meaning "ours" for disclosure and "not ours" for reading is
+	# the two-mechanisms-disagree failure this module argues against, in the direction that publishes.
+	return bool(bind.team_dir(bind.of(repo)))
 
 
 def _pool(repo, fact):

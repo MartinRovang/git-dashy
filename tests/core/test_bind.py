@@ -1,4 +1,6 @@
 """The binding store: which team a repo belongs to, declared rather than inferred."""
+import os
+
 from dashy import config
 from dashy.core import bind, memory, team
 
@@ -203,3 +205,32 @@ def test_an_unbound_repo_never_pools_or_offers_a_fact(monkeypatch, tmp_path):
 	assert memory.team_visible("neomedsys/neo-api") and not memory.team_visible("me/weekend")
 	assert ("me/weekend", "my side project uses bun") not in memory.shareable()
 	assert ("neomedsys/neo-api", "worth telling the team") in memory.shareable()
+
+
+def test_a_repo_bound_to_a_team_we_are_not_in_discloses_nothing(monkeypatch, tmp_path):
+	"""The blocking defect: reads said not-ours, disclosure said ours, and the pool is the publishing half.
+
+	bool(bind.of(repo)) was true for a binding to ANY team. Bound to org/other while in org/mem, the
+	repo's NAME and its facts were written into org/mem's pool and offered on the share screen — to
+	people with no claim on it — while sources() and brief() both reported it was not ours.
+	"""
+	mine, _ = _estate(monkeypatch, tmp_path)          # we are in org/mem
+	bind.bind("acme/api", "org/other")                # bound somewhere else entirely
+	assert [l for l, _ in memory.sources("acme/api")] == ["mine"]      # reads: not ours
+	assert memory.brief("acme/api")[1] == "not in team org/other"
+	assert not memory.team_visible("acme/api")                          # and so is disclosure
+
+	memory.append("acme/api", "a fact about someone else's repo")
+	memory.append("acme/api", "a fact about someone else's repo")       # promoted for me
+	assert memory._facts(memory.path("acme/api")) == ["a fact about someone else's repo"]  # still mine
+	assert not os.path.exists(memory.pool_path(memory.whoami(), "acme/api"))  # the name never left
+	assert ("acme/api", "a fact about someone else's repo") not in memory.shareable()
+
+
+def test_a_team_slug_is_matched_however_it_is_typed(monkeypatch, tmp_path):
+	"""Repo keys fold because they are typed. A --team slug is typed too."""
+	_estate(monkeypatch, tmp_path)                    # team.NAME == "org/mem"
+	bind.bind("acme/api", "Org/Mem")
+	assert bind.team_dir("Org/Mem")                   # not "not in team Org/Mem" about the team we are in
+	assert [l for l, _ in memory.sources("acme/api")] == ["mine", "team Org/Mem"]
+	assert memory.team_visible("acme/api")

@@ -237,7 +237,11 @@ def team_dir(slug):
 	else — every caller already asks "which directory does this slug mean" instead of reaching for
 	config.TEAM itself, which is the shape that makes 35 call sites into one.
 	"""
-	return os.path.join(config.TEAM, "memory") if slug and team.on() and slug == team.NAME else ""
+	# ponytail: folded on BOTH sides. Repo keys are lowercased because they are typed; a team slug is
+	# typed too — `--team Org/Mem` while in org/mem resolved to no team dir at all and fell back to your
+	# own brief, reporting "not in team Org/Mem" about the team you were sitting in. Compared rather
+	# than stored folded, so --list still shows the slug as GitHub spells it.
+	return os.path.join(config.TEAM, "memory") if slug and team.on() and slug.lower() == (team.NAME or "").lower() else ""
 
 
 def team_key():

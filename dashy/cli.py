@@ -68,7 +68,8 @@ bind says which team a repo belongs to, and that decides everything the team kno
   binds a whole org in one line, and a repo binding or --forget still overrides it, so the one repo that
   is not the project can be left out. Joining a team binds the repos already named in its shared review
   log, once, so nothing you had yesterday disappears; after that it is yours to change and --forget
-  sticks. Defaults to this directory\'s origin; --list shows every rule.
+  sticks. Defaults to this directory\'s origin; --list shows every rule. A bare `bind` reports and changes
+  no binding of its own — though joining a team seeds from its log on any command, including this one.
 
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
@@ -259,6 +260,12 @@ def bind(argv):
 		elif not a.startswith("-"):
 			rest.append(a)
 	named = arg("--repo", "", str, argv) or next((a for a in rest if "/" in a), "")
+	# ponytail: a positional we cannot read is a TYPO, not an absence. `bind neo-api --team org/mem`
+	# used to fall through to this directory's origin and bind whatever repo you were standing in,
+	# reporting success with the wrong name — the same silent-wrong-repo shape as the flag-value bug
+	# above it, reached by a different route.
+	if not named and rest:
+		raise SystemExit(f"gitdashy: {rest[0]!r} is not owner/name — bind takes a full slug, or --owner OWNER")
 	repo = named or team.origin_slug(".")
 	if "--list" in argv:
 		rows = ([(o + "/*", t) for o, t in sorted(bind_mod.owners().items())] + sorted(bind_mod.bindings().items())
@@ -281,9 +288,12 @@ def bind(argv):
 		return print(f"gitdashy: {bind_mod.owner_key(owner)}/* → {to}  (a repo binding still overrides it)")
 	if not repo:
 		raise SystemExit("gitdashy: no git origin here — pass owner/name, or --list")
-	# ponytail: a bare `gitdashy bind` REPORTS. Naming no repo and asking for no change is a question,
-	# and answering it by silently binding this directory to whatever team you are in is a write nobody
-	# asked for — the exact class of thing this command exists to take away from the review log.
+	# ponytail: a bare `gitdashy bind` REPORTS — it changes no binding of its own. Naming no repo and
+	# asking for no change is a question, and answering it by binding this directory to whatever team
+	# you are in is a write nobody asked for. It is not a read-only command, though, and saying so would
+	# be false: team.activate() above seeds bindings from the shared log, on this and every other
+	# command. That is the bootstrap, and a bootstrap only some entry points perform is the one missing
+	# on the path nobody tested.
 	if not named and not arg("--team", "", str, argv) and "--forget" not in argv:
 		text, whose = memory.brief(repo)
 		print(f"gitdashy: {bind_mod.key(repo)} → {bind_mod.of(repo) or 'no team'}")
