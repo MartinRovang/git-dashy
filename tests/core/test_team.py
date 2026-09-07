@@ -538,3 +538,30 @@ def test_a_teams_own_name_cannot_paint_the_header(monkeypatch, tmp_path):
 	# and a name that is nothing but control bytes falls back to the key rather than rendering empty
 	(shared / "team.json").write_text('{"name": "\\u0007\\u0007", "description": ""}')
 	assert team.info("org-t")["name"] == "org-t"
+
+
+def test_a_private_https_clone_says_what_to_do_about_it(monkeypatch, tmp_path):
+	"""git cannot ask — GIT_TERMINAL_PROMPT=0 is deliberate — so an https URL to a private repo fails
+	outright on a machine with no credential helper, and the raw fatal is clipped mid-sentence.
+	It used to work because `gh repo clone` carried gh's token; dropping gh took that with it."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	fatal = "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+	monkeypatch.setattr(team, "_remote",
+						lambda cmd, timeout=None: subprocess.CompletedProcess(cmd, 128, "", fatal))
+	err = team.clone("https://github.com/NilsPontus/TeamDashy.git", str(tmp_path / "x"))
+	assert "needs a credential gitdashy cannot ask for" in err
+	assert "git@github.com:NilsPontus/TeamDashy.git" in err   # the form that works from an agent
+	assert "credential.helper" in err                          # or the other way out
+
+	# ponytail: only for an auth failure. A repo that does not exist must still say THAT.
+	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None:
+						subprocess.CompletedProcess(cmd, 128, "", "fatal: repository not found"))
+	assert "not found" in team.clone("https://github.com/a/b.git", str(tmp_path / "y"))
+
+
+def test_the_ssh_form_of_a_url_is_not_a_github_fact():
+	"""Every git host offers both forms; ssh is the one that authenticates from an agent."""
+	assert team.ssh_form("https://github.com/a/b.git") == "git@github.com:a/b.git"
+	assert team.ssh_form("https://gitlab.example.com/g/sub/c") == "git@gitlab.example.com:g/sub/c.git"
+	assert team.ssh_form("git@github.com:a/b.git") == ""      # already ssh
+	assert team.ssh_form("/a/local/path") == "" and team.ssh_form("") == ""

@@ -465,15 +465,43 @@ def looks_local(repo):
 	                       or repo.startswith(("/", "./", "../", "~")))
 
 
+def ssh_form(url):
+	"""The ssh form of an https URL — "https://host/a/b(.git)" -> "git@host:a/b.git". "" if it is not one.
+
+	ponytail: host-agnostic on purpose. This is not a GitHub fact; every git host offers both forms, and
+	ssh is the one that authenticates from an agent with nothing else configured.
+	"""
+	u = (url or "").strip()
+	for pre in ("https://", "http://"):
+		if u.startswith(pre):
+			rest = u[len(pre):].rstrip("/")
+			host, _, path = rest.partition("/")
+			return f"git@{host}:{path.removesuffix('.git')}.git" if host and path else ""
+	return ""
+
+
 def clone(repo, dest):
-	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
+	"""Clone `repo` into `dest`. Any git URL, a path, or owner/name on GitHub. "" or an error."""
 	local = looks_local(repo) or "://" in repo or "@" in repo  # a path, a URL or an ssh remote: pass it through
 	# ponytail: git clone, whatever it is. `gh repo clone` was here so that a bare owner/name would
 	# work, which quietly made GitHub the only host a team could live on — and a team is just a repo
 	# people can reach. A bare owner/name is now expanded to a GitHub URL as a CONVENIENCE, and any
 	# other URL, ssh remote or path goes straight through untouched.
 	url = repo if local else f"https://github.com/{repo}.git"
-	return "" if _note(_remote(["git", "clone", "-q", url, dest]), "join") else ERROR
+	if _note(_remote(["git", "clone", "-q", url, dest]), "join"):
+		return ""
+	# ponytail: git cannot ask. GIT_TERMINAL_PROMPT=0 is deliberate — a credential prompt inside curses
+	# is invisible and hangs the dashboard — so an https URL to a PRIVATE repo fails outright on a
+	# machine with no credential helper, and the raw fatal is clipped to 60 characters mid-sentence.
+	# It used to work because `gh repo clone` carried gh's own token; dropping gh took that with it.
+	# The answer is not to reach for a host's CLI again: it is ssh, which every host speaks and which
+	# authenticates from an agent that is usually already loaded.
+	if "could not read Username" in ERROR or "Authentication failed" in ERROR:
+		alt = ssh_form(url)
+		return (f"{url} needs a credential gitdashy cannot ask for"
+		        + (f" — try {alt}" if alt else "")
+		        + " (or `git config --global credential.helper` one)")
+	return ERROR
 
 
 def union_attrs(dest):
