@@ -230,16 +230,22 @@ def unpushed(d):
 	# subprocess.run lets TimeoutExpired and OSError straight through. -1 already means "cannot tell",
 	# which is the same answer a hung git should give, and every caller treats it as "do not delete".
 	try:
+		dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
+		                       capture_output=True, text=True, timeout=60)
+		if dirty.returncode != 0 or dirty.stdout.strip():
+			return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
+		# ponytail: a team with NO REMOTE has nowhere to push, so "unpushed" is not the question — only
+		# whether anything is uncommitted, which is the check above. `git log @{u}..HEAD` exits non-zero
+		# without an upstream, which returned -1 and made a team you STARTED unleavable forever: leave()
+		# refused, and start() on the same name answered "already in <key>". No way out inside the app.
+		if not team.has_remote(d):
+			return 0
 		r = subprocess.run(["git", "-C", d, "log", "--oneline", "@{u}..HEAD"],
 		                   capture_output=True, text=True, timeout=60)
 		if r.returncode != 0:
 			return -1
-		dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
-		                       capture_output=True, text=True, timeout=60)
 	except (subprocess.TimeoutExpired, OSError):
 		return -1
-	if dirty.returncode != 0 or dirty.stdout.strip():
-		return -1  # uncommitted work is as unsaved as an unpushed commit, and we cannot count it
 	return len(r.stdout.strip().splitlines())
 
 

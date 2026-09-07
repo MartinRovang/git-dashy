@@ -269,3 +269,21 @@ def test_teams_lists_what_each_one_covers(monkeypatch, capsys, tmp_path):
 	assert "org-two" in out and "acme/tool" in out
 	assert out.index("org-one") < out.index("org-two")      # each team's coverage under its own row
 	assert out.index("neomedsys/*") < out.index("org-two")
+
+
+def test_teams_join_names_the_team_it_just_joined(monkeypatch, capsys, tmp_path):
+	"""joined()[-1] is the last ALPHABETICALLY, so already being in "zulu" and joining "acme" printed
+	"joined zulu"."""
+	from dashy import cli
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "ERROR", "")
+	for key in ("zulu",):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+	def fake_setup(repo, name=""):
+		(tmp_path / "teams" / "acme" / ".git").mkdir(parents=True)
+		return ""
+	monkeypatch.setattr(team, "setup", fake_setup)
+	cli.teams(["gitdashy", "teams", "--join", "somewhere/acme.git"])
+	assert "joined acme" in capsys.readouterr().out

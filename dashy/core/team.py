@@ -646,9 +646,11 @@ def setup(repo, name=""):
 	# else you review. log.reviewed() merges every log on read, so you still see your own history;
 	# they see only what was reviewed for them.
 	activate()
-	# ponytail: this checkout's own result, not the ERROR global. push() walks EVERY joined team now, so
-	# a team you were already in whose push fails — access revoked, no cached credential, and
-	# GIT_TERMINAL_PROMPT=0 makes that a hard fail rather than a prompt — set ERROR, and the freshly
-	# cloned, renamed, fully joined team was reported as a failure. The CLI raised SystemExit on it and
-	# the TUI skipped state.wake.set(), so REVIEWED never reloaded; retrying said "already in <key>".
-	return push_dir(dest, "gitdashy: join " + (os.environ.get("USER") or "team"), "join")
+	# ponytail: the JOIN is done — cloned, renamed, activated. A push that fails after this is a sync
+	# problem, not a join problem: read-only access to the repo clones fine, and then union_attrs and
+	# seed_project give push_dir something to commit. Returning that error made the caller treat a
+	# usable checkout as a failure — the TUI skipped state.wake.set() so REVIEWED never reloaded, and
+	# retrying answered "already in <key>". push_dir already puts the reason in ERROR, which the Team
+	# row shows, so it is reported where a sync failure belongs rather than as a failure to join.
+	push_dir(dest, "gitdashy: join " + (os.environ.get("USER") or "team"), "join")
+	return ""

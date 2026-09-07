@@ -106,7 +106,7 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
-L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
+L local memory dir, C where all team checkouts live, n repo memory, g general memory ($EDITOR),
 b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
 T teams (n start, a join, e edit its brief, d describe, c connect a remote, x leave), u install the newest release, f refresh, q quit."""
@@ -389,9 +389,14 @@ def teams(argv):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {key} now pushes to {url}")
 	elif join := arg("--join", "", str, argv):
+		# ponytail: what CHANGED, not joined()[-1] — that is the last alphabetically, so already being
+		# in "zulu" and joining "acme" printed "joined zulu".
+		before = set(team.joined())
 		if err := team.setup(join, arg("--name", "", str, argv)):
 			raise SystemExit("gitdashy: " + err)
-		print(f"gitdashy: joined {team.joined()[-1] if team.joined() else join}")
+		fresh = sorted(set(team.joined()) - before)
+		print(f"gitdashy: joined {fresh[0] if fresh else join}"
+		      + (f"  ({team.ERROR})" if team.ERROR else ""))
 	elif leave := arg("--leave", "", str, argv):
 		if err := knowledge.leave(leave):
 			raise SystemExit("gitdashy: " + err)

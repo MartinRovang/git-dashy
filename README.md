@@ -117,7 +117,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
-| `C` | point the team checkout somewhere else (only while you are not in a team) |
+| `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
 | `T` | teams: `n` start one, `a` join one, `e` edit its brief, `d` describe it, `c` connect a remote, `x` leave (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
@@ -319,7 +319,7 @@ makes it your memory directory, moving the facts already there into it (and refu
 if a file exists on both sides). From then on your memory is a checkout that gitdashy pushes, so your facts
 and drafts follow you between machines without ever passing through the team.
 
-`L` and `C` point the memory directory and the team checkout somewhere else. There is no config file — the old
+`L` and `C` point the memory directory and the team store — `~/.prs_teams`, which holds every joined team — somewhere else. There is no config file — the old
 location becomes a symlink to the new one and whatever was there moves across, so the setting survives a restart
 the same way team mode does, by being a fact about the filesystem. Nothing is overwritten: if both sides hold a
 file of the same name, the move stops and says so. `PRS_MEMORY` and `PRS_TEAMS` still win when they are set, and

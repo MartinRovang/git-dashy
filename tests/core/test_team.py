@@ -477,3 +477,44 @@ def test_unpushed_cannot_raise(monkeypatch, tmp_path):
 	assert knowledge.unpushed(str(tmp_path)) == -1
 	monkeypatch.setattr(knowledge.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("nope")))
 	assert knowledge.unpushed(str(tmp_path)) == -1
+
+
+def test_a_team_you_started_can_be_left(monkeypatch, tmp_path):
+	"""`git log @{u}..HEAD` exits non-zero without an upstream, so unpushed() said -1 and leave()
+	refused forever — on exactly the teams this PR exists to let you create. start() then answered
+	"already in <key>", so there was no way out inside the app."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Acme Tools", "internal") == ""
+	d = team.dir_of("acme-tools")
+	assert not team.has_remote(d)
+	assert knowledge.unpushed(d) == 0          # nowhere to push, so nothing is unpushed
+	assert knowledge.leave("acme-tools") == ""
+	assert team.joined() == []
+	assert team.start("Acme Tools") == ""      # and the name is free again
+
+	# uncommitted work still refuses, remote or not — that is the check that matters here
+	open(os.path.join(team.dir_of("acme-tools"), "memory", "general.md"), "w").write("- unsaved\n")
+	assert knowledge.unpushed(team.dir_of("acme-tools")) == -1
+	assert "unpushed" in knowledge.leave("acme-tools")
+
+
+def test_a_join_that_cannot_publish_still_joined(monkeypatch, tmp_path):
+	"""Read-only access clones fine, then union_attrs and seed_project give push_dir something to
+	commit. Returning that error made the caller treat a usable checkout as a failure."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "r.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	git("clone", "-q", str(remote), str(tmp_path / "seed"), cwd=tmp_path)
+	(tmp_path / "seed" / "team.json").write_text('{"name": "Read Only", "description": ""}')
+	git("add", "-A", cwd=tmp_path / "seed")
+	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s", cwd=tmp_path / "seed")
+	git("push", "-q", "origin", "HEAD", cwd=tmp_path / "seed")
+	os.chmod(remote, 0o500)                     # clone yes, push no
+	try:
+		assert team.setup(str(remote)) == "", "a usable checkout was reported as a failed join"
+		assert team.joined() == ["read-only"]
+		assert team.ERROR                        # and the sync failure IS reported, on the Team row
+	finally:
+		os.chmod(remote, 0o700)

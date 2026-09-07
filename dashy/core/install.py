@@ -43,8 +43,7 @@ def links():
 
 	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
 	joined. With none or several it points inside TEAMS at a DOTTED name, which key_of can never produce
-	and joined() skips — so no team can ever occupy it. It dangles, which
-	which the loader already degrades on (a missing @import target is skipped and its siblings still
+	and joined() skips — so no team can ever occupy it. It dangles, which the loader already degrades on (a missing @import target is skipped and its siblings still
 	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
 	into every session on the machine, which is the defect this whole line of work removes. Making the
 	route itself per-repo is the deferred session-scoping work, SPEC 5+6.
@@ -797,14 +796,12 @@ def setup(ask, corpus_home=None):
 	# where it used to write the team's. That is the right file — nothing can be bound to a nameless
 	# team, so its project.md could never be selected by anything — but it is a different file from the
 	# one the last version chose, so it is said out loud rather than swapped silently.
-	if team.on() and not slug:
-		# ponytail: team_key() is "" for NONE and for SEVERAL, and those are different problems. Two
-		# joined teams is the normal state this whole change exists to create, and telling that user
-		# their checkout has no origin describes a cause that is not theirs.
-		joined = team.joined()
+	# ponytail: team.on() IS joined() being non-empty, and team_key() is "" only when there is more than
+	# one — so "several" is the only way to get here. The other branch this used to carry could not be
+	# reached in production, and its test reached it by monkeypatching team.on over an empty store: a
+	# test for a state the code cannot be in, which proves the message and not the behaviour.
+	if len(joined := team.joined()) > 1:
 		out.append(f"note   several teams joined ({', '.join(joined)}) — say which with --team; "
-		           "writing your own brief instead" if len(joined) > 1 else
-		           "note   the team checkout has no name, so nothing can be bound to it — "
 		           "writing your own brief instead")
 	dest = memory.brief_path(slug)
 	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
