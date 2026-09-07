@@ -1,5 +1,6 @@
 """Shared fixtures. ponytail: one fake screen, one temp log, no framework."""
 import json
+import os
 import urllib.request
 
 import pytest
@@ -39,7 +40,9 @@ def isolated(monkeypatch, tmp_path):
 	# every test that names a url. The environment does not get to decide what the suite asserts.
 	monkeypatch.setattr(github, "API", "https://api.github.com")
 	monkeypatch.setattr(github, "GRAPHQL", "https://api.github.com/graphql")
-	monkeypatch.setattr(review, "api_cmd", lambda: "gitdashy")  # not "where is it installed on this machine"
+	# ponytail: pin what api_cmd READS, not api_cmd itself — a stub here would have hidden the very bug
+	# it exists to keep out of the suite (a `gitdashy` on PATH that is a different, older build).
+	monkeypatch.setattr(review.shutil, "which", lambda c: os.path.join(review.HERE, "prs.py"))
 	monkeypatch.setattr(github, "_me", "")  # the login is cached for the process; not across tests
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs
 	# while install() swapped eight, so github.copy, collaborators, request_review, self_review and

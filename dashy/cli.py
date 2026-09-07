@@ -405,6 +405,11 @@ def run(argv=None):
 		return api(argv)
 	if len(argv) > 1 and argv[1] == "drafts":
 		return drafts(argv)
+	# ponytail: an unknown subcommand is an ERROR, not the dashboard. `gitdashy api …` against a build
+	# without that command fell through to here and opened curses, which is how a review crashed rather
+	# than being told the command was not there.
+	if len(argv) > 1 and not argv[1].startswith("-") and argv[1] != "self-check":
+		raise SystemExit(f"gitdashy: no command {argv[1]!r} in {VERSION} — see gitdashy --help")
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:

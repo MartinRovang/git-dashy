@@ -87,8 +87,15 @@ def api_cmd():
 	resolves that — so the reviewer can read the repo and nothing else.
 	ponytail: prs.py, not `-m dashy`. The review runs in a temp directory, and from there the package is
 	not importable unless it was pip-installed — prs.py puts its own checkout on sys.path.
+	ponytail: and the name on PATH is only used when it IS this checkout. A review ran with a prompt from
+	here while `gitdashy` on PATH was an older install with no `api` command — the reviewer's first tool
+	call fell through into the dashboard and crashed. The running code is the code that has the command.
 	"""
-	return "gitdashy" if shutil.which("gitdashy") else f"{sys.executable} {os.path.join(HERE, 'prs.py')}"
+	here = os.path.join(HERE, "prs.py")
+	found = shutil.which("gitdashy")
+	if found and os.path.realpath(found) == os.path.realpath(here):
+		return "gitdashy"
+	return f"{sys.executable} {here}"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
 # CLAUDE.md is a dialogue protocol, and this call has no dialogue — it has a JSON contract it can break by
 # answering in prose. And without it the prompt would depend on which directory gitdashy was launched from.

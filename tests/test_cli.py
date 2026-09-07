@@ -279,6 +279,27 @@ def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
 		cli.api(["gitdashy", "api"])
 
 
+def test_an_unknown_command_is_an_error_not_the_dashboard(monkeypatch):
+	"""`gitdashy api …` against a build with no api command fell through into curses.wrapper, so a review
+	whose first tool call hit an older install crashed instead of being told the command was not there."""
+	from dashy import cli
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	with pytest.raises(SystemExit, match="no command 'bogus'"):
+		cli.run(["gitdashy", "bogus"])
+	with pytest.raises(SystemExit, match="no command 'pr'"):  # a command from some other build, or a typo
+		cli.run(["gitdashy", "pr", "view", "7"])
+
+
+def test_the_reviewers_command_points_at_the_running_code(monkeypatch, tmp_path):
+	"""A stale `gitdashy` on PATH is a different program: the prompt said `api` while the binary was a
+	build that had none. The bare name is used only when PATH resolves to this very checkout."""
+	from dashy.core import review
+	monkeypatch.setattr(review.shutil, "which", lambda c: str(tmp_path / "old-install" / "prs.py"))
+	assert review.api_cmd().endswith("prs.py") and "gitdashy" not in review.api_cmd().split("/")[-1]
+	monkeypatch.setattr(review.shutil, "which", lambda c: os.path.join(review.HERE, "prs.py"))
+	assert review.api_cmd() == "gitdashy"
+
+
 def test_api_asks_for_a_diff_when_told_to(monkeypatch, capsys):
 	"""A patch inside json is readable but escaped; --diff is the same GET with one header changed."""
 	from dashy import cli
