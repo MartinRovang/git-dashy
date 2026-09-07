@@ -1123,3 +1123,18 @@ def test_in_flight_row_says_how_long_it_has_been_running():
 		return "\n".join(scr.line(y) for y in range(scr.h))
 	assert "pre-reviewing… 42s" in painted(1042.0)
 	assert "pre-reviewing… 3m" in painted(1000.0 + 3 * 60 + 7)
+
+
+def test_finished_review_row_stops_spinning():
+	"""c873852 unioned verdicts into `busy` so a reviewed draft stays visible — but `busy` also drove the
+	spinner, the elapsed counter and the agent count. A finished PR read "⠋ ✓ approved… 0s" forever."""
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "✓ approved"  # done: not in running, no started_at
+	ui.C = lambda n: 0
+	scr = FakeScr()
+	ui.draw(scr, st, 0, now=1000.0)
+	row = next(scr.line(y) for y in range(scr.h) if "✓ approved" in scr.line(y))
+	assert "approved…" not in row and "0s" not in row and "⠋" not in row, row
+	assert "0 agents running" in scr.text()
