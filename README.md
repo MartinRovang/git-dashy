@@ -112,6 +112,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
+| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
@@ -139,6 +140,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
+| `gitdashy drafts` | what a review proposed and no second review has confirmed yet |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 

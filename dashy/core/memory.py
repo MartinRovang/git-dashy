@@ -68,7 +68,7 @@ def append_self(repo, text):
 		if not any(_same(t, fact) for _n, t in items):
 			items.append((1, fact))  # ponytail: no count here. One pre-review, or ten, is still one opinion.
 	_history()
-	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite_counted(self_path(repo), items)
 	return fresh
 
 
@@ -81,7 +81,7 @@ def _consume_self(repo, fact):
 	kept = [(n, t) for n, t in items if not _same(t, fact)]
 	if len(kept) == len(items):
 		return False
-	_rewrite(self_path(repo), "".join(f"- ({n}) {t}\n" for n, t in kept))
+	_rewrite_counted(self_path(repo), kept)
 	return True
 
 
@@ -405,8 +405,7 @@ def pools():
 		items = []
 		for name in sorted(os.listdir(d)):
 			if name.endswith(".md"):
-				repo = None if name == "general.md" else name[:-3].replace("__", "/")
-				items += [(repo, f) for f in _facts(os.path.join(d, name))]
+				items += [(_repo_of(name), f) for f in _facts(os.path.join(d, name))]
 		if items:
 			out[user] = items
 	return out
@@ -432,10 +431,18 @@ def drafts(repo):
 	return [_parse(l) for l in _read(queue_path(repo)).splitlines() if l.strip()]
 
 
-def _write_drafts(repo, items):
-	_history()
-	p = queue_path(repo)
+def _rewrite_counted(p, items):
+	"""Replace a counted file — drafts or pre-review findings.
+
+	ponytail: the "- (n) fact" line format was written out at four call sites. One of them drifting
+	produces a file the other three cannot read back, and _parse would silently read the whole line as
+	the fact with a count of 1.
+	"""
 	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
+
+
+def _write_drafts(repo, items):
+	_rewrite_counted(queue_path(repo), items)  # ponytail: _rewrite reaches _history(); the call here was a second one
 
 
 def append(repo, text):
@@ -486,7 +493,7 @@ def shareable():
 	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
 		if not name.endswith(".md") or name == PROJECT:
 			continue
-		repo = None if name == "general.md" else name[:-3].replace("__", "/")
+		repo = _repo_of(name)
 		if not team_visible(repo):
 			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
 		theirs = _facts(path(repo, base))
@@ -514,6 +521,76 @@ def forget(repo, fact):
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
+
+
+def _repo_of(name):
+	""""a__b.md" -> "a/b"; "general.md" -> None. The inverse of slug()."""
+	return None if name == "general.md" else name[:-3].replace("__", "/")
+
+
+def waiting():
+	"""[(repo, count, fact, kind)] — every observation that is not a fact yet. Newest store last.
+
+	kind is "draft" (a review proposed it; `count` is how many independent reviews have) or "self" (a
+	PRE-review of your own PR found it; it holds no count and waits to be consumed by a real review).
+
+	ponytail: reading these is not the thing the invariant forbids. "Never read into a prompt" keeps the
+	MODEL from meeting its own guess as evidence and agreeing with itself. A PERSON is not going to
+	self-confirm, and this store had no window into it at all — the only way in was `cat`.
+	"""
+	out = []
+	for sub, kind in ((QUEUE, "draft"), (SELF, "self")):
+		base = os.path.join(config.MEMORY_DIR, sub)
+		for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+			if not name.endswith(".md"):
+				continue  # ponytail: drafts/ holds the self/ DIRECTORY too, and listdir returns it
+			repo = _repo_of(name)
+			for n, fact in (_parse(l) for l in _read(os.path.join(base, name)).splitlines() if l.strip()):
+				out.append((repo, n, fact, kind))
+	# ponytail: one fact, one row. append_self only checks known(repo) — the settled facts — not the
+	# drafts queue, so a review and then a pre-review proposing the same line leaves an entry in BOTH.
+	# You would page past the same sentence twice, and t/x removes both, so the list jumps by two.
+	# The counted row wins: it is the one carrying how close the fact is, and `self` sorts after it.
+	seen, kept = [], []
+	for row in sorted(out, key=lambda r: r[3] == "self"):
+		if not any(r[0] == row[0] and _same(r[2], row[2]) for r in seen):
+			seen.append(row)
+			kept.append(row)
+	return kept
+
+
+def drop(repo, fact):
+	"""Forget one unconfirmed observation, from whichever queue holds it. True when one went.
+
+	ponytail: the prune the drafts store never had. Everything else self-limits — facts are dropped by
+	`forget`, the pool is withdrawn on share or forget — and drafts only ever grew.
+	"""
+	gone = False
+	for p in (queue_path(repo), self_path(repo)):
+		items = [_parse(l) for l in _read(p).splitlines() if l.strip()]
+		kept = [(n, t) for n, t in items if not _is(t, fact)]
+		if len(kept) != len(items):
+			gone = True
+			_rewrite_counted(p, kept)
+	return gone
+
+
+def promote(repo, fact):
+	"""Accept an observation by hand: it becomes one of your facts. Returns the file it landed in.
+
+	ponytail: PROMOTE_AT is a proxy for a judgement you may already have. Recurrence is the right gate
+	for something nobody has read — it is the whole reason a model's guess does not become a fact on its
+	own — but once a person HAS read the line and knows it is true, requiring a second review to
+	rediscover it is asking the machine to re-derive what you can already see. This is the only path
+	into your memory that is not recurrence, and it takes a person and a keypress.
+	ponytail: pooled like any promotion, so the evidence trail says the same thing either way. Bound
+	repos only — _pool checks team_visible.
+	"""
+	drop(repo, fact)
+	if not already_known(repo, fact):
+		_append_line(path(repo), fact)
+		_pool(repo, fact)
+	return path(repo)
 
 
 DREAM = """You are tidying the review memory of a code-review bot. Below are its memory files: "mine/" are one

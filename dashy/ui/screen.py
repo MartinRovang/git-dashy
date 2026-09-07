@@ -625,15 +625,36 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 def panel(scr, title, lines, footer, accent=4):
 	"""Centred bordered box. ponytail: addnstr and box-drawing chars, no curses windows or panels."""
 	h, w = scr.getmaxyx()
-	inner = max([len(l) for l in [title, footer] + [t for t, _ in lines]] + [34]) + 6
+	# ponytail: the RIGHT-hand values count too. Sizing on the left texts alone drew a long right value
+	# at x + inner - 3 - len(right), which lands left of its own label and overwrites it — a repo name
+	# came out as "me/weekenpre-review · waits…". Every panel with a right column was one long value
+	# away from this; the share screen escaped only because "★ 2 people found this" is short.
+	inner = max([len(l) for l in [title, footer]] + [len(t) + len(r) + 2 for t, r in lines] + [34]) + 6
 	inner = min(inner, w - 4)
+	# ponytail: and a VERTICAL clamp. `top` floored at 1 but the bottom row is top + 4 + len(lines), so
+	# a long body wrote past the last line on a short terminal — h <= 14 was enough. Reachable from the
+	# share screen already; the drafts screen feeds it model-authored text of unbounded length, which is
+	# the caller most likely to find it. Trim the body rather than draw outside the screen.
+	# ponytail: a box needs 6 rows before any body — two borders, two blanks, a footer, and the row the
+	# title sits on. Below that there is no correct trim, so it does not draw at all: max(1, h - 6) kept
+	# one body line at h == 6 and put the bottom border on row 6 of a 6-row screen. `draw()` survives
+	# every height down to 2, so this is reachable rather than academic — my own sweep started at 8.
+	if h < 7 or w < 12:  # ponytail: and the width, where inner - 6 goes non-positive. popup() has the same gate.
+		return
+	room = h - 6  # rows left for the body: two borders, two blanks, the footer, the title row
+	if len(lines) > room:
+		# ponytail: the ellipsis COSTS a row. `[:max(1, room-1)] + […]` kept one line plus the marker at
+		# room == 1 — a trim that made the body longer than the space it was trimming to fit.
+		lines = (list(lines)[:room - 1] + [("…", "")]) if room > 1 else [("…", "")]
 	top = max(1, h // 2 - (len(lines) + 6) // 2)
 	x = max(0, (w - inner) // 2)
 	def row(y, left, right="", attr=0, attr2=None):
 		scr.addnstr(y, x, "│" + " " * (inner - 2) + "│", inner, C(accent))
 		scr.addnstr(y, x + 3, left, inner - 6, attr)
-		if right:
-			scr.addnstr(y, x + inner - 3 - len(right), right, len(right), attr if attr2 is None else attr2)
+		# ponytail: and never start the right value left of the label, whatever the sizing decided. The
+		# width above is the fix; this is the bound that makes overwriting impossible rather than unlikely.
+		if right and (rx := x + inner - 3 - len(right)) >= x + 3 + len(left) + 1:
+			scr.addnstr(y, rx, right, len(right), attr if attr2 is None else attr2)
 	scr.addnstr(top, x, "╭" + "─" * (inner - 2) + "╮", inner, C(accent))
 	scr.addnstr(top, x + 3, f" {title} ", inner - 6, C(accent) | curses.A_BOLD)
 	row(top + 1, "")
@@ -917,6 +938,54 @@ def share_screen(scr, state, sel):
 			memory.forget(repo, fact)
 			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
 			team.push(f"memory: withdraw {repo or 'general'}")  # forget also withdraws it from the pool
+		elif k in (27, ord("q")):
+			return
+
+
+def drafts_screen(scr, state, sel):
+	"""What gitdashy has heard once and not confirmed: t promotes one by hand, x drops it.
+
+	ponytail: the only store with no window into it until now. Reading drafts does NOT weaken the
+	invariant that guards them — "never read into a prompt" keeps the MODEL from meeting its own guess
+	as evidence and agreeing with itself, and a person reading them cannot self-confirm. The window was
+	missing because the two got conflated, not because anyone decided against it.
+	ponytail: one at a time, like the share screen and for the same reason — a fact is a sentence you
+	have to read to judge, and a column of clipped sentences is how something wrong gets waved through.
+	"""
+	i = 0
+	while True:
+		items = memory.waiting()
+		if not items:
+			confirm(scr, state, sel, " nothing waiting — every observation so far is either a fact or gone  [any key]")
+			return
+		# ponytail: most-seen first, so anything one review short of PROMOTE_AT is the first thing you
+		# read. A pre-review finding carries no count and sorts last: it is one opinion, not two.
+		items.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))  # by repo, then most-seen first
+		i %= len(items)
+		repo, n, fact, kind = items[i]
+		if kind == "self":
+			mark = "pre-review · one opinion"
+		else:
+			left = memory.PROMOTE_AT - n
+			mark = f"seen {n}×" + (f" · {left} more to go" if left > 0 else " · confirmed")
+		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
+		team_of = bind.of(repo) if repo else ""
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"waiting  ·  {i + 1}/{len(items)}",
+		      [(repo or "general", mark), *([(f"team: {team_of}", "")] if team_of else []), ("", ""), *body],
+		      "[t] make it a fact   [x] drop it   [j/k] move   [esc] close")
+		k = scr.getch()
+		if k in (ord("j"), curses.KEY_DOWN):
+			i += 1
+		elif k in (ord("k"), curses.KEY_UP):
+			i -= 1
+		elif k == ord("t"):
+			memory.promote(repo, fact)
+			team.push_dir(config.MEMORY_DIR, f"memory: accepted for {repo or 'general'}", "mine")
+			team.push(f"memory: evidence for {repo or 'general'}")  # ponytail: promotion writes the pool
+		elif k == ord("x"):
+			memory.drop(repo, fact)
+			team.push_dir(config.MEMORY_DIR, f"memory: dropped a draft for {repo or 'general'}", "mine")
 		elif k in (27, ord("q")):
 			return
 
@@ -1222,6 +1291,8 @@ def main(scr, interval, auto, model):
 			dream_screen(scr, state, sel)
 		elif k == ord("P"):
 			share_screen(scr, state, sel)
+		elif k == ord("W"):
+			drafts_screen(scr, state, sel)
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
