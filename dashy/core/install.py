@@ -428,8 +428,13 @@ and who it is working with. Installed by `gitdashy install --full` from {os.path
 def full_explain(corpus, url=""):
 	"""What a full install changes. Returns report lines."""
 	d, out = claude_dir(), []
-	names = corpus_files(corpus)
-	words = sum(len(open(os.path.join(corpus, "identity", n)).read().split()) for n in names)
+	# ponytail: explain what apply will DO. apply imports from CORPUS_HOME when it exists; reading the
+	# shipped corpus here named the wrong files and the wrong cost to anyone who had pointed
+	# CORPUS_HOME at their own corpus — "import 3 files: AGENT.md, AGENTS.md, RULES.md" on a machine
+	# about to import six others.
+	src = CORPUS_HOME if os.path.isdir(CORPUS_HOME) else corpus
+	names = corpus_files(src)
+	words = sum(len(open(os.path.join(src, "identity", n)).read().split()) for n in names)
 	out.append("gitdashy install --full puts an agent corpus on this machine, so every coding session")
 	out.append("works to the same discipline — and adds the review-memory wiring `install` does.")
 	out.append("")

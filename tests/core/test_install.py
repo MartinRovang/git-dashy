@@ -843,3 +843,52 @@ def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
 	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
 	assert "no origin" not in note and "no name" not in note
 	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says
+
+
+def test_the_session_hook_says_what_it_is_loading(tmp_path):
+	"""'Know what you are loading' was a sentence in a README. One line at session start is a guard
+	that does not depend on being remembered; the corpus that ships this hook grew to twice its stated
+	ceiling before anyone measured."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	cfg = tmp_path / "cfg"
+	(cfg / "identity").mkdir(parents=True)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                     capture_output=True, text=True, env=env).stdout
+	assert "[budget] identity ~13 tok" in out, out  # 10 words * 1.35, the estimate the corpus uses
+	assert "STATE.md" not in out  # none seeded from a corpus with no templates, so none reported
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert seen.strip() == ""  # still writes nothing git can see
+
+
+def test_a_corpus_that_ships_its_own_budget_check_runs_it_instead(tmp_path):
+	"""A corpus knows its own budgets better than a generic total does; when it ships the check, the
+	hook defers to it and says nothing of its own. Guarded on -x, so a corpus without one gets the
+	generic line rather than a hook pointing at a missing command."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
+	check.chmod(0o755)
+	out = subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt), capture_output=True, text=True).stdout
+	assert "[budget] mine 1 / 2 tok" in out, out
+	assert "identity ~" not in out  # the generic line yields to the corpus's own
+
+
+def test_explain_describes_the_corpus_that_will_actually_be_imported(monkeypatch, tmp_path):
+	"""Explain read the shipped corpus while apply imported CORPUS_HOME. With CORPUS_HOME pointed at
+	your own corpus, the report named the wrong files and the wrong cost right before asking you
+	to agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)                       # CORPUS_HOME now exists, seeded from the shipped one
+	extra = os.path.join(install.CORPUS_HOME, "identity", "EXTRA.md")
+	open(extra, "w").write("a corpus the user has since made their own\n")
+	out = "\n".join(install.full_explain(corpus))
+	assert "EXTRA.md" in out, out                    # from CORPUS_HOME, not from the shipped corpus
+	assert "AGENTS.md" not in out                    # a file the shipped corpus no longer has

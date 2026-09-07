@@ -42,4 +42,19 @@ fi
 # 4. this repo's review memory, if gitdashy is around. --no-pull: a hook has seconds, not a network.
 command -v gitdashy >/dev/null 2>&1 && \
   gitdashy init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || true
+
+# 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
+#    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to
+#    twice its stated ceiling before anyone measured. One line, at the moment it is true, in context.
+#    A corpus that ships its own check knows its own budgets better — it runs instead, and this step
+#    is silent. Never blocks: a budget is information at session start, not a gate.
+if [ -x "$CORPUS/bin/budget-check.sh" ]; then
+  "$CORPUS/bin/budget-check.sh" 2>/dev/null | sed 's/^/[budget] /' || true
+else
+  ID="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/identity"
+  tok() { cat "$@" 2>/dev/null | awk '{w+=NF} END{printf "%d", w*1.35}'; }
+  line="[budget] identity ~$(tok "$ID"/*.md) tok"
+  [ -f .agent/STATE.md ] && line="$line · .agent/STATE.md ~$(tok .agent/STATE.md) tok"
+  echo "$line"
+fi
 exit 0
