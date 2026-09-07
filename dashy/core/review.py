@@ -10,8 +10,7 @@ import subprocess
 from .. import HERE, config
 from . import github, llm, log, memory, team
 
-PROMPT = """Review pull request {repo}#{number}. Its description and full diff are at the end of this
-message. Look for bugs, logic errors, security issues and missing tests.
+PROMPT = """Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
 {depth}{project}{memory}{prev}
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
@@ -57,15 +56,14 @@ HUNTER = {  # a lens, not a style: each hunts one class of problem the main revi
 }
 EXPLORE = """
 
-To read anything the diff does not show — a file it changes in part, a caller, a test — run
-`{cmd} api <github api path>`. It is a GET against the GitHub API, a file comes back decoded, and
-`--diff` gives a unified diff instead of json. Nothing else is available to you. The useful paths:
+Read the PR with `{cmd} api <github api path>`: a GET against the GitHub API, files decoded, `--diff` for
+a unified diff instead of json. It is the only command available to you. Start with the first two:
 
-  {cmd} api /repos/{repo}/contents/path/to/file.py?ref=<head branch>   read a file (no ref = base branch)
-  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1          every path in the repo, to find one
-  {cmd} api "/search/code?q=<symbol>+repo:{repo}"                      where a symbol is used
-  {cmd} api /repos/{repo}/pulls/{number}/files                         the changed files, one by one
-  {cmd} api /repos/{repo}/compare/<base>...<head> --diff               a diff of any range
+  {cmd} api /repos/{repo}/pulls/{number}            the description, author, base and head
+  {cmd} api /repos/{repo}/pulls/{number} --diff     the diff
+  {cmd} api /repos/{repo}/contents/<file>?ref=<head branch>   read a file (no ref = base branch)
+  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1  every path in the repo, to find one
+  {cmd} api "/search/code?q=<symbol>+repo:{repo}"   where a symbol is used
 
 Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
 survive review.
@@ -203,12 +201,15 @@ def _verdict(repo, n, model, prev=None):
 	if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 		with open(config.INSTRUCTIONS) as f:
 			prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-	# ponytail: the PR is pasted for EVERY backend now. It was the diff `gh` existed to fetch, and one
-	# path is one thing to get right. Claude keeps the exploring — one read-only command, not a shell.
+	# ponytail: claude fetches the PR itself, with the one command it is given — pasting it in as well
+	# was the same bytes twice, and as an argv string a big diff died with E2BIG before claude started.
+	# A backend with no tool loop still gets it pasted; that goes over HTTP, where size is not a limit.
 	claude = llm.provider(model)[0] == "claude"
 	tools = f"Bash({api_cmd()} api:*)" if claude else ""
-	prompt += (EXPLORE.format(cmd=api_cmd(), repo=repo, number=n) if claude else NO_TOOLS)
-	prompt += PR_FOLLOWS + github.context(repo, n)
+	if claude:
+		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n)
+	else:
+		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms

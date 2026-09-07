@@ -104,16 +104,18 @@ def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
 	assert not __import__("os").path.exists(log.LOG)
 
 
-def test_every_backend_gets_the_pr_pasted_in_and_only_claude_can_read_more(monkeypatch):
-	"""There is no gh to fetch the diff with, so the diff goes in the prompt — for claude too."""
+def test_claude_fetches_the_pr_itself_and_the_others_get_it_pasted(monkeypatch):
+	"""Pasting it in for claude as well was the same bytes twice — and as an argv string a big diff hit
+	MAX_ARG_STRLEN, so the review died with E2BIG before claude was even started."""
 	calls = []
-	monkeypatch.setattr(github, "context", lambda repo, n: "PASTED PR")
+	monkeypatch.setattr(github, "context", lambda repo, n: pytest.fail("claude fetches the PR itself"))
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
 	review(dict(PR), "opus")
 	prompt, cmd = calls[0][2], calls[0]
-	assert prompt.endswith("PASTED PR") and "gitdashy api /repos/a/b/contents/" in prompt
+	assert "gitdashy api /repos/a/b/pulls/7 --diff" in prompt and len(prompt) < 8_000
 	assert cmd[cmd.index("--allowedTools") + 1] == "Bash(gitdashy api:*)"  # read the repo, run nothing else
 	calls.clear()
+	monkeypatch.setattr(github, "context", lambda repo, n: "PASTED PR")
 	monkeypatch.setattr("dashy.core.llm.ask", lambda p, m, **kw: calls.append((p, kw)) or
 	                    (json.dumps({"verdict": "approve", "summary": "s", "body": "b"}), None, 0))
 	review(dict(PR), "openrouter:x-ai/grok-4")
