@@ -6,6 +6,7 @@ what the reviewer read; putting each finding back on the line it is about is the
 """
 import re
 import subprocess
+import threading
 
 MARK = {"blocking": "◆", "note": "◇", "nit": "·"}  # severity order; the pane paints them
 ORDER = ["blocking", "note", "nit"]
@@ -13,10 +14,15 @@ TIMEOUT = 20
 # ponytail: the CYCLE is the source of the default, not a second copy of it. c used to step a dict
 # {3: 8, 8: 0, 0: 3} while State carried its own literal 3 — two defaults for one number, and moving
 # either one turned the key that cycles context into a KeyError inside draw().
-CONTEXTS = [3, 8, 0]   # lines kept either side of a marked line; c steps this ring
-CONTEXT = CONTEXTS[0]
-_CACHE = {}   # (repo, number, head) -> diff text. ponytail: keyed by HEAD, so a push invalidates it
-_FAILED = set()   # the keys in _CACHE that are "" because gh failed, not because the diff was empty
+CONTEXTS = [3, 8, 0]   # lines kept either side of a marked line; c steps this ring; [0] is the default
+
+# ponytail: None is "gh failed", "" is "gh succeeded and the diff was empty". One dict says both, and
+# retry() is then the difference between them — a parallel _FAILED set was a second place to forget.
+# The lock is not decoration: fetch() now runs on a worker thread while f calls retry() on the UI one,
+# and a set changing size mid-iteration raised straight out of the key handler and unwound curses.
+_CACHE = {}   # (repo, number, head) -> diff text | None. Keyed by HEAD, so a push invalidates it
+_LOCK = threading.Lock()
+_GEN = 0   # bumped by retry(); part of the key State caches on, so f reaches past ITS cache too
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
@@ -39,22 +45,34 @@ def fetch(repo, number, head=""):
 	take the dashboard down. "" is that reason; the caller says so.
 	"""
 	key = (repo, number, head)
-	if key in _CACHE:
-		return _CACHE[key]
+	with _LOCK:
+		if key in _CACHE:
+			return _CACHE[key] or ""
 	try:
+		# ponytail: OUTSIDE the lock. It is a subprocess with a 20s ceiling, and holding the lock across
+		# it would park the UI thread's retry() behind a network call for as long as gh takes.
 		r = subprocess.run(["gh", "pr", "diff", str(number), "--repo", repo],
 		                   capture_output=True, text=True, timeout=TIMEOUT)
+		got = r.stdout if r.returncode == 0 else None
 	except (subprocess.SubprocessError, OSError):
 		# ponytail: the failure is CACHED too. Returning "" uncached meant a PR whose diff times out
 		# re-ran the subprocess on every look at it and never got past it — the one input for which
 		# the cache existed was the one input it did not cover.
-		_FAILED.add(key)
-		_CACHE[key] = ""
-		return ""
-	if r.returncode != 0:
-		_FAILED.add(key)
-	_CACHE[key] = r.stdout if r.returncode == 0 else ""
-	return _CACHE[key]
+		got = None
+	with _LOCK:
+		_CACHE[key] = got
+	return got or ""
+
+
+def generation():
+	"""Bumped every time retry() drops a failure, so caches ABOVE this one can key on it and follow.
+
+	ponytail: clearing _CACHE was not enough. State caches (files, marks) per PR and answers from that
+	before fetch() is ever reached, so f cleared the layer nothing was reading and the pane went on
+	showing "no diff to show" for the rest of the session. The remedy has to reach the layer that
+	actually answers, and a generation in the key is how it does that without State knowing why.
+	"""
+	return _GEN
 
 
 def retry():
@@ -64,9 +82,14 @@ def retry():
 	life of the process. f already means "go and look again", so it clears these and nothing else — a
 	diff that really is empty is not re-fetched twenty times because someone pressed refresh.
 	"""
-	for key in _FAILED:
-		_CACHE.pop(key, None)
-	_FAILED.clear()
+	global _GEN
+	with _LOCK:
+		failed = [k for k, v in _CACHE.items() if v is None]
+		for key in failed:
+			del _CACHE[key]
+		if failed:
+			_GEN += 1
+	return len(failed)
 
 
 def parse(text):
@@ -82,8 +105,10 @@ def parse(text):
 			cur = {"path": raw.split(" b/", 1)[-1] if " b/" in raw else raw[11:], "add": 0, "dele": 0, "hunks": []}
 			files.append(cur)
 			hunk = None
-		elif raw.startswith("+++ b/") and cur is not None:
-			cur["path"] = raw[6:]  # ponytail: the authoritative name; the `diff --git` line quotes odd paths
+		elif raw.startswith("+++ b/") and cur is not None and hunk is None:
+			# ponytail: `hunk is None` or an ADDED LINE reading "+++ b/x" rewrites the path of the file it
+			# is in. A PR body or doc quoting a diff does exactly that, and this repo writes them constantly.
+			cur["path"] = raw[6:]  # the authoritative name; the `diff --git` line quotes odd paths
 		elif (m := _HUNK.match(raw)) and cur is not None:
 			new = int(m.group(2))
 			hunk = {"header": raw.rstrip(), "start": new, "lines": []}
@@ -119,29 +144,26 @@ def _same_file(a, b):
 def anchor(files, findings):
 	"""Put each finding on the line it names. Returns [mark] in file-then-line order, and tags the lines.
 
-	Each mark is {kind, loc, text, path, n, hunk} — `hunk` is the index of the hunk it sits in, or None
+	Each mark is {kind, loc, text, path, n, file} — `file` is the index of the file it is in, or None
 	when the finding names a file this diff does not touch.
 
-	ponytail: a finding that lands nowhere is KEPT, with hunk None. A review's most important line is
-	sometimes about a file the diff does not contain — something missing, something the change should
-	have touched — and silently dropping it would make the pane quietly less honest than the summary.
+	ponytail: a finding that lands nowhere is KEPT. A review's most important line is sometimes about a
+	file the diff does not contain — something missing, something the change should have touched — and
+	silently dropping it would make the pane quietly less honest than the summary. The pane holds up
+	the other half of that: it gives every mark a row, tagged onto its line or listed on its own.
 	"""
 	marks = []
 	for f in findings:
 		path, n = _where(f.get("loc", ""))
 		hit = next((i for i, d in enumerate(files) if _same_file(path, d["path"])), None)
-		mark = {**f, "path": path, "n": n, "file": hit, "hunk": None}
-		if hit is not None:
-			for hi, h in enumerate(files[hit]["hunks"]):
-				for line in h["lines"]:
-					if n and line["n"] == n and not line["del"]:
-						mark["hunk"] = hi
-						line.setdefault("marks", []).append(mark)
-						break
-				if mark["hunk"] is not None:
+		mark = {**f, "path": path, "n": n, "file": hit}
+		if hit is not None and n:
+			# ponytail: the same dict object goes onto the line AND into marks, which is what lets the
+			# pane ask "did this one land" by identity rather than by re-deriving the match.
+			for h in files[hit]["hunks"]:
+				if (l := next((l for l in h["lines"] if l["n"] == n and not l["del"]), None)) is not None:
+					l.setdefault("marks", []).append(mark)
 					break
-			else:
-				mark["hunk"] = 0 if files[hit]["hunks"] and not n else mark["hunk"]
 		marks.append(mark)
 	marks.sort(key=lambda m: (m["file"] is None, m["file"] or 0, m["n"], rank(m["kind"])))
 	return marks
@@ -153,7 +175,7 @@ def worst(line):
 	return min((m["kind"] for m in got), key=rank, default="")
 
 
-def narrow(files, context=CONTEXT):
+def narrow(files, context=CONTEXTS[0]):
 	"""The same files, keeping only hunks that carry a mark and only lines near one. "marks only".
 
 	ponytail: a review of a 1,400-line diff has four findings in it, and scrolling to them is the work

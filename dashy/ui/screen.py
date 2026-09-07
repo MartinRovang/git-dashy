@@ -498,6 +498,15 @@ def find_c(kind):
 	return C(FIND.get(kind, 1))
 
 
+def code_ready(pr):
+	"""Whether the code tab has anything to answer keys with — it needs a review to draw against.
+
+	ponytail: the branch guarded on the TAB alone, so on a row with no review D was swallowed by a pane
+	showing "no review yet" instead of toggling drafts. A mode may only take a key while it can use it.
+	"""
+	return bool(pr and (pr.get("review") or log.last(pr["url"])))
+
+
 def code_rows(files, marks, scoped):
 	"""The pane as a flat list of (kind, payload) rows, so it can be windowed like the PR list is.
 
@@ -505,7 +514,7 @@ def code_rows(files, marks, scoped):
 	straight down cannot. Without this the jump strip is decoration — it moved a variable nothing read,
 	and a diff longer than the pane simply had no way to reach its own second half.
 	"""
-	rows = []
+	rows, landed = [], set()
 	for f in files:
 		rows.append(("file", f))
 		for hunk in f["hunks"]:
@@ -514,9 +523,15 @@ def code_rows(files, marks, scoped):
 				rows.append(("line", l))
 				for m in (l.get("marks") or []) if scoped else []:
 					rows.append(("note", m))
+					landed.add(id(m))
 		rows.append(("gap", None))
-	for m in [m for m in marks if m["file"] is None] if scoped else []:
-		rows.append(("orphan", m))   # a finding about a file this diff does not touch
+	# ponytail: EVERY mark gets a row, not just the ones with no file. A finding on a file the diff does
+	# touch but a line it does not contain had `file` set, so it was not an orphan, and nothing emitted
+	# it — it appeared as a chip with no body and no way to reach it. anchor() promises a finding that
+	# lands nowhere is kept; this is the half of that promise the pane owes. Identity, because anchor
+	# puts the same dict on the line and in marks.
+	for m in [m for m in marks if id(m) not in landed] if scoped else []:
+		rows.append(("orphan", m))
 	return rows
 
 
@@ -561,13 +576,18 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 	# reading the review, a file when you are reading the whole change. One key, because they are the
 	# same gesture — and the full diff had no way to scroll at all while advertising a `}` that did
 	# nothing, which is worse than not offering it.
-	jump = [i for i, (k, _v) in enumerate(rows) if k == ("note" if scoped else "file")]
+	jump = [i for i, (k, _v) in enumerate(rows)
+	        if k in (("note", "orphan") if scoped else ("file",))]
 	cur = max(0, min(state.code_at, len(jump) - 1)) if jump else 0
 	state.code_at = cur
 
+	# ponytail: the chips are built FROM the jump rows, so chip i and jump i are the same thing by
+	# construction. They used to be two spaces — chips enumerated marks, jump counted note rows — so one
+	# orphan made every chip after it name the wrong mark, and the last chip could not be reached at all.
+	anchors = [rows[i][1] for i in jump]
 	chips = ([f"{i + 1}{diff.MARK.get(m['kind'], '·')} {m['path'].rsplit('/', 1)[-1]}" + (f":{m['n']}" if m["n"] else "")
-	          for i, m in enumerate(marks)] if scoped else
-	         [f"{f['path'].rsplit('/', 1)[-1]} +{f['add']}−{f['dele']}" for f in shown])
+	          for i, m in enumerate(anchors)] if scoped else
+	         [f"{f['path'].rsplit('/', 1)[-1]} +{f['add']}−{f['dele']}" for f in anchors])
 	if chips:
 		x = x0 + 2
 		at(y, x, "MARKS" if scoped else "FILES", 6, C(25))
@@ -629,8 +649,15 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 			at(y, x0 + 3, v["kind"], 9, find_c(v["kind"]))
 			at(y, x0 + 13, " ".join(v["text"].split())[:max(1, width - 15)], max(1, width - 15), C(1))
 		elif kind == "orphan":
+			# ponytail: two different misses, and the difference is what you would do about it. No file
+			# at all means the review is about something the change did not touch; a file with no such
+			# line means it is about a line this diff does not carry.
+			# ponytail: it carries the finding's TEXT, like a note row does. Showing only the loc said
+			# that something was lost without saying what — a finding is KEPT only if it can be read.
+			why = "not in this diff" if v["file"] is None else "line not in this diff"
 			at(y, x0 + 2, v["kind"], 9, find_c(v["kind"]))
-			at(y, x0 + 12, f"{v['loc']} — not in this diff", max(1, width - 14), C(1))
+			said = f"{' '.join(v['text'].split())} · {v['loc']} {why}"
+			at(y, x0 + 12, said[:max(1, width - 14)], max(1, width - 14), C(1))
 		y += 1
 
 	# ponytail: the keys this pane answers to, in the pane. The global footer carries the app's keys and
@@ -1587,7 +1614,8 @@ def main(scr, interval, auto, model):
 		# ponytail: ABOVE the global D / n. Both are bound twice — D toggles drafts, n edits this repo's
 		# memory — and an elif chain gives the first branch the key. Sitting below them, this branch could
 		# only ever be reached by N and c, so two of the four keys the pane documents did nothing.
-		elif state.pane_tab == "code" and state.pane and k in (ord("D"), ord("n"), ord("N"), ord("c")):
+		elif (state.pane_tab == "code" and state.pane and current and code_ready(current)
+		      and k in (ord("D"), ord("n"), ord("N"), ord("c"))):
 			if k == ord("D"):
 				state.code_scope = "diff" if state.code_scope == "marks" else "marks"
 			elif k == ord("c"):

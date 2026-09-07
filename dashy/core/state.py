@@ -9,6 +9,12 @@ from .. import config
 from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
 
 
+def _evict(cache, drop):
+	"""Drop every entry the predicate names, so one PR keeps one entry — not one per push or review."""
+	for k in [k for k in cache if drop(k)]:
+		del cache[k]
+
+
 def in_flight(state, url):
 	"""True while a review or pre-review of this PR is running.
 
@@ -61,7 +67,7 @@ class State:
 		self.code_scope = "marks"  # "marks" | "diff" — only the marked hunks, or the whole change
 		self.code_at = 0  # which mark n/N is on
 		self.code_pr = ""  # the PR code_at counts marks in; moving row resets the jump
-		self.code_context = diff.CONTEXT  # lines kept either side of a marked line; c cycles it
+		self.code_context = diff.CONTEXTS[0]  # lines kept either side of a marked line; c cycles it
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
@@ -91,8 +97,7 @@ class State:
 			with self.lock:
 				# ponytail: drop what we knew about this PR at any other revision, so the cache cannot
 				# grow one entry per push for a branch someone is iterating on.
-				for k in [k for k in self.details if k[0] == key[0]]:
-					del self.details[k]
+				_evict(self.details, lambda k: k[0] == key[0])
 				self.details[key] = got
 				self.detailing.discard(key)
 		threading.Thread(target=run, daemon=True).start()
@@ -111,7 +116,10 @@ class State:
 		# ponytail: the findings are part of the key. A re-review changes what is marked without moving
 		# the head, and the pane would have gone on showing the previous round's marks.
 		sig = tuple((f.get("kind"), f.get("loc"), f.get("text")) for f in findings)
-		key = (repo, number, head, sig)
+		# ponytail: the GENERATION is in the key. Without it f cleared diff._CACHE while this cache went
+		# on answering from the failed read above it, so one gh blip pinned "no diff to show" for the
+		# rest of the session — the retry reached the layer nobody was asking.
+		key = (repo, number, head, sig, diff.generation())
 		with self.lock:
 			if key in self.diffs:
 				return self.diffs[key]
@@ -121,8 +129,7 @@ class State:
 		def run():
 			got = diff.load(repo, number, head, findings)
 			with self.lock:
-				for k in [k for k in self.diffs if k[:2] == (repo, number)]:
-					del self.diffs[k]  # one entry per PR, not one per push or per review round
+				_evict(self.diffs, lambda k: k[:2] == (repo, number))
 				self.diffs[key] = got
 				self.diffing.discard(key)
 		threading.Thread(target=run, daemon=True).start()

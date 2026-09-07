@@ -1,5 +1,6 @@
-import time
 import os
+import sys
+import time
 
 import pytest
 
@@ -394,7 +395,6 @@ def test_want_diff_reads_the_diff_off_the_draw_thread(monkeypatch):
 	import subprocess as sp
 	calls = []
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(sp, "run", lambda cmd, **k: calls.append(cmd) or sp.CompletedProcess(
 		cmd, 0, "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n a\n+b\n", ""))
 	st = State(60)
@@ -416,7 +416,6 @@ def test_want_diff_re_reads_when_the_review_changes(monkeypatch):
 	from dashy.core import diff
 	import subprocess as sp
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(sp, "run", lambda cmd, **k: sp.CompletedProcess(
 		cmd, 0, "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n a\n+b\n", ""))
 	st = State(60)
@@ -432,7 +431,6 @@ def test_want_diff_anchors_once_however_often_it_is_asked(monkeypatch):
 	from dashy.core import diff
 	import subprocess as sp
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(sp, "run", lambda cmd, **k: sp.CompletedProcess(
 		cmd, 0, "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n a\n+b\n", ""))
 	st = State(60)
@@ -442,3 +440,70 @@ def test_want_diff_anchors_once_however_often_it_is_asked(monkeypatch):
 		files, _m = st.want_diff("a/b", 7, "sha", found)
 	tagged = [len(l.get("marks") or []) for f in files for h in f["hunks"] for l in h["lines"]]
 	assert max(tagged) == 1
+
+
+def test_f_can_actually_retry_a_diff_gh_failed_on(monkeypatch):
+	"""retry() cleared diff._CACHE while THIS cache went on answering from the failure above it.
+
+	The old retry() tests drove diff.fetch directly and never came through State, which is exactly why
+	they passed while one gh blip pinned "no diff to show" for the rest of the session.
+	"""
+	from dashy.core import diff
+	import subprocess as sp
+	calls = []
+	monkeypatch.setattr(diff, "_CACHE", {})
+	def flaky(cmd, **k):
+		calls.append(cmd)
+		if len(calls) == 1:
+			raise OSError("no network")
+		return sp.CompletedProcess(cmd, 0, "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n a\n+b\n", "")
+	monkeypatch.setattr(sp, "run", flaky)
+	st = State(60)
+	found = [{"kind": "note", "loc": "x.py:2", "text": "t"}]
+
+	files, marks = _settle(lambda: st.want_diff("a/b", 7, "sha", found))
+	assert files == [] and len(marks) == 1       # no diff, and the finding survives as an orphan
+	for _ in range(5):
+		assert st.want_diff("a/b", 7, "sha", found)[0] == []
+	assert len(calls) == 1                       # cached at both layers: no retry storm
+
+	diff.retry()                                 # what f does
+	files, _m = _settle(lambda: st.want_diff("a/b", 7, "sha", found))
+	assert [f["path"] for f in files] == ["x.py"] and len(calls) == 2
+
+
+def test_retry_survives_a_fetch_landing_while_it_runs(monkeypatch):
+	"""f runs on the UI thread while workers write the cache — a size change mid-iteration unwound curses.
+
+	ponytail: the window is made WIDE on purpose. A few dozen entries and the comprehension finishes
+	inside one GIL slice, so the race never shows and the test passes against the unguarded code —
+	which is a test that proves nothing. Twenty thousand entries and a tiny switch interval make the
+	interleaving the common case: verified to fail without the lock, and to pass with it.
+	"""
+	from dashy.core import diff
+	import subprocess as sp
+	import threading as th
+	monkeypatch.setattr(diff, "_CACHE", {(f"a/b", i, "s"): None for i in range(20000)})
+	monkeypatch.setattr(sp, "run", lambda cmd, **k: (_ for _ in ()).throw(OSError("down")))
+	old_interval = sys.getswitchinterval()
+	sys.setswitchinterval(1e-6)
+	stop, boom = th.Event(), []
+	def churn():
+		i = 100000
+		while not stop.is_set():
+			diff.fetch("a/b", i, "s")     # a NEW key every time: the cache changes SIZE under retry()
+			i += 1
+	t = th.Thread(target=churn, daemon=True)
+	t.start()
+	try:
+		for _ in range(60):
+			try:
+				diff.retry()
+			except RuntimeError as e:      # "dictionary changed size during iteration"
+				boom.append(e)
+				break
+	finally:
+		stop.set()
+		t.join(2)
+		sys.setswitchinterval(old_interval)
+	assert not boom, boom

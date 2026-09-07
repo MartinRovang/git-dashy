@@ -1563,13 +1563,20 @@ def test_the_code_pane_never_writes_outside_itself(screen, monkeypatch, st):
 # ponytail: these drive main()'s KEY DISPATCH, not the pane. Every other code-tab test reaches into
 # st.code_scope / st.code_at directly, which is exactly why D and n could be swallowed by the global
 # handlers above them and still look tested: the pane was right, and nothing could reach it.
-def _drive(screen, monkeypatch, keys, tab="summary"):
+def _drive(screen, monkeypatch, keys, tab="summary", review=True):
 	"""Run main() over a key sequence and hand back the State it built."""
 	box, real = {}, ui.State
+	rev = {"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	       "findings": [{"kind": "note", "loc": "a.py:1", "text": "t"}]}
 	def make(interval, model=None):
 		st = box["st"] = real(interval, model)
-		st.sections = [("MINE", [dict(PR, number=23, url="u23",
-		                              repository={"nameWithOwner": "a/b", "name": "git-dashy"})], None)]
+		pr = dict(PR, number=23, url="u23", repository={"nameWithOwner": "a/b", "name": "git-dashy"})
+		if review:
+			pr["review"] = rev
+		else:
+			pr.pop("review", None)
+			monkeypatch.setattr(ui.log, "last", lambda url: None)
+		st.sections = [("MINE", [pr], None)]
 		st.pane, st.pane_tab = True, tab
 		return st
 	monkeypatch.setattr(ui, "State", make)
@@ -1652,7 +1659,6 @@ def test_the_pane_never_runs_gh_on_the_draw_thread(screen, monkeypatch, st):
 	from dashy.core import diff
 	where = []
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(sp, "run", lambda cmd, **k: where.append(th.current_thread())
 	                    or sp.CompletedProcess(cmd, 0, DIFF_FIXTURE, ""))
 	pr = dict(PR, number=99, url="u99", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
@@ -1669,3 +1675,45 @@ def test_the_pane_never_runs_gh_on_the_draw_thread(screen, monkeypatch, st):
 			break
 		time.sleep(0.005)
 	assert where and all(t is not th.main_thread() for t in where)
+
+
+def test_every_mark_gets_a_row_and_the_chips_agree_with_the_jumps(screen, monkeypatch, st):
+	"""chips enumerated marks while jump counted note rows — one orphan and every chip after it lied."""
+	from dashy.core import diff
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "blocking", "loc": "auto.py:139", "text": "this one is on a line"},
+		{"kind": "note", "loc": "gone/away.py:9", "text": "no such file in the diff"},
+		{"kind": "nit", "loc": "auto.py:9999", "text": "right file wrong line"}])
+	files = diff.parse(DIFF_FIXTURE)
+	marks = diff.anchor(files, ui.log.findings(pr["review"]))
+	rows = ui.code_rows(files, marks, True)
+	anchors = [v for k, v in rows if k in ("note", "orphan")]
+	assert len(anchors) == len(marks) == 3          # every mark is reachable, none counted twice
+
+	# ponytail: each mark in turn, because the pane scrolls to the one n is on — "all three on screen"
+	# would be a claim about the window, and the claim under test is that each one is REACHABLE.
+	# order is anchor.marks' order: on a line, then the same file's unmatched line, then no file at all
+	for i, want in enumerate(["this one is on a line", "right file wrong line", "no such file in the diff"]):
+		st.code_at = i
+		scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+		ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+		out = scr.text()
+		assert want in out, (i, want)
+		assert st.code_at == i                       # n reaches it; it is not clamped away
+	assert "not in this diff" in out                  # and each says which kind of miss it is
+
+
+def test_the_code_tab_gives_its_keys_back_when_it_has_nothing_to_show(screen, monkeypatch):
+	"""On a row with no review the tab draws "no review yet"; D must still reach the drafts toggle."""
+	st = _drive(screen, monkeypatch, [ord("2"), ord("D")], review=False)
+	assert st.pane_tab == "code"
+	assert st.drafts is True and st.code_scope == "marks"
+
+
+def test_f_clears_the_diffs_gh_failed_on(screen, monkeypatch):
+	"""The key that means "go and look again" has to reach the diff cache, not only the PR list."""
+	from dashy.core import diff
+	hit = []
+	monkeypatch.setattr(diff, "retry", lambda: hit.append(1))
+	_drive(screen, monkeypatch, [ord("f")])
+	assert hit == [1]

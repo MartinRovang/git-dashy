@@ -48,7 +48,7 @@ def test_a_finding_lands_on_the_line_it_names():
 		{"kind": "nit", "loc": "CHANGELOG.md", "text": "entry missing the version bump"},
 	])
 	assert [m["kind"] for m in marks] == ["blocking", "nit"]
-	assert (marks[0]["file"], marks[0]["hunk"]) == (0, 0)
+	assert marks[0]["file"] == 0
 	line = next(l for l in files[0]["hunks"][0]["lines"] if l["n"] == 139 and not l["del"])
 	assert line["marks"] == [marks[0]]
 	assert diff.worst(line) == "blocking"
@@ -59,7 +59,7 @@ def test_a_finding_lands_on_the_line_it_names():
 def test_a_finding_about_a_file_the_diff_does_not_touch_is_kept():
 	"""A review's most important line is sometimes about something the change should have touched."""
 	marks = diff.anchor(diff.parse(DIFF), [{"kind": "note", "loc": "nowhere/at/all.py:9", "text": "missing"}])
-	assert len(marks) == 1 and marks[0]["file"] is None and marks[0]["hunk"] is None
+	assert len(marks) == 1 and marks[0]["file"] is None
 
 
 def test_the_worst_mark_on_a_line_is_the_one_it_paints():
@@ -114,7 +114,6 @@ def test_a_diff_gh_cannot_produce_is_not_re_run_on_every_look(monkeypatch):
 		calls.append(1)
 		raise subprocess.TimeoutExpired("gh", diff.TIMEOUT)
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(subprocess, "run", boom)
 	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1
 	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1   # the failure is cached too
@@ -127,7 +126,6 @@ def test_retry_forgets_only_the_failures(monkeypatch):
 	"""A diff that really is empty is not worth re-fetching every time someone presses refresh."""
 	calls = []
 	monkeypatch.setattr(diff, "_CACHE", {})
-	monkeypatch.setattr(diff, "_FAILED", set())
 	monkeypatch.setattr(subprocess, "run",
 	                    lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
 	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1   # gh succeeded and printed nothing
@@ -145,7 +143,22 @@ def test_an_unknown_kind_sorts_last_instead_of_raising():
 	assert [m["kind"] for m in marks] == ["blocking", "wildcard"]   # sorted, not crashed
 
 
-def test_the_context_ring_starts_on_the_default():
+def test_the_context_ring_has_one_home():
 	"""Two copies of one number is how the c key became a KeyError waiting to happen."""
-	assert diff.CONTEXT == diff.CONTEXTS[0]
 	assert len(set(diff.CONTEXTS)) == len(diff.CONTEXTS)
+	assert not hasattr(diff, "CONTEXT")   # a second name for CONTEXTS[0] is a second place to change
+
+
+def test_an_added_line_that_looks_like_a_header_does_not_rewrite_the_path():
+	"""A doc or PR body quoting a diff does exactly this, and this repo writes them constantly."""
+	text = ("diff --git a/docs/memory.md b/docs/memory.md\n"
+	        "--- a/docs/memory.md\n"
+	        "+++ b/docs/memory.md\n"
+	        "@@ -1,1 +1,3 @@\n"
+	        " intro\n"
+	        "+++ b/not-a-file.py\n"
+	        "+really part of the doc\n")
+	files = diff.parse(text)
+	assert [f["path"] for f in files] == ["docs/memory.md"]
+	body = [l["text"] for h in files[0]["hunks"] for l in h["lines"]]
+	assert "++ b/not-a-file.py" in body            # kept as the added line it is
