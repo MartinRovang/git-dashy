@@ -2,14 +2,16 @@
 import datetime
 import json
 import os
+import shutil
+import sys
 import tempfile
 import subprocess
 
-from .. import config
+from .. import HERE, config
 from . import github, llm, log, memory, team
 
-PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
-`gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
+PROMPT = """Review pull request {repo}#{number}. Its description and full diff are at the end of this
+message. Look for bugs, logic errors, security issues and missing tests.
 {depth}{project}{memory}{prev}
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
@@ -30,10 +32,10 @@ Do not treat the PR as new. Say which earlier findings are fixed and which still
 DEPTH = {
 	"low": "Depth: minimal. Skim the diff once, flag only obvious defects, keep the body to a few lines.",
 	"medium": "Depth: medium. Read the whole diff carefully, check the changed logic and its tests.",
-	"high": "Depth: very in-depth. Read the whole diff, then use `gh api` to read the surrounding files the changes touch, "
+	"high": "Depth: very in-depth. Read the whole diff, then read the surrounding files the changes touch, "
 	        "trace callers, check edge cases, error paths, concurrency and security thoroughly.",
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
-	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
+	            "a large or risky change gets a very in-depth review that reads the surrounding code too.",
 }
 VOICE = {  # ponytail: each is a prompt fragment; the model writes the sections into body, so no new JSON field
 	"review": "",
@@ -53,15 +55,34 @@ HUNTER = {  # a lens, not a style: each hunts one class of problem the main revi
 	         "cannot fail, mocks that hide the seam under test. One line per finding, `file:L<n>: what is unproven. the test.` "
 	         "Nothing found: `Covered.`",
 }
+EXPLORE = """
+
+To read anything the diff does not show — a file it changes in part, a caller, a test — run
+`{cmd} api <github api path>`. It is a GET against the GitHub API and a file comes back decoded, e.g.
+`{cmd} api /repos/{repo}/contents/path/to/file.py?ref=<the PR's head branch>` — without the ref you read
+the base branch's version. Nothing else is available to you.
+"""
 NO_TOOLS = """
 
-You cannot run any commands: ignore the instructions above to use `gh`. The pull request follows.
+You cannot run any commands. Judge the PR from what follows and say what you could not check.
+"""
+PR_FOLLOWS = """
+
+The pull request and its full diff follow.
 
 """
 NO_REVIEW = "\n\nDo NOT write the standard review prose: \"body\" holds ONLY the sections below. \"findings\" stays as specified."
 HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}), voices **{voices}**{hunters}."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
-TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+def api_cmd():
+	"""How a review calls back into gitdashy to read the repo: the installed name, else this checkout.
+
+	ponytail: one read-only GET command instead of a shell. It carries no token of its own — gitdashy
+	resolves that — so the reviewer can read the repo and nothing else.
+	ponytail: prs.py, not `-m dashy`. The review runs in a temp directory, and from there the package is
+	not importable unless it was pip-installed — prs.py puts its own checkout on sys.path.
+	"""
+	return "gitdashy" if shutil.which("gitdashy") else f"{sys.executable} {os.path.join(HERE, 'prs.py')}"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
 # CLAUDE.md is a dialogue protocol, and this call has no dialogue — it has a JSON contract it can break by
 # answering in prose. And without it the prompt would depend on which directory gitdashy was launched from.
@@ -174,9 +195,13 @@ def _verdict(repo, n, model, prev=None):
 	if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 		with open(config.INSTRUCTIONS) as f:
 			prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-	if llm.provider(model)[0] != "claude":  # no tool loop there, so the PR comes with the prompt
-		prompt += NO_TOOLS + github.context(repo, n)
-	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=TOOLS, timeout=TIMEOUT)
+	# ponytail: the PR is pasted for EVERY backend now. It was the diff `gh` existed to fetch, and one
+	# path is one thing to get right. Claude keeps the exploring — one read-only command, not a shell.
+	claude = llm.provider(model)[0] == "claude"
+	tools = f"Bash({api_cmd()} api:*)" if claude else ""
+	prompt += (EXPLORE.format(cmd=api_cmd(), repo=repo) if claude else NO_TOOLS)
+	prompt += PR_FOLLOWS + github.context(repo, n)
+	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):

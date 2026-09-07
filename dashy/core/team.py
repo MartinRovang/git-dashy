@@ -6,7 +6,7 @@ import subprocess
 import threading
 
 from .. import config
-from . import log
+from . import github, log
 
 ERROR = ""  # last git failure, shown in the header until the next success
 NAME = ""  # owner/name of the team repo, for the stats strip
@@ -267,9 +267,10 @@ def activate():
 
 
 def clone(repo, dest):
-	"""Clone `repo` into `dest`: owner/name goes through gh, a path or URL through git. "" or an error."""
+	"""Clone `repo` into `dest`: owner/name becomes a github URL, a path or URL is taken as given."""
 	local = os.path.isdir(repo) or "://" in repo or "@" in repo
-	cmd = ["git", "clone", "-q", repo, dest] if local else ["gh", "repo", "clone", repo, dest]
+	cmd = ["git", "clone", "-q", repo, dest] if local else \
+		["git", *github.git_auth(), "clone", "-q", f"https://github.com/{repo}.git", dest]
 	return "" if _note(_remote(cmd)) else ERROR
 
 
@@ -326,8 +327,8 @@ def seed_project(path):
 
 def setup(repo, create=False):
 	"""Clone (or create private + clone) the team repo, seed it with the local log. Returns '' or an error."""
-	if create and not _note(_remote(["gh", "repo", "create", repo, "--private"])):
-		return ERROR
+	if create and (err := github.create_repo(repo)):
+		return "create: " + err.strip().splitlines()[0][:60]
 	if is_own_memory(repo):
 		return "that is your own memory directory, which holds drafts — use a different repo for the team"
 	err = clone(repo, config.TEAM)

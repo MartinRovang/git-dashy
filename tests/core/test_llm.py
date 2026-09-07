@@ -7,10 +7,10 @@ import urllib.request
 import pytest
 
 from dashy import config
-from dashy.core import llm
+from dashy.core import github, llm
 from dashy.core.review import review
 
-from conftest import PR, Result
+from conftest import PR, Body, Result
 
 
 def test_provider_splits_only_known_prefixes():
@@ -63,21 +63,21 @@ def test_local_backend_sends_no_key_when_unset(monkeypatch):
 
 
 def test_review_on_openai_backend_pastes_the_pr_and_posts(monkeypatch):
-	seen, calls = [], []
+	"""No tool loop on this backend, so the PR has to arrive in the prompt — and the model never runs."""
+	seen, calls, asked = [], [], []
 	verdict = json.dumps({"verdict": "approve", "summary": "s", "body": "b", "findings": []})
-	monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen(seen, answer(verdict)))
-	def fake_run(cmd, **kw):
-		calls.append(cmd)
-		return Result(json.dumps({"title": "a pr"}) if "--json" in cmd else "DIFF-BODY")
-	monkeypatch.setattr(subprocess, "run", fake_run)
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Result("{}"))
+	def http(req, timeout=None):
+		if req.full_url.startswith(github.API):  # the PR, its diff, the hello and the verdict
+			asked.append((req.full_url, req.headers.get("Accept", "")))
+			return Body(b"DIFF-BODY" if "diff" in req.headers.get("Accept", "") else b'{"title": "a pr"}')
+		return fake_urlopen(seen, answer(verdict))(req, timeout)
+	monkeypatch.setattr(urllib.request, "urlopen", http)
 	assert review(dict(PR), "local:qwen3") == "✓ approved"
-	assert ["gh", "pr", "diff", "7", "--repo", "a/b"] in calls
-	assert not any(c[0] == "claude" for c in calls)  # the CLI is never touched
+	assert not calls  # neither the claude CLI nor gh is touched
+	assert ("https://api.github.com/repos/a/b/pulls/7", "application/vnd.github.v3.diff") in asked
 	sent = json.loads(seen[0].data)["messages"][-1]["content"]
 	assert "DIFF-BODY" in sent and "title: a pr" in sent
-	# ponytail: `gh pr view` without --json asks GraphQL for projectCards and exits 1 on repos with
-	# classic projects. Naming the fields is the fix, so the test names it too.
-	assert all("--json" in c for c in calls if c[:3] == ["gh", "pr", "view"])
 
 
 class Dribble:

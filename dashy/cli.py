@@ -1,11 +1,13 @@
 """Argument parsing and the curses entry point. ponytail: sys.argv scan, argparse would be more code than this."""
+import base64
 import curses
 import itertools
+import json
 import os
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import bind as bind_mod, install as install_mod, memory, mirror, review as review_mod, team
+from .core import bind as bind_mod, github, install as install_mod, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -16,6 +18,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
+       gitdashy api PATH
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
@@ -29,7 +32,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
   --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
-  --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
+  --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
 
 sync-memory copies this repo's review memory into PATH as a read-only mirror, so an agent session there
   reads what the reviews learned. --repo defaults to this directory's origin. Cross-repo facts are left out:
@@ -325,6 +328,28 @@ def bind(argv):
 	print(f"  reviews of {bind_mod.key(repo) or repo} read: {whose}" + ("" if text else " (nothing to read)"))
 
 
+def api(argv):
+	"""GET one GitHub API path and print it. This is how a review reads the repo now that gh is gone.
+
+	ponytail: GET only, github only, and a file arrives decoded rather than as base64 in an envelope.
+	It is the one command a review is allowed to run, so what it can do is what a reviewer may do: read.
+	"""
+	path = next((a for a in argv[2:] if not a.startswith("-")), "")
+	if not path:
+		raise SystemExit("gitdashy: api needs a path, e.g. /repos/owner/name/contents/src/app.py")
+	try:
+		raw = github.call(path if path.startswith(("/", "http")) else "/" + path, timeout=60)
+	except OSError as e:
+		raise SystemExit(f"gitdashy: {e}")
+	try:
+		d = json.loads(raw)
+	except ValueError:
+		return print(raw)  # a diff, a raw file: already text
+	if isinstance(d, dict) and d.get("encoding") == "base64":
+		return print(base64.b64decode(d["content"]).decode(errors="replace"))
+	print(json.dumps(d, indent=1))
+
+
 def drafts(argv):
 	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
 	team.activate()
@@ -369,6 +394,8 @@ def run(argv=None):
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "bind":
 		return bind(argv)
+	if len(argv) > 1 and argv[1] == "api":
+		return api(argv)
 	if len(argv) > 1 and argv[1] == "drafts":
 		return drafts(argv)
 	if len(argv) > 1 and argv[1] == "self-check":

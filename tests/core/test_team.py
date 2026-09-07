@@ -81,6 +81,19 @@ def test_setup_accepts_a_url_and_never_waits_on_a_prompt(monkeypatch, tmp_path):
 	assert not team.on()
 
 
+def test_owner_name_clones_over_https_with_the_api_token(monkeypatch, tmp_path):
+	"""No gh to clone with: owner/name becomes a URL, and a private team repo needs the token on it."""
+	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
+	monkeypatch.setenv("GH_TOKEN", "gho_x")
+	seen = {}
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: seen.update(cmd=cmd) or subprocess.CompletedProcess(cmd, 1, "", "nope"))
+	team.setup("org/review-team")
+	assert seen["cmd"][0] == "git" and "clone" in seen["cmd"]
+	assert seen["cmd"][-2] == "https://github.com/org/review-team.git"
+	assert seen["cmd"][1:3] == ["-c", "http.extraHeader=Authorization: Bearer gho_x"]
+
+
 def test_setup_keeps_a_users_own_ssh_command(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "TEAM", str(tmp_path / "me"))
 	monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /keys/mine")

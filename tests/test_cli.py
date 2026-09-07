@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -252,3 +253,27 @@ def test_drafts_prints_a_heading_for_every_group_including_general(monkeypatch, 
 	assert "general" in out and "a/b" in out
 	assert out.index("general") < out.index("a general guess")   # the heading is ABOVE its rows
 	assert out.index("a/b") < out.index("a repo guess")
+
+
+def test_api_prints_a_file_decoded_and_json_as_json(monkeypatch, capsys):
+	"""The reviewer's one command. A file arrives base64 in an envelope; a model must not have to unwrap it."""
+	import base64
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: json.dumps(
+		{"encoding": "base64", "content": base64.b64encode(b"def f():\n\tpass\n").decode()}
+		if "contents" in path else {"number": 7}))
+	cli.api(["gitdashy", "api", "/repos/a/b/contents/x.py?ref=feat"])
+	assert capsys.readouterr().out == "def f():\n\tpass\n\n"
+	cli.api(["gitdashy", "api", "repos/a/b/pulls/7"])  # a path with no leading slash still works
+	assert json.loads(capsys.readouterr().out) == {"number": 7}
+
+
+def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: (_ for _ in ()).throw(github.Error("404 x: Not Found")))
+	with pytest.raises(SystemExit, match="Not Found"):
+		cli.api(["gitdashy", "api", "/repos/a/b/pulls/9"])
+	with pytest.raises(SystemExit, match="needs a path"):
+		cli.api(["gitdashy", "api"])

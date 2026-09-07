@@ -29,7 +29,7 @@ INTERVALS = [60, 120, 300, 600, 900]  # i cycles
 INTERVAL = 300  # seconds between refreshes, --interval overrides
 NOTIFY = os.environ.get("PRS_NOTIFY", "1") != "0"  # desktop popup when a PR asks for me; the Esc menu toggles it
 THEME = os.environ.get("PRS_THEME", "dashy")  # colour theme, the Esc menu cycles it; names in ui.screen.THEMES
-SPLASH_MIN = 1.0  # seconds the startup splash stays up even if gh is fast
+SPLASH_MIN = 1.0  # seconds the startup splash stays up even if github is fast
 SUBS = ["all", "open", "off"]  # which rows get a summary line under them
 SUB = "all"
 WINDOWS = [1, 4, 6, None]  # hours of REVIEWED history to show, None = all

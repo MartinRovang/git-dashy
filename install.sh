@@ -33,7 +33,7 @@ warn() { printf '\n    %s⚠%s  %s\n' "$YELLOW" "$R" "$1"; }
 printf '  %s✓%s installed %s%s%s  %s→ %s%s\n\n' "$GREEN" "$R" "$B" "${TAG:-main}" "$R" "$DIM" "$DIR" "$R"
 printf '  Run it with %s%s%s%s in your terminal:\n\n' "$B" "$PINK" "$NAME" "$R"
 row "$NAME"          "your PRs, review-requested, assigned"
-row "$NAME --demo"   "try it with canned data (no gh, no claude)"
+row "$NAME --demo"   "try it with canned data (no token, no claude)"
 row "$NAME --help"   "all flags and keys"
 
 case ":$PATH:" in
@@ -41,5 +41,5 @@ case ":$PATH:" in
 	*) warn "$BIN is not on your PATH — add to your shell rc:"
 	   printf '       %sexport PATH="%s:$PATH"%s\n' "$CYAN" "$BIN" "$R" ;;
 esac
-command -v gh >/dev/null || warn "gh is required — https://cli.github.com"
+[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || warn "no github token — export GH_TOKEN=… (scope: repo)"
 printf '\n'

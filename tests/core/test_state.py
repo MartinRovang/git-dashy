@@ -167,7 +167,7 @@ def test_notify_cmd_pins_the_payload_contract():
 	cmd = state.notify_cmd(PR, "ASSIGNED")
 	assert cmd[0] == "notify-send" and "-A" in cmd and cmd[-2] == "#7 T" and cmd[-1] == "<b>b</b> · me assigned you"
 	assert "wants a review" in state.notify_cmd(PR, "REVIEW REQUESTED")[-1]
-	assert all(f in github.FIELDS for f in ("number", "title", "repository", "author"))
+	assert all(f in github.ROW for f in ("number", "title", "repository", "author"))
 	with pytest.raises(TypeError):
 		state.notify_cmd(dict(PR, author=None), "ASSIGNED")  # a deleted account; notify() swallows this
 

@@ -1,7 +1,7 @@
 """Which model answers a prompt. Default is the claude CLI; "provider:model" goes to an OpenAI-compatible API.
 
-ponytail: the OpenAI path is ONE chat completion, no tool loop. Claude reads the PR itself with `gh`;
-everyone else gets `gh pr view` + `gh pr diff` pasted into the prompt by the caller. Add a tool loop when
+ponytail: the OpenAI path is ONE chat completion, no tool loop. The caller pastes the PR into the prompt
+for every backend; claude alone is given a command to read further with. Add a tool loop when
 a backend proves it can drive one, not before.
 """
 import json
