@@ -221,13 +221,17 @@ def seed(to, repos):
 	"""
 	if not to:
 		return []
-	touched = _entries()[2]
+	# ponytail: ONE read, reused for every repo. `of(r)` per repo re-opened ~/.prs_bindings once per
+	# entry, and with the mirror registry folded in that is len(log) + len(registry) reads at startup,
+	# inside curses. _pick against the entry we already hold answers the same question.
+	entry = _entries()
+	touched = entry[2]
 	wrote = []
 	for repo in repos:
-		# ponytail: `of(r)` too, so a repo an OWNER rule already covers is not given a redundant row of
-		# its own. Writing one would pin it to whatever team the rule named at seed time, and removing
-		# the rule later would leave rows nobody chose repo by repo.
-		if (r := key(repo)) and r not in touched and not of(r) and not _append({"repo": r, "team": to}):
+		# ponytail: the owner rule too, so a repo it already covers is not given a redundant row of its
+		# own. Writing one would pin it to whatever team the rule named at seed time, and removing the
+		# rule later would leave rows nobody chose repo by repo.
+		if (r := key(repo)) and r not in touched and not _pick(entry, r)[1] and not _append({"repo": r, "team": to}):
 			touched.add(r)  # ponytail: `repos` may name one repo twice; the file must not
 			wrote.append(r)
 	return wrote

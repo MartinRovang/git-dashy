@@ -68,6 +68,18 @@ def test_fetch_joins_ci_and_head_from_graphql_for_every_section(monkeypatch):
 	assert github.checks({"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}) == "●"
 
 
+def test_a_pr_missing_from_the_graphql_result_gets_no_head(monkeypatch):
+	"""An absent node must read like a failed call — no head at all, not "" masquerading as one."""
+	per_flag = {"--author=@me": [], "--review-requested=@me": [dict(PR, url="b")], "--assignee=@me": []}
+	def fake_run(cmd, **kw):
+		if cmd[1] == "api":
+			return Result(json.dumps({"data": {"mine": {"nodes": []}, "rr": {"nodes": []}, "asg": {"nodes": []}}}))
+		return Result(json.dumps(per_flag[cmd[4]]))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	b = github.fetch()[1][1][0]
+	assert "head" not in b and b["checks"] == ""
+
+
 def test_open_in_browser_uses_open_on_mac(monkeypatch):
 	ran = []
 	monkeypatch.setattr(github.subprocess, "Popen", lambda cmd, **kw: ran.append(cmd))

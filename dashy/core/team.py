@@ -253,9 +253,17 @@ def activate():
 	# that is not reviewing — a repo wired with `gitdashy init` and never reviewed stayed unbound, so
 	# mirror._write resolved sources(repo) to yours alone and, because a mirror never outlives its
 	# source, DELETED the general.md and repo.md already sitting in that repo on the next refresh tick.
-	# An init-wired repo is one you declared an interest in; it is exactly what the seed is for.
+	# ponytail: but only registry repos the team ALREADY HOLDS FACTS FOR. logged_repos() is disclosure-
+	# neutral by construction — the team can see those names already. The registry is not: it is every
+	# repo `gitdashy init` ever wired, personal side projects included, and binding one makes its facts
+	# poolable and shareable. Seeding the whole registry fixed a deletion by GRANTING DISCLOSURE that
+	# neither of the old rules gave, which is a fix carried past its reason. This set is exactly the old
+	# disclosure test, and exactly the set whose repo.md the mirror would otherwise strip: a repo the
+	# team has no facts about only ever had general.md mirrored, and dropping that IS the new rule.
 	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
-	bind.seed(NAME, sorted(memory.logged_repos()) + [r for _, r, *_ in install.registered() if r])
+	theirs = os.path.join(config.TEAM, "memory")
+	known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
+	bind.seed(NAME, sorted(memory.logged_repos()) + known)
 
 
 def clone(repo, dest):

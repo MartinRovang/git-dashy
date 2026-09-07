@@ -324,3 +324,20 @@ def test_a_fetch_already_running_when_the_verdict_lands_cannot_baseline_it(monke
 	st.wake = __import__("threading").Event()
 	one_loop(st, monkeypatch, [("MINE", [dict(PR, url="m", updatedAt="post")], None)])
 	assert st.seen_at["m"] == "post"
+
+
+def test_auto_does_not_re_review_on_a_fetch_older_than_the_verdict(monkeypatch):
+	"""The re-review sweep reads the fetch's REVIEWED section, which a fetch that started before the
+	verdict landed does not carry — so it still sees the OLD log entry, calls the PR pushed-to-since,
+	drops the verdict we wrote a second ago, and auto reviews the same head twice.
+	"""
+	started = []
+	monkeypatch.setattr(State, "start_review", lambda self, p: started.append(p["url"]))
+	log.log_review(dict(PR, url="a", head="old"), "opus", {"verdict": "approve", "body": ""})
+	st = State(0)
+	st.set_auto(True, include_existing=True)
+	st.reviews["a"] = "✓ approved"      # the re-review of head "new" that just finished
+	st.done_at["a"] = time.time() + 60  # ...after this fetch began
+	one_loop(st, monkeypatch, [("REVIEW REQUESTED", [dict(PR, url="a", head="new")], None),
+	                           ("REVIEWED", log.reviewed(), None)])
+	assert st.reviews == {"a": "✓ approved"} and started == []

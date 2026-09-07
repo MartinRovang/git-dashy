@@ -155,12 +155,27 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 	monkeypatch.setattr(config, "MEMORY_DIR", str(mem))
 	monkeypatch.setattr(install, "REGISTRY", str(tmp_path / "mirrors"))
 	install.register(str(tmp_path / "wired"), "acme/only-wired")   # init'd, never reviewed
+	install.register(str(tmp_path / "mine"), "me/weekend-thing")   # init'd, and none of the team's business
 	open(log.LOG, "w").write('{"pr":{"repository":{"nameWithOwner":"acme/reviewed"}}}\n')
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	assert team.setup(str(remote)) == ""
-	assert bind.of("acme/reviewed") == team.NAME   # the log route
-	assert bind.of("acme/only-wired") == team.NAME  # and the mirror route
+	# the team holds facts for one of the wired repos; the mirror would strip them if it stayed unbound
+	shared = tmp_path / "me" / "memory"
+	shared.mkdir(parents=True, exist_ok=True)
+	(shared / "acme__only-wired.md").write_text("- the team knows this repo\n")
+	team.activate()
+	assert bind.of("acme/reviewed") == team.NAME    # the log route
+	assert bind.of("acme/only-wired") == team.NAME  # and the mirror route, for a repo they can see
+
+	# ponytail: and NOT the other way. The registry is every repo `gitdashy init` ever wired, personal
+	# ones included; binding one makes its facts poolable and shareable, which neither old rule did.
+	assert bind.of("me/weekend-thing") == ""
+	assert not memory.team_visible("me/weekend-thing")
+	memory.append("me/weekend-thing", "my side project uses bun")
+	memory.append("me/weekend-thing", "my side project uses bun")   # promoted for me
+	assert ("me/weekend-thing", "my side project uses bun") not in memory.shareable()
+	assert not os.path.exists(memory.pool_path(memory.whoami(), "me/weekend-thing"))
 
 
 def test_joining_a_team_that_already_has_a_log_seeds_from_theirs(monkeypatch, tmp_path):
