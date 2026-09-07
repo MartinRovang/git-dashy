@@ -102,8 +102,8 @@ def test_reviewers_merges_requests_over_latest_reviews():
 	                                    {"author": {"login": "carol"}, "state": "CHANGES_REQUESTED"}, None]},
 	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "alice"}},
 	                                     {"requestedReviewer": {"login": "carol"}},  # re-requested after her ✗
-	                                     {"requestedReviewer": {"slug": "backend"}}, {"requestedReviewer": None}]}}
-	assert github.reviewers(node) == "✓bob ·carol ·alice ·backend"
+	                                     {"requestedReviewer": {}}, {"requestedReviewer": None}]}}  # a Team: not asked for
+	assert github.reviewers(node) == "✓bob ·carol ·alice"
 	assert github.reviewers({}) == ""
 
 

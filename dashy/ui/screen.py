@@ -185,9 +185,10 @@ def draw(scr, state, sel, prompt=None, now=None):
 	h, w = scr.getmaxyx()
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
-		busy = set(state.running)  # ponytail: copied under the same lock as reviews
+		# ponytail: verdicts too, or a draft under review vanishes on the frame its answer lands
+		busy = set(state.running) | set(reviews)
 		since = dict(state.started_at)
-	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
+	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded, busy)
 	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
 		rs = [r for r in rs if r[0] != "cols"]
 	prs = [i for i, (k, _) in enumerate(rs) if k == "pr"]

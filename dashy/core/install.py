@@ -231,7 +231,7 @@ def remove(dry=False):
 			out.append(f"SKIP    {knowledge.tilde(link)} is not the link we made — left alone")
 		else:
 			out.append(f"ok      {knowledge.tilde(link)} is not there")
-	md = os.path.join(d := claude_dir(), "CLAUDE.md")
+	md = os.path.join(claude_dir(), "CLAUDE.md")
 	text = _read(md)
 	if BEGIN in text and END in text:
 		out.append(f"{did}remove  the import block from {knowledge.tilde(md)}")
@@ -425,13 +425,13 @@ def full_explain(corpus, url=""):
 	           + ("   [EXISTS, will be left alone]" if os.path.isdir(CORPUS_HOME) else "   [new]"))
 	out.append(f"  · symlink {knowledge.tilde(os.path.join(d, 'identity'))} -> that corpus's identity/")
 	out.append(f"  · import {len(names)} files into {knowledge.tilde(os.path.join(d, 'CLAUDE.md'))}: {', '.join(names)}")
-	out.append(f"  · seed USER.md from the template, for you to fill in, if it is not there already")
+	out.append("  · seed USER.md from the template, for you to fill in, if it is not there already")
 	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
 	out.append("  · everything plain `gitdashy install` does, for review memory")
 	out.append("")
-	out.append(f"What that costs, every session on this machine, permanently:")
+	out.append("What that costs, every session on this machine, permanently:")
 	out.append(f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
-	out.append(f"  · one hook running at the start of every session, in every repo")
+	out.append("  · one hook running at the start of every session, in every repo")
 	out.append("")
 	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
 	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
@@ -783,7 +783,7 @@ def setup(ask, corpus_home=None):
 	got = [(k, ask(f"{k} — {hint}")) for k, hint in ASK_PROJECT]
 	text = compose("What is being built", "Written by `gitdashy setup`. Every review reads this.", got)
 	if not text:
-		return out + [f"ok     no brief written — `gitdashy setup` again whenever you want one"]
+		return out + ["ok     no brief written — `gitdashy setup` again whenever you want one"]
 	os.makedirs(os.path.dirname(dest), exist_ok=True)
 	_write_text(dest, text)
 	out.append(f"wrote  {knowledge.tilde(dest)}")

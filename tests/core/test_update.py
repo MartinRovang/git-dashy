@@ -1,6 +1,5 @@
 import subprocess
 
-import pytest
 
 from dashy.core import update
 from dashy.core.update import update_available

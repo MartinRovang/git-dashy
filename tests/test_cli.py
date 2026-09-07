@@ -1,5 +1,4 @@
 import os
-import subprocess
 
 import pytest
 
@@ -193,7 +192,7 @@ def test_saying_yes_reaches_setup_and_no_does_not(monkeypatch, tmp_path, capsys)
 
 def test_a_failed_full_install_never_offers_the_briefs(monkeypatch, tmp_path):
 	"""The guard depends on install.fail() emitting a line prefixed FAIL — nothing else holds that."""
-	called = _offer_env(monkeypatch, tmp_path)
+	_offer_env(monkeypatch, tmp_path)
 	offered = []
 	monkeypatch.setattr(cli, "offer_setup", lambda argv: offered.append(argv))
 	monkeypatch.setattr(install_mod, "full_apply", lambda *a, **k: ["ok    something", "FAIL  broken"])
