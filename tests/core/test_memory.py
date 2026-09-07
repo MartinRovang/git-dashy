@@ -532,3 +532,57 @@ def test_push_reports_a_team_failure_but_not_the_absence_of_a_team(monkeypatch, 
 	(d / "memory" / "general.md").write_text("- changed\n")
 	monkeypatch.setattr(team, "_git", fake)
 	assert team.push("memory: doomed"), "a team commit that fails must explain itself"
+
+
+def test_waiting_shows_both_queues_and_never_the_facts(monkeypatch, tmp_path):
+	"""The store with no window into it. Reading it is safe: the invariant guards a PROMPT, not a person."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("- a settled fact\n")
+	memory.append("a/b", "seen once")
+	memory.append(None, "a general guess")
+	memory.append_self("a/b", "a pre-review found this")
+	got = memory.waiting()
+	assert (None, 1, "a general guess", "draft") in got
+	assert ("a/b", 1, "seen once", "draft") in got
+	assert ("a/b", 1, "a pre-review found this", "self") in got
+	assert not any("settled" in f for _r, _n, f, _k in got)  # a fact is not waiting for anything
+	memory.append("a/b", "seen once")  # a second review promotes it
+	assert not any(f == "seen once" for _r, _n, f, _k in memory.waiting())
+
+
+def test_waiting_is_not_confused_by_the_self_directory(monkeypatch, tmp_path):
+	"""drafts/ holds the self/ DIRECTORY as well as its own files; listdir returns both."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append_self("a/b", "only a pre-review here")
+	assert memory.waiting() == [("a/b", 1, "only a pre-review here", "self")]
+
+
+def test_dropping_an_observation_is_the_prune_drafts_never_had(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "a guess\nanother guess")
+	memory.append_self("a/b", "a pre-review guess")
+	assert memory.drop("a/b", "a guess") is True
+	assert memory.drop("a/b", "a pre-review guess") is True   # either queue
+	assert memory.drop("a/b", "never proposed") is False
+	assert [f for _r, _n, f, _k in memory.waiting()] == ["another guess"]
+	assert memory._facts(memory.path("a/b")) == []            # dropping is not promoting
+
+
+def test_promoting_by_hand_needs_a_person_not_a_second_review(monkeypatch, tmp_path):
+	"""PROMOTE_AT is a proxy for judgement. Once a person HAS read the line, it is not needed."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b")) == []             # one review is not enough on its own
+	memory.promote("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b")) == ["the API owns all validation"]
+	assert memory.waiting() == []                              # and it stops waiting
+	memory.promote("a/b", "the API owns all validation")       # idempotent, no duplicate line
+	assert memory._facts(memory.path("a/b")) == ["the API owns all validation"]
+
+
+def test_promoting_a_pre_review_finding_works_the_same_way(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append_self("a/b", "a pre-review noticed this")
+	memory.promote("a/b", "a pre-review noticed this")
+	assert memory._facts(memory.path("a/b")) == ["a pre-review noticed this"]
+	assert memory.self_drafts("a/b") == []

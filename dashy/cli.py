@@ -18,6 +18,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
+       gitdashy drafts [--repo owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -71,6 +72,11 @@ bind says which team a repo belongs to, and that decides everything the team kno
   sticks. Defaults to this directory\'s origin; --list shows every rule. A bare `bind` reports and changes
   no binding of its own — though joining a team seeds from its log on any command, including this one.
 
+drafts shows what a review proposed and no second review has confirmed — the store nothing else can
+  show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,
+  because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
+  promotes one by hand or drops it.
+
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
   one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
@@ -86,7 +92,7 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
-P share your facts with the team (t share, x forget), Z dream (Claude tidies all memory, you approve),
+P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
 T team repo setup or leave, u install the newest release, f refresh, q quit."""
 
 
@@ -316,6 +322,30 @@ def bind(argv):
 	print(f"  reviews of {bind_mod.key(repo) or repo} read: {whose}" + ("" if text else " (nothing to read)"))
 
 
+def drafts(argv):
+	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
+	team.activate()
+	only = arg("--repo", "", str, argv)
+	rows = memory.waiting()
+	if only:
+		rows = [r for r in rows if (r[0] or "general") == only]
+	if not rows:
+		return print("  nothing waiting — every observation so far is either a fact or gone")
+	rows.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))
+	where = None
+	for repo, n, fact, kind in rows:
+		if repo != where:
+			where = repo
+			team_of = bind_mod.of(repo) if repo else ""
+			print(f"\n  {repo or 'general'}" + (f"  ({team_of})" if team_of else ""))
+		# ponytail: the count is the whole point of the line — it says how close this is to being a fact,
+		# and a pre-review finding has no count at all because one opinion twice is still one opinion.
+		tag = "pre-review" if kind == "self" else f"seen {n}×"
+		print(f"    [{tag:>10}]  {fact}")
+	print(f"\n  {len(rows)} waiting · {memory.PROMOTE_AT} independent observations make a fact · "
+	      f"W in the dashboard promotes or drops one")
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -336,6 +366,8 @@ def run(argv=None):
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "bind":
 		return bind(argv)
+	if len(argv) > 1 and argv[1] == "drafts":
+		return drafts(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:

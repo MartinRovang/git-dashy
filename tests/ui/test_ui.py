@@ -1104,3 +1104,70 @@ def test_in_flight_row_says_how_long_it_has_been_running():
 		return "\n".join(scr.line(y) for y in range(scr.h))
 	assert "pre-reviewing… 42s" in painted(1042.0)
 	assert "pre-reviewing… 3m" in painted(1000.0 + 3 * 60 + 7)
+
+
+def _waiting(monkeypatch, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	memory.append("a/b", "one review saw this")
+	memory.append("a/b", "one review saw this")   # -> a fact, so it must NOT appear
+	memory.append("a/b", "still only a guess")
+	memory.append_self("a/b", "a pre-review found this")
+	return memory
+
+
+def test_drafts_screen_shows_what_is_waiting_and_how_close_it_is(screen, monkeypatch, st, tmp_path):
+	"""The only store with no window into it. Counts are the point: they say how close a guess is."""
+	_waiting(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	out = screen.text()
+	assert "still only a guess" in out and "seen 1×" in out and "1 more to go" in out
+	assert "1/2" in out                       # the promoted fact is not waiting for anything
+	assert "one review saw this" not in out
+
+
+def test_drafts_screen_sorts_a_pre_review_last_and_marks_it(screen, monkeypatch, st, tmp_path):
+	"""A pre-review and the real review are one model on one diff, so it carries no count."""
+	_waiting(monkeypatch, tmp_path)
+	screen.getch, screen.timeout = _keys(ord("j"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	out = screen.text()
+	assert "a pre-review found this" in out and "pre-review · one opinion" in out
+	assert "seen 1×" not in out               # no count on this one
+
+
+def test_drafts_screen_promotes_and_drops(screen, monkeypatch, st, tmp_path):
+	memory = _waiting(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui.team, "push", lambda m: None)
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	screen.getch, screen.timeout = _keys(ord("t"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert "still only a guess" in memory._facts(memory.path("a/b"))   # accepted by hand
+	screen.getch = _keys(ord("x"), 27)
+	ui.drafts_screen(screen, st, 0)
+	assert memory.waiting() == []                                      # the pre-review one dropped
+
+
+def test_drafts_screen_says_so_when_nothing_is_waiting(screen, monkeypatch, st, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "empty"))
+	screen.getch, screen.timeout = _keys(ord(" ")), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert "nothing waiting" in screen.text()
+
+
+def test_a_panels_right_value_never_lands_on_its_own_label(screen):
+	"""panel() sized itself on the LEFT texts only, so a long right value overwrote the label.
+
+	It showed up as "me/weekenpre-review · waits…" in the drafts screen. Every panel with a right
+	column was one long value away from it; the share screen escaped only because its marks are short.
+	"""
+	ui.panel(screen, "t", [("me/weekend", "pre-review · waits for a real review to confirm it")], "f")
+	out = screen.text()
+	assert "me/weekend" in out and "pre-review · waits for a real review to confirm it" in out
+
+	# and the bound holds even when the box cannot grow: the label survives, the value is dropped
+	screen.erase()
+	screen.w = 44
+	ui.panel(screen, "t", [("me/weekend", "x" * 60)], "f")
+	assert "me/weekend" in screen.text()

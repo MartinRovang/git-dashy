@@ -297,6 +297,29 @@ bootstrap still happens, into a store you can read and take back: `gitdashy bind
 `--list`. A `--forget` leaves a tombstone, so the next startup's seeding does not undo it, and seeding
 skips repos an owner rule already covers rather than pinning them to a team nobody chose repo by repo.
 
+## 4c. Looking at what is not a fact yet
+
+`gitdashy drafts` lists them; **`W`** in the dashboard shows one at a time, `t` accepts it as a fact,
+`x` drops it.
+
+**Reading drafts does not weaken the invariant that guards them.** "Never read into a prompt" keeps the
+MODEL from meeting its own guess as evidence and agreeing with itself — that is what would make the
+count measure repetition instead of durability. A PERSON cannot self-confirm, so showing them costs
+nothing. The window was missing because the two got conflated, not because anyone decided against it.
+
+`t` is the only path into your memory that is not recurrence, and it takes a person. `PROMOTE_AT` is a
+proxy for a judgement you may already have: recurrence is the right gate for a line nobody has read,
+but once you HAVE read it and know it is true, requiring a second review to rediscover it is asking the
+machine to re-derive what you can already see. It pools like any promotion, so the evidence trail says
+the same thing either way.
+
+`x` is the prune the drafts store never had. Everything else self-limits — facts go with `forget`, the
+pool is withdrawn on share or forget — and drafts only ever grew (SPEC §8).
+
+A `pre-review` row carries no count, because a pre-review and the real review are one model on one
+diff. It sorts last, and it is still promotable by hand: a person reading it is a second opinion in a
+way a second run of the same model is not.
+
 ## 5. Writes and pushes
 
 | event | writes | pushes |
