@@ -60,7 +60,8 @@ EXPLORE = """
 To read anything the diff does not show — a file it changes in part, a caller, a test — run
 `{cmd} api <github api path>`. It is a GET against the GitHub API and a file comes back decoded, e.g.
 `{cmd} api /repos/{repo}/contents/path/to/file.py?ref=<the PR's head branch>` — without the ref you read
-the base branch's version. Nothing else is available to you.
+the base branch's version. Add `--diff` for a unified diff instead of json, e.g.
+`{cmd} api /repos/{repo}/compare/<base>...<head> --diff`. Nothing else is available to you.
 """
 NO_TOOLS = """
 

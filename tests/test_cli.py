@@ -279,6 +279,18 @@ def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
 		cli.api(["gitdashy", "api"])
 
 
+def test_api_asks_for_a_diff_when_told_to(monkeypatch, capsys):
+	"""A patch inside json is readable but escaped; --diff is the same GET with one header changed."""
+	from dashy import cli
+	from dashy.core import github
+	seen = []
+	monkeypatch.setattr(github, "call", lambda path, **kw: seen.append(kw["accept"]) or "diff --git a b")
+	cli.api(["gitdashy", "api", "/repos/a/b/compare/x...y", "--diff"])
+	assert seen == ["application/vnd.github.v3.diff"] and capsys.readouterr().out == "diff --git a b\n"
+	cli.api(["gitdashy", "api", "/repos/a/b/pulls/7"])
+	assert seen[-1] == "application/vnd.github+json"
+
+
 def test_api_refuses_a_url(monkeypatch):
 	"""The caller is a model that has just read an untrusted diff. A diff that talks it into pointing
 	this at another host must not get a request out of it, token or no token."""

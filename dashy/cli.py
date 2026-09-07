@@ -18,7 +18,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
-       gitdashy api PATH
+       gitdashy api PATH [--diff]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
@@ -329,7 +329,8 @@ def bind(argv):
 
 
 def api(argv):
-	"""GET one GitHub API path and print it. This is how a review reads the repo now that gh is gone.
+	"""GET one GitHub API path and print it, `--diff` for a unified diff. This is how a review reads the
+	repo now that gh is gone.
 
 	ponytail: GET only, github only, and a file arrives decoded rather than as base64 in an envelope.
 	It is the one command a review is allowed to run, so what it can do is what a reviewer may do: read.
@@ -343,7 +344,8 @@ def api(argv):
 	if path.startswith(("http://", "https://", "//")):
 		raise SystemExit("gitdashy: api takes an API path, not a URL")
 	try:
-		raw = github.call(path if path.startswith("/") else "/" + path, timeout=60)
+		accept = "application/vnd.github.v3.diff" if "--diff" in argv else "application/vnd.github+json"
+		raw = github.call(path if path.startswith("/") else "/" + path, accept=accept, timeout=60)
 	except OSError as e:
 		raise SystemExit(f"gitdashy: {e}")
 	try:
