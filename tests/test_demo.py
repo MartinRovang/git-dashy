@@ -2,7 +2,6 @@ import os
 import subprocess
 import time
 
-import pytest
 
 from dashy import demo
 from dashy.core import github, log, review as review_mod

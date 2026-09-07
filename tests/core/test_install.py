@@ -82,7 +82,7 @@ def test_wire_repo_excludes_imports_registers_and_mirrors(monkeypatch, tmp_path)
 	subprocess.run(["git", "init", "-q", str(repo)], check=True)
 	loader = repo / "NOTES.md"
 	loader.write_text("# notes\n")
-	out = install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
+	install.wire_repo(str(repo / ".agent" / "team"), str(loader), "o/n")
 	assert ".agent/team/" in (repo / ".git" / "info" / "exclude").read_text()
 	assert "@.agent/team/repo.md" in loader.read_text()
 	entry = install.registered()[0]
