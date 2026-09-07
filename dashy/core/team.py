@@ -465,19 +465,35 @@ def looks_local(repo):
 	                       or repo.startswith(("/", "./", "../", "~")))
 
 
-def ssh_form(url):
-	"""The ssh form of an https URL — "https://host/a/b(.git)" -> "git@host:a/b.git". "" if it is not one.
+FOOTER = 66  # ponytail: confirm() wraps a message as " {err}  [any key]" and draw() hard-clips the
+             # footer at w - 1, so 66 is what survives an 80-column terminal. Not a guess: the fix this
+             # replaces was 181 characters and its advice fell off the end of the line.
 
-	ponytail: host-agnostic on purpose. This is not a GitHub fact; every git host offers both forms, and
-	ssh is the one that authenticates from an agent with nothing else configured.
+
+def bare_url(url):
+	"""A URL with any user:password stripped out of the authority. "" for anything that is not one.
+
+	ponytail: `https://x-token:ghp_…@host/o/r.git` is a legitimate remote and it reaches every message
+	here. git redacts the password in its own fatal; we were printing it verbatim to the footer and to
+	CLI scrollback, and splicing it into the ssh form we suggested. A credential is not an error detail.
 	"""
-	u = (url or "").strip()
-	for pre in ("https://", "http://"):
-		if u.startswith(pre):
-			rest = u[len(pre):].rstrip("/")
-			host, _, path = rest.partition("/")
-			return f"git@{host}:{path.removesuffix('.git')}.git" if host and path else ""
-	return ""
+	scheme, sep, rest = (url or "").strip().partition("://")
+	if not sep or scheme not in ("http", "https"):
+		return ""
+	authority, _, path = rest.partition("/")
+	return f"{scheme}://{authority.rpartition('@')[2]}/{path}" if path else ""
+
+
+def ssh_form(url):
+	"""The ssh form of an http(s) URL — "https://host/a/b(.git)" -> "git@host:a/b.git". "" if not one.
+
+	ponytail: host-agnostic on purpose. This is not a GitHub fact; every git host offers both forms,
+	and ssh is the one that authenticates from an agent with nothing else configured.
+	"""
+	if not (u := bare_url(url)):
+		return ""
+	host, _, path = u.partition("://")[2].partition("/")
+	return f"git@{host}:{path.rstrip('/').removesuffix('.git')}.git" if host and path else ""
 
 
 def clone(repo, dest):
@@ -492,16 +508,33 @@ def clone(repo, dest):
 		return ""
 	# ponytail: git cannot ask. GIT_TERMINAL_PROMPT=0 is deliberate — a credential prompt inside curses
 	# is invisible and hangs the dashboard — so an https URL to a PRIVATE repo fails outright on a
-	# machine with no credential helper, and the raw fatal is clipped to 60 characters mid-sentence.
-	# It used to work because `gh repo clone` carried gh's own token; dropping gh took that with it.
-	# The answer is not to reach for a host's CLI again: it is ssh, which every host speaks and which
-	# authenticates from an agent that is usually already loaded.
-	if "could not read Username" in ERROR or "Authentication failed" in ERROR:
-		alt = ssh_form(url)
-		return (f"{url} needs a credential gitdashy cannot ask for"
-		        + (f" — try {alt}" if alt else "")
-		        + " (or `git config --global credential.helper` one)")
+	# machine with no credential helper. It used to work because `gh repo clone` carried gh's own
+	# token; dropping gh took that with it. The answer is not to reach for a host's CLI again: it is
+	# ssh, which every host speaks and which authenticates from an agent already loaded.
+	# ponytail: "could not read " covers Username AND Password — git says the second when the URL
+	# carries a user, which is the same failure with the same remedy.
+	if "could not read " in ERROR or "Authentication failed" in ERROR:
+		say = _credential_hint(url)
+		# ponytail: the GLOBAL too. The friendly string was only the return value, so after the popup
+		# was dismissed the T row went on painting the clipped fatal — the very string this replaces —
+		# until the next successful sync.
+		globals()["ERROR"] = f"join: {say}"
+		return say
 	return ERROR
+
+
+def _credential_hint(url):
+	"""One line, short enough to survive the footer, that says what to do about a missing credential."""
+	alt = ssh_form(url)
+	if not alt:
+		# ponytail: already ssh, so there is no other form to suggest — and the answer is different.
+		# GIT_SSH_COMMAND carries -oBatchMode=yes, so a key with a passphrase and no agent fails here
+		# exactly as an https URL with no helper does, and "check your agent" is the actual remedy.
+		return f"no credential for {host_of(url) or 'that remote'} — is your ssh agent loaded?"[:FOOTER]
+	# ponytail: the action alone when the whole sentence will not fit. A reason that pushes the remedy
+	# off the end of the line is worse than no reason — that is the bug this is fixing.
+	full = f"no credential — try {alt}"
+	return full if len(full) <= FOOTER else f"try {alt}"[:FOOTER]
 
 
 def union_attrs(dest):

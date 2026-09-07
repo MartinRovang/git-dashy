@@ -549,9 +549,12 @@ def test_a_private_https_clone_says_what_to_do_about_it(monkeypatch, tmp_path):
 	monkeypatch.setattr(team, "_remote",
 						lambda cmd, timeout=None: subprocess.CompletedProcess(cmd, 128, "", fatal))
 	err = team.clone("https://github.com/NilsPontus/TeamDashy.git", str(tmp_path / "x"))
-	assert "needs a credential gitdashy cannot ask for" in err
 	assert "git@github.com:NilsPontus/TeamDashy.git" in err   # the form that works from an agent
-	assert "credential.helper" in err                          # or the other way out
+	# ponytail: and it FITS. The version this replaces was 181 characters; confirm() wraps it and the
+	# footer hard-clips at w - 1, so the advice fell off the end of an 80-column line — a truncation
+	# bug fixed with a message that truncates. This is the assertion that would have caught that.
+	assert len(err) <= team.FOOTER, f"{len(err)} chars will be clipped in the footer"
+	assert team.ERROR.endswith(err)                            # and the T row stops painting the fatal
 
 	# ponytail: only for an auth failure. A repo that does not exist must still say THAT.
 	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None:
@@ -563,5 +566,37 @@ def test_the_ssh_form_of_a_url_is_not_a_github_fact():
 	"""Every git host offers both forms; ssh is the one that authenticates from an agent."""
 	assert team.ssh_form("https://github.com/a/b.git") == "git@github.com:a/b.git"
 	assert team.ssh_form("https://gitlab.example.com/g/sub/c") == "git@gitlab.example.com:g/sub/c.git"
+	assert team.ssh_form("http://h/a/b") == "git@h:a/b.git"   # not only https
 	assert team.ssh_form("git@github.com:a/b.git") == ""      # already ssh
 	assert team.ssh_form("/a/local/path") == "" and team.ssh_form("") == ""
+
+
+def test_a_credential_in_the_url_is_never_echoed(monkeypatch, tmp_path):
+	"""`https://user:token@host/a/b.git` is a legitimate remote. git redacts the password in its own
+	fatal; we were printing it to the footer and to CLI scrollback, and splicing it into the ssh form."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None: subprocess.CompletedProcess(
+		cmd, 128, "", "fatal: Authentication failed for 'https://github.com/o/r.git/'"))
+	err = team.clone("https://x-token:ghp_SECRET123@github.com/o/r.git", str(tmp_path / "x"))
+	assert "ghp_SECRET123" not in err and "x-token" not in err
+	assert "ghp_SECRET123" not in team.ERROR
+	assert err.endswith("git@github.com:o/r.git")              # and the suggestion is still usable
+	assert team.ssh_form("https://u:tok@h/a/b.git") == "git@h:a/b.git"
+
+
+def test_the_password_variant_is_the_same_failure(monkeypatch, tmp_path):
+	"""git says Password, not Username, when the URL carries a user. Same class, same remedy."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None: subprocess.CompletedProcess(
+		cmd, 128, "", "fatal: could not read Password for 'https://me@github.com': terminal prompts disabled"))
+	err = team.clone("https://me@github.com/a/b.git", str(tmp_path / "x"))
+	assert "git@github.com:a/b.git" in err and "could not read Password" not in err
+
+
+def test_an_ssh_url_that_cannot_authenticate_still_says_something_useful(monkeypatch, tmp_path):
+	"""There is no ssh form to suggest, so it names the host and says gitdashy cannot ask."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "_remote", lambda cmd, timeout=None: subprocess.CompletedProcess(
+		cmd, 128, "", "fatal: Authentication failed for 'git@github.com:o/r.git'"))
+	err = team.clone("git@github.com:o/r.git", str(tmp_path / "x"))
+	assert "ssh agent" in err and "github.com" in err and len(err) <= team.FOOTER
