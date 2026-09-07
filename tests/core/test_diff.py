@@ -105,3 +105,47 @@ def test_a_diff_it_cannot_read_yields_what_it_could():
 	assert diff.parse("") == [] and diff.parse("not a diff at all\n") == []
 	half = "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n a\n+b\n"
 	assert [f["path"] for f in diff.parse(half)] == ["x.py"]
+
+
+def test_a_diff_gh_cannot_produce_is_not_re_run_on_every_look(monkeypatch):
+	"""The timing-out PR was the ONE input the cache did not cover — the pane re-ran gh on every draw."""
+	calls = []
+	def boom(*a, **k):
+		calls.append(1)
+		raise subprocess.TimeoutExpired("gh", diff.TIMEOUT)
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(diff, "_FAILED", set())
+	monkeypatch.setattr(subprocess, "run", boom)
+	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1
+	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1   # the failure is cached too
+
+	diff.retry()                                                 # f means "go and look again"
+	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 2
+
+
+def test_retry_forgets_only_the_failures(monkeypatch):
+	"""A diff that really is empty is not worth re-fetching every time someone presses refresh."""
+	calls = []
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(diff, "_FAILED", set())
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1   # gh succeeded and printed nothing
+	diff.retry()
+	assert diff.fetch("a/b", 7, "s") == "" and len(calls) == 1   # still cached: it was not a failure
+
+
+def test_an_unknown_kind_sorts_last_instead_of_raising():
+	"""ORDER.index is reached from inside draw(). log.KINDS is a dict someone will add a row to."""
+	assert diff.rank("blocking") == 0 and diff.rank("nit") == 2
+	assert diff.rank("wildcard") == len(diff.ORDER)
+	marks = diff.anchor(diff.parse(DIFF), [
+		{"kind": "wildcard", "loc": "auto.py:139", "text": "a kind this table does not name"},
+		{"kind": "blocking", "loc": "auto.py:139", "text": "known"}])
+	assert [m["kind"] for m in marks] == ["blocking", "wildcard"]   # sorted, not crashed
+
+
+def test_the_context_ring_starts_on_the_default():
+	"""Two copies of one number is how the c key became a KeyError waiting to happen."""
+	assert diff.CONTEXT == diff.CONTEXTS[0]
+	assert len(set(diff.CONTEXTS)) == len(diff.CONTEXTS)

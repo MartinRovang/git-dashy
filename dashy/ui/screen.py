@@ -45,11 +45,11 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(26, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # the selected row: a tint, not reverse video
 	# ponytail: the diff reads by BACKGROUND, not by a leading character. A + and a − are one column and
 	# the eye skips them; a tinted row is the shape of the change before you have read a word of it.
-	(27, 151, curses.COLOR_GREEN, 22, curses.COLOR_BLACK),   # an added line
-	(28, 181, curses.COLOR_RED, 52, curses.COLOR_BLACK),     # a removed line
-	(29, 252, curses.COLOR_WHITE, 238, curses.COLOR_BLACK),  # a line a finding is about
-	(30, 16, curses.COLOR_BLACK, 75, curses.COLOR_CYAN),     # the chip you are on
-	(31, 250, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # a chip you are not on
+	(32, 151, curses.COLOR_GREEN, 22, curses.COLOR_BLACK),   # an added line
+	(33, 181, curses.COLOR_RED, 52, curses.COLOR_BLACK),     # a removed line
+	(34, 252, curses.COLOR_WHITE, 238, curses.COLOR_BLACK),  # a line a finding is about
+	(35, 16, curses.COLOR_BLACK, 75, curses.COLOR_CYAN),     # the chip you are on
+	(36, 250, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # a chip you are not on
 	(27, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # dim on the selected row
 ]
 # ponytail: a theme swaps the 256-colour values above, nothing else. Keys are the accents (cyan, red, green, yellow,
@@ -489,6 +489,15 @@ TONE = {"ok": (4, "✓"), "fail": (3, "✗"), "run": (5, "~"), "skip": (1, "·")
 FIND = {"blocking": 3, "note": 5, "nit": 1}
 
 
+def find_c(kind):
+	"""The colour for a finding kind. Dim for a kind this table does not name — never a KeyError.
+
+	ponytail: every one of these lookups happens inside draw(). log.KINDS decides what a finding may
+	be, and it is a dict; adding a row to it must change how the pane LOOKS, not whether it runs.
+	"""
+	return C(FIND.get(kind, 1))
+
+
 def code_rows(files, marks, scoped):
 	"""The pane as a flat list of (kind, payload) rows, so it can be windowed like the PR list is.
 
@@ -518,7 +527,17 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 	knows the pane. A pane that draws its own writes is how the out-of-bounds bugs in this file happened.
 	"""
 	repo = pr.get("repository", {}).get("nameWithOwner", "")
-	files, marks = diff.load(repo, pr.get("number"), pr.get("head", ""), log.findings(rev))
+	if state.code_pr != pr["url"]:
+		# ponytail: the jump index counts THIS PR's marks. Carrying it to the next row landed you on
+		# mark 5 of a review with two, or on an unrelated line — the number survived, its meaning did not.
+		state.code_pr, state.code_at = pr["url"], 0
+	got = state.want_diff(repo, pr.get("number"), pr.get("head", ""), log.findings(rev))
+	if got is None:
+		# ponytail: `gh pr diff` used to run HERE, in a function draw() calls twenty times a second. A
+		# big PR stuttered every keypress and one gh could not answer froze the dashboard outright.
+		at(y, x0 + 2, "reading the diff…", width - 3, C(1))
+		return
+	files, marks = got
 	if not files:
 		# ponytail: says WHY there is nothing. A diff gh will not print — too large, a fork it cannot
 		# reach, no network — looks identical to a PR with no changes, and only one of those is worth
@@ -531,8 +550,8 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 		at(y, x0 + 2, "the review marked nothing — D shows the whole diff", width - 3, C(1))
 		return
 
-	line(y, [("SCOPE", C(25)), (" marks only ", C(30) if scoped else C(31)),
-	         (" full diff ", C(31) if scoped else C(30))])
+	line(y, [("SCOPE", C(25)), (" marks only ", C(35) if scoped else C(36)),
+	         (" full diff ", C(36) if scoped else C(35))])
 	if width > 40:
 		at(y, x0 + width - 11, "D toggle", 9, C(25))
 	y += 1
@@ -542,13 +561,11 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 	# reading the review, a file when you are reading the whole change. One key, because they are the
 	# same gesture — and the full diff had no way to scroll at all while advertising a `}` that did
 	# nothing, which is worse than not offering it.
-	jump = ([i for i, (k, v) in enumerate(rows) if k == "note"] or
-	        [i for i, (k, v) in enumerate(rows) if k == "line" and v.get("marks")]) if scoped else \
-	       [i for i, (k, _v) in enumerate(rows) if k == "file"]
+	jump = [i for i, (k, _v) in enumerate(rows) if k == ("note" if scoped else "file")]
 	cur = max(0, min(state.code_at, len(jump) - 1)) if jump else 0
 	state.code_at = cur
 
-	chips = ([f"{i + 1}{diff.MARK[m['kind']]} {m['path'].rsplit('/', 1)[-1]}" + (f":{m['n']}" if m["n"] else "")
+	chips = ([f"{i + 1}{diff.MARK.get(m['kind'], '·')} {m['path'].rsplit('/', 1)[-1]}" + (f":{m['n']}" if m["n"] else "")
 	          for i, m in enumerate(marks)] if scoped else
 	         [f"{f['path'].rsplit('/', 1)[-1]} +{f['add']}−{f['dele']}" for f in shown])
 	if chips:
@@ -559,7 +576,7 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 			if x + len(c) + 2 >= x0 + width - 13:
 				at(y, x, "…", 1, C(1))
 				break
-			at(y, x, f" {c} ", len(c) + 2, C(30) if (scoped and i == cur) else C(31))
+			at(y, x, f" {c} ", len(c) + 2, C(35) if (scoped and i == cur) else C(36))
 			x += len(c) + 3
 		if width > 46:
 			at(y, x0 + width - 13, "n/N mark" if scoped else "n/N file", 12, C(25))
@@ -574,9 +591,11 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 	# the bottom of a short pane, so jumping to a finding showed the line and not what was said about
 	# it, which is the one thing the jump is for. A file jump wants the header itself at the top:
 	# backing up put you in the tail of the file before it, under a sticky path naming the one you left.
-	lead = min(3, max(0, room - 2)) if scoped else 0
-	top = max(0, jump[cur] - lead) if jump else 0
-	top = min(top, max(0, len(rows) - room))
+	def window(room):
+		lead = min(3, max(0, room - 2)) if scoped else 0   # the lead-in yields to the thing it leads to
+		return min(max(0, jump[cur] - lead) if jump else 0, max(0, len(rows) - room))
+
+	top = window(room)
 	# ponytail: a sticky path when the window has scrolled past the file header. A hunk with no file
 	# name over it is a diff you cannot act on — the line number means nothing without the path, and
 	# that was true of every mark far enough into a file to need scrolling to.
@@ -586,8 +605,7 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 		at(y, x0 + width - 10, "↑ in", 8, C(25))
 		y += 1
 		room -= 1
-		lead = min(lead, max(0, room - 2)) if scoped else 0
-		top = min(max(0, jump[cur] - lead) if jump else 0, max(0, len(rows) - room))
+		top = window(room)   # the sticky row cost us a line, so the window has to be found again
 
 	for kind, v in rows[top:top + max(1, room)]:
 		if y >= bottom - 1:
@@ -599,19 +617,19 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 			at(y, x0 + 2, v["header"][:width - 4], max(1, width - 4), C(25))
 		elif kind == "line":
 			mark = diff.worst(v)
-			tone = C(29) if mark else C(27) if v["sign"] == "+" else C(28) if v["sign"] == "-" else 0
+			tone = C(34) if mark else C(32) if v["sign"] == "+" else C(33) if v["sign"] == "-" else 0
 			if mark:
-				at(y, x0 + 1, diff.MARK[mark], 1, C(FIND[mark]) | curses.A_BOLD)
+				at(y, x0 + 1, diff.MARK.get(mark, '·'), 1, find_c(mark) | curses.A_BOLD)
 			at(y, x0 + 3, "" if v["del"] else str(v["n"]).rjust(5), 5, C(25))
 			at(y, x0 + 9, v["sign"] if v["sign"] != " " else " ", 1, tone)
 			# ponytail: tabs expanded, or the gutter walks and the diff stops reading by shape.
 			body = v["text"].replace("\t", "    ")[:max(1, width - 12)]
 			at(y, x0 + 10, body.ljust(max(1, width - 12)), max(1, width - 12), tone)
 		elif kind == "note":
-			at(y, x0 + 3, v["kind"], 9, C(FIND[v["kind"]]))
+			at(y, x0 + 3, v["kind"], 9, find_c(v["kind"]))
 			at(y, x0 + 13, " ".join(v["text"].split())[:max(1, width - 15)], max(1, width - 15), C(1))
 		elif kind == "orphan":
-			at(y, x0 + 2, v["kind"], 9, C(FIND[v["kind"]]))
+			at(y, x0 + 2, v["kind"], 9, find_c(v["kind"]))
 			at(y, x0 + 12, f"{v['loc']} — not in this diff", max(1, width - 14), C(1))
 		y += 1
 
@@ -664,9 +682,9 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 	# find somewhere else is a reference nobody follows, which is the whole reason the code tab exists.
 	code = state.pane_tab == "code"
 	line(y, [("SELECTED PR", C(25)), ("│", C(25)),
-	         (" 1 summary ", C(31) if code else C(30)), (" 2 code ", C(30) if code else C(31))])
+	         (" 1 summary ", C(36) if code else C(35)), (" 2 code ", C(35) if code else C(36))])
 	if width > 46:
-		at(y, x0 + width - 12, "esc close", 10, C(25))
+		at(y, x0 + width - 10, "⏎ close", 8, C(25))   # ponytail: ⏎ toggles the pane; esc opens the menu
 	y += 2
 	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
 	         ("· " + age(pr["updatedAt"]), C(1))])
@@ -716,14 +734,14 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 		y += 1
 		found = log.findings(rev)
 		if found:
-			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", C(FIND[k]))
+			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", find_c(k))
 			          for k in ("blocking", "note", "nit") if any(f["kind"] == k for f in found)]
 			line(y, counts)
 			y += 1
 			for f in found:
 				if y >= h - 6:
 					break
-				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
+				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, find_c(f["kind"]))
 				room = width - 13
 				# ponytail: the file's BASENAME, not its path. "features/library/ui/LibraryLanding.tsx:19"
 				# is most of a pane on its own, so the finding itself — the part you actually read — was
@@ -1566,7 +1584,23 @@ def main(scr, interval, auto, model):
 			sel += 1
 		elif k in (ord("k"), curses.KEY_UP):
 			sel -= 1
+		# ponytail: ABOVE the global D / n. Both are bound twice — D toggles drafts, n edits this repo's
+		# memory — and an elif chain gives the first branch the key. Sitting below them, this branch could
+		# only ever be reached by N and c, so two of the four keys the pane documents did nothing.
+		elif state.pane_tab == "code" and state.pane and k in (ord("D"), ord("n"), ord("N"), ord("c")):
+			if k == ord("D"):
+				state.code_scope = "diff" if state.code_scope == "marks" else "marks"
+			elif k == ord("c"):
+				# ponytail: cycles rather than growing. ±3 is the default because it is a hunk's worth
+				# of why; 0 is the line alone, 8 is "show me the function". Steps diff.CONTEXTS by
+				# index, so the ring cannot disagree with the default it starts on.
+				ring = diff.CONTEXTS
+				here = ring.index(state.code_context) if state.code_context in ring else 0
+				state.code_context = ring[(here + 1) % len(ring)]
+			else:
+				state.code_at += 1 if k == ord("n") else -1
 		elif k == ord("f"):
+			diff.retry()  # ponytail: f means "look again", so a diff gh failed to read is worth retrying
 			state.wake.set()  # ponytail: f for fetch. r became review, and o was already open-in-browser
 		elif k == ord("a"):
 			n = 0 if state.auto else len(state.pending_rr())
@@ -1615,15 +1649,6 @@ def main(scr, interval, auto, model):
 			state.pane_tab = "summary" if k == ord("1") else "code"
 		elif k == 9 and state.pane:  # Tab: the two faces of the pane, without leaving the row
 			state.pane_tab = "code" if state.pane_tab == "summary" else "summary"
-		elif state.pane_tab == "code" and state.pane and k in (ord("D"), ord("n"), ord("N"), ord("c")):
-			if k == ord("D"):
-				state.code_scope = "diff" if state.code_scope == "marks" else "marks"
-			elif k == ord("c"):
-				# ponytail: cycles rather than growing. ±3 is the default because it is a hunk's worth
-				# of why; 0 is the line alone, 8 is "show me the function".
-				state.code_context = {3: 8, 8: 0, 0: 3}[state.code_context]
-			else:
-				state.code_at += 1 if k == ord("n") else -1
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:

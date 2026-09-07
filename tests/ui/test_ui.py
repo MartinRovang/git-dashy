@@ -1450,9 +1450,24 @@ diff --git a/CHANGELOG.md b/CHANGELOG.md
 """
 
 
-def _code_pr(monkeypatch, st, findings=None):
+def _prime(st, pr):
+	"""Drive want_diff to completion, the way the dashboard does across successive draws.
+
+	ponytail: the pane fetches OFF the draw thread, so a test that draws once sees "reading the diff…".
+	Waiting here rather than stubbing want_diff keeps the threading in the path under test — it is
+	where the freeze was.
+	"""
+	findings = ui.log.findings(pr.get("review"))
+	for _ in range(300):
+		if st.want_diff("a/b", pr["number"], "", findings) is not None:
+			return
+		time.sleep(0.01)
+	raise AssertionError("the diff never landed")
+
+
+def _code_pr(monkeypatch, st, findings=None, text=DIFF_FIXTURE):
 	from dashy.core import diff
-	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): DIFF_FIXTURE})
+	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): text})
 	pr = dict(PR, number=23, url="u23", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
 	          review={"verdict": "approve", "at": "x", "model": "opus", "body": "b",
 	                  "findings": findings if findings is not None else [
@@ -1461,6 +1476,8 @@ def _code_pr(monkeypatch, st, findings=None):
 	monkeypatch.setattr(st, "want_detail", lambda p: {})
 	st.sections = [("MINE", [pr], None)]
 	st.pane_tab = "code"
+	st.code_pr = pr["url"]   # the fixture stands for "already looking at this one"; see the reset test
+	_prime(st, pr)
 	return pr
 
 
@@ -1521,9 +1538,7 @@ def test_a_finding_about_a_file_outside_the_diff_is_still_shown(screen, monkeypa
 
 
 def test_the_code_tab_says_why_it_is_empty(screen, monkeypatch, st):
-	from dashy.core import diff
-	pr = _code_pr(monkeypatch, st)
-	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): ""})
+	pr = _code_pr(monkeypatch, st, text="")
 	screen.w = PANE_X + PANE_W + 2
 	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
 	assert "no diff to show" in screen.text()      # not an empty pane you press 2 at again
@@ -1543,3 +1558,114 @@ def test_the_code_pane_never_writes_outside_itself(screen, monkeypatch, st):
 			for w in range(30, 120, 7):
 				scr = FakeScr(h=h, w=PANE_X + w + 2)
 				ui.detail(scr, st, h, PANE_X, w, pr)   # must not raise
+
+
+# ponytail: these drive main()'s KEY DISPATCH, not the pane. Every other code-tab test reaches into
+# st.code_scope / st.code_at directly, which is exactly why D and n could be swallowed by the global
+# handlers above them and still look tested: the pane was right, and nothing could reach it.
+def _drive(screen, monkeypatch, keys, tab="summary"):
+	"""Run main() over a key sequence and hand back the State it built."""
+	box, real = {}, ui.State
+	def make(interval, model=None):
+		st = box["st"] = real(interval, model)
+		st.sections = [("MINE", [dict(PR, number=23, url="u23",
+		                              repository={"nameWithOwner": "a/b", "name": "git-dashy"})], None)]
+		st.pane, st.pane_tab = True, tab
+		return st
+	monkeypatch.setattr(ui, "State", make)
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(config, "SETTINGS", "")
+	screen.getch, screen.timeout = _keys(*keys, ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	return box["st"]
+
+
+def test_the_code_tab_keys_are_not_swallowed_by_the_global_ones(screen, monkeypatch):
+	"""D and n are each bound twice. An elif chain gives the key to the FIRST branch, and this was last."""
+	edited = []
+	monkeypatch.setattr(ui, "edit_memory", lambda *a: edited.append(a))
+	st = _drive(screen, monkeypatch, [ord("2"), ord("D"), ord("c"), ord("n")])
+	assert st.pane_tab == "code"
+	assert st.code_scope == "diff"        # D reached the pane
+	assert st.drafts is False             # and did NOT toggle the drafts view on the way
+	assert st.code_context == 8           # c stepped the ring
+	assert st.code_at == 1                # n moved the jump
+	assert edited == []                   # and did not open $EDITOR over the top of the dashboard
+
+
+def test_the_global_D_and_n_still_work_on_the_summary_tab(screen, monkeypatch):
+	"""Hoisting the code branch must not take the keys away from the handlers that owned them."""
+	edited = []
+	monkeypatch.setattr(ui, "edit_memory", lambda scr, st, sel, repo: edited.append(repo))
+	st = _drive(screen, monkeypatch, [ord("D"), ord("n")])
+	assert st.drafts is True and edited == ["a/b"]
+	assert st.code_scope == "marks" and st.code_at == 0   # the pane was not touched
+
+
+def test_tab_and_the_number_keys_move_between_the_two_faces(screen, monkeypatch):
+	st = _drive(screen, monkeypatch, [ord("2")])
+	assert st.pane_tab == "code"
+	assert _drive(screen, monkeypatch, [ord("2"), ord("1")]).pane_tab == "summary"
+	assert _drive(screen, monkeypatch, [9]).pane_tab == "code"
+	assert _drive(screen, monkeypatch, [9, 9]).pane_tab == "summary"
+
+
+def test_the_context_key_cycles_the_whole_ring(screen, monkeypatch):
+	from dashy.core import diff
+	seen = [_drive(screen, monkeypatch, [ord("2")] + [ord("c")] * n).code_context
+	        for n in range(len(diff.CONTEXTS) + 1)]
+	assert seen == diff.CONTEXTS + [diff.CONTEXTS[0]]   # steps every value and comes home
+
+
+def test_every_colour_pair_is_defined_once():
+	"""init_colors calls init_pair in order, so a repeat silently repaints the earlier one's meaning."""
+	nums = [row[0] for row in ui.COLORS]
+	dupes = sorted({n for n in nums if nums.count(n) > 1})
+	assert not dupes, f"colour pairs defined twice: {dupes}"
+
+
+def test_an_unknown_finding_kind_does_not_take_the_pane_down(screen, monkeypatch, st):
+	"""log.KINDS decides what a finding may be; adding a row must change how it LOOKS, not whether it runs."""
+	monkeypatch.setitem(ui.log.KINDS, "wildcard", "dim")
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "wildcard", "loc": "auto.py:139", "text": "a new kind"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)     # must not raise out of draw()
+	assert "a new kind" in screen.text()
+
+
+def test_moving_to_another_pr_resets_the_mark_jump(screen, monkeypatch, st):
+	"""code_at counts THIS review's marks; carrying it over landed you on mark 5 of a review with two."""
+	pr = _code_pr(monkeypatch, st)
+	st.code_at = 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, dict(pr, url="another"))
+	assert st.code_at == 0 and st.code_pr == "another"
+
+
+def test_the_pane_never_runs_gh_on_the_draw_thread(screen, monkeypatch, st):
+	"""`gh pr diff` ran inside code_pane, and draw() is called twenty times a second."""
+	import subprocess as sp
+	import threading as th
+	from dashy.core import diff
+	where = []
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(diff, "_FAILED", set())
+	monkeypatch.setattr(sp, "run", lambda cmd, **k: where.append(th.current_thread())
+	                    or sp.CompletedProcess(cmd, 0, DIFF_FIXTURE, ""))
+	pr = dict(PR, number=99, url="u99", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
+	          review={"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	                  "findings": [{"kind": "note", "loc": "auto.py:139", "text": "t"}]})
+	monkeypatch.setattr(st, "want_detail", lambda p: {})
+	st.sections, st.pane_tab = [("MINE", [pr], None)], "code"
+	screen.w = PANE_X + PANE_W + 2
+
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)      # one draw: it must return without shelling out
+	assert "reading the diff" in screen.text()
+	for _ in range(400):
+		if where:
+			break
+		time.sleep(0.005)
+	assert where and all(t is not th.main_thread() for t in where)

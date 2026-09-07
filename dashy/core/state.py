@@ -6,7 +6,7 @@ import threading
 import time
 
 from .. import config
-from . import github, install, log, memory, mirror, review as review_mod, team, update
+from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
 
 
 def in_flight(state, url):
@@ -52,6 +52,7 @@ class State:
 		# and friends came later and are the whole point of the settings file.
 		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
 		self.details, self.detailing = {}, set()  # url -> detail dict, and the ones in flight
+		self.diffs, self.diffing = {}, set()  # (repo, number, head, findings) -> (files, marks), and in flight
 		self.pane = True  # the detail pane, toggled with ⏎
 		# ponytail: which face of the pane, and how much of the diff. Both live on State rather than in
 		# the draw, so moving between rows keeps where you were — a review you are reading line by line
@@ -59,7 +60,8 @@ class State:
 		self.pane_tab = "summary"  # "summary" | "code"
 		self.code_scope = "marks"  # "marks" | "diff" — only the marked hunks, or the whole change
 		self.code_at = 0  # which mark n/N is on
-		self.code_context = 3  # lines kept either side of a marked line; c cycles it
+		self.code_pr = ""  # the PR code_at counts marks in; moving row resets the jump
+		self.code_context = diff.CONTEXT  # lines kept either side of a marked line; c cycles it
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
@@ -93,6 +95,36 @@ class State:
 					del self.details[k]
 				self.details[key] = got
 				self.detailing.discard(key)
+		threading.Thread(target=run, daemon=True).start()
+		return None
+
+	def want_diff(self, repo, number, head, findings):
+		"""(files, marks) for one PR's diff, or None while it is being read.
+
+		ponytail: off the draw thread for the same reason want_detail is — `gh pr diff` is a subprocess
+		and draw() runs 20 times a second, so a slow one stuttered the whole dashboard and a timing-out
+		one froze it. It ANCHORS here too, not in the pane: anchor() tags the lines it marks, so calling
+		it twice over one parse appends every note twice, and the pane redraws constantly.
+		"""
+		if not repo or number is None:
+			return None
+		# ponytail: the findings are part of the key. A re-review changes what is marked without moving
+		# the head, and the pane would have gone on showing the previous round's marks.
+		sig = tuple((f.get("kind"), f.get("loc"), f.get("text")) for f in findings)
+		key = (repo, number, head, sig)
+		with self.lock:
+			if key in self.diffs:
+				return self.diffs[key]
+			if key in self.diffing:
+				return None
+			self.diffing.add(key)
+		def run():
+			got = diff.load(repo, number, head, findings)
+			with self.lock:
+				for k in [k for k in self.diffs if k[:2] == (repo, number)]:
+					del self.diffs[k]  # one entry per PR, not one per push or per review round
+				self.diffs[key] = got
+				self.diffing.discard(key)
 		threading.Thread(target=run, daemon=True).start()
 		return None
 
