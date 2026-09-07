@@ -1086,3 +1086,21 @@ def test_voices_dropdown_is_a_checklist(screen, monkeypatch):
 	screen.getch = _keys(ord("j"), ord("j"), 10, 27)  # hunters may all go off
 	ui.dropdown(screen, st, 0, "h")
 	assert config.HUNTER == [] and ui.snapshot(st)["hunter"] == []
+
+
+def test_in_flight_row_says_how_long_it_has_been_running():
+	"""ponytail: a big diff to a slow model spins for minutes; without this there is no way to tell a
+	long answer from a wedged one. It must also FIT the 20-wide STATE column, or it says "3m…"."""
+	st = State(0)
+	pr = dict(PR, url="u", section="MINE")
+	st.sections = [("MINE", [pr], None)]
+	st.reviews["u"] = "pre-reviewing..."
+	st.running.add("u")
+	st.started_at["u"] = 1000.0
+	ui.C = lambda n: 0
+	def painted(now):
+		scr = FakeScr()
+		ui.draw(scr, st, 0, now=now)
+		return "\n".join(scr.line(y) for y in range(scr.h))
+	assert "pre-reviewing… 42s" in painted(1042.0)
+	assert "pre-reviewing… 3m" in painted(1000.0 + 3 * 60 + 7)

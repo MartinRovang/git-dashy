@@ -2,7 +2,13 @@
 import json
 import os
 
-MODELS = ["opus", "sonnet", "fable"]  # cycle list, pass any name via --model
+# ponytail: a bare name is the claude CLI; "provider:model" (openrouter:x-ai/grok-4, local:qwen3-coder)
+# goes to that provider's OpenAI-compatible API instead. See core/llm.py.
+ENDPOINTS = {  # provider -> (base url, env var holding the api key)
+	"openrouter": (os.environ.get("PRS_OPENROUTER_URL", "https://openrouter.ai/api/v1"), "OPENROUTER_API_KEY"),
+	"local": (os.environ.get("PRS_LOCAL_URL", "http://localhost:1234/v1"), "PRS_LOCAL_KEY"),  # LM Studio's default port
+}
+MODELS = ["opus", "sonnet", "fable"] + [m for m in os.environ.get("PRS_MODELS", "").split(",") if m]  # m cycles these; --model takes any name
 DEFAULT_MODEL = os.environ.get("PRS_MODEL", "opus")
 EFFORTS = ["", "low", "medium", "high", "xhigh", "max"]  # e cycles; "" = claude's default
 DEPTHS = ["adaptive", "low", "medium", "high"]  # d cycles

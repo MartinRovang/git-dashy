@@ -38,6 +38,18 @@ def test_start_review_marks_in_flight_then_result(monkeypatch):
 	assert st.reviews["u"] == "✓ approved"
 
 
+@pytest.mark.parametrize("start, target", [("start_review", "review"), ("start_self_review", "self_review")])
+def test_a_review_that_raises_clears_the_row(monkeypatch, start, target):
+	def boom(pr, model):
+		raise RuntimeError("worker died")
+	monkeypatch.setattr(review_mod, target, boom)
+	st = State(0, model="sonnet")
+	getattr(st, start)(dict(PR))
+	assert st.wake.wait(5)
+	assert st.reviews["u"] == "error: worker died"
+	assert not st.running and "u" not in st.started_at  # nothing spins, nothing is kept
+
+
 def test_start_review_uses_model_at_start_time(monkeypatch):
 	models = []
 	monkeypatch.setattr(review_mod, "review", lambda pr, model: models.append(model) or "x")

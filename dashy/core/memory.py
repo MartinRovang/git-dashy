@@ -563,18 +563,12 @@ def dream(model):
 	the model never saw — showing wrong line counts and, on accept, overwriting the new fact.
 	"""
 	import json
-	import subprocess
-	import tempfile
+	from . import llm
 	before = files()
 	if not before:
 		raise ValueError("no memory to dream about")
 	prompt = DREAM.format(files="\n\n".join(f"### {n}\n{t}" for n, t in before.items()))
-	# ponytail: --safe-mode for the same reason as a review — this call has a JSON contract, not a conversation
-	with tempfile.TemporaryDirectory() as here:  # ponytail: same reason as a review — see review.review
-		out = subprocess.run(["claude", "-p", prompt, "--output-format", "json", "--safe-mode", "--model", model]
-		                     + (["--effort", config.EFFORT] if config.EFFORT else []),
-		                     capture_output=True, text=True, check=True, timeout=TIMEOUT, cwd=here).stdout
-	text = json.loads(out)["result"].strip()
+	text = llm.ask(prompt, model, timeout=TIMEOUT)[0]  # ponytail: no tools and no system prompt — the files are in the prompt
 	got = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	sent = got.get("files") or {}
 	new = {n: str(sent.get(n, t)) for n, t in before.items()}  # a name we did not list keeps what it had

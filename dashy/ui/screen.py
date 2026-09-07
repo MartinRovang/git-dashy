@@ -186,6 +186,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	with state.lock:
 		sections, fetched_at, reviews = state.sections, state.fetched_at, dict(state.reviews)
 		busy = set(state.running)  # ponytail: copied under the same lock as reviews
+		since = dict(state.started_at)
 	rs = rows(sections, state.window, state.subs, state.drafts, state.expanded)
 	if h < 12:  # ponytail: on a short terminal a column header costs a PR, and the PR is the point
 		rs = [r for r in rs if r[0] != "cols"]
@@ -377,7 +378,13 @@ def draw(scr, state, sel, prompt=None, now=None):
 				# ponytail: removesuffix, not [:-3]. Membership of `busy` is what says in-flight now, so
 				# nothing guarantees the text ends in dots — the two are written under one lock today,
 				# and that is a coupling rather than a rule.
-				st = f"{spin} {st.removesuffix('...')}…"
+				# ponytail: elapsed, because a big diff to a slow model is minutes of identical spinner
+				# and no way to tell a long answer from a wedged one.
+				# ponytail: whole minutes past the first one — "3m07s" is two characters past the 20-wide
+				# STATE column, and gets truncated to "3m…" anyway.
+				el = int(now - since.get(p["url"], now))
+				st = f"{spin} {st.removesuffix('...')}… {el}s" if el < 60 else \
+					f"{spin} {st.removesuffix('...')}… {el // 60}m"
 			st_attr = C(3) if st.startswith("error") else C(4) if st.startswith("✓") else \
 				C(3) if st.startswith("✗") else C(5)
 			tag = ("▸+" + str(p["more"])) if p.get("more") else "▾" if p.get("open") else ""

@@ -176,3 +176,23 @@ def copy(text):
 	out.write(f"\033]52;c;{base64.b64encode(text.encode()).decode()}\a")
 	out.flush()
 	return "terminal"
+
+
+PR_CONTEXT_MAX = 200_000  # chars; a diff bigger than this is cut, since a context window is not free
+CONTEXT = "title,author,baseRefName,headRefName,body,additions,deletions,changedFiles,labels"
+
+
+def context(repo, number):
+	"""`gh pr view` + `gh pr diff` as one blob, for a model that cannot run gh itself. Raises on failure.
+
+	ponytail: --json with named fields, not the plain `gh pr view`. That prints the same thing but asks
+	GraphQL for projectCards too, which now fails outright on repos with classic projects — the whole
+	command exits 1 over a field nothing here wants.
+	"""
+	head = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", CONTEXT],
+	                      capture_output=True, text=True, check=True, timeout=120).stdout
+	pr = json.loads(head)
+	diff = subprocess.run(["gh", "pr", "diff", str(number), "--repo", repo],
+	                      capture_output=True, text=True, check=True, timeout=120).stdout
+	text = "\n".join(f"{k}: {json.dumps(v) if isinstance(v, (dict, list)) else v}" for k, v in pr.items()) + "\n\n" + diff
+	return text[:PR_CONTEXT_MAX] + ("\n\n[diff truncated]" if len(text) > PR_CONTEXT_MAX else "")
