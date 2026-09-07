@@ -1100,29 +1100,8 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
-def team_setup(scr, state, sel):
-	joined = team.joined()
-	if joined:
-		# ponytail: names WHICH team. With several joined, "leave the team" is not a sentence that says
-		# what it will delete — and this prompt is the last thing anyone reads before files go. One
-		# joined leaves that one; several, and it walks them rather than guessing.
-		name = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Leave which team? ({', '.join(joined)})")
-		if not name:
-			return
-		d = team.dir_of(name)
-		if not d:
-			confirm(scr, state, sel, f" not in {name}  [any key]")
-			return
-		where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
-		         if os.path.islink(d) else f"files in {d} are deleted")
-		if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
-			return
-		err = knowledge.leave(name)
-		if err:
-			confirm(scr, state, sel, f" {err}  [any key]")
-		else:
-			state.wake.set()  # ponytail: REVIEWED must reload from the solo log, the team one is gone
-		return
+def _join_team(scr, state, sel):
+	"""Ask for a repo and join it. owner/name is offered for creation when the clone fails."""
 	repo = ask(scr, state, sel, " Team repo (owner/name, a local path, or a git URL; owner/name is created if missing):")
 	if not repo:
 		return
@@ -1133,7 +1112,50 @@ def team_setup(scr, state, sel):
 	if err:
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
-		state.wake.set()  # reload REVIEWED from the team log
+		state.wake.set()  # reload REVIEWED, which now reads one more log
+
+
+def _leave_team(scr, state, sel, joined):
+	"""Drop one team's checkout, having said which one and what that removes."""
+	# ponytail: names WHICH team. "Leave the team" is not a sentence that says what it will delete once
+	# there are several, and this prompt is the last thing anyone reads before files go.
+	name = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" Leave which team? ({', '.join(joined)})")
+	if not name:
+		return
+	if not (d := team.dir_of(name)):
+		return confirm(scr, state, sel, f" not in {name}  [any key]") and None
+	where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
+	         if os.path.islink(d) else f"files in {d} are deleted")
+	if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
+		return
+	if err := knowledge.leave(name):
+		confirm(scr, state, sel, f" {err}  [any key]")
+	else:
+		state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
+
+
+def team_setup(scr, state, sel):
+	"""The teams you are in: join another, or leave one.
+
+	ponytail: JOIN stays reachable once you are in a team. This used to return after offering to leave,
+	so a second team could not be joined from anywhere — the store, the resolution and the log all
+	handled several while no surface could produce one. A capability nothing can reach is not shipped.
+	"""
+	while True:
+		joined = team.joined()
+		if not joined:
+			return _join_team(scr, state, sel)
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"teams  ·  {len(joined)} joined",
+		      [(s, knowledge.tilde(team.dir_of(s))) for s in joined],
+		      "[a] join another   [x] leave one   [esc] close")
+		k = scr.getch()
+		if k == ord("a"):
+			_join_team(scr, state, sel)
+		elif k == ord("x"):
+			_leave_team(scr, state, sel, joined)
+		elif k in (27, ord("q")):
+			return
 
 
 DREAM_SKY = "˖ ⋆ ✧ ✦ ☾ · ° ˚ z Z"

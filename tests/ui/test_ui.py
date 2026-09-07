@@ -1227,3 +1227,33 @@ def test_finished_review_row_stops_spinning():
 	row = next(scr.line(y) for y in range(scr.h) if "✓ approved" in scr.line(y))
 	assert "approved…" not in row and "0s" not in row and "⠋" not in row, row
 	assert "0 agents running" in scr.text()
+
+
+def test_t_can_still_join_once_you_are_already_in_a_team(screen, monkeypatch, st, tmp_path):
+	"""It used to return after offering to LEAVE, so a second team could not be joined from anywhere —
+	the store, the resolution and the log all handled several while no surface could produce one."""
+	from dashy.core import team
+	a_team(monkeypatch, tmp_path, "org/one")
+	asked, joined = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (asked.append(prompt), "org/two")[1])
+	monkeypatch.setattr(ui.team, "setup", lambda repo, create=False: joined.append(repo) or "")
+	screen.getch, screen.timeout = _keys(ord("a"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert joined == ["org/two"]                       # the join path is reachable
+	assert "Team repo" in asked[0]
+	assert "org/one" in screen.text() and "1 joined" in screen.text()
+
+
+def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_path):
+	from dashy.core import knowledge
+	a_team(monkeypatch, tmp_path, "org/one")
+	(tmp_path / "teams" / "org__two" / ".git").mkdir(parents=True)
+	prompts, left = [], []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), "org/two")[1])
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: prompts.append(prompt) or True)
+	monkeypatch.setattr(ui.knowledge, "leave", lambda slug: left.append(slug) or "")
+	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert left == ["org/two"]
+	assert "Leave which team?" in prompts[0] and "org/one, org/two" in prompts[0]
+	assert "team org/two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes

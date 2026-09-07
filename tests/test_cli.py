@@ -252,3 +252,20 @@ def test_drafts_prints_a_heading_for_every_group_including_general(monkeypatch, 
 	assert "general" in out and "a/b" in out
 	assert out.index("general") < out.index("a general guess")   # the heading is ABOVE its rows
 	assert out.index("a/b") < out.index("a repo guess")
+
+
+def test_teams_lists_what_each_one_covers(monkeypatch, capsys, tmp_path):
+	from dashy import cli
+	from dashy.core import bind, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for slug in ("org__one", "org__two"):
+		(tmp_path / "teams" / slug / ".git").mkdir(parents=True)
+	bind.bind_owner("neomedsys", "org/one")
+	bind.bind("acme/tool", "org/two")
+	cli.teams(["gitdashy", "teams"])
+	out = capsys.readouterr().out
+	assert "org/one" in out and "neomedsys/*" in out
+	assert "org/two" in out and "acme/tool" in out
+	assert out.index("org/one") < out.index("org/two")      # each team's coverage under its own row
+	assert out.index("neomedsys/*") < out.index("org/two")

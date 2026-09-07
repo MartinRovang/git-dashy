@@ -141,6 +141,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
 | `gitdashy drafts` | what a review proposed and no second review has confirmed yet |
+| `gitdashy teams [--join X] [--leave X]` | the teams this machine has joined and what each covers |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
 

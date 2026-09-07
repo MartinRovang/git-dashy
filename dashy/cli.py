@@ -20,6 +20,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name]
+       gitdashy teams [--join owner/name|PATH|URL [--create]] [--leave owner/name]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -78,6 +79,11 @@ drafts shows what a review proposed and no second review has confirmed — the s
   because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
   promotes one by hand or drops it.
 
+teams lists the teams this machine has joined and what each one covers. A team is a git repo holding
+  shared memory — --join takes an owner/name, a local path or a git URL, and --create makes a private
+  one when owner/name does not exist yet. --leave drops one checkout, refusing while it holds unpushed
+  work. Several teams can be joined at once; which one applies to a repo is `gitdashy bind`.
+
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
   one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
@@ -94,7 +100,7 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C team checkout dir, n repo memory, g general memory ($EDITOR),
 P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
-T team repo setup or leave, u install the newest release, f refresh, q quit."""
+T teams (a join another, x leave one), u install the newest release, f refresh, q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):
@@ -349,6 +355,33 @@ def drafts(argv):
 	      f"W in the dashboard promotes or drops one")
 
 
+def teams(argv):
+	"""List the teams this machine has joined, or join/leave one.
+
+	ponytail: a CLI as well as `T`, for the same reason `bind` has one — it is scriptable, it is
+	testable without curses, and the join path is the one that clones a repo, which is worth being able
+	to run somewhere errors are visible rather than on a footer.
+	"""
+	team.activate()
+	if join := arg("--join", "", str, argv):
+		if err := team.setup(join, create="--create" in argv):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: joined {team.joined()[-1] if team.joined() else join}")
+	elif leave := arg("--leave", "", str, argv):
+		from .core import knowledge
+		if err := knowledge.leave(leave):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: left {leave}")
+	got = team.joined()
+	if not got:
+		return print("  no teams joined — `gitdashy teams --join owner/name` or T in the dashboard")
+	for slug in got:
+		bound = sorted(r for r, t in bind_mod.bindings().items() if t == slug)
+		owners = sorted(o + "/*" for o, t in bind_mod.owners().items() if t == slug)
+		cover = ", ".join(owners + bound) or "no repos bound to it yet"
+		print(f"  {slug:28}  {team.dir_of(slug)}\n  {'':28}  {cover}")
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -371,6 +404,8 @@ def run(argv=None):
 		return bind(argv)
 	if len(argv) > 1 and argv[1] == "drafts":
 		return drafts(argv)
+	if len(argv) > 1 and argv[1] == "teams":
+		return teams(argv)
 	if len(argv) > 1 and argv[1] == "self-check":
 		rows = review_mod.self_check(arg("--model", config.DEFAULT_MODEL, str, argv))
 		for name, ok, detail in rows:
