@@ -53,6 +53,13 @@ class State:
 		self.window, self.subs, self.drafts = config.WINDOW, config.SUB, config.DRAFTS
 		self.details, self.detailing = {}, set()  # url -> detail dict, and the ones in flight
 		self.pane = True  # the detail pane, toggled with ⏎
+		# ponytail: which face of the pane, and how much of the diff. Both live on State rather than in
+		# the draw, so moving between rows keeps where you were — a review you are reading line by line
+		# should not snap back to the summary because you glanced at the row above.
+		self.pane_tab = "summary"  # "summary" | "code"
+		self.code_scope = "marks"  # "marks" | "diff" — only the marked hunks, or the whole change
+		self.code_at = 0  # which mark n/N is on
+		self.code_context = 3  # lines kept either side of a marked line; c cycles it
 		self.expanded = set()  # REVIEWED urls with older reviews unfolded (space toggles)
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch

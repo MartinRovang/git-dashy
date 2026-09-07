@@ -810,7 +810,7 @@ def test_a_finding_shows_its_text_not_mostly_its_path(screen):
 	assert "LibraryLanding.tsx:19" in out                       # the file, short
 	assert "features/library/ui/LibraryLanding" not in out      # not the whole path
 	assert "Count is derived" in out                            # and the finding itself is readable
-	assert "v read all" in out                                  # with a way to open the whole review
+	assert "2 in code" in out   # ponytail: the pane points at the code tab; v is still in the footer
 
 
 def test_v_reads_the_review_from_any_row_that_has_one(screen, monkeypatch):
@@ -1428,3 +1428,118 @@ def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st
 	monkeypatch.setattr(ui.team, "ERROR", "")
 	ui._join_team(screen, st, 0)
 	assert said == [] and st.wake.is_set()
+
+
+DIFF_FIXTURE = """diff --git a/gitdashy/auto.py b/gitdashy/auto.py
+--- a/gitdashy/auto.py
++++ b/gitdashy/auto.py
+@@ -136,7 +136,12 @@ class Auto:
+     def _sweep(self, prs):
+         for pr in prs:
+-            self.in_flight.discard(pr.id)
++            self.in_flight.discard(pr.id)
++            verdict = self._verdict_for(pr)
+             self.persist_verdict(pr, verdict)
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,4 +1,5 @@
+ # Changelog
++## 1.34.0
+ ## 1.33.2
+"""
+
+
+def _code_pr(monkeypatch, st, findings=None):
+	from dashy.core import diff
+	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): DIFF_FIXTURE})
+	pr = dict(PR, number=23, url="u23", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
+	          review={"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	                  "findings": findings if findings is not None else [
+	                      {"kind": "blocking", "loc": "auto.py:139", "text": "the discard runs before the verdict is written"},
+	                      {"kind": "note", "loc": "CHANGELOG.md:2", "text": "entry missing the version bump"}]})
+	monkeypatch.setattr(st, "want_detail", lambda p: {})
+	st.sections = [("MINE", [pr], None)]
+	st.pane_tab = "code"
+	return pr
+
+
+# ponytail: x0 + width must fit the screen — at() bounds by the PANE, and draw() always derives the
+# pane from the terminal width, so a test that asks for a pane wider than its screen is asking for
+# something production cannot produce.
+PANE_X, PANE_W = 40, 90
+
+
+def test_the_code_tab_puts_each_finding_on_the_line_it_names(screen, monkeypatch, st):
+	"""A finding that cites a line you then have to go and find somewhere else is one nobody follows."""
+	pr = _code_pr(monkeypatch, st)
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "1 summary" in out and "2 code" in out
+	assert "gitdashy/auto.py" in out
+	assert "verdict = self._verdict_for(pr)" in out              # the line
+	assert "blocking" in out and "the discard runs before" in out  # its finding, under it
+	assert "◆" in out                                            # and a mark in the gutter
+
+
+def test_marks_only_hides_what_the_review_did_not_mark(screen, monkeypatch, st):
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "blocking", "loc": "auto.py:139", "text": "x"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "CHANGELOG" not in screen.text()      # unmarked, so it is not in the way
+	screen.erase()
+	st.code_scope = "diff"
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "CHANGELOG.md" in out                  # D shows the whole change
+	assert "blocking" not in out                  # and the notes step aside; the marks stay
+
+
+def test_n_moves_between_marks_and_between_files(screen, monkeypatch, st):
+	"""The strip used to move a variable nothing read — the pane drew from the top whatever it said."""
+	pr = _code_pr(monkeypatch, st)
+	st.code_at = 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 22, PANE_X, PANE_W, pr)
+	assert "entry missing the version bump" in screen.text()   # scrolled to the second mark
+	screen.erase()
+	st.code_scope, st.code_at = "diff", 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 22, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "CHANGELOG.md" in out and "n/N file" in out          # and to the second FILE
+
+
+def test_a_finding_about_a_file_outside_the_diff_is_still_shown(screen, monkeypatch, st):
+	"""The pane must not be quieter than the summary it replaces."""
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "note", "loc": "gone/away.py:9", "text": "missing"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "not in this diff" in screen.text() and "gone/away.py:9" in screen.text()
+
+
+def test_the_code_tab_says_why_it_is_empty(screen, monkeypatch, st):
+	from dashy.core import diff
+	pr = _code_pr(monkeypatch, st)
+	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): ""})
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "no diff to show" in screen.text()      # not an empty pane you press 2 at again
+	screen.erase()
+	pr2 = dict(pr); pr2.pop("review")
+	monkeypatch.setattr(ui.log, "last", lambda url: None)
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr2)
+	assert "no review yet" in screen.text()
+
+
+def test_the_code_pane_never_writes_outside_itself(screen, monkeypatch, st):
+	"""Every width and height, including the ones where the pane has almost no room."""
+	pr = _code_pr(monkeypatch, st)
+	for scope in ("marks", "diff"):
+		st.code_scope = scope
+		for h in range(8, 34):
+			for w in range(30, 120, 7):
+				scr = FakeScr(h=h, w=PANE_X + w + 2)
+				ui.detail(scr, st, h, PANE_X, w, pr)   # must not raise

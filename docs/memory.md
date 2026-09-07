@@ -236,6 +236,24 @@ has either recurred across two independent reviews or been shared by a human.
 
 ---
 
+## 3b. Reading a review against the code
+
+A finding is `{kind, loc, text}` — `blocking`, `note` or `nit`, a `file.py:141`, and a line. The summary
+lists them; **`2` puts them back on the lines they name.** `gh pr diff` is parsed into files and hunks,
+each finding is anchored to its new-side line number, and the note is drawn under it.
+
+- **`D`** switches between *marks only* — the marked hunks with ±3 lines of context, which is what a
+  review of a 1,400-line diff actually concerns — and the whole change.
+- **`n`/`N`** moves to the next anchor and the window follows: a mark when you are reading the review,
+  a file when you are reading the diff. Both are the same gesture.
+- **`c`** cycles the context: ±3, ±8, the line alone.
+
+A finding about a file the diff does **not** touch is kept and shown as `not in this diff` — a review's
+most important line is sometimes about something the change should have contained, and the code tab
+must not be quieter than the summary it replaces.
+
+The diff is cached on the PR's head sha, so a push invalidates it and nothing else does.
+
 ## 4a. Several teams
 
 ```

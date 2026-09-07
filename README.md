@@ -114,6 +114,8 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
+| `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
+| `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
