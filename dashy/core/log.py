@@ -80,7 +80,12 @@ def mark_rereviews(sections):
 		e = last.get(p["url"])
 		if not e:
 			continue
-		if e.get("head") and p.get("head"):
+		if e.get("head"):
+			# ponytail: the entry knows its head but the row does not, so the graphql call that fills it
+			# failed on this fetch and nothing here can tell. Falling through to the timestamp would call
+			# it changed — posting a review is itself an update — and auto would re-review every tick.
+			if not p.get("head"):
+				continue
 			changed = p["head"] != e["head"]
 		else:
 			changed = datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"])
