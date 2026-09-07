@@ -69,3 +69,12 @@ def test_tag_carries_cost_and_duration():
 	assert log.tag({"depth": "low", "ms": 9_400}) == "low 9s"
 	assert log.tag({"depth": "low", "cost": None, "ms": None}) == "low"
 	assert log.tag({}) == ""
+
+
+def test_a_pr_with_no_head_is_never_called_pushed_to():
+	"""fetch() fills head from the graphql call; when that fails nothing has one. Falling back to the
+	timestamp there re-reviews forever, since posting a review is itself an update."""
+	log_review(dict(PR, url="p", head="aaa"), "opus", {"verdict": "approve", "body": "ok"}, at="2020-01-01T00:00:00+00:00")
+	unknown = dict(PR, url="p", updatedAt="2021-01-01T00:00:00Z")  # graphql failed: no head on the row
+	assert mark_rereviews([("REVIEW REQUESTED", [unknown], None), ("REVIEWED", reviewed(), None)]) == []
+	assert "prev" not in unknown

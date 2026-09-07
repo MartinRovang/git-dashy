@@ -164,7 +164,11 @@ class State:
 			with self.lock:
 				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 				for u in stale:  # forget the old verdict so r / auto can review the new push
-					if not in_flight(self, u):
+					# ponytail: same guard as the sweep below. `stale` is read off the REVIEWED section of
+					# THIS fetch, so a fetch that started before our verdict landed still holds the previous
+					# entry, calls the head we just reviewed a new push, drops the verdict — and auto starts
+					# the identical review a second later.
+					if not in_flight(self, u) and self.done_at.get(u, 0) <= t0:
 						self.reviews.pop(u, None)
 						self.seen_at.pop(u, None)
 				# ponytail: and forget it for ANY row whose PR has moved since. `stale` comes from

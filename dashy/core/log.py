@@ -80,7 +80,13 @@ def mark_rereviews(sections):
 		e = last.get(p["url"])
 		if not e:
 			continue
-		if e.get("head") and p.get("head"):
+		if e.get("head"):
+			# ponytail: the entry knows its head but the row does not — the graphql call failed on this
+			# fetch, or returned no node for this PR — and nothing here can tell. Falling through to the
+			# timestamp would call it changed — posting a review is itself an update — and auto would
+			# re-review every tick. Ceiling: a PR permanently missing from graphql is never re-reviewed.
+			if not p.get("head"):
+				continue
 			changed = p["head"] != e["head"]
 		else:
 			changed = datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"])
