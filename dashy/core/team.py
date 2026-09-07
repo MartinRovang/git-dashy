@@ -14,6 +14,7 @@ ERROR = ""  # last git failure, shown in the header until the next success
 NAME = ""  # owner/name of the team repo, for the stats strip
 _lock = threading.Lock()  # review threads push concurrently; git wants one writer
 CLONE = 300  # seconds a clone or repo-create may take before we give up on it
+BRANCH = "main"  # the branch a team gitdashy STARTS uses; a team it clones keeps its own
 
 
 def _remote(cmd, timeout=None):
@@ -511,8 +512,15 @@ def start(name, description="", at=""):
 		os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	except OSError as e:
 		return str(e)
-	if not is_repo(dest) and _git("init", "-q", cwd=dest).returncode != 0:
-		return f"could not git init {dest}"
+	if not is_repo(dest):
+		if _git("init", "-q", cwd=dest).returncode != 0:
+			return f"could not git init {dest}"
+		# ponytail: PIN the branch. `git init` uses init.defaultBranch, which is "main" on one machine
+		# and "master" on the next — so two people starting or connecting the same team push branches
+		# that never meet, and a clone of a repo whose HEAD names the other one comes back EMPTY. Found
+		# by CI, which has no global git config where mine says main; symbolic-ref rather than `init -b`
+		# because it needs no minimum git version.
+		_git("symbolic-ref", "HEAD", "refs/heads/" + BRANCH, cwd=dest)
 	union_attrs(dest)
 	write_info(key, name, description)
 	seed_project(os.path.join(dest, "memory", "project.md"))

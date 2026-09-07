@@ -349,3 +349,17 @@ def test_nothing_in_the_team_path_shells_out_to_github():
 	           if isinstance(n, _ast.Constant) and isinstance(n.value, str)]
 	cmds = [t for t in strings if t == "gh" or t.startswith("gh ")]
 	assert cmds == [], f"team.py still invokes gh: {cmds}"
+
+
+def test_a_started_team_pins_its_branch(monkeypatch, tmp_path):
+	"""git init uses init.defaultBranch — "main" on one machine, "master" on the next. Two people
+	starting or connecting the same team then push branches that never meet, and a clone of a repo
+	whose HEAD names the other one comes back EMPTY. CI found it; my own config hid it."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)   # a machine with no init.defaultBranch
+	monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+	assert team.start("Acme Tools", "internal") == ""
+	head = subprocess.run(["git", "-C", team.dirs()[0], "symbolic-ref", "--short", "HEAD"],
+	                      capture_output=True, text=True).stdout.strip()
+	assert head == team.BRANCH
