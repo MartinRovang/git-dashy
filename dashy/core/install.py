@@ -632,18 +632,26 @@ def full_explain(corpus, url=""):
 	if unread:
 		out.append("    known until it is cloned")
 	out.append("  · seed USER.md from the template, for you to fill in, if it is not there already")
-	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
+	out.append(f"  · register a SessionStart and a Stop hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
 	out.append("  · everything plain `gitdashy install` does, for review memory")
 	out.append("")
 	out.append("What that costs, every session on this machine, permanently:")
 	out.append("  · however many tokens that corpus's identity/ holds — unknown until it is cloned"
 	           if unread else
 	           f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
-	out.append("  · one hook running at the start of every session, in every repo")
+	out.append("  · one hook at the start of every session, and one at the end, in every repo")
 	out.append("")
-	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
-	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
-	out.append("that git can see, and exits quietly if it is not in a repo.")
+	out.append("The SessionStart hook seeds .agent/ notes in a repo, excludes them from git (via")
+	out.append(".git/info/exclude, never the tracked .gitignore), and mirrors that repo's review memory.")
+	out.append("It writes nothing that git can see, and exits quietly if it is not in a repo.")
+	out.append("")
+	# ponytail: the Stop hook can BLOCK a stop, which is a thing done TO the session rather than for it,
+	# so the consent screen says so in those words. #31's blocking finding was this same rule one door
+	# along: a hook that gained a new kind of power and a consent screen that still described the old one.
+	out.append("The Stop hook reads the session transcript when a session ends and, if you interrupted")
+	out.append("or refused tool calls enough times, asks the agent once to write down what it learned.")
+	out.append("It can hold a session open for that one question — never twice, and never on a routine")
+	out.append("session. It reads only the transcript, and sends nothing anywhere.")
 	out.append("")
 	# ponytail: until this corpus shipped a bin/, the corpus was DATA — markdown imported into context,
 	# templates copied. The hook now RUNS a script out of it, so a --corpus URL is no longer only text you
@@ -664,22 +672,30 @@ HOOK = os.path.join(HERE, "dashy", "hooks", "claude-session-start.sh")
 # ponytail: enough path to be ours. A bare filename would match — and uninstall would delete —
 # somebody else's hook that happened to be called the same thing.
 HOOK_MATCH = os.path.join("dashy", "hooks", "claude-session-start.sh")
+STOP_HOOK = os.path.join(HERE, "dashy", "hooks", "claude-stop.sh")
+STOP_MATCH = os.path.join("dashy", "hooks", "claude-stop.sh")
+
+# ponytail: a TABLE, so a third hook is a row rather than a fourth copy of the register block and a
+# fourth branch in uninstall. (event, script, match, what the status line says, whether it is passed
+# the corpus home). The Stop hook takes no argument: everything it judges comes in on stdin.
+HOOK_TABLE = (("SessionStart", HOOK, HOOK_MATCH, "Preparing repo notes", True),
+              ("Stop", STOP_HOOK, STOP_MATCH, "Checking what this session learned", False))
 
 
-def _count(settings):
-	"""How many SessionStart hooks there are in total, across every group."""
-	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get("SessionStart", []))
+def _count(settings, event):
+	"""How many of `event`'s hooks there are in total, across every group."""
+	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get(event, []))
 
 
-def _hooks(settings, script):
-	"""SessionStart groups with our hook taken out. Empty groups are dropped.
+def _hooks(settings, script, event):
+	"""`event`'s groups with our hook taken out. Empty groups are dropped.
 
 	ponytail: callers compare HOOK counts, never group counts. Ours can end up sharing a group with
 	somebody else's — then the group survives, the count of groups is unchanged, and a group-count
 	check concludes we were never installed and appends a second copy.
 	"""
 	out = []
-	for group in settings.get("hooks", {}).get("SessionStart", []):
+	for group in settings.get("hooks", {}).get(event, []):
 		kept = [h for h in group.get("hooks", []) if script not in str(h.get("command", ""))]
 		if kept:
 			out.append({**group, "hooks": kept})
@@ -783,25 +799,29 @@ def full_apply(corpus, url="", dry=False):
 				# added to stop this path leaving things behind.
 				# ponytail: a file we created is removed, not left empty. Undo means the state before.
 				undo.append((f"the imports in {knowledge.tilde(md)}", lambda: _unwrite(md, text)))
-		script = HOOK
 		sp = os.path.join(d, "settings.json")
 		try:
 			settings = json.loads(_read(sp) or "{}")
 		except ValueError:
 			return fail(f"{knowledge.tilde(sp)} is not valid JSON — fix it first")
-		script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
-		if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
-			out.append("ok    the SessionStart hook is already registered")
-		elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
-			out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
-		else:
-			out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
-			if not dry:
-				settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
-					{"hooks": [{"type": "command", "command": f"{shlex.quote(script)} {shlex.quote(home)}",
-					            "timeout": 10,
-					            "statusMessage": "Preparing repo notes"}]})
-				_write_json(sp, settings)
+		wrote = False
+		for event, script, match, saying, takes_home in HOOK_TABLE:
+			if _count({"hooks": {event: _hooks(settings, match, event)}}, event) != _count(settings, event):
+				out.append(f"ok    the {event} hook is already registered")
+			elif not (os.path.isfile(script) and os.access(script, os.X_OK)):
+				# ponytail: only reachable if gitdashy's own install is damaged — but reported per hook,
+				# because one missing script must not silently cost you the other.
+				out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no {event} hook")
+			else:
+				out.append(f"{did}hook  register {event} -> {knowledge.tilde(script)}")
+				if not dry:
+					cmd = shlex.quote(script) + (f" {shlex.quote(home)}" if takes_home else "")
+					settings.setdefault("hooks", {}).setdefault(event, []).append(
+						{"hooks": [{"type": "command", "command": cmd,
+						            "timeout": 10, "statusMessage": saying}]})
+					wrote = True
+		if wrote:
+			_write_json(sp, settings)
 		return out + [""] + (apply(dry) if not dry else [f"{did}do    everything plain `install` does"])
 
 	# ponytail: only fail() unwound, so anything that RAISED walked out past the undo list — a
@@ -836,15 +856,23 @@ def full_remove(dry=False):
 	except ValueError:
 		out.append(f"SKIP    {knowledge.tilde(sp)} is not valid JSON — remove the hook by hand")
 		settings = None
-	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
-		kept = _hooks(settings, HOOK_MATCH)
-		if _count({"hooks": {"SessionStart": kept}}) != _count(settings):
-			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
+	# ponytail: every hook in the table, not the one this branch happened to add. An uninstall that
+	# leaves a Stop hook pointing into a checkout the user then deletes fails at the end of every
+	# session, forever, with nothing naming gitdashy as the cause.
+	dropped = False
+	for event, _, match, _, _ in HOOK_TABLE if settings is not None else ():
+		if not settings.get("hooks", {}).get(event):
+			continue
+		kept = _hooks(settings, match, event)
+		if _count({"hooks": {event: kept}}, event) != _count(settings, event):
+			out.append(f"{did}remove  the {event} hook from {knowledge.tilde(sp)}")
 			if not dry:
-				settings["hooks"]["SessionStart"] = kept
+				settings["hooks"][event] = kept
 				if not kept:
-					settings["hooks"].pop("SessionStart")
-				_write_json(sp, settings)
+					settings["hooks"].pop(event)
+				dropped = True
+	if dropped:
+		_write_json(sp, settings)
 	known = registered()
 	if known:
 		out.append(f"{did}forget  {len(known)} mirror{'s' if len(known) > 1 else ''} — the import each repo"

@@ -8,7 +8,8 @@ import signal
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import bind as bind_mod, github, install as install_mod, knowledge, memory, mirror, review as review_mod, team
+from .core import (bind as bind_mod, friction as friction_mod, github, install as install_mod, knowledge,
+                   memory, mirror, review as review_mod, team)
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -24,6 +25,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name] [--count]
+       gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--leave KEY]
 
@@ -83,6 +85,13 @@ drafts shows what a review proposed and no second review has confirmed — the s
   show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,
   because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
   promotes one by hand or drops it.
+
+friction answers one question — did this session hit something worth remembering? — and is how a
+  coding session gets ASKED to file a fact instead of being told to remember. Two human signals only:
+  how often you interrupted, and how often you refused a tool call. Tool errors are ignored on purpose
+  (most are a benign non-zero exit), and neither signal grows with session length, so a long routine
+  session stays silent. It prints the ask, or nothing at all, which is the usual answer. Claude Code is
+  wired by the Stop hook gitdashy ships; any other agent counts its own signals and passes them in.
 
 teams lists the teams this machine has joined, what each calls itself, and what it covers.
   A team is a git repo — or just a directory — that pools what reviews learn. Whoever can reach it is
@@ -479,6 +488,45 @@ def teams(argv):
 		print(f"      {', '.join(owners + bound) or 'no repos bound to it yet'}")
 
 
+def friction(argv):
+	"""Ask, when a session hit something worth remembering. The contract every agent is wired against.
+
+	Two ways in, one policy behind both:
+
+	    gitdashy friction --interrupts N --denials N     any agent that can count its own signals
+	    gitdashy friction --claude-hook                  Claude's Stop hook JSON on stdin, its JSON out
+
+	Prints the reason and exits 0 when there is one; prints nothing when there is not. Silence is the
+	normal answer — most sessions are routine, and one that fires every time is a prompt nobody reads.
+
+	ponytail: there was a third door, `--transcript PATH`, and nothing wired it: --claude-hook covers
+	Claude and --interrupts/--denials covers everyone else. It also resolved filed_since BEFORE counting
+	while the hook path does it after, so the two entry points disagreed about a session that had both
+	friction and a draft. One door fewer is one disagreement fewer. `echo '{"transcript_path":"..."}' |
+	gitdashy friction --claude-hook` does the same job for a person debugging one.
+	"""
+	if "--claude-hook" not in argv:
+		if said := friction_mod.reason(arg("--interrupts", 0, int, argv), arg("--denials", 0, int, argv)):
+			print(said)
+		return
+	try:
+		hook = json.loads(sys.stdin.read() or "{}")
+	except ValueError:
+		return  # ponytail: a hook that cannot parse its own input says nothing, never blocks a stop
+	# ponytail: stop_hook_active means WE already blocked this stop once. Blocking again is a loop the
+	# user cannot leave except by killing the session, so the second ask is never made.
+	if hook.get("stop_hook_active") or not (path := hook.get("transcript_path")):
+		return
+	if not (said := friction_mod.reason(*friction_mod.claude_signals(path))):
+		return
+	# ponytail: the repo is resolved HERE, not at the top. origin_slug() forks `git`, and this runs at
+	# the end of every session in every repo — above the check it paid for that fork on every routine
+	# session and then discarded the answer, which is ~99% of them.
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not friction_mod.filed_since(repo, friction_mod.started_at(path)):
+		print(json.dumps({"decision": "block", "reason": said}))
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--help" in argv or "-h" in argv:
@@ -499,6 +547,8 @@ def run(argv=None):
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "bind":
 		return bind(argv)
+	if len(argv) > 1 and argv[1] == "friction":
+		return friction(argv)
 	if len(argv) > 1 and argv[1] == "api":
 		return api(argv)
 	if len(argv) > 1 and argv[1] == "drafts":

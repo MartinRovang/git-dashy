@@ -1,5 +1,7 @@
+import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 
@@ -1414,3 +1416,130 @@ def test_a_draw_survives_an_unreadable_agent_config(monkeypatch, tmp_path):
 		install.session_notes()                     # the other half: hand_wired_team_import's read
 	finally:
 		(cfg / "CLAUDE.md").chmod(0o644)
+
+
+def test_full_install_registers_both_hooks_and_uninstall_removes_both(monkeypatch, tmp_path):
+	"""The Stop hook is what makes the friction ask a mechanism rather than an instruction.
+
+	Registered but never removed, it would fail at the end of every session forever once the checkout
+	it points into is gone, with nothing naming gitdashy as the cause — so both halves are one test.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	cmds = {event: [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
+	        for event in ("SessionStart", "Stop")}
+	assert any(install.HOOK_MATCH in c for c in cmds["SessionStart"]), cmds
+	assert any(install.STOP_MATCH in c for c in cmds["Stop"]), cmds
+	# ponytail: the Stop hook takes NO argument — everything it judges arrives on stdin. The
+	# SessionStart one is passed the corpus home, and passing it to both would be a silent no-op today
+	# and a wrong path the day the stop hook reads argv.
+	stop = next(c for c in cmds["Stop"] if install.STOP_MATCH in c)
+	assert stop.strip() == shlex.quote(install.STOP_HOOK)
+
+	install.full_apply(corpus)                                   # idempotent: no second copy of either
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "Stop") == 1
+	assert install._count(settings, "SessionStart") == 1
+
+	install.full_remove()
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert not settings.get("hooks", {}).get("Stop"), settings
+	assert not settings.get("hooks", {}).get("SessionStart"), settings
+
+
+def test_uninstall_leaves_somebody_elses_stop_hook_alone(monkeypatch, tmp_path):
+	"""Same rule the SessionStart match already follows: enough path to be ours, so a hook of another
+	tool's that happens to run on Stop is not swept away with ours."""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	sp = os.path.join(d, "settings.json")
+	theirs = {"type": "command", "command": "/opt/other/claude-stop.sh"}
+	open(sp, "w").write(json.dumps({"hooks": {"Stop": [{"hooks": [theirs]}]}}))
+	install.full_apply(corpus)
+	install.full_remove()
+	settings = json.loads(open(sp).read())
+	left = [h["command"] for g in settings["hooks"]["Stop"] for h in g["hooks"]]
+	assert left == ["/opt/other/claude-stop.sh"], settings
+
+
+def test_the_consent_screen_names_the_stop_hook_and_what_it_can_do(monkeypatch, tmp_path):
+	"""#31's blocking finding, one door along: a hook that gains a new kind of power and a consent
+	screen that still describes the old one. A Stop hook can HOLD A SESSION OPEN, which is done to the
+	user rather than for them, so the screen has to say that before they agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus))
+	assert "Stop hook" in out, out
+	assert "hold a session open" in out, out
+	assert "never twice" in out, out
+	assert "sends nothing anywhere" in out, out
+
+
+def test_one_missing_hook_script_does_not_cost_you_the_other(monkeypatch, tmp_path):
+	"""The per-hook SKIP claims exactly this, and nothing proved it.
+
+	Registration walks HOOK_TABLE; a script that is present but not executable must skip its own row
+	and leave the other registered, rather than aborting the loop or writing a hook that cannot run.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	dead = tmp_path / "not-executable.sh"
+	dead.write_text("#!/usr/bin/env bash\nexit 0\n")
+	dead.chmod(0o644)
+	monkeypatch.setattr(install, "HOOK_TABLE",
+	                    (install.HOOK_TABLE[0],
+	                     ("Stop", str(dead), install.STOP_MATCH, "x", False)))
+	out = install.full_apply(corpus)
+	assert any("SKIP" in l and "no Stop hook" in l for l in out), out
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "SessionStart") == 1        # the other one still landed
+	assert not settings.get("hooks", {}).get("Stop")
+
+
+def test_the_install_doc_names_every_hook_that_is_actually_registered(monkeypatch, tmp_path):
+	"""docs/install.md is what README calls "the full account — every file it writes".
+
+	It said install registers "one SessionStart hook" while HOOK_TABLE had grown to two, and it
+	understated it precisely for the hook that can hold a session open. Prose nobody checks is the
+	thing that goes stale, so the check is here rather than in someone's memory: the doc has to name
+	every event the code actually registers.
+	"""
+	doc = open(os.path.join(install.HERE, "docs", "install.md")).read()
+	for event, *_ in install.HOOK_TABLE:
+		assert f"`{event}`" in doc, f"docs/install.md never names the {event} hook"
+	# and the one consequence a reader must not have to discover at runtime
+	assert "hold a session open" in doc, doc[:0] or "docs/install.md does not say the Stop hook can block"
+
+
+def test_the_stop_hook_script_actually_runs_and_finds_its_own_entry_point(tmp_path):
+	"""The one new file no test executed — this repo runs its shell hooks for real everywhere else.
+
+	The `../..` walk, the `prs.py` name and the `[ -x ]` fail-quiet were all unproven: rename prs.py or
+	move the hook one directory and the whole suite still passes while the hook silently stops asking,
+	forever, with no failure anywhere. Which is the exact shape of the bug this feature exists to fix.
+	"""
+	tr = tmp_path / "t.jsonl"
+	tr.write_text("".join(json.dumps({"type": "user", "interruptedMessageId": str(i)}) + "\n"
+	                      for i in range(3)))
+	body = json.dumps({"transcript_path": str(tr), "stop_hook_active": False})
+	# ponytail: PATH without gitdashy on it, which is the point — the hook must reach its own entry
+	# point from BASH_SOURCE, not from whatever `gitdashy` happens to come first after every session.
+	kept = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+	                       if d and not os.path.exists(os.path.join(d, "gitdashy")))
+	assert shutil.which("gitdashy", path=kept) is None
+	env = {**os.environ, "PATH": kept, "PRS_MEMORY": str(tmp_path / "mem")}
+	done = subprocess.run(["bash", install.STOP_HOOK], input=body,
+	                      capture_output=True, text=True, env=env)
+	assert done.returncode == 0, done.stderr
+	assert json.loads(done.stdout)["decision"] == "block", done.stdout
+
+
+def test_the_stop_hook_is_quiet_when_its_entry_point_is_gone(tmp_path):
+	"""Fails CLOSED. A checkout half-removed is the normal state mid-uninstall, and a hook that fails
+	loudly at the end of every session is a hook the user rips out."""
+	moved = tmp_path / "hooks"
+	moved.mkdir()
+	copy = moved / "claude-stop.sh"
+	shutil.copy(install.STOP_HOOK, str(copy))      # same script, nowhere near a prs.py
+	done = subprocess.run(["bash", str(copy)], input='{"transcript_path":"/nope"}',
+	                      capture_output=True, text=True)
+	assert done.returncode == 0, done.stderr
+	assert done.stdout == "", done.stdout
