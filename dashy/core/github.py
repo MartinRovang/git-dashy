@@ -49,6 +49,52 @@ def token():
 	return next((os.environ[v].strip() for v in ("GH_TOKEN", "GITHUB_TOKEN") if os.environ.get(v)), "")
 
 
+SCOPE = "PRS_API_REPO"  # set on a review's own subprocess: the one repo its `api` command may read
+QUALIFIERS = ("repo:", "user:", "org:")  # search terms that choose WHERE to look, rather than what for
+
+
+def scoped(path, repo):
+	"""`path`, rewritten so it can only read `repo`. Raises ValueError when it cannot be. "" = unscoped.
+
+	ponytail: the reviewer's input is an untrusted diff and its output is published on that diff's PR, so
+	"read anything the token can" closes a loop — steer the read, and the answer is posted for you. The
+	read is GET-only and host-pinned already; this is the third side, and the one that was open.
+	ponytail: the scope arrives in the ENVIRONMENT, not in the argv the model writes. There is nothing a
+	prompt can say that widens it, and nothing to keep in step with the --allowedTools pattern.
+	ponytail: "" means unscoped, which is a person at a terminal. Their own `gitdashy api /user/repos`
+	is not the threat and refusing it would only teach them to work around this.
+	"""
+	if not repo:
+		return path
+	p = path if path.startswith("/") else "/" + path
+	head, _, query = p.partition("?")
+	want, low = f"/repos/{repo}".lower(), head.lower()
+	# ponytail: the separator matters. Bare startswith let /repos/acme/api-secrets through on a scope of
+	# acme/api — a neighbouring repo, which is exactly the kind an attacker would guess at.
+	if low == want or low.startswith(want + "/"):
+		return p
+	if low.rstrip("/") == "/search/code":
+		return "/search/code?" + scoped_query(query, repo)
+	raise ValueError(f"a review may only read {repo}, and {head} is outside it")
+
+
+def scoped_query(query, repo):
+	"""A /search/code query string forced to `repo`. Raises ValueError when it names anywhere else.
+
+	ponytail: REWRITTEN, not merely checked. A `q` carrying no qualifier at all searches every repo the
+	token can see, so refusing only the ones that name someone else would leave the default — the form a
+	model reaches for first — wide open. parse_qsl also turns `+` back into a space, which is how the
+	qualifier in "q=SECRET+user:victim" becomes visible as a term rather than hiding inside one.
+	"""
+	parts = urllib.parse.parse_qsl(query, keep_blank_values=True)
+	terms = " ".join(v for k, v in parts if k == "q").split()
+	for t in terms:
+		if t.lower().startswith(QUALIFIERS) and t.lower() != f"repo:{repo}".lower():
+			raise ValueError(f"a review may only search {repo}, so {t} cannot be asked for")
+	terms = [t for t in terms if not t.lower().startswith("repo:")] + [f"repo:{repo}"]
+	return urllib.parse.urlencode([("q", " ".join(terms))] + [(k, v) for k, v in parts if k != "q"])
+
+
 def call(path, method="GET", body=None, accept="application/vnd.github+json", timeout=30):
 	"""One API call, returning the response text. Raises Error on anything that is not a 2xx."""
 	url = path if path.startswith("http") else API + path

@@ -497,3 +497,26 @@ def test_drafts_prints_the_fact_without_its_provenance(monkeypatch, capsys, tmp_
 	out = capsys.readouterr().out
 	assert "the viewer owns mask state" in out
 	assert "[r:" not in out and "r:" not in out.split("waiting")[0]   # no provenance in the sentence
+
+
+def test_api_is_confined_to_the_repo_under_review(monkeypatch):
+	"""The scope arrives in the ENVIRONMENT, so there is nothing in the argv a prompt can rewrite."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setenv(github.SCOPE, "acme/api")
+	monkeypatch.setattr(github, "call", lambda path, **kw: pytest.fail(f"called out to {path}"))
+	for path in ("/repos/some-other-org/private-repo/contents/.env",
+	             "/search/code?q=AWS_SECRET+user:victim",
+	             "/user/repos?per_page=100"):
+		with pytest.raises(SystemExit, match="acme/api"):
+			cli.api(["gitdashy", "api", path])
+
+
+def test_api_unscoped_still_reads_anything(monkeypatch, capsys):
+	"""ponytail: no scope means a person typed it. Refusing there protects nobody and teaches a workaround."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.delenv(github.SCOPE, raising=False)
+	monkeypatch.setattr(github, "call", lambda path, **kw: json.dumps({"path": path}))
+	cli.api(["gitdashy", "api", "/user/repos"])
+	assert json.loads(capsys.readouterr().out) == {"path": "/user/repos"}

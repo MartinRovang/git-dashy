@@ -71,7 +71,10 @@ a unified diff instead of json. It is the only command available to you. Start w
   {cmd} api /repos/{repo}/pulls/{number} --diff     the diff
   {cmd} api /repos/{repo}/contents/<file>?ref=<head branch>   read a file (no ref = base branch)
   {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1  every path in the repo, to find one
-  {cmd} api "/search/code?q=<symbol>+repo:{repo}"   where a symbol is used
+  {cmd} api "/search/code?q=<symbol>"               where a symbol is used, within this repo
+
+Reads are confined to {repo}: a path outside it is refused, and a code search is answered for this
+repo whatever it asks for. That is a boundary, not a hint — do not spend turns trying to widen it.
 
 Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
 survive review.
@@ -241,7 +244,9 @@ def _verdict(repo, n, model, prev=None):
 	else:
 		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
 	prompt += tail() + CONTRACT.format(sections=sections())  # how to write the body, then its shape — last, both
-	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
+	# ponytail: the scope rides the environment, not the prompt or the argv — see github.scoped.
+	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT,
+	                         env={github.SCOPE: repo} if claude else None)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):

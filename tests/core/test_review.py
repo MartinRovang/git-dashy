@@ -405,3 +405,19 @@ def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatc
 	monkeypatch.setattr(config, "VOICE", ["review"])
 	review(dict(PR), "opus")
 	assert "Append a section" not in calls[0][2] and "Do NOT" not in calls[0][2]
+
+
+def test_a_review_hands_its_agent_the_scope(monkeypatch, posted):
+	"""ponytail: the whole of github.scoped is inert unless this is set, and it is set in exactly one
+	place. A test of the policy that never checks it is reached is a test that cannot fail."""
+	from dashy.core import github
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen.update(kw.get("env") or {})
+		seen["tools"] = cmd[cmd.index("--allowedTools") + 1] if "--allowedTools" in cmd else ""
+		return claude_out(verdict="approve", summary="s", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "sonnet") == "✓ approved"
+	assert seen[github.SCOPE] == "a/b"          # the repo of the PR under review, not a default
+	assert seen["tools"].endswith(" api:*)")    # and the one command it may run is still the wrapper
+	assert "PATH" in seen                       # ponytail: an overlay, not a replacement — see llm.ask

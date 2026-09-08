@@ -323,3 +323,50 @@ def test_context_truncates_a_huge_diff(monkeypatch):
 	                    if kw.get("accept", "").endswith("diff") else json.dumps({"title": "t"}))
 	text = github.context("a/b", 7)
 	assert text.endswith("[diff truncated]") and len(text) < 200
+
+
+@pytest.mark.parametrize("path, want", [
+	("/repos/acme/api/pulls/7", "/repos/acme/api/pulls/7"),
+	("repos/acme/api/pulls/7", "/repos/acme/api/pulls/7"),          # no leading slash
+	("/repos/ACME/API/pulls/7", "/repos/ACME/API/pulls/7"),         # github is case-insensitive here
+	("/repos/acme/api", "/repos/acme/api"),                         # the repo itself
+	("/repos/acme/api/contents/x.py?ref=feat", "/repos/acme/api/contents/x.py?ref=feat"),
+])
+def test_scoped_lets_the_repo_under_review_through(path, want):
+	assert github.scoped(path, "acme/api") == want
+
+
+@pytest.mark.parametrize("path", [
+	"/repos/some-other-org/private-repo/contents/.env",
+	"/user/repos?per_page=100",
+	"/repos/acme/api-secrets/contents/.env",   # ponytail: the separator. A bare startswith let a
+	"/repos/acme/apifoo",                      # neighbouring repo through, which is the one to guess at
+	"/orgs/acme/members",
+	"/search/repositories?q=acme",             # only /search/code is rewritable; the rest are not
+	"/gists",
+])
+def test_scoped_refuses_everything_outside_it(path):
+	"""ponytail: the reviewer reads an untrusted diff and its body is posted on that diff's PR, so an
+	unscoped read closes a loop — steer it, and the answer is published for you."""
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped(path, "acme/api")
+
+
+def test_scoped_forces_the_repo_into_a_code_search():
+	"""ponytail: REWRITTEN, not merely checked. A q with no qualifier searches every repo the token can
+	see, so refusing only the ones naming someone else leaves the default — what a model writes first."""
+	import urllib.parse
+	def q(path):
+		return urllib.parse.parse_qs(github.scoped(path, "acme/api").partition("?")[2])["q"][0]
+	assert q("/search/code?q=parseToken") == "parseToken repo:acme/api"
+	assert q("/search/code?q=parseToken+repo:acme/api") == "parseToken repo:acme/api"  # not doubled
+	assert q("/search/code/?q=x") == "x repo:acme/api"                                 # trailing slash
+	for hostile in ("/search/code?q=AWS_SECRET+user:victim", "/search/code?q=x+repo:other/repo",
+	                "/search/code?q=x+org:victim"):
+		with pytest.raises(ValueError, match="acme/api"):
+			github.scoped(hostile, "acme/api")
+
+
+def test_an_unscoped_call_is_a_person_at_a_terminal():
+	"""`gitdashy api /user/repos` typed by hand is not the threat, and refusing it teaches a workaround."""
+	assert github.scoped("/user/repos", "") == "/user/repos"
