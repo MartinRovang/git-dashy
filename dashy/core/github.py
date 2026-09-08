@@ -51,8 +51,12 @@ def reviewers(node):
 			out[n["author"]["login"]] = REVIEW_GLYPH.get(n.get("state"), "~")
 	for n in (node.get("reviewRequests") or {}).get("nodes") or []:
 		r = (n or {}).get("requestedReviewer") or {}
-		if r.get("login"):
-			out[r["login"]] = "·"  # a fresh request supersedes an older review
+		# ponytail: a fresh request supersedes an older review — EXCEPT a comment. GitHub clears the
+		# request when a review approves or requests changes, so a reviewer in BOTH lists really was
+		# asked again. Commenting clears nothing, so the standing request is the ORIGINAL one, and
+		# stomping it made every comment invisible to everyone but the person who left it.
+		if r.get("login") and out.get(r["login"]) != "~":
+			out[r["login"]] = "·"
 	return " ".join(g + who for who, g in out.items())
 
 
@@ -109,8 +113,13 @@ def fetch():
 					p["checks"] = checks(n)
 					if h := n.get("headRefOid"):  # ponytail: absent node reads like a failed call — no head, not ""
 						p["head"] = h
+					# ponytail: reviewers on EVERY section, not just MINE. A "~alice" only ever painted
+					# on my own rows, so a comment on someone else's PR was visible to nobody looking
+					# at it. status stays MINE-only — own_status reads reviewDecision as "what is
+					# blocking ME", which is not the question an assigned or requested row asks.
+					p["reviewers"] = reviewers(n)
 					if name == "MINE":
-						p["status"], p["reviewers"] = own_status(n), reviewers(n)
+						p["status"] = own_status(n)
 		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError, TypeError):
 			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above

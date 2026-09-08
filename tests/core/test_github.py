@@ -119,6 +119,13 @@ def test_reviewers_merges_requests_over_latest_reviews():
 	assert github.reviewers({}) == ""
 
 
+def test_a_comment_survives_its_still_standing_review_request():
+	"""A COMMENTED review does not clear the request, so the request must not erase the comment."""
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "COMMENTED"}]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "bob"}}]}}
+	assert github.reviewers(node) == "~bob"
+
+
 def test_collaborators_and_request_review_shell_out(monkeypatch):
 	calls = []
 	def run(cmd, **kw):
