@@ -27,7 +27,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
-                      [--team KEY --connect URL] [--leave KEY]
+                      [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -98,12 +98,19 @@ teams lists the teams this machine has joined, what each calls itself, and what 
   on the team; there is no service and no account. Its name and description live in team.json inside
   it, so everyone who clones it sees the same ones.
   --new starts one right here with no remote at all: a name, a description, and files. --at DIR keeps
-  it somewhere else and links to it. When you have a repo for it, --team KEY --connect URL points it
-  there and pushes; the key does not change, so every binding still holds.
+  it somewhere else and links to it — an EMPTY directory, or one that does not exist yet; one that
+  already holds something is refused rather than adopted. When you have a repo for it, --team KEY
+  --connect URL points it there and pushes; the key does not change, so every binding still holds. A
+  remote that already has history that is not this team's is refused: that is a team to join.
   --join clones one that exists, from any git URL or a path (a bare owner/name is expanded to GitHub
-  as a convenience, nothing more). It takes its key from the team's own name.
-  --leave drops one checkout, refusing while it holds unpushed work.
-  Several teams at once; which one applies to a repo is `gitdashy bind`.
+  as a convenience, nothing more). It takes its key from the team's own name, and writes one in when
+  the repo has none, so the next person lands on the same key. A path must be a BARE repo — git
+  refuses pushes into a checkout — so a team on a shared drive is `git init --bare` there, then --connect.
+  --cover TARGET declares, in the team, that it covers an owner ("acme", "acme/*") or an owner/name.
+  Everyone who joins gets that seeded into their own bindings once, exactly as the review log is —
+  visible in `bind --list`, and a --forget still sticks. --uncover withdraws the declaration; rows it
+  already seeded stay each person's to change. --leave drops one checkout, refusing while it holds
+  unpushed work. Several teams at once; which one applies to a repo is `gitdashy bind`.
 
 setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
@@ -291,6 +298,31 @@ def remember(argv):
 	print(f"gitdashy: {where} — drafted; one more independent observation confirms it")
 
 
+def _team_of(argv):
+	"""The team a `bind` writes to: --team as typed, folded to its key, or the one joined team.
+
+	ponytail: refused when it is not a team this machine has joined. `--team NeoMedSys_team` was accepted
+	verbatim, reported success and resolved to nothing — a typo bound an org to a team that did not
+	exist, and the only sign was the pane saying "not in team" on every row of it.
+	"""
+	if typed := arg("--team", "", str, argv):
+		key = team.key_of(typed)
+		if not team.dir_of(key):
+			raise SystemExit(f"gitdashy: not in team {typed!r} — joined: {', '.join(team.joined()) or 'none'}")
+		return key
+	if not (key := bind_mod.team_key()):
+		raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
+	return key
+
+
+def _which_team(argv):
+	"""The team a `teams` verb acts on: --team, or the only one joined."""
+	key = arg("--team", "", str, argv) or (team.joined()[0] if len(team.joined()) == 1 else "")
+	if not key:
+		raise SystemExit(f"gitdashy: say which team: --team {' | --team '.join(team.joined()) or 'NAME'}")
+	return team.key_of(key)
+
+
 def bind(argv):
 	"""Bind a repo to a team, so reviews of it are told that team\'s brief and no other."""
 	team.activate()  # ponytail: names the team, and seeds bindings from the shared log the first time
@@ -328,9 +360,7 @@ def bind(argv):
 			if err := bind_mod.forget_owner(owner):
 				raise SystemExit("gitdashy: " + err)
 			return print(f"gitdashy: {bind_mod.owner_key(owner)}/* is no longer bound")
-		to = arg("--team", "", str, argv) or bind_mod.team_key()
-		if not to:
-			raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
+		to = _team_of(argv)
 		if err := bind_mod.bind_owner(owner, to):
 			raise SystemExit("gitdashy: " + err)
 		return print(f"gitdashy: {bind_mod.owner_key(owner)}/* → {to}  (a repo binding still overrides it)")
@@ -352,9 +382,7 @@ def bind(argv):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {bind_mod.key(repo)} " + (f'unbound from {was}' if was else 'was not bound to anything'))
 	else:
-		to = arg("--team", "", str, argv) or bind_mod.team_key()
-		if not to:
-			raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
+		to = _team_of(argv)
 		if err := bind_mod.bind(repo, to):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {bind_mod.key(repo)} → {to}")
@@ -463,12 +491,22 @@ def teams(argv):
 		print(f"  bind repos to it: gitdashy bind --owner OWNER --team {key}")
 		print(f"  give it a remote when you have one: gitdashy teams --team {key} --connect URL")
 	elif url := arg("--connect", "", str, argv):
-		key = arg("--team", "", str, argv) or (team.joined()[0] if len(team.joined()) == 1 else "")
-		if not key:
-			raise SystemExit(f"gitdashy: say which team: --team {' | --team '.join(team.joined()) or 'NAME'}")
+		key = _which_team(argv)
 		if err := team.connect(key, url):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {key} now pushes to {url}")
+	elif target := arg("--cover", "", str, argv):
+		key = _which_team(argv)
+		if err := team.cover(key, target):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {key} now covers {bind_mod.cover_key(target)}  (everyone who joins gets it bound once)"
+		      + (f"  ({team.ERROR})" if team.ERROR else ""))
+	elif target := arg("--uncover", "", str, argv):
+		key = _which_team(argv)
+		if err := team.uncover(key, target):
+			raise SystemExit("gitdashy: " + err)
+		print(f"gitdashy: {key} no longer covers {bind_mod.cover_key(target)}  (rows it seeded stay until `gitdashy bind ... --forget`)"
+		      + (f"  ({team.ERROR})" if team.ERROR else ""))
 	elif join := arg("--join", "", str, argv):
 		# ponytail: what CHANGED, not joined()[-1] — that is the last alphabetically, so already being
 		# in "zulu" and joining "acme" printed "joined zulu".
@@ -494,6 +532,8 @@ def teams(argv):
 		if it["description"]:
 			print(f"      {it['description']}")
 		print(f"      {d}{'' if team.has_remote(d) else '   · no remote yet'}")
+		if declared := team.covers(key):
+			print(f"      declares: {', '.join(declared)}")
 		print(f"      {', '.join(owners + bound) or 'no repos bound to it yet'}")
 
 

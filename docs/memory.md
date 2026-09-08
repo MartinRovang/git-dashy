@@ -257,7 +257,8 @@ The diff is cached on the PR's head sha, so a push invalidates it and nothing el
 ## 4a. Several teams
 
 ```
-~/.prs_teams/<owner>__<name>/     one checkout per team; the directory name IS the slug
+~/.prs_teams/<key>/               one checkout per team; the directory name IS the key
+    team.json                      name, description, and what it declares it covers
     memory/{general,<repo>,project}.md
     memory/pool/<user>/*.md
     reviewed.jsonl                 that team's shared review log
@@ -301,7 +302,22 @@ gitdashy teams --new "Acme" --at /srv/shared/acme-mem     # kept elsewhere, link
 gitdashy bind --owner neomedsys --team neomedsys-platform # add repos to it
 gitdashy teams --team neomedsys-platform --connect git@somewhere:us/mem.git   # when you have a repo
 gitdashy teams --join git@somewhere:us/mem.git            # a colleague, from any host
+gitdashy teams --team neomedsys-platform --cover neomedsys   # declared in the team: joiners get it bound
 ```
+
+`--at` takes an **empty** directory, or one that does not exist yet; one that already holds something is
+refused rather than adopted. A path given to `--join` must be a **bare** repo — git refuses pushes into a
+checkout — so a team on a shared drive is `git init --bare` there, `--connect` from one machine and `--join`
+from the rest. `--join` refuses a repo that is already one of your teams, and writes a `team.json` into a
+repo that has none, so everyone keys it the same way. `--connect` refuses a remote holding history that is
+not this team's (that is a team to join) and accepts one holding the team's own, so a host can be moved.
+
+**What a team covers is declared in it.** `covers` in `team.json` lists owners (`acme/*`) and repos
+(`acme/api`). `activate()` seeds them into the local bindings the same way it seeds from the log — once,
+skipping anything ever bound or unbound here, and skipping a claim two joined teams both make. Bindings stay
+per machine: the declaration seeds, it does not own, so a `--forget` sticks and `--uncover` leaves what it
+seeded in place. A claim is a disclosure decision for everyone who joins, which is why it is its own verb
+with its own keypress rather than a side effect of binding locally.
 
 `T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
 

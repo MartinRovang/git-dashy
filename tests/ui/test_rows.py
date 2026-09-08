@@ -119,15 +119,15 @@ def _pr(repo, n):
 def test_rows_separate_a_section_by_team():
 	"""Which team a repo's reviews use was invisible until you opened the pane on every single row."""
 	bind.bind_owner("neomedsys", "neomedsys-review-memory")
-	bind.bind("acme/tool", "acme/mem")
+	bind.bind("acme/tool", "acme-mem")
 	prs = [_pr("me/weekend", 1), _pr("neomedsys/neo-api", 2), _pr("acme/tool", 3),
 	       _pr("neomedsys/nms-platform-v2", 4)]
 	out = rows([("MINE", prs, None)])
 	groups = [p for k, p in out if k == "group"]
-	assert groups == ["acme/mem", "neomedsys-review-memory", "not bound to a team"]
+	assert groups == ["acme-mem", "neomedsys-review-memory", "not bound to a team"]
 	# each PR sits under its own team's separator, and unbound is the last pile
 	order = [p if k == "group" else p["repository"]["nameWithOwner"] for k, p in out if k in ("group", "pr")]
-	assert order == ["acme/mem", "acme/tool",
+	assert order == ["acme-mem", "acme/tool",
 	                 "neomedsys-review-memory", "neomedsys/neo-api", "neomedsys/nms-platform-v2",
 	                 "not bound to a team", "me/weekend"]
 

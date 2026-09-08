@@ -843,22 +843,35 @@ def test_setup_still_refuses_a_file_you_wrote_yourself(monkeypatch, tmp_path):
 	assert any("is yours already" in l for l in out)
 
 
-def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
-	"""bind.team_key() is "" for NONE and for SEVERAL, and those are different problems. Two joined
-	teams is the normal state this whole change exists to create."""
-	from dashy.core import memory, team
+def test_setup_writes_the_brief_of_the_team_the_repo_you_stand_in_is_bound_to(monkeypatch, tmp_path):
+	"""A brief belongs to a repo. Picking the team by COUNT wrote the team's brief from inside an
+	unbound side project whenever exactly one team was joined, and yours from inside a bound repo
+	whenever two were. The binding of the directory you run this in is the only thing that says which."""
+	from dashy.core import bind, memory, team
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	for key in ("org-one", "org-two"):
 		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	here = tmp_path / "work"
+	subprocess.run(["git", "init", "-q", str(here)], check=True)
+	subprocess.run(["git", "-C", str(here), "remote", "add", "origin", "git@github.com:acme/api.git"], check=True)
+	monkeypatch.chdir(here)
+	bind.bind("acme/api", "org-two")
+	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
+	assert os.path.exists(memory.brief_path("org-two"))       # the team this repo is bound to, of two
+	assert not os.path.exists(memory.brief_path())
+	assert any("org-two" in l and "acme/api" in l for l in out)
+	bind.forget("acme/api")
+	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
+	assert os.path.exists(memory.brief_path())                 # unbound: yours, however many are joined
+	note = next(l for l in out if l.startswith("note"))
+	assert "acme/api" in note and "bound to no team" in note
+	assert "--team" not in note                                # setup parses no arguments
+	monkeypatch.chdir(tmp_path)
 	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
 	note = next(l for l in out if l.startswith("note"))
-	assert "several teams joined" in note and "org-one, org-two" in note
-	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
-	assert "no origin" not in note and "no name" not in note
-	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says
-
-
+	assert "no git origin" in note                             # not in a repo: yours, and said so
 def test_install_retires_the_old_team_link_and_rewrites_its_block(monkeypatch, tmp_path):
 	"""The pre-2026-09-08 install pointed `prs-team` at ONE team's memory and imported it into every
 	session on the machine. With several teams it dangled; with one it told every repo how that team

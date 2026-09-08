@@ -156,11 +156,26 @@ def init_history(d):
 	return is_repo(d)
 
 
+def _pull(d, label):
+	"""`pull --rebase`, and never leave a rebase behind. True when it merged. Caller holds _lock.
+
+	ponytail: team.json is JSON, not append-only, so it is not union-merged — two people describing the
+	team at once conflict. A pull that stopped mid-rebase STAYED that way: every later pull and push
+	failed on it, leave refused the dirty tree, and the checkout was wedged until someone ran
+	`git rebase --abort` by hand. Aborting puts HEAD back on the local commit with a clean tree, so
+	nothing is lost and the next tick starts from a state git can work with.
+	"""
+	if _note(_git("pull", "--rebase", "-q", cwd=d), label):
+		return True
+	_git("rebase", "--abort", cwd=d)  # ponytail: a no-op when none is in progress; ERROR keeps the pull's reason
+	return False
+
+
 def pull_dir(d, label="sync"):
 	"""ponytail: git is the sync server for any checkout, not just the team's — the private one uses it too."""
 	if is_repo(d) and has_remote(d):  # ponytail: local-only history has nothing to pull and no error to show
 		with _lock:
-			_note(_git("pull", "--rebase", "-q", cwd=d), label)
+			_pull(d, label)
 
 
 def push_dir(d, msg, label="sync"):
@@ -187,7 +202,7 @@ def push_dir(d, msg, label="sync"):
 		return ""  # ponytail: committed, which is the half that protects you. Nothing to push to.
 	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), label):  # rejected: someone pushed first, merge and retry
-			if not (_note(_git("pull", "--rebase", "-q", cwd=d), label) and _note(_git("push", "-q", cwd=d), label)):
+			if not (_pull(d, label) and _note(_git("push", "-q", cwd=d), label)):
 				# ponytail: names the PUSH, with the last git message after it. ERROR alone was whichever
 				# of the two failed, so a pull that failed reported itself as the push's reason.
 				return f"push failed: {ERROR}" if ERROR else "push failed"  # committed locally, nothing lost
@@ -273,6 +288,16 @@ def key_of(name):
 	return out[:64]
 
 
+def _info_raw(key):
+	"""team.json as a dict, {} when it is missing, unreadable, or not an object."""
+	try:
+		with open(os.path.join(dir_of(key), INFO)) as f:
+			got = json.load(f)
+		return got if isinstance(got, dict) else {}
+	except (OSError, ValueError):
+		return {}
+
+
 def info(key):
 	"""{"name", "description"} the team says about itself, from its own checkout. Falls back to the key.
 
@@ -280,15 +305,32 @@ def info(key):
 	and the same description. A checkout written before this file existed still reads — the key is the
 	fallback, and the key is what everything resolves by anyway.
 	"""
-	d = dir_of(key)
-	try:
-		with open(os.path.join(d, INFO)) as f:
-			got = json.load(f)
-		if isinstance(got, dict):
-			return {"name": _clean(got.get("name"), key), "description": _clean(got.get("description"), "")}
-	except (OSError, ValueError):
-		pass
-	return {"name": key, "description": ""}
+	got = _info_raw(key)
+	return {"name": _clean(got.get("name"), key), "description": _clean(got.get("description"), "")}
+
+
+def covers(key):
+	"""What the team declares it covers — ["acme/api", "neomedsys/*"], sorted. [] when nothing.
+
+	ponytail: DECLARED IN THE TEAM, so it clones with it. Bindings are per machine, and a colleague who
+	joined got per-repo seeds from the review log and nothing else: the owner rule that made the team
+	cover an org never left the laptop it was typed on, and two people on one team read different
+	briefs for the same repo with nothing on screen to say so. activate() seeds these into the local
+	store once, exactly as it seeds from the log — visible in `bind --list`, and a --forget still sticks.
+	ponytail: read through _clean and bind.target, because this file arrives in a clone. An entry that
+	is not an owner or an owner/name is dropped rather than stored: a claim the resolver could never
+	match is a row that reads as bound to nothing, and a control byte here would reach the listing.
+	"""
+	from . import bind  # ponytail: bind imports this module; a top-level import is a cycle
+	raw = _info_raw(key).get("covers")
+	out = set()
+	for item in (raw if isinstance(raw, list) else []):
+		# ponytail: DROPPED, not repaired. _clean strips a control byte and keeps the rest, which here
+		# would bind an owner nobody typed; a claim is refused whole or taken whole.
+		t = item.strip() if isinstance(item, str) else ""
+		if t and t.isprintable() and len(t) <= 120 and (c := bind.cover_key(t)):
+			out.add(c)
+	return sorted(out)
 
 
 def _clean(v, fallback):
@@ -302,17 +344,58 @@ def _clean(v, fallback):
 	return t[:120] or fallback
 
 
-def write_info(key, name, description):
-	"""Record what the team calls itself. Returns "" or why it could not."""
+def write_info(key, name, description, covers_=None):
+	"""Record what the team calls itself, and what it covers when given. Returns "" or why it could not.
+
+	ponytail: `covers_` None KEEPS what is there. Describing a team must not silently drop what it
+	covers, which is what a whole-file rewrite from three arguments would do.
+	"""
 	if not (d := dir_of(key)):
 		return f"not in {key}"
+	body = {"name": name or key, "description": description or ""}
+	kept = _info_raw(key).get("covers") if covers_ is None else covers_
+	if kept:
+		body["covers"] = kept
 	try:
 		with open(os.path.join(d, INFO), "w") as f:
-			json.dump({"name": name or key, "description": description or ""}, f, indent=1)
+			json.dump(body, f, indent=1)
 			f.write("\n")
 	except OSError as e:
 		return str(e)
 	return ""
+
+
+def _declare(key, target, add):
+	"""Add or remove one coverage claim in team.json and push it. "" or why not."""
+	from . import bind
+	if not (t := bind.cover_key(target)):
+		return f"{target!r} is not an owner or an owner/name"
+	if not (d := dir_of(key)):
+		return f"not in {key}"
+	now = covers(key)
+	if (t in now) == add:
+		return ""  # already what was asked for
+	it = info(key)
+	if err := write_info(key, it["name"], it["description"], sorted(set(now) | {t}) if add else [c for c in now if c != t]):
+		return err
+	# ponytail: shared, so it is pushed. A push that fails is a sync problem on the T row, like any other.
+	push_dir(d, f"team: {key} {'covers' if add else 'no longer covers'} {t}", "sync")
+	return ""
+
+
+def cover(key, target):
+	"""Declare that team `key` covers `target` — an owner ("acme", "acme/*") or an owner/name. "" or why not.
+
+	ponytail: a claim is a disclosure decision for everyone who joins — every review of every repo it
+	names reads this team's brief and facts, and facts about them may be shared here. That is why it is
+	a separate, explicit verb with a keypress of its own, and not a side effect of binding locally.
+	"""
+	return _declare(key, target, True)
+
+
+def uncover(key, target):
+	"""Withdraw a claim. The rows it already seeded on each machine stay theirs to change."""
+	return _declare(key, target, False)
 
 
 def joined():
@@ -449,10 +532,19 @@ def activate():
 	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
 	# ponytail: per team, and only for teams that can be seeded unambiguously. With several joined, a
 	# repo in one team's log is that team's; a repo in two is left alone rather than guessed at.
+	# ponytail: and what each team DECLARES it covers, from its own team.json — the one route that carries
+	# an owner rule from the machine it was typed on to a colleague's. Same rule as the log: a claim two
+	# joined teams both make is left alone rather than guessed at, and the listing shows both.
+	claims = {}
+	for slug in joined():
+		for t in covers(slug):
+			claims.setdefault(t, set()).add(slug)
 	for slug in joined():
 		theirs = os.path.join(dir_of(slug), "memory")
 		known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
-		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known)
+		declared = [t for t, who in claims.items() if who == {slug}]
+		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known + [t for t in declared if not t.endswith("/*")])
+		bind.seed_owners(slug, [t[:-2] for t in declared if t.endswith("/*")])
 
 
 def looks_local(repo):
@@ -522,8 +614,7 @@ def clone(repo, dest):
 	# ssh, which every host speaks and which authenticates from an agent already loaded.
 	# ponytail: "could not read " covers Username AND Password — git says the second when the URL
 	# carries a user, which is the same failure with the same remedy.
-	if "could not read " in ERROR or "Authentication failed" in ERROR:
-		say = _credential_hint(url)
+	if say := _auth_hint(ERROR, url):
 		# ponytail: the GLOBAL too. The friendly string was only the return value, so after the popup was
 		# dismissed the T row went on painting the clipped fatal until the next successful sync. The row
 		# renders ERROR[:40], so a long hint is still cut there — a truncated hint beats a truncated
@@ -531,6 +622,11 @@ def clone(repo, dest):
 		ERROR = f"join: {say}"
 		return say
 	return ERROR
+
+
+def _auth_hint(msg, url):
+	"""The credential hint when `msg` is git saying it could not authenticate, else ""."""
+	return _credential_hint(url) if ("could not read " in msg or "Authentication failed" in msg) else ""
 
 
 def _credential_hint(url):
@@ -636,6 +732,14 @@ def start(name, description="", at=""):
 			# team.json with this name. Joining one is `teams --join`; this makes a new team.
 			if is_repo(at):
 				return f"{at} is already a git checkout — join it with `teams --join` instead"
+			# ponytail: EMPTY, or not there yet. Only a repo was refused, so `--at ~/dev/neomedsys` — the
+			# parent of every checkout on the machine — was accepted, git-inited and committed: thirty
+			# repos recorded as gitlinks in one commit, every later team commit re-recording their HEADs,
+			# and a leave that refuses forever because the nested repos keep the tree dirty. A directory
+			# that already holds something is somebody's; adopting it is not what "keep it somewhere
+			# else" meant, and the prompt now says "empty" rather than "a path".
+			if os.path.isdir(at) and os.listdir(at):
+				return f"not empty — a team needs an empty directory, or one that does not exist yet: {at}"
 			os.makedirs(at, exist_ok=True)
 			os.symlink(at, dest)
 		else:
@@ -673,12 +777,31 @@ def connect(key, url):
 	"""
 	if not (d := dir_of(key)):
 		return f"not in {key}"
-	if not url.strip():
+	if not (url := url.strip()):
 		return "a remote needs a URL"
-	had = has_remote(d)
-	r = _git("remote", "set-url" if had else "add", "origin", url.strip(), cwd=d)
+	if err := _cannot_push_into(url):
+		return err
+	had = _url(d) if has_remote(d) else ""
+	r = _git("remote", "set-url" if had else "add", "origin", url, cwd=d)
 	if r.returncode != 0:
 		return (r.stderr or r.stdout).strip().splitlines()[-1][:120] if (r.stderr or r.stdout).strip() else "could not set the remote"
+	# ponytail: LOOK before pushing. A remote already holding history that is not this team's is a team
+	# to JOIN — the push was rejected as non-fast-forward, the rebase could not even start because
+	# `remote add` sets no upstream, and every tick after that painted git's --set-upstream-to hint on
+	# the T row. History that IS ours — a mirror pushed by hand, a host moved — fast-forwards, and
+	# refusing that would make repointing impossible: ancestry is the test, not emptiness. The fetch
+	# goes through _git like every other call here: bounded, and it cannot prompt.
+	with _lock:
+		f = _git("fetch", "-q", "--prune", "origin", cwd=d)
+		foreign = f.returncode == 0 and _foreign(d)
+	if f.returncode != 0 or foreign:
+		# ponytail: taken back out. Half-connected — origin set, nothing pushed — was the state that
+		# showed the hint forever; a refusal leaves the team exactly as it was before the question.
+		_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
+		if foreign:
+			return f"already has history that is not this team's — `teams --join` it, or connect an empty repo: {url}"
+		msg = ((f.stderr or f.stdout).strip().splitlines() or ["could not reach it"])[-1]
+		return _auth_hint(msg, url) or msg[:FOOTER]
 	if err := push_dir(d, "gitdashy: connect " + key, "join"):
 		return err
 	# ponytail: push EXPLICITLY. push_dir returns early when there is nothing new to commit, which is
@@ -688,6 +811,55 @@ def connect(key, url):
 	with _lock:
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), "join"):
 			return f"connected, but the push failed: {ERROR}" if ERROR else "connected, but the push failed"
+	return ""
+
+
+def _foreign(d):
+	"""True when origin holds a commit that is not in this checkout's history."""
+	r = _git("for-each-ref", "--format=%(objectname)", "refs/remotes/origin", cwd=d)
+	return any(_git("merge-base", "--is-ancestor", sha, "HEAD", cwd=d).returncode != 0 for sha in r.stdout.split())
+
+
+def _cannot_push_into(repo):
+	"""Why a LOCAL path cannot be a team's remote, or "". Only a non-bare checkout on this machine is.
+
+	ponytail: `--new --at /srv/shared/x` and then `--join /srv/shared/x` was the documented shared-drive
+	pairing. The clone works, and every push into it is refused — git will not move the branch a
+	checkout has checked out — so the joiner's first fact failed with "failed to push some refs", and
+	every one after it. A bare copy is what a shared drive needs, and the message says how to make one.
+	`receive.denyCurrentBranch=updateInstead` is the one setting under which a checkout accepts them.
+	"""
+	if not looks_local(repo):
+		return ""
+	p = os.path.abspath(os.path.expanduser(repo.strip()))
+	if not is_repo(p):
+		return ""  # bare, or not a repo at all — git clone says which
+	r = _git("config", "receive.denyCurrentBranch", cwd=p)
+	if r.returncode == 0 and r.stdout.strip() == "updateInstead":
+		return ""
+	# ponytail: the remedy first. confirm() clips at the footer, and a long path pushed it off the line.
+	return f"a checkout — git refuses pushes into one; share a bare copy: git clone --bare {p} {p}.git"
+
+
+def already_joined(repo):
+	"""The key of the joined team whose origin is `repo`, "" when none is.
+
+	ponytail: knowledge.adopt has had this guard since the day memory could be a checkout; setup did not,
+	so `--join` of a repo you were in — under a --name, or after its team.json was renamed — made a
+	second checkout with a second key, and every binding pointed at one of the two. A path is compared
+	as a path: two shares that happen to end in the same two segments are not the same repo.
+	"""
+	local = looks_local(repo)
+	want = os.path.realpath(os.path.expanduser(repo.strip())) if local else repo
+	for slug in joined():
+		d = dir_of(slug)
+		if not (have := _url(d)):
+			continue
+		if local:
+			if "://" not in have and "@" not in have and os.path.realpath(os.path.join(d, os.path.expanduser(have))) == want:
+				return slug
+		elif same_remote(want, have):
+			return slug
 	return ""
 
 
@@ -702,6 +874,10 @@ def setup(repo, name=""):
 	"""
 	if is_own_memory(repo):
 		return "that is your own memory directory, which holds drafts — use a different repo for the team"
+	if err := _cannot_push_into(repo):
+		return err
+	if have := already_joined(repo):
+		return f"already joined that repo, as {have}"
 	tmp = os.path.join(config.TEAMS, ".joining")
 	shutil.rmtree(tmp, ignore_errors=True)
 	os.makedirs(config.TEAMS, exist_ok=True)
@@ -727,6 +903,12 @@ def setup(repo, name=""):
 	union_attrs(dest)
 	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	seed_project(os.path.join(dest, "memory", "project.md"))
+	# ponytail: a repo that predates team.json gets one NOW — the name you gave, or the key that was
+	# derived — and the push below carries it. Without it every joiner keyed the same repo by whatever
+	# they typed, so two people on one team held two keys, and a binding one of them made meant nothing
+	# on the other's machine. start() writes this file; a join is the other way a checkout is born.
+	if not os.path.exists(os.path.join(dest, INFO)):
+		write_info(key, name or key, "")
 	# ponytail: your own log is NOT copied in. It was, back when "a team" was singular and your log
 	# became the team's — but a personal log holds reviews of repos bound to OTHER teams and of private
 	# work, and copying it in committed and PUSHED all of it. Joining a team would have told them what

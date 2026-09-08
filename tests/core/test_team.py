@@ -421,9 +421,9 @@ def test_migration_carries_the_bindings_across_the_rename(monkeypatch, tmp_path)
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "prs_teams"))
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	monkeypatch.setattr(knowledge, "unpushed", lambda d: 0)
-	bind.bind("acme/api", "org/mem")          # exactly as the shipped version wrote them
-	bind.bind_owner("acme", "org/mem")
-	bind.bind("other/repo", "someone/else")   # a team we are not migrating: left alone
+	bind._append({"repo": "acme/api", "team": "org/mem"})   # exactly as the shipped version wrote them
+	bind._append({"owner": "acme", "team": "org/mem"})
+	bind._append({"repo": "other/repo", "team": "someone/else"})   # a team we are not migrating: left alone
 
 	report = team.migrate()
 	assert "repointed 2 bindings" in report
@@ -642,3 +642,191 @@ def test_git_is_asked_in_a_locale_we_can_read(monkeypatch):
 	team._remote(["git", "status"])
 	assert seen.get("LC_ALL") == "C" and seen.get("LANGUAGE") == ""
 	assert seen.get("GIT_TERMINAL_PROMPT") == "0"   # and the reason it cannot prompt is still there
+
+
+def test_starting_a_team_at_a_directory_that_holds_something_refuses(monkeypatch, tmp_path):
+	"""`--at ~/dev/neomedsys` — the parent of every checkout on the machine — was accepted, git-inited
+	and committed: thirty repos recorded as gitlinks in one commit, plus a leave that refuses forever
+	because the nested repos keep the tree dirty. Only a repo was refused; anything else was adopted."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	home = tmp_path / "dev"
+	home.mkdir()
+	(home / "notes.txt").write_text("mine\n")
+	git("init", "-q", str(home / "project"), cwd=tmp_path)
+	err = team.start("Everything", "", str(home))
+	assert "not empty" in err and str(home) in err
+	assert not os.path.exists(home / ".git") and not os.path.exists(home / "team.json")  # nothing adopted
+	assert team.joined() == [] and not os.path.lexists(tmp_path / "teams" / "everything")  # no link left
+	# an empty directory, or one that does not exist yet, is still fine
+	(tmp_path / "empty").mkdir()
+	assert team.start("Everything", "", str(tmp_path / "empty")) == ""
+	assert team.start("Another", "", str(tmp_path / "not-yet")) == ""
+
+
+def test_joining_a_checkout_it_could_never_push_to_is_refused(monkeypatch, tmp_path):
+	"""The docs paired `--new --at /srv/shared/x` with `--join /srv/shared/x`. The clone works and every
+	push is refused, because the target is a non-bare checkout on the same branch — reproduced as
+	"failed to push some refs" on the first fact, forever."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "a"))
+	share = tmp_path / "share"
+	assert team.start("Acme", "", str(share)) == ""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "b"))
+	err = team.setup(str(share))
+	assert "checkout" in err and "--bare" in err
+	assert team.joined() == []
+	# a bare copy is what a shared drive needs, and that joins and pushes
+	git("clone", "-q", "--bare", str(share), str(tmp_path / "share.git"), cwd=tmp_path)
+	assert team.setup(str(tmp_path / "share.git")) == "" and team.ERROR == ""
+	assert team.joined() == ["acme"]
+	# a checkout that has been told to accept pushes is fine too
+	git("config", "receive.denyCurrentBranch", "updateInstead", cwd=share)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "c"))
+	assert team.setup(str(share)) == ""
+
+
+def test_joining_the_same_repo_twice_is_refused_whatever_you_call_it(monkeypatch, tmp_path):
+	"""knowledge.adopt refuses a URL a joined team already pushes to; setup did not, so `--join` of a
+	repo you were in — under a --name, or after its team.json was renamed — made a second checkout
+	with a second key, and every binding pointed at one of the two."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.setup(str(remote), "Acme") == ""
+	err = team.setup(str(remote), "Acme Again")
+	assert "already" in err and "acme" in err
+	assert team.joined() == ["acme"]
+
+
+def test_joining_a_repo_with_no_name_gives_it_one_so_the_next_person_agrees(monkeypatch, tmp_path):
+	"""A team repo that predates team.json was keyed by whatever each joiner typed, and nothing ever
+	wrote the name in — so two people on one repo held two keys, and a binding one of them made meant
+	nothing on the other's machine."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "one"))
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.setup(str(remote), "Acme Mem") == ""
+	assert team.info("acme-mem") == {"name": "Acme Mem", "description": ""}
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "two"))
+	assert team.setup(str(remote)) == ""            # no name given, and none needed any more
+	assert team.joined() == ["acme-mem"]
+
+
+def test_connect_refuses_a_remote_that_already_holds_someone_elses_history(monkeypatch, tmp_path):
+	"""Reproduced: the push is rejected as non-fast-forward, the rebase cannot start because `remote
+	add` sets no upstream, and every tick after that shows git's --set-upstream-to hint. A repo with
+	history is a team to JOIN; connect is for the empty one you just made."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "theirs.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	seed = tmp_path / "seed"
+	git("clone", "-q", str(remote), str(seed), cwd=tmp_path)
+	(seed / "team.json").write_text('{"name": "Other"}\n')
+	git("add", "-A", cwd=seed)
+	git("commit", "-qm", "theirs", cwd=seed)
+	git("push", "-q", "origin", "HEAD:main", cwd=seed)
+	assert team.start("Mine") == ""
+	err = team.connect("mine", str(remote))
+	assert "already has history" in err and "--join" in err
+	d = team.dir_of("mine")
+	assert not team.has_remote(d)                 # taken back out, not left half-connected
+	team.pull_dir(d)
+	assert team.ERROR == ""                       # and the next tick is quiet, not a git hint forever
+	assert git("ls-remote", "--heads", str(remote), cwd=tmp_path).count("\n") == 1  # theirs, untouched
+
+
+def test_connect_accepts_a_remote_that_already_holds_this_teams_own_history(monkeypatch, tmp_path):
+	"""Moving hosts: the team was pushed by hand, or connected once already. History that is ours
+	fast-forwards, and refusing it would make repointing impossible."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	first, second = tmp_path / "first.git", tmp_path / "second.git"
+	for r in (first, second):
+		git("init", "-q", "--bare", "-b", "main", str(r), cwd=tmp_path)
+	assert team.start("Mine") == ""
+	assert team.connect("mine", str(first)) == ""
+	git("push", "-q", str(second), "HEAD:main", cwd=team.dir_of("mine"))   # a mirror pushed by hand
+	assert team.connect("mine", str(second)) == ""                          # repoint: ours, so allowed
+	assert team._url(team.dir_of("mine")) == str(second)
+
+
+def test_a_pull_that_cannot_rebase_leaves_no_rebase_behind(monkeypatch, tmp_path):
+	"""team.json is JSON, not append-only, so it is not union-merged and two people describing the
+	team at once conflict. The failed `pull --rebase` stayed in progress: every later pull and push
+	failed on it and leave refused the dirty tree — wedged until someone ran `git rebase --abort`."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.setup(str(remote), "Acme") == ""
+	d = team.dir_of("acme")
+	mate = tmp_path / "mate"
+	git("clone", "-q", str(remote), str(mate), cwd=tmp_path)
+	(mate / "team.json").write_text('{"name": "Acme", "description": "theirs"}\n')
+	git("add", "-A", cwd=mate)
+	git("commit", "-qm", "mate", cwd=mate)
+	git("push", "-q", cwd=mate)
+	assert team.write_info("acme", "Acme", "mine") == ""
+	err = team.push_dir(d, "describe", "sync")
+	assert err.startswith("push failed")
+	g = os.path.join(d, ".git")
+	assert not os.path.exists(os.path.join(g, "rebase-merge")) and not os.path.exists(os.path.join(g, "rebase-apply"))
+	assert git("status", "--porcelain", cwd=d) == ""      # committed locally, tree clean, nothing lost
+	assert "mine" in open(os.path.join(d, "team.json")).read()
+
+
+def test_what_a_team_covers_travels_with_it(monkeypatch, tmp_path):
+	"""Bindings are per machine, so a colleague who joined got per-repo seeds from the review log and
+	nothing else: the owner rule that made the team cover an org never left the laptop it was typed
+	on. Declared in team.json, it clones with the team and is seeded ONCE into the joiner's own store
+	— visible, and undoable, exactly as the log seeding is."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "one"))
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "one-bindings"))
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.start("Platform") == ""
+	assert team.cover("platform", "neomedsys") == ""              # an owner: "neomedsys" or "neomedsys/*"
+	assert team.cover("platform", "acme/tool") == ""              # one repo somewhere else
+	assert "not" in team.cover("platform", "acme/tool/pull/1")    # nothing else
+	assert team.cover("platform", "NeoMedSys/*") == ""            # idempotent, however it is spelled
+	assert team.covers("platform") == ["acme/tool", "neomedsys/*"]
+	assert team.connect("platform", str(remote)) == ""
+	team.activate()
+	assert bind.owners() == {"neomedsys": "platform"} and bind.of("acme/tool") == "platform"
+	# the colleague
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "two"))
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "two-bindings"))
+	assert team.setup(str(remote)) == ""
+	assert bind.owners() == {"neomedsys": "platform"} and bind.of("acme/tool") == "platform"
+	assert bind.of("neomedsys/neo-api") == "platform"
+	# seeded once, into a store that is theirs: an unbind sticks across restarts
+	assert bind.forget_owner("neomedsys") == ""
+	team.activate()
+	assert bind.owners() == {}
+	# a team can stop covering something, and that is shared too
+	assert team.uncover("platform", "acme/tool") == ""
+	assert team.covers("platform") == ["neomedsys/*"]
+	# team.json comes from a CLONED repo: anything that is not an owner or a repo is dropped on read
+	with open(os.path.join(team.dir_of("platform"), "team.json"), "w") as f:
+		f.write('{"name": "Platform", "covers": ["acme/tool", "  ", "*", "a/b/c", 7, "x\\ny/*"]}')
+	assert team.covers("platform") == ["acme/tool"]
+
+
+def test_an_owner_two_teams_both_cover_is_left_alone(monkeypatch, tmp_path):
+	"""Same rule as seeding from the log: a repo in one team's log is that team's, a repo in two is
+	not guessed at. A claim is a disclosure decision, and a guess publishes to the wrong team."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for name in ("One", "Two"):
+		assert team.start(name) == ""
+		assert team.cover(team.key_of(name), "acme") == ""
+	team.activate()
+	assert bind.owners() == {}
+	assert team.cover("one", "acme/api") == ""
+	team.activate()
+	assert bind.of("acme/api") == "one"          # an unambiguous repo claim still seeds

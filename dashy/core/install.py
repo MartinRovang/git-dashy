@@ -1054,33 +1054,30 @@ def setup(ask, corpus_home=None, project=True):
 	# ponytail: a team brief now reaches only the repos BOUND to that team, so the old line — "every
 	# review reads it" — became false the moment selection stopped being "yours and theirs, always".
 	# Saying which reviews read it is the part someone acts on.
-	slug = bind.team_key()
+	# ponytail: the brief of the team the repo you STAND IN is bound to — that is what "a brief belongs to
+	# a repo" means once there is a keyboard in front of it. Picking the team by COUNT wrote the team's
+	# brief from inside an unbound side project whenever exactly one team was joined, and yours from
+	# inside a bound repo whenever two were: which file this wrote was decided by how many teams you were
+	# in, not by where you were. Every note names a command that exists; setup parses no arguments.
+	here = team.origin_slug(".")
+	slug = bind.of(here) if here else ""
+	if not here:
+		out.append("note   no git origin here — writing your own brief; run this inside a repo bound to a team "
+		           "to write that team's")
+	elif not slug:
+		out.append(f"note   {here} is bound to no team — writing your own brief; `gitdashy bind` binds it to one")
+	elif not bind.team_dir(slug):
+		out.append(f"note   {here} is bound to team {slug}, which this machine has not joined — writing your own brief")
+		slug = ""
 	mine = not slug
-	# ponytail: in a team whose origin does not resolve, team_key() is "" and this writes YOUR brief
-	# where it used to write the team's. That is the right file — nothing can be bound to a nameless
-	# team, so its project.md could never be selected by anything — but it is a different file from the
-	# one the last version chose, so it is said out loud rather than swapped silently.
-	# ponytail: team.on() IS joined() being non-empty, and team_key() is "" only when there is more than
-	# one — so "several" is the only way to get here. The other branch this used to carry could not be
-	# reached in production, and its test reached it by monkeypatching team.on over an empty store: a
-	# test for a state the code cannot be in, which proves the message and not the behaviour.
-	if len(joined := team.joined()) > 1:
-		# ponytail: names a command that exists. `gitdashy setup` parses no arguments at all, so telling
-		# someone to "say which with --team" pointed at a flag this command does not have.
-		out.append(f"note   several teams joined ({', '.join(joined)}) — writing your own brief; edit a "
-		           f"team's with T then e in the dashboard")
 	dest = memory.brief_path(slug)
 	# ponytail: says what it COVERS, not just whose it is. "yours" reads as "scoped to me" and it is the
 	# opposite — one file, every unbound repo, so a second project inherits the first one's brief.
 	whose = ("yours, and EVERY repo bound to no team reads it — one brief for all of them, so bind each "
 	         "project to its own team (`gitdashy teams --new`, `gitdashy bind`) if you have more than one"
 	         if mine else
-	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")
-	if slug and not dest:
-		# ponytail: brief_path returns "" for a team this machine does not have. It cannot happen while
-		# team_key and team_dir agree, and that is exactly the kind of invariant that stops holding when
-		# one of the two grows a case. os.makedirs("") raises, so the cost of checking is one line.
-		return out + [f"SKIP   no memory directory for team {slug} — cannot write its brief"]
+	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it — {here} "
+	         "included — reads it")
 	if os.path.exists(dest):
 		out.append(f"ok     {knowledge.tilde(dest)} already written — edit it directly to change it")
 		return out

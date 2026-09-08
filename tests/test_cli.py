@@ -409,3 +409,35 @@ def test_drafts_count_says_nothing_for_a_repo_it_cannot_name(monkeypatch, capsys
 	memory.append(None, "a general guess")
 	cli.drafts(["gitdashy", "drafts", "--count"])
 	assert capsys.readouterr().out == ""
+
+
+def test_bind_refuses_a_team_this_machine_has_not_joined(monkeypatch, tmp_path):
+	"""A typo in --team bound the org to nothing and said it had worked."""
+	from dashy.core import bind
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "neomedsys-team" / ".git").mkdir(parents=True)
+	with pytest.raises(SystemExit) as e:
+		cli.bind(["gitdashy", "bind", "--owner", "neomedsys", "--team", "neomedsys-tean"])
+	assert "not in team" in str(e.value) and "neomedsys-team" in str(e.value)
+	assert bind.owners() == {}
+	cli.bind(["gitdashy", "bind", "--owner", "neomedsys", "--team", "NeoMedSys_Team"])  # a spelling of one we ARE in
+	assert bind.owners() == {"neomedsys": "neomedsys-team"}
+
+
+def test_teams_cover_declares_in_the_team_and_the_listing_says_so(monkeypatch, capsys, tmp_path):
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Platform") == ""
+	cli.teams(["gitdashy", "teams", "--team", "platform", "--cover", "neomedsys"])
+	out = capsys.readouterr().out
+	assert "platform now covers neomedsys/*" in out
+	assert team.covers("platform") == ["neomedsys/*"]
+	assert "declares: neomedsys/*" in out          # the listing after it
+	with pytest.raises(SystemExit) as e:
+		cli.teams(["gitdashy", "teams", "--team", "nope", "--cover", "acme"])
+	assert "not in nope" in str(e.value)
+	cli.teams(["gitdashy", "teams", "--team", "platform", "--uncover", "neomedsys/*"])
+	assert "no longer covers neomedsys/*" in capsys.readouterr().out
+	assert team.covers("platform") == []
