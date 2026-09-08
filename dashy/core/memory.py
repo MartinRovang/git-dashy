@@ -282,6 +282,28 @@ def scope_text(scope=None, repo=None):
 	return "\n\n".join(parts)
 
 
+def session_context(repo, general_mirrored=False):
+	"""What a session in `repo` should be told besides the repo's own facts: THE brief, then the bound
+	team's general facts. Labelled, so a reader can tell the team's words from their own.
+
+	ponytail: the brief is the one brief(repo) picks — the same one a review gets, never both. The old
+	session route imported yours globally AND the team's, two statements of what the work is for, which
+	brief() calls worse than saying nothing. A session in a repo with no mirror gets none; that is a
+	repo nobody wired, and a brief for it would be a guess.
+	ponytail: general_mirrored — when the caller also writes general.md (which already carries the
+	team's general facts through scope_text), they are left out here rather than said twice.
+	"""
+	parts = []
+	text, source = brief(repo)
+	if text:
+		parts.append(f"### brief — {source}\n{text}")
+	if not general_mirrored:
+		for label, base in sources(repo)[1:]:
+			if t := _read(path(None, base)):
+				parts.append(f"### {label} — true of every repo it covers\n{t}")
+	return "\n\n".join(parts)
+
+
 def read(repo):
 	"""General + repo memory from the sources bound to `repo`, as one prompt block. '' when there is none."""
 	parts = [f"## {name}\n{t}" for name, r in (("General", None), (repo, repo)) if (t := scope_text(r, repo))]

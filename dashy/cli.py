@@ -21,7 +21,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
-       gitdashy drafts [--repo owner/name]
+       gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction [--transcript PATH | --interrupts N --denials N] [--repo owner/name]
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--leave KEY]
@@ -52,8 +52,8 @@ self-review runs the reviewer over one of your OWN PRs and posts nothing — a p
   separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
   on the same diff, so only a later real review landing on the same fact independently promotes it.
 
-install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
-  directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
+install wires this machine so every session reads the cross-repo facts: one symlink in the agent config
+  directory and one import. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
   by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
@@ -355,10 +355,22 @@ def bind(argv):
 def drafts(argv):
 	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
 	team.activate()
-	only = arg("--repo", "", str, argv)
+	count = "--count" in argv
+	# ponytail: --count is for a session hook, so it defaults to the repo you are standing in and reads
+	# only the local store — no network, and nothing printed when there is nothing to say.
+	only = arg("--repo", "", str, argv) or (team.origin_slug(".") if count else "")
+	if count and not only:
+		# ponytail: a repo we cannot name has nothing waiting FOR IT. Without this a local-only repo —
+		# a git repo, which is all the hook requires — was told every draft on the machine was its own.
+		return
 	rows = memory.waiting()
 	if only:
 		rows = [r for r in rows if (r[0] or "general") == only]
+	if count:
+		if rows:
+			print(f"gitdashy: {len(rows)} draft{'s' if len(rows) != 1 else ''} waiting for {only}"
+			      " — `gitdashy drafts` lists them, W in the dashboard promotes or drops them")
+		return
 	if not rows:
 		return print("  nothing waiting — every observation so far is either a fact or gone")
 	rows.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))

@@ -40,9 +40,17 @@ if [ ! -e CLAUDE.local.md ]; then
 fi
 
 # 4. this repo's review memory, if gitdashy is around. --no-pull: a hook has seconds, not a network.
-command -v gitdashy >/dev/null 2>&1 && \
+if command -v gitdashy >/dev/null 2>&1; then
   gitdashy init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || true
-
+  # drafts a review or a session filed for THIS repo that nothing has confirmed. Local store only, so
+  # it fits the hook's budget; silent when there are none, or when the repo has no origin to be named
+  # by. The count is the pull toward W that was missing.
+  # ponytail: CAPPED, like the corpus check below, and for the same reason — except the third party
+  # here is gitdashy itself at a version this hook did not ship with. A `gitdashy` that predates
+  # --count does not reject the flag, it IGNORES it and prints the whole store: measured at 117 lines
+  # and 99 drafts across every repo on this machine, into the context of every session, at every start.
+  gitdashy drafts --count 2>/dev/null | head -3 || true
+fi
 # 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
 #    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to
 #    twice its stated ceiling before anyone measured. One line, at the moment it is true, in context.

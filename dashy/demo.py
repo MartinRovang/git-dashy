@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import cycle
 
 from . import config
-from .core import github, log, memory, review, update
+from .core import github, install as install_mod, log, memory, review, update
 
 
 def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None):
@@ -42,6 +42,18 @@ def install():
 	# whole promise is that it touches nothing real.
 	config.TEAM = config.TEAMS = ""  # never sync the demo
 	config.SETTINGS = ""  # never read or write the real settings
+	# ponytail: the launch-time link retirement is a CALL-OUT like any other, and the rule above is
+	# "EVERY one". It reads and REWRITES ~/.claude/CLAUDE.md and unlinks a symlink; claude_dir() is not
+	# swapped by anything here, so an unswapped retire() edits the real agent config on `gitdashy --demo`
+	# — the one thing --demo is documented never to do. Blanking the store roots is not enough on its
+	# own: it stops the link being matched, it does not stop the CLAUDE.md rewrite below it.
+	# ponytail: through _swap like every other call-out, so restore() can put it back — a direct
+	# `setattr` records nothing in SWAPPED, and restore()'s whole point is that a swap added later is
+	# covered by having been WRITTEN rather than by someone remembering it in a second place. It was
+	# a direct write, and the compensating pin then had to live in tests/conftest.py.
+	# ponytail: install_mod, NOT install — `def install()` rebinds that name at module level, so a bare
+	# `install.retire = ...` here sets an attribute on THIS FUNCTION and silently swaps nothing.
+	_swap(install_mod, "retire", lambda dry=False: [])
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
 	config.MEMORY_DIR = log.LOG[:-6] + "-memory"  # Z dream must never rewrite the real memory
 	memory.append(None, "run make lint before flagging style")

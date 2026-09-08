@@ -76,6 +76,12 @@ def _write(into, repo, general, at):
 	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):
 		dst = os.path.join(into, name)
 		text = memory.scope_text(scope, repo) if scope is None or scope else ""
+		if scope:
+			# ponytail: repo.md carries the brief and the bound team's general facts ABOVE the repo's own,
+			# because they reach the session no other way now. Your general facts stay out: they load
+			# live through the prs-memory link, and a second copy per repo is context spent twice.
+			text = "\n\n".join(t for t in (memory.session_context(repo, general_mirrored=general),
+			                                f"## {repo}\n{text}" if text else "") if t)
 		if text:
 			with open(dst, "w") as f:
 				f.write(HEADER.format(src=src, at=at) + text + "\n")
