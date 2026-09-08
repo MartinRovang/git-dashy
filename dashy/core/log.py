@@ -9,7 +9,7 @@ LOG = config.LOG  # module attr so --demo and tests can point it elsewhere
 
 
 def when(iso):
-	"""An entry's timestamp as an aware datetime, UTC when it carries no offset.
+	"""An entry's timestamp as an aware datetime in UTC, whatever offset it carried.
 
 	ponytail: `at` predates the offset, so entries written before it read back NAIVE — and everything
 	that compares one compares it against an aware value. Kept as a function of its own because _parse
@@ -17,7 +17,11 @@ def when(iso):
 	already catches, rather than as a fourth type check beside the three.
 	"""
 	at = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-	return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+	# ponytail: converted to UTC, not merely made aware. reviewed() sorts on the STRING this becomes,
+	# so an entry from a machine at +02:00 sorted by literal text rather than by instant — 09:30+02:00
+	# is 07:30Z, earlier than 08:00Z, and came back first in a list whose whole job is "newest first".
+	# Unreachable while every writer emits UTC, which is exactly how long it stays unreachable.
+	return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
 
 
 def logs():

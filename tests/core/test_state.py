@@ -8,7 +8,7 @@ from dashy import config
 from dashy.core import github, log, review as review_mod, state, team, update
 from dashy.core.state import State
 
-from conftest import PR
+from conftest import PR, fake_http, gql_nodes
 
 
 def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
@@ -567,12 +567,26 @@ def test_a_tick_that_lands_clears_the_last_failure(monkeypatch):
 	assert st.error == ""
 
 
-def test_fetch_survives_a_log_line_it_cannot_read(monkeypatch):
-	"""The end-to-end shape of the freeze: fetch() reads the log with no handler of its own."""
+@pytest.mark.parametrize("api_ok", [True, False])
+def test_fetch_survives_a_log_line_it_cannot_read(monkeypatch, api_ok):
+	"""The end-to-end shape of the freeze: fetch() reads the log with no handler of its own.
+
+	ponytail: BOTH of fetch()'s paths. The early return for a failed API call appends REVIEWED too, so
+	testing only the happy one would leave the branch a broken log is most likely to be taken WITH —
+	an outage and a half-written append arrive together — completely uncovered.
+	ponytail: this pinned github.subprocess before drop-gh, which patched a seam fetch() no longer has.
+	It still passed, because no token means the API raises anyway; a test that cannot fail is worse
+	than no test, so it now stubs what fetch() actually calls.
+	"""
 	with open(log.LOG, "w") as f:
-		f.write('{"at":"2020-01-0\n')
-	monkeypatch.setattr(github.subprocess, "run",
-	                    lambda *a, **kw: (_ for _ in ()).throw(github.subprocess.TimeoutExpired("gh", 60)))
+		f.write('{"at":"2020-01-0\n')  # a torn append
+	if api_ok:
+		monkeypatch.setattr(github.urllib.request, "urlopen",
+		                    fake_http(lambda url, body: gql_nodes([], [], [])))
+		monkeypatch.setattr(github, "_me", "tester")
+	else:
+		monkeypatch.setattr(github, "gql",
+		                    lambda *a, **kw: (_ for _ in ()).throw(github.Error("github unreachable")))
 	assert github.fetch()[-1] == ("REVIEWED", [], None)
 
 

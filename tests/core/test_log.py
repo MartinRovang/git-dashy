@@ -122,3 +122,19 @@ def test_an_entry_written_without_an_offset_is_read_as_utc():
 	assert got[0]["review"]["at"] == "2020-01-01T00:00:00+00:00"
 	moved = dict(PR, url="u", updatedAt="2021-01-01T00:00:00Z")
 	assert mark_rereviews([("REVIEW REQUESTED", [moved], None), ("REVIEWED", got, None)]) == ["u"]
+
+
+def test_entries_from_other_offsets_sort_by_instant_not_by_text():
+	"""ponytail: reviewed() sorts on the STRING `at` becomes, so making it merely aware was not enough.
+	09:30+02:00 is 07:30Z — the EARLIER instant — but sorts after 08:00+00:00 as raw text, so it came
+	back first in a list whose whole job is "newest first". Converting to UTC in the gate makes the
+	lexical order the chronological one."""
+	base = {"model": "opus", "verdict": "approve", "summary": "", "body": "",
+	        "pr": {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 1}}
+	with open(log.LOG, "w") as f:
+		f.write(json.dumps({**base, "at": "2020-01-01T08:00:00+00:00",
+		                    "pr": {**base["pr"], "url": "at_0800z"}}) + "\n")
+		f.write(json.dumps({**base, "at": "2020-01-01T09:30:00+02:00",  # 07:30Z, half an hour earlier
+		                    "pr": {**base["pr"], "url": "at_0730z"}}) + "\n")
+	assert [p["url"] for p in reviewed()] == ["at_0800z", "at_0730z"]
+	assert all(p["review"]["at"].endswith("+00:00") for p in reviewed())
