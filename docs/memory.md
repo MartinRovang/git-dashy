@@ -334,11 +334,11 @@ binding survives a re-clone or a move. Selection for repo `R`:
 | none anywhere | — | `no brief written` |
 
 > **The session path is scoped the same way** (since 2026-09-08). `gitdashy install` writes one link and
-> imports only yours — `@prs-memory/project.md` and `@prs-memory/general.md`. A bound repo's mirror
-> (`repo.md`) carries the team's brief and general facts above the repo's own, from the same
+> imports one file — `@prs-memory/general.md`. A repo's mirror (`repo.md`) carries the ONE brief
+> `brief(repo)` picks and the bound team's general facts above the repo's own, from the same
 > `sources(repo)` a review uses, so a session and a review of one repo are told the same things by the
-> same team. An install from before this wrote a global `prs-team` link; the next `gitdashy install`
-> retires it and rewrites the block.
+> same team. An install from before this wrote a global `prs-team` link and imported both briefs; the
+> next `gitdashy install`, or the next launch, retires the link and rewrites the block.
 
 **The binding decides everything the team knows about a repo**, not just the brief. `memory.sources(repo)`
 returns your memory alone for an unbound repo, so it reads no team facts — not even `general.md` — and

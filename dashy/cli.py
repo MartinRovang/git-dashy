@@ -347,6 +347,10 @@ def drafts(argv):
 	# ponytail: --count is for a session hook, so it defaults to the repo you are standing in and reads
 	# only the local store — no network, and nothing printed when there is nothing to say.
 	only = arg("--repo", "", str, argv) or (team.origin_slug(".") if count else "")
+	if count and not only:
+		# ponytail: a repo we cannot name has nothing waiting FOR IT. Without this a local-only repo —
+		# a git repo, which is all the hook requires — was told every draft on the machine was its own.
+		return
 	rows = memory.waiting()
 	if only:
 		rows = [r for r in rows if (r[0] or "general") == only]

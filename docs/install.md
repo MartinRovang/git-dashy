@@ -49,16 +49,16 @@ One symlink and one marked block. Nothing else. Your memory directory is created
 ~/.claude/prs-memory  ->  ~/.prs_memory
 
 ~/.claude/CLAUDE.md   +=  <!-- gitdashy:begin -->
-                          … @prs-memory/project.md   what YOU are building
                           … @prs-memory/general.md   your cross-repo facts
                           <!-- gitdashy:end -->
 ```
 
-Nothing of a team's is wired globally. Which team applies is a property of the repo you are standing in,
-not of the machine, so a team's brief and general facts reach a session through that repo's own mirror
-(`gitdashy init`, below) — the same way a review of that repo gets them. Installs made before 2026-09-08
-also wrote a `prs-team` link and imported it; the next `gitdashy install` retires the link and rewrites
-the block, and says so.
+Nothing of a team's is wired globally, and neither is the brief. Which brief and which team apply is a
+property of the repo you are standing in, not of the machine, so they reach a session through that
+repo's own mirror (`gitdashy init`, below) — the one brief a review of that repo would get, and that
+team's general facts. Installs made before 2026-09-08 also wrote a `prs-team` link and imported it and
+both briefs; the next `gitdashy install` — or the next launch of the dashboard — retires the link,
+rewrites the block, and says so. A block you wrote by hand is reported, never touched.
 
 It **asks first**, showing exactly the above with your real paths and whether each item
 is new, already correct, or something it will refuse to touch. `--dry-run` shows and

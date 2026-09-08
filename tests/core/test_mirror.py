@@ -225,7 +225,7 @@ def test_a_bound_repos_mirror_carries_the_teams_brief_and_general_facts(monkeypa
 	into = tmp_path / "out"
 	mirror.sync(str(into), "a/b", pull=False)
 	repo = (into / "repo.md").read_text()
-	assert "team org-t — what the work is for" in repo and "We build the thing." in repo
+	assert "### brief — team org-t" in repo and "We build the thing." in repo
 	assert "team org-t — true of every repo it covers" in repo and "pushed head" in repo
 	assert "## a/b" in repo and "team about a/b" in repo
 	assert "mine general" not in repo                       # yours are global already
@@ -246,3 +246,38 @@ def test_an_unbound_repos_mirror_has_no_team_context(monkeypatch, tmp_path):
 	mirror.sync(str(into), "a/b", pull=False)
 	repo = (into / "repo.md").read_text()
 	assert "mine about a/b" in repo and "team general" not in repo and "theirs" not in repo
+
+
+def test_the_mirror_carries_the_one_brief_a_review_would_get(monkeypatch, tmp_path):
+	"""Never both. The block used to import yours globally while the mirror carried the team's."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	os.makedirs(tmp_path / "mem", exist_ok=True)
+	(tmp_path / "mem" / "project.md").write_text("mine: a side project\n")
+	(shared / "project.md").write_text("theirs: the product\n")
+	seed("a/b", "a fact")
+	into = tmp_path / "out"
+
+	mirror.sync(str(into), "a/b", pull=False)                          # unbound: yours, and it says so
+	repo = (into / "repo.md").read_text()
+	assert "### brief — yours" in repo and "a side project" in repo and "the product" not in repo
+
+	bind.bind("a/b", "org-t")
+	mirror.sync(str(into), "a/b", pull=False)                          # bound: theirs, and only theirs
+	repo = (into / "repo.md").read_text()
+	assert "### brief — team org-t" in repo and "the product" in repo and "a side project" not in repo
+
+
+def test_general_on_a_bound_repo_says_the_teams_general_facts_once(monkeypatch, tmp_path):
+	"""general.md already carries them through scope_text; repo.md must not carry them again."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	seed(None, "team general: verify the pushed head", str(shared))
+	seed("a/b", "team about a/b", str(shared))
+	bind.bind("a/b", "org-t")
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False, general=True)
+	both = (into / "general.md").read_text() + (into / "repo.md").read_text()
+	assert both.count("verify the pushed head") == 1
+	mirror.sync(str(into), "a/b", pull=False)                          # without --general it moves to repo.md
+	assert "verify the pushed head" in (into / "repo.md").read_text()

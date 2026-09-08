@@ -282,22 +282,25 @@ def scope_text(scope=None, repo=None):
 	return "\n\n".join(parts)
 
 
-def team_context(repo):
-	"""What the BOUND team says that holds for every repo it covers: its brief, then its general facts.
+def session_context(repo, general_mirrored=False):
+	"""What a session in `repo` should be told besides the repo's own facts: THE brief, then the bound
+	team's general facts. Labelled, so a reader can tell the team's words from their own.
 
-	'' for an unbound repo. Labelled, so a reader can tell the team's words from their own.
-
-	ponytail: a review of `repo` already reads both (sources() and brief()); a session in the same repo
-	read neither. The old session route was one global symlink to one team's general file — wrong the
-	moment there were two teams, dangling once there were, and even with one it told every repo on the
-	machine how that team works. Per repo, through the binding, like everything else that is the team's.
+	ponytail: the brief is the one brief(repo) picks — the same one a review gets, never both. The old
+	session route imported yours globally AND the team's, two statements of what the work is for, which
+	brief() calls worse than saying nothing. A session in a repo with no mirror gets none; that is a
+	repo nobody wired, and a brief for it would be a guess.
+	ponytail: general_mirrored — when the caller also writes general.md (which already carries the
+	team's general facts through scope_text), they are left out here rather than said twice.
 	"""
 	parts = []
-	for label, base in sources(repo)[1:]:
-		if t := _brief_text(os.path.join(base, PROJECT)):
-			parts.append(f"### {label} — what the work is for\n{t}")
-		if t := _read(path(None, base)):
-			parts.append(f"### {label} — true of every repo it covers\n{t}")
+	text, source = brief(repo)
+	if text:
+		parts.append(f"### brief — {source}\n{text}")
+	if not general_mirrored:
+		for label, base in sources(repo)[1:]:
+			if t := _read(path(None, base)):
+				parts.append(f"### {label} — true of every repo it covers\n{t}")
 	return "\n\n".join(parts)
 
 

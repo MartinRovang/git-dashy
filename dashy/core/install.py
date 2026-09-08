@@ -23,11 +23,11 @@ BLOCK = f"""{BEGIN}
 # Review memory
 
 Cross-repo facts gitdashy's PR reviews have earned — yours. Written only once two independent
-observations agreed, so trust them, but they are what the code turned out to be, not rules. A team's
-facts and its brief arrive per repo, through that repo's own mirror, because which team applies is a
-property of the repo you are in and not of the machine.
+observations agreed, so trust them, but they are what the code turned out to be, not rules. The brief
+(what the work is for) and a team's facts arrive per repo, through that repo's own mirror: which brief
+and which team apply is a property of the repo you are in, not of the machine, and a review of that
+repo is told exactly the same ones.
 
-@prs-memory/project.md
 {IMPORT}
 {END}
 """
@@ -58,9 +58,84 @@ def stale_team_link():
 	link = os.path.join(claude_dir(), "prs-team")
 	if not os.path.islink(link):
 		return ""
-	target = os.path.abspath(os.readlink(link))
+	target = os.path.abspath(os.path.join(os.path.dirname(link), os.readlink(link)))
 	stores = (os.path.abspath(config.TEAMS), os.path.abspath(os.path.join(config.TEAM, "memory")))
 	return link if any(target == st or target.startswith(st + os.sep) for st in stores) else ""
+
+
+def retire(dry=False):
+	"""Retire the pre-2026-09-08 team link and the imports that went through it. [] when nothing to do.
+
+	ponytail: one callable, because it runs from two places — `gitdashy install`, and every LAUNCH,
+	the way team.migrate() moves a pre-plural checkout. Nothing re-runs install after an update, so a
+	migration that waits for it waits forever on most machines; meanwhile a one-team user had the
+	team's general facts in context twice, and leaking into repos bound to no team.
+	ponytail: it rewrites only text between markers it wrote. A hand-wired import is REPORTED, never
+	touched — and reported here rather than skipped, because the link it went through is gone and the
+	loader drops a dangling @import without a word. A retirement that leaves one behind half happened.
+	"""
+	out, did = [], "would " if dry else ""
+	if old := stale_team_link():
+		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts reach a session through its repo's mirror now")
+		if not dry:
+			os.remove(old)
+	md = os.path.join(claude_dir(), "CLAUDE.md")
+	text = _read(md)
+	# ponytail: fence-aware on BOTH sides, like _strip_blocks. A raw `STALE in text` took this branch for
+	# a CLAUDE.md that merely QUOTED the old block in a code sample — docs/install.md shows exactly that
+	# — stripped nothing, and appended BLOCK again on every run, never reaching "ok".
+	if STALE in _inside_blocks(text):
+		out.append(f"{did}update the import block in {knowledge.tilde(md)} — the team imports are per repo now")
+		if not dry:
+			_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
+	if hand_wired_team_import(text):
+		out.append(f"NOTE  {knowledge.tilde(md)} still imports {STALE}… outside a block we wrote — "
+		           "those lines point at nothing now; remove them by hand")
+	return out
+
+
+def _inside_blocks(text):
+	"""The lines inside every begin..end block we wrote, fence-aware — a quoted block is text, not ours."""
+	held, inside = [], False
+	for line, out in _outside(text):
+		if out and BEGIN in line:
+			inside = True
+		elif out and END in line:
+			inside = False
+		elif inside:
+			held.append(line)
+	return "\n".join(held)
+
+
+def hand_wired_team_import(text=None):
+	"""True while CLAUDE.md imports @prs-team/ outside a block we wrote and outside a fence."""
+	text = _read(os.path.join(claude_dir(), "CLAUDE.md")) if text is None else text
+	return any(STALE in l for l, out in _outside(_strip_blocks(text, BEGIN, END)) if out)
+
+
+def corpus_remembers(ident=None):
+	"""Whether the installed identity ever tells a session to `gitdashy remember`. None when there is none.
+
+	ponytail: a heuristic, and it says what it looked for. gitdashy cannot write a user's corpus, and
+	the one this tool was built next to lacked the instruction for months while every draft sat at (1)
+	— the pipeline's second observer was silent and nothing said so. A check that reports beats a
+	sentence in a README the reader is assumed to have followed.
+	"""
+	ident = ident or os.path.join(claude_dir(), "identity")
+	if not os.path.isdir(ident):
+		return None
+	return any("gitdashy remember" in _read(os.path.join(ident, n))
+	           for n in os.listdir(ident) if n.endswith(".md"))
+
+
+def session_notes():
+	"""Short standing notes for the Knowledge row: what a session here is NOT being told, and why."""
+	out = []
+	if corpus_remembers() is False:
+		out.append("corpus never says `gitdashy remember`")
+	if hand_wired_team_import():
+		out.append("CLAUDE.md imports @prs-team by hand")
+	return out
 
 
 def _fence(line, open_at):
@@ -193,8 +268,14 @@ def explain():
 		         else "EXISTS, will be left alone" if os.path.lexists(link) else "new")
 		out.append(f"  · symlink {knowledge.tilde(link)} -> {knowledge.tilde(target)}   [{state}]")
 	md = os.path.join(d, "CLAUDE.md")
-	out.append(f"  · append four imports to {knowledge.tilde(md)}, inside a marked block"
+	n = BLOCK.count("\n@")  # ponytail: counted, not written down — "four" outlived the block it described
+	out.append(f"  · append {n} import{'s' if n != 1 else ''} to {knowledge.tilde(md)}, inside a marked block"
 	           + ("   [already there]" if IMPORT in _read(md) else "   [new]"))
+	# ponytail: the consent screen must name the migration it is asking consent for. It said nothing
+	# about removing a symlink and rewriting a block in the user's own config — this install's whole
+	# promise is that it shows what it will touch first. The same call apply() makes, in dry mode.
+	for line in retire(dry=True):
+		out.append("  · " + line[len("would "):] if line.startswith("would ") else "  · " + line)
 	out.append("")
 	out.append("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.")
 	out.append("Cross-repo facts load live through the symlink — the session reads the same file a review")
@@ -225,26 +306,11 @@ def apply(dry=False):
 				if target == config.LOCAL_MEMORY:
 					os.makedirs(target, exist_ok=True)
 				os.symlink(target, link)
-	if old := stale_team_link():
-		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts reach a session through its repo's mirror now")
-		if not dry:
-			os.remove(old)
+	out += retire(dry)
 	md = os.path.join(d, "CLAUDE.md")
 	text = _read(md)
-	if BEGIN in text and END in text and STALE in text:
-		# ponytail: the block is ours, so it is rewritten rather than left importing a link that is gone.
-		# A dangling @import is skipped silently, which is exactly why it must not be left to be skipped.
-		out.append(f"{did}update the import block in {knowledge.tilde(md)} — the team imports are per repo now")
-		if not dry:
-			_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
-	elif IMPORT in text:
+	if IMPORT in text:
 		out.append(f"ok    {knowledge.tilde(md)} already imports the review memory")
-		if STALE in text:
-			# ponytail: wired by hand, so not ours to rewrite — but not ours to stay quiet about either.
-			# The link is gone, so that import now points at nothing and is skipped without a word;
-			# a retirement that leaves a silent dangling import behind has only half happened.
-			out.append(f"NOTE  {knowledge.tilde(md)} still imports {STALE}… outside a block we wrote — "
-			           "those lines point at nothing now; remove them by hand")
 	else:
 		out.append(f"{did}add   the import block to {knowledge.tilde(md)}")
 		if not dry:
@@ -584,6 +650,12 @@ def full_apply(corpus, url="", dry=False):
 				# there. Only reachable when CORPUS_HOME pre-existed — otherwise the clone's own undo
 				# takes it — which is exactly the case where the directory is not ours to litter.
 				undo.append((f"the seeded {knowledge.tilde(user)}", lambda: os.remove(user)))
+		if corpus_remembers(ident) is False:
+			# ponytail: said at the one moment they could act on it. gitdashy cannot write their corpus;
+			# it can say that without this line the reviews have no second observer and every draft
+			# they ever file stays at (1). The dashboard's Knowledge row keeps saying it afterwards.
+			out.append("NOTE  this corpus never tells a session to `gitdashy remember` — add that to its AGENT.md,"
+			           " or nothing a session learns reaches the reviews")
 		md = os.path.join(d, "CLAUDE.md")
 		text = _read(md)
 		if CBEGIN in text:

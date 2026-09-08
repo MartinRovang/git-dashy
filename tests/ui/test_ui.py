@@ -1428,3 +1428,32 @@ def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st
 	monkeypatch.setattr(ui.team, "ERROR", "")
 	ui._join_team(screen, st, 0)
 	assert said == [] and st.wake.is_set()
+
+
+def test_launch_retires_the_team_link_and_says_so_once(screen, monkeypatch):
+	"""Nothing re-runs install after an update, so the migration runs at launch like team.migrate()
+	does. Only a CHANGE earns a keypress; a hand-wired import it cannot touch is a standing note."""
+	from dashy.core import install
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	monkeypatch.setattr(install, "retire", lambda: ["retire ~/.claude/prs-team — a team's facts reach a session through its repo's mirror now"])
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0]
+
+	said.clear()
+	monkeypatch.setattr(install, "retire", lambda: ["NOTE  ~/.claude/CLAUDE.md still imports @prs-team/… by hand"])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                                  # not a nag on every launch
+
+	monkeypatch.setattr(install, "retire", lambda: [])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []

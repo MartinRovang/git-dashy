@@ -334,8 +334,9 @@ the ones on screen or leave them as the baseline.
 
 What the reviews learn is worth having open in the editor too. `gitdashy sync-memory --into PATH`
 copies the memory into a repo as a read-only mirror, `repo.md`, for an agent session working there to
-read. It holds that repo's facts from every source bound to it — and, above them, the bound team's brief
-and general facts, so a session and a review of one repo are told the same things by the same team.
+read. It holds that repo's facts from every source bound to it — and, above them, the one brief a review
+of that repo would get and the bound team's general facts, so a session and a review of one repo are
+told the same things by the same team.
 Your own general facts are not in it: they load live, everywhere, through `gitdashy install`. (`--general`
 mirrors them too, for an agent that has not wired that route.)
 

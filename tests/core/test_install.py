@@ -423,13 +423,13 @@ def test_setup_will_not_eat_a_template_you_filled_in(monkeypatch, tmp_path):
 	assert "new" in seeded.read_text() and "old" not in seeded.read_text()
 
 
-def test_a_solo_brief_is_imported_too(monkeypatch, tmp_path):
-	"""setup writes ~/.prs_memory/project.md; without this import a session never sees it."""
+def test_the_brief_is_never_imported_globally(monkeypatch, tmp_path):
+	"""A session used to get your brief through the block AND the team's through the mirror — two
+	statements of what the work is for. The mirror carries the ONE brief(repo) picks; the block none."""
 	cfg = fresh(monkeypatch, tmp_path)
 	install.apply()
 	block = (cfg / "CLAUDE.md").read_text()
-	assert "@prs-memory/project.md" in block
-	assert "@prs-team/project.md" not in block   # the team's brief rides the repo mirror, through the binding
+	assert "project.md" not in block and "@prs-team/" not in block
 
 
 def test_forgetting_a_mirror_does_not_rewrite_the_registry(monkeypatch, tmp_path):
@@ -902,3 +902,78 @@ def test_install_says_so_when_the_stale_team_import_is_not_in_our_block(monkeypa
 	assert not (cfg / "prs-team").exists()
 	assert any(l.startswith("NOTE") and "remove them by hand" in l for l in out)
 	assert (cfg / "CLAUDE.md").read_text().count("\n") == 3   # untouched
+
+
+def test_explain_counts_the_imports_it_will_write_and_names_the_migration(monkeypatch, tmp_path):
+	"""The consent screen said "four imports" after the block had two, and nothing about removing a
+	symlink and rewriting a block in the user's own config — the thing it was asking consent for."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	n = install.BLOCK.count("\n@")
+	assert any(f"append {n} import" in l for l in install.explain())
+	assert not any("retire" in l for l in install.explain())       # nothing to migrate on a fresh machine
+
+	os.symlink(str(tmp_path / "teams" / "x" / "memory"), str(cfg / "prs-team"))
+	(cfg / "CLAUDE.md").write_text(install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md"))
+	out = install.explain()
+	assert any("retire" in l and "prs-team" in l for l in out)
+	assert any("update the import block" in l for l in out)
+	assert (cfg / "prs-team").is_symlink()                           # explain() explains; it does nothing
+
+
+def test_a_claude_md_that_only_quotes_the_old_block_is_left_alone(monkeypatch, tmp_path):
+	"""A raw substring test took the rewrite branch for a CLAUDE.md that QUOTED the old block in a code
+	sample, stripped nothing, and appended BLOCK again on every run — never reaching "ok"."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	quoted = "# notes\n\n```\n" + install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md") + "```\n"
+	(cfg / "CLAUDE.md").write_text(quoted)
+	for _ in range(2):
+		out = install.apply()
+		assert not any("update" in l or "NOTE" in l for l in out), out
+	assert (cfg / "CLAUDE.md").read_text() == quoted
+	assert install.retire() == []
+
+
+def test_a_relative_link_is_judged_from_its_own_directory(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(cfg / "teams"))          # so a relative "teams/x" is inside it
+	os.symlink("teams/x/memory", str(cfg / "prs-team"))
+	monkeypatch.chdir(tmp_path)                                        # an unlucky cwd must not change the answer
+	assert install.stale_team_link() == str(cfg / "prs-team")
+
+
+def test_session_notes_say_what_a_session_is_not_being_told(monkeypatch, tmp_path):
+	"""The tool this was built next to lacked the `remember` instruction for months while every draft
+	sat at (1). A check that reports beats a README line the reader is assumed to have followed."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert install.corpus_remembers() is None and install.session_notes() == []   # no corpus: nothing to say
+	ident = cfg / "identity"
+	ident.mkdir()
+	(ident / "AGENT.md").write_text("# me\nbe good\n")
+	assert install.corpus_remembers() is False
+	assert install.session_notes() == ["corpus never says `gitdashy remember`"]
+	(ident / "AGENT.md").write_text("# me\n`gitdashy remember` what will still be true next month\n")
+	assert install.session_notes() == []
+	(cfg / "CLAUDE.md").write_text("@prs-memory/general.md\n@prs-team/general.md\n")
+	assert install.session_notes() == ["CLAUDE.md imports @prs-team by hand"]
+	(cfg / "CLAUDE.md").write_text("```\n@prs-team/general.md\n```\n")   # quoted, not wired
+	assert install.session_notes() == []
+
+
+def test_full_install_says_when_the_corpus_never_tells_a_session_to_remember(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(install, "CORPUS_HOME", str(tmp_path / "corpus"))
+	monkeypatch.setattr(install, "HOOK", str(tmp_path / "hook.sh"))
+	(tmp_path / "hook.sh").write_text("#!/bin/sh\n")
+	os.chmod(tmp_path / "hook.sh", 0o755)
+	(tmp_path / "corpus" / "identity").mkdir(parents=True)
+	(tmp_path / "corpus" / "identity" / "AGENT.md").write_text("# quiet\n")
+	out = install.full_apply(str(tmp_path / "corpus"))
+	assert any(l.startswith("NOTE") and "gitdashy remember" in l for l in out), out
+	install.full_remove()
+	(tmp_path / "corpus" / "identity" / "AGENT.md").write_text("# loud\nrun `gitdashy remember` for durable facts\n")
+	out = install.full_apply(str(tmp_path / "corpus"))
+	assert not any("gitdashy remember" in l for l in out), out

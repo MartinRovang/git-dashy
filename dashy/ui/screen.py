@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import bind, github, knowledge, log, memory, review as review_mod, team, update
+from ..core import bind, github, install, knowledge, log, memory, review as review_mod, team, update
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
@@ -112,7 +112,10 @@ def header_groups(state):
 	reviewer = [row("m"), row("d"), row("e"), row("x"), row("h")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
-	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
+	# ponytail: session_notes() are standing, not errors — what a session on this machine is NOT being
+	# told. A missing `remember` instruction starved the whole pipeline for weeks with nothing saying so.
+	notes = "".join(f" · {n}" for n in install.session_notes())
+	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note() + notes, None),
 	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
@@ -1393,6 +1396,11 @@ def main(scr, interval, auto, model):
 			confirm(scr, state, 0, f" {line[:110]}  [any key]")
 		else:
 			team.ERROR = line[:60]
+	# ponytail: the team link retirement, at launch and said once, for the same reason migrate() is —
+	# nothing re-runs install after an update. Only a CHANGE is worth a keypress; a hand-wired import
+	# it could not touch is a standing note on the Knowledge row, not a nag on every launch.
+	if done := [l for l in install.retire() if not l.startswith("NOTE")]:
+		confirm(scr, state, 0, f" {done[0][:110]}  [any key]")
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
