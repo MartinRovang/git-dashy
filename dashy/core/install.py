@@ -682,12 +682,12 @@ HOOK_TABLE = (("SessionStart", HOOK, HOOK_MATCH, "Preparing repo notes", True),
               ("Stop", STOP_HOOK, STOP_MATCH, "Checking what this session learned", False))
 
 
-def _count(settings, event="SessionStart"):
+def _count(settings, event):
 	"""How many of `event`'s hooks there are in total, across every group."""
 	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get(event, []))
 
 
-def _hooks(settings, script, event="SessionStart"):
+def _hooks(settings, script, event):
 	"""`event`'s groups with our hook taken out. Empty groups are dropped.
 
 	ponytail: callers compare HOOK counts, never group counts. Ours can end up sharing a group with

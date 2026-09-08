@@ -1507,3 +1507,39 @@ def test_the_install_doc_names_every_hook_that_is_actually_registered(monkeypatc
 		assert f"`{event}`" in doc, f"docs/install.md never names the {event} hook"
 	# and the one consequence a reader must not have to discover at runtime
 	assert "hold a session open" in doc, doc[:0] or "docs/install.md does not say the Stop hook can block"
+
+
+def test_the_stop_hook_script_actually_runs_and_finds_its_own_entry_point(tmp_path):
+	"""The one new file no test executed — this repo runs its shell hooks for real everywhere else.
+
+	The `../..` walk, the `prs.py` name and the `[ -x ]` fail-quiet were all unproven: rename prs.py or
+	move the hook one directory and the whole suite still passes while the hook silently stops asking,
+	forever, with no failure anywhere. Which is the exact shape of the bug this feature exists to fix.
+	"""
+	tr = tmp_path / "t.jsonl"
+	tr.write_text("".join(json.dumps({"type": "user", "interruptedMessageId": str(i)}) + "\n"
+	                      for i in range(3)))
+	body = json.dumps({"transcript_path": str(tr), "stop_hook_active": False})
+	# ponytail: PATH without gitdashy on it, which is the point — the hook must reach its own entry
+	# point from BASH_SOURCE, not from whatever `gitdashy` happens to come first after every session.
+	kept = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+	                       if d and not os.path.exists(os.path.join(d, "gitdashy")))
+	assert shutil.which("gitdashy", path=kept) is None
+	env = {**os.environ, "PATH": kept, "PRS_MEMORY": str(tmp_path / "mem")}
+	done = subprocess.run(["bash", install.STOP_HOOK], input=body,
+	                      capture_output=True, text=True, env=env)
+	assert done.returncode == 0, done.stderr
+	assert json.loads(done.stdout)["decision"] == "block", done.stdout
+
+
+def test_the_stop_hook_is_quiet_when_its_entry_point_is_gone(tmp_path):
+	"""Fails CLOSED. A checkout half-removed is the normal state mid-uninstall, and a hook that fails
+	loudly at the end of every session is a hook the user rips out."""
+	moved = tmp_path / "hooks"
+	moved.mkdir()
+	copy = moved / "claude-stop.sh"
+	shutil.copy(install.STOP_HOOK, str(copy))      # same script, nowhere near a prs.py
+	done = subprocess.run(["bash", str(copy)], input='{"transcript_path":"/nope"}',
+	                      capture_output=True, text=True)
+	assert done.returncode == 0, done.stderr
+	assert done.stdout == "", done.stdout
