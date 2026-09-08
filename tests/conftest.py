@@ -1,5 +1,9 @@
 """Shared fixtures. ponytail: one fake screen, one temp log, no framework."""
 import json
+import os
+import shutil
+import urllib.request
+
 import pytest
 
 from dashy import demo, config
@@ -45,8 +49,35 @@ def isolated(monkeypatch, tmp_path):
 	# ponytail: and the cache keyed off it, exactly as log._CACHE is pinned. A module-global that
 	# survives a test carries one test's tmp_path answer into the next one's assertions.
 	monkeypatch.setattr(install, "_NOTES", (None, []))
+	# ponytail: and the review lens. config.INSTRUCTIONS is read from $PRS_INSTRUCTIONS at import, and
+	# review() appends that file to every prompt — so a developer who actually uses --instructions ran a
+	# suite that asserted on prompt CONTENT and LENGTH with their own text folded in. Two review tests
+	# failed on this machine and passed in CI, which reads as "main is broken" rather than "your
+	# environment leaked in". Same class as CLAUDE_CONFIG_DIR above; the env var is cleared too, because
+	# anything re-reading config at import time would pick it back up.
+	monkeypatch.delenv("PRS_INSTRUCTIONS", raising=False)
+	monkeypatch.setattr(config, "INSTRUCTIONS", "")
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
+	# ponytail: github.py talks HTTP now, so a test that forgets to fake it would hit the real API with
+	# the developer's own token — which is exactly what happened once. No test gets a socket for free.
+	POSTED.clear()
+	monkeypatch.setattr(urllib.request, "urlopen", recorder)
+	for var in ("GH_TOKEN", "GITHUB_TOKEN"):
+		monkeypatch.delenv(var, raising=False)  # a token on the machine must not change what a test sends
+	# ponytail: $GITHUB_API is read at import, so a developer pointed at an Enterprise host would fail
+	# every test that names a url. The environment does not get to decide what the suite asserts.
+	monkeypatch.setattr(github, "API", "https://api.github.com")
+	monkeypatch.setattr(github, "GRAPHQL", "https://api.github.com/graphql")
+	# ponytail: pin what api_cmd READS, not api_cmd itself — a stub here would have hidden the very bug
+	# it exists to keep out of the suite (a `gitdashy` on PATH that is a different, older build).
+	# ponytail: `gitdashy` alone — review.shutil IS the shutil module, so a blanket lambda answered for
+	# every caller in every module (github.copy's clipboard probe included) and swallowed `path=`.
+	orig_which = shutil.which
+	monkeypatch.setattr(review.shutil, "which", lambda c, *a, **kw:
+	                    os.path.join(review.HERE, "prs.py") if c == "gitdashy" and not (a or kw)
+	                    else orig_which(c, *a, **kw))
+	monkeypatch.setattr(github, "_me", "")  # the login is cached for the process; not across tests
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs
 	# while install() swapped eight, so github.copy, collaborators, request_review, self_review and
 	# update_available stayed faked for every module collected afterwards. demo.restore() puts back
@@ -55,6 +86,55 @@ def isolated(monkeypatch, tmp_path):
 	demo.restore()
 
 
+POSTED = []  # (url, body) of every github API call the test under way made
+
+
+def recorder(req, timeout=None):
+	"""The default urlopen: records github calls and answers {}, refuses to reach anything else.
+
+	ponytail: no test gets a socket. github.py talks HTTP now, so without this a test that forgets to
+	fake it hits the real API with the developer's own token — which is exactly what happened once.
+	"""
+	if not req.full_url.startswith((github.API, github.GRAPHQL)):  # on Enterprise the two are siblings
+		raise AssertionError(f"test tried to reach {req.full_url}")
+	POSTED.append((req.full_url, json.loads(req.data) if req.data else None))
+	return Body(b"{}")
+
+
+class Body:
+	"""A response body handed over in one chunk. ponytail: urlopen's contract is read() and a context."""
+	def __init__(self, raw): self.raw = raw
+	def read(self): return self.raw
+	def __enter__(self): return self
+	def __exit__(self, *a): return False
+
+
+class Writes:
+	"""The github calls that WROTE, indexable after the fact. A review reads the PR and its diff too, and
+	those are not what a test asserting "it posted the verdict" means."""
+	def rows(self): return [c for c in POSTED if c[1] is not None]
+	def __getitem__(self, i): return self.rows()[i]
+	def __len__(self): return len(self.rows())
+	def __iter__(self): return iter(self.rows())
+	def __eq__(self, other): return self.rows() == other
+
+
+@pytest.fixture
+def posted():
+	return Writes()
+
+
+def fake_http(handler):
+	"""urlopen replacement: handler(url, body-dict-or-None) -> the response text (or a dict, as json)."""
+	def go(req, timeout=None):
+		out = handler(req.full_url, json.loads(req.data) if req.data else None)
+		return Body((out if isinstance(out, str) else json.dumps(out)).encode())
+	return go
+
+
+def gql_nodes(*sections):
+	"""{"data": {"s0": {"nodes": [...]}, ...}} — one section per argument."""
+	return {"data": {f"s{i}": {"nodes": list(ns)} for i, ns in enumerate(sections)}}
 def a_team(monkeypatch, tmp_path, key="org-t"):
 	"""A joined team at ~/.prs_teams/<slug>/. Returns its memory dir.
 

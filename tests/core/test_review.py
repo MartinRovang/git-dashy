@@ -11,18 +11,18 @@ from dashy.core.review import review
 from conftest import PR, Result, a_team, claude_out
 
 
-def test_review_posts_verdict_and_logs(monkeypatch):
+def test_review_posts_verdict_and_logs(monkeypatch, posted):
 	calls = []
 	def fake_run(cmd, **kw):
 		calls.append(cmd)
 		return claude_out(verdict="request_changes", summary="adds x", body="nope")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "sonnet") == "✗ changes requested"
-	assert calls[0][:6] == ["gh", "pr", "comment", "7", "--repo", "a/b"]
-	assert calls[0][-1] == "**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium**, depth **adaptive** (Dashy picks the depth from the diff size and risk), voices **review**."
-	assert calls[1][0] == "claude" and calls[1][calls[1].index("--model") + 1] == "sonnet"
-	assert calls[2][:6] == ["gh", "pr", "review", "7", "--repo", "a/b"]
-	assert "--request-changes" in calls[2] and calls[2][-1] == "nope"
+	assert posted[0] == ("https://api.github.com/repos/a/b/issues/7/comments", {"body":
+		"**Dashy is on its way!** Reviewing with model **sonnet**, effort **medium**, depth **adaptive** (Dashy picks the depth from the diff size and risk), voices **review**."})
+	assert calls[0][0] == "claude" and calls[0][calls[0].index("--model") + 1] == "sonnet"
+	assert posted[1] == ("https://api.github.com/repos/a/b/pulls/7/reviews",
+	                     {"event": "REQUEST_CHANGES", "body": "nope"})
 	entry = json.loads(open(log.LOG).read())
 	assert entry["verdict"] == "request_changes" and entry["summary"] == "adds x"
 	assert entry["model"] == "sonnet" and entry["pr"]["url"] == "u"
@@ -38,28 +38,25 @@ def test_review_logs_what_claude_said_it_cost(monkeypatch):
 	assert log.reviewed()[0]["tag"] == "adaptive/medium $0.12 1m"
 
 
-@pytest.mark.parametrize("verdict,flag,status", [
-	("approve", "--approve", "✓ approved"),
-	("comment", "--comment", "~ commented"),
+@pytest.mark.parametrize("verdict,event,status", [
+	("approve", "APPROVE", "✓ approved"),
+	("comment", "COMMENT", "~ commented"),
 ])
-def test_review_verdict_flags(monkeypatch, verdict, flag, status):
-	calls = []
-	def fake_run(cmd, **kw):
-		calls.append(cmd)
-		return claude_out(verdict=verdict, body="b")
-	monkeypatch.setattr(subprocess, "run", fake_run)
+def test_review_verdict_flags(monkeypatch, posted, verdict, event, status):
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(verdict=verdict, body="b"))
 	assert review(dict(PR), "opus") == status
-	assert flag in calls[2]
+	assert posted[1][1]["event"] == event
 
 
-def test_review_unparseable_output_is_error_and_not_posted(monkeypatch):
+def test_review_unparseable_output_is_error_and_not_posted(monkeypatch, posted):
 	calls = []
 	def fake_run(cmd, **kw):
 		calls.append(cmd)
 		return Result(json.dumps({"result": "I could not review this"}))
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus").startswith("error:")
-	assert len(calls) == 2 and calls[1][0] == "claude" and not __import__("os").path.exists(log.LOG)
+	assert calls[0][0] == "claude" and not __import__("os").path.exists(log.LOG)
+	assert [url for url, _ in posted] == ["https://api.github.com/repos/a/b/issues/7/comments"]  # hello, no verdict
 
 
 def test_review_unknown_verdict_is_error(monkeypatch):
@@ -67,13 +64,17 @@ def test_review_unknown_verdict_is_error(monkeypatch):
 	assert review(dict(PR), "opus").startswith("error:")
 
 
-def test_review_gh_failure_surfaces_stderr(monkeypatch):
-	def fake_run(cmd, **kw):
-		if cmd[:3] == ["gh", "pr", "review"]:
-			raise subprocess.CalledProcessError(1, cmd, stderr="line1\nfatal: nope\n")
-		return claude_out(verdict="approve", body="b")
-	monkeypatch.setattr(subprocess, "run", fake_run)
-	assert review(dict(PR), "opus") == "error: fatal: nope"
+def test_review_api_failure_surfaces_githubs_message(monkeypatch):
+	import io
+	import urllib.error
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: claude_out(verdict="approve", body="b"))
+	def boom(req, timeout=None):
+		if req.full_url.endswith("/reviews"):
+			raise urllib.error.HTTPError(req.full_url, 422, "Unprocessable", {},
+			                             io.BytesIO(b'{"message": "Can not approve your own pull request"}'))
+		return __import__("conftest").Body(b"{}")
+	monkeypatch.setattr(github.urllib.request, "urlopen", boom)
+	assert "Can not approve your own pull request" in review(dict(PR), "opus")
 
 
 def test_review_timeout_is_error(monkeypatch):
@@ -93,7 +94,7 @@ def test_review_appends_instructions_file(monkeypatch, tmp_path):
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	assert review(dict(PR), "opus") == "✓ approved"
-	assert calls[1][2].endswith("Additional instructions from the reviewer:\nAlways check the changelog.")
+	assert "Additional instructions from the reviewer:\nAlways check the changelog." in calls[0][2]
 
 
 def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
@@ -103,34 +104,52 @@ def test_review_missing_instructions_file_is_error(monkeypatch, tmp_path):
 	assert not __import__("os").path.exists(log.LOG)
 
 
+def test_claude_fetches_the_pr_itself_and_the_others_get_it_pasted(monkeypatch):
+	"""Pasting it in for claude as well was the same bytes twice — and as an argv string a big diff hit
+	MAX_ARG_STRLEN, so the review died with E2BIG before claude was even started."""
+	calls = []
+	monkeypatch.setattr(github, "context", lambda repo, n: pytest.fail("claude fetches the PR itself"))
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
+	review(dict(PR), "opus")
+	prompt, cmd = calls[0][2], calls[0]
+	assert "gitdashy api /repos/a/b/pulls/7 --diff" in prompt and len(prompt) < 8_000
+	assert cmd[cmd.index("--allowedTools") + 1] == "Bash(gitdashy api:*)"  # read the repo, run nothing else
+	calls.clear()
+	monkeypatch.setattr(github, "context", lambda repo, n: "PASTED PR")
+	monkeypatch.setattr("dashy.core.llm.ask", lambda p, m, **kw: calls.append((p, kw)) or
+	                    (json.dumps({"verdict": "approve", "summary": "s", "body": "b"}), None, 0))
+	review(dict(PR), "openrouter:x-ai/grok-4")
+	prompt, kw = calls[0]
+	assert "You cannot run any commands" in prompt and not kw["tools"]
+
+
 # ---- reviewed log / detail ----
 
 
-def test_review_depth_and_effort(monkeypatch):
+def test_review_depth_and_effort(monkeypatch, posted):
 	calls = []
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
 	monkeypatch.setattr(config, "DEPTH", "high")
 	monkeypatch.setattr(config, "EFFORT", "max")
 	review(dict(PR), "opus")
-	assert "Depth: very in-depth" in calls[1][2] and calls[1][-2:] == ["--effort", "max"]
-	assert "effort **max**, depth **high** (set by the reviewer)" in calls[0][-1]
+	assert "Depth: very in-depth" in calls[0][2] and calls[0][-2:] == ["--effort", "max"]
+	assert "effort **max**, depth **high** (set by the reviewer)" in posted[0][1]["body"]
 	calls.clear()
 	monkeypatch.setattr(config, "EFFORT", "")
 	review(dict(PR), "opus")
-	assert "--effort" not in calls[1] and "effort **default**" in calls[0][-1]
+	assert "--effort" not in calls[0] and "effort **default**" in posted[2][1]["body"]
 
 
-def test_review_adaptive_appends_depth_used(monkeypatch):
+def test_review_adaptive_appends_depth_used(monkeypatch, posted):
 	calls = []
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(
 		verdict="approve", body="b", depth_used="high", depth_reason="touches auth"))
 	review(dict(PR), "opus")
-	assert calls[2][-1] == "b\n\n_Dashy reviewed at **high** depth: touches auth_"
+	assert posted[1][1]["body"] == "b\n\n_Dashy reviewed at **high** depth: touches auth_"
 	assert log.reviewed()[0]["review"]["body"].endswith("touches auth_")
-	calls.clear()
 	monkeypatch.setattr(config, "DEPTH", "high")
 	review(dict(PR), "opus")
-	assert calls[2][-1] == "b"  # set depth: nothing to explain
+	assert posted[3][1]["body"] == "b"  # set depth: nothing to explain
 
 
 def test_review_reads_memory_and_only_drafts_what_it_proposes(monkeypatch, tmp_path):
@@ -201,7 +220,7 @@ def test_review_runs_claude_scoped_with_the_lens(monkeypatch):
 		return claude_out(verdict="approve", body="b")
 	monkeypatch.setattr(subprocess, "run", fake_run)
 	review(dict(PR), "opus")
-	cmd = calls[1]
+	cmd = calls[0]
 	assert "--safe-mode" in cmd
 	assert cmd[cmd.index("--append-system-prompt") + 1] == review_mod.LENS
 	assert cmd.index("--safe-mode") < cmd.index("--allowedTools")  # flags precede the tool grant, not the prompt
@@ -365,24 +384,24 @@ def test_self_review_writes_where_the_lookup_looks(monkeypatch, tmp_path):
 	assert review_mod.self_review_at("acme/api", 7) > 0
 
 
-def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatch):
+def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatch, posted):
 	calls = []
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
 	monkeypatch.setattr(config, "VOICE", ["bot", "review"])
 	monkeypatch.setattr(config, "HUNTER", ["tests", "ponytail"])
 	review(dict(PR), "opus")
-	prompt = calls[1][2]
+	prompt = calls[0][2]
 	assert prompt.index("**Bot**") < prompt.index("**Ponytail**") < prompt.index("**Tests**")  # voices, then hunters, each in table order
 	assert "**Caveman**" not in prompt and "**Security**" not in prompt and "Do NOT" not in prompt
-	assert calls[0][-1].endswith("voices **review, bot** and hunters **ponytail, tests**.")
+	assert posted[0][1]["body"].endswith("voices **review, bot** and hunters **ponytail, tests**.")
 	calls.clear()
 	monkeypatch.setattr(config, "HUNTER", [])
 	calls.clear()
 	monkeypatch.setattr(config, "VOICE", ["caveman"])  # review unchecked: caveman IS the review
 	review(dict(PR), "opus")
-	assert "Do NOT write the standard review" in calls[1][2] and "**Caveman**" in calls[1][2]
-	assert calls[0][-1].endswith("voices **caveman**.")  # the author is told up front why it reads that way
+	assert "Do NOT write the standard review" in calls[0][2] and "**Caveman**" in calls[0][2]
+	assert posted[-2][1]["body"].endswith("voices **caveman**.")  # the author is told why it reads that way
 	calls.clear()
 	monkeypatch.setattr(config, "VOICE", ["review"])
 	review(dict(PR), "opus")
-	assert "Append a section" not in calls[1][2] and "Do NOT" not in calls[1][2]
+	assert "Append a section" not in calls[0][2] and "Do NOT" not in calls[0][2]

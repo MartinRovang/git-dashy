@@ -39,8 +39,8 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 def test_demo_swaps_every_call_out_including_the_pre_reviewer(monkeypatch, tmp_path):
 	"""`p` on a demo row called review.self_review, which demo.install() did not swap.
 
-	With claude on PATH that spawned a real `claude -p` against acme/api#101, which then shells out to
-	gh — against a README that promises no gh and no claude. The other test asserts no subprocess.run;
+	With claude on PATH that spawned a real `claude -p` against acme/api#101, which then reads the real
+	PR — against a README that promises no token and no claude. The other test asserts no subprocess.run;
 	this one asserts the attr itself is not the real function, which is what actually went wrong.
 	"""
 	monkeypatch.setenv("TMPDIR", str(tmp_path))

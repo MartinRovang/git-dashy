@@ -1,4 +1,4 @@
-"""Canned PRs and a fake reviewer, so the UI can be eyeballed without gh or claude."""
+"""Canned PRs and a fake reviewer, so the UI can be eyeballed without a github token or claude."""
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -36,7 +36,7 @@ def install():
 	"""ponytail: swap every module attr the app calls out through — no injection framework.
 
 	ponytail: EVERY one. A new call-out that is not swapped here reaches the real thing, and the demo
-	promises no gh and no claude — `p` shipped for one commit doing exactly that."""
+	promises no github and no claude — `p` shipped for one commit doing exactly that."""
 	# ponytail: BOTH homes. team.joined() lists directories under TEAMS, so blanking the old singular
 	# path alone left the demo reading whatever real teams this machine had joined — and the demo's
 	# whole promise is that it touches nothing real.
@@ -108,7 +108,7 @@ def install():
 	def fake_self_review(p, model):
 		# ponytail: swapped for the same reason fake_review is. start_self_review calls a DIFFERENT module
 		# attr, so swapping review.review alone left `p` on a demo row spawning a real `claude -p` against
-		# acme/api#101, which then shells out to gh — against a README that promises no gh and no claude.
+		# acme/api#101, which then calls the github api — against a README that promises no github and no claude.
 		time.sleep(4)
 		dest = log.LOG[:-6] + f"-selfreview-{p['number']}.md"
 		with open(dest, "w") as f:

@@ -1,31 +1,123 @@
-"""Everything that shells out to `gh`."""
+"""Everything that talks to GitHub.
+
+ponytail: urllib against the API, no `gh` binary and no requests. One dependency less to install, and
+every failure arrives as an Error (an OSError) instead of a string parsed out of someone's stderr.
+"""
 import base64
 import json
+import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import log
 
-FIELDS = "number,title,repository,url,updatedAt,isDraft,author"
-SECTIONS = [
-	("MINE", "--author=@me"),
-	("REVIEW REQUESTED", "--review-requested=@me"),
-	("ASSIGNED", "--assignee=@me"),
-]
+API = os.environ.get("GITHUB_API", "https://api.github.com")
+# ponytail: graphql does not live under the REST root on Enterprise — /api/v3 and /api/graphql are
+# siblings there, while on github.com the two share a host. One replace covers both.
+GRAPHQL = API.replace("/api/v3", "/api").rstrip("/") + "/graphql"
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+	"""Drop the token when a 3xx leaves the host it was issued for.
+
+	ponytail: urllib copies every header onto the redirected request, so the host check in `call()` would
+	guard only the request this code builds, not the one urllib may end up sending. Installed globally
+	because `urlopen` is what the rest of the module calls — one opener, no plumbing through every site.
+	"""
+	def redirect_request(self, req, fp, code, msg, headers, newurl):
+		new = super().redirect_request(req, fp, code, msg, headers, newurl)
+		if new and urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname:
+			new.headers = {k: v for k, v in new.headers.items() if k.lower() != "authorization"}
+		return new
+
+
+urllib.request.install_opener(urllib.request.build_opener(_StripAuthOnRedirect))
+
+
+class Error(OSError):
+	"""ponytail: an OSError, so every `except OSError` already guarding these calls still catches it."""
+
+
+def token():
+	"""The API token: $GH_TOKEN or $GITHUB_TOKEN. ponytail: the environment, and nothing else — gh's own
+	token store is gh's, and reading it would make an uninstall of gh look like a gitdashy failure."""
+	return next((os.environ[v].strip() for v in ("GH_TOKEN", "GITHUB_TOKEN") if os.environ.get(v)), "")
+
+
+def call(path, method="GET", body=None, accept="application/vnd.github+json", timeout=30):
+	"""One API call, returning the response text. Raises Error on anything that is not a 2xx."""
+	url = path if path.startswith("http") else API + path
+	tok = token()
+	headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
+	# ponytail: the token goes to the API host and nowhere else. A review reads untrusted diffs and can
+	# choose the path it asks for, so an absolute URL in there must not be a way to post the token out.
+	if tok and urllib.parse.urlparse(url).hostname == urllib.parse.urlparse(API).hostname:
+		headers["Authorization"] = "Bearer " + tok
+	if body is not None:
+		headers["Content-Type"] = "application/json"
+	req = urllib.request.Request(url, method=method,
+	                             data=json.dumps(body).encode() if body is not None else None, headers=headers)
+	try:
+		with urllib.request.urlopen(req, timeout=timeout) as r:
+			return r.read().decode()
+	except urllib.error.HTTPError as e:
+		detail = ""
+		try:
+			detail = json.loads(e.read().decode()).get("message", "")
+		except (ValueError, OSError):
+			pass
+		hint = " — no token: export GH_TOKEN=… (scope: repo)" if e.code in (401, 403) and not tok else ""
+		raise Error(f"{e.code} {path}: {detail or e.reason}{hint}") from None
+	except OSError as e:  # URLError, timeouts, DNS, no network — all OSError already
+		raise Error(f"{path}: {e}") from None
+
+
+def api(path, **kw):
+	return json.loads(call(path, **kw))
+
+
+def gql(query, timeout=60):
+	"""GraphQL, returning `data`. Partial data survives partial errors (a missing scope drops fields)."""
+	d = json.loads(call(GRAPHQL, "POST", {"query": query}, timeout=timeout))
+	if d.get("data") is None:
+		raise Error((d.get("errors") or [{}])[0].get("message", "graphql returned no data"))
+	return d["data"]
+
+
+_me = ""
+
+
+def me():
+	"""Your login. ponytail: `@me` is gh/UI sugar the API does not resolve, so the search needs the name."""
+	global _me
+	if not _me:
+		_me = gql("{ viewer { login } }")["viewer"]["login"]
+	return _me
+
+
+SECTIONS = [("MINE", "author:{me}"), ("REVIEW REQUESTED", "review-requested:{me}"), ("ASSIGNED", "assignee:{me}")]
 DECISION = {"APPROVED": "✓ approved", "CHANGES_REQUESTED": "✗ changes requested", "REVIEW_REQUIRED": "· awaiting review"}
-# ponytail: one graphql call for what `gh search` cannot give — review decision, reviewers, head commit and
-# CI state — over the same three searches, aliased, so the nodes can be joined back to the sections by url.
+# ponytail: ONE query for the whole dashboard — the three sections aliased, each carrying the row fields
+# and the review decision, reviewers, head commit and CI state that no list endpoint returns.
 # ponytail: no `... on Team { slug }` — that field needs read:org, and a token without it failed the WHOLE
 # query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
-NODE = """{ nodes { ... on PullRequest { url headRefOid reviewDecision
+NODE = """{ nodes { ... on PullRequest { number title url updatedAt isDraft
+    author { login } repository { nameWithOwner name } headRefOid reviewDecision
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }
     latestReviews(first: 20) { nodes { author { login } state } } } } }"""
-META_QUERY = "{ " + " ".join(f'{a}: search(query: "is:pr is:open {q}", type: ISSUE, first: 100) {NODE}'
-                             for a, q in (("mine", "author:@me"), ("rr", "review-requested:@me"), ("asg", "assignee:@me"))) + " }"
 CHECKS = {"SUCCESS": "✓", "FAILURE": "✗", "ERROR": "✗", "PENDING": "●", "EXPECTED": "●"}
 REVIEW_GLYPH = {"APPROVED": "✓", "CHANGES_REQUESTED": "✗", "COMMENTED": "~", "PENDING": "·"}
+ROW = ("number", "title", "url", "updatedAt", "isDraft", "author", "repository")
+
+
+def query(who):
+	return "{ " + " ".join(f's{i}: search(query: "is:pr is:open {q.format(me=who)}", type: ISSUE, first: 100) {NODE}'
+	                       for i, (_, q) in enumerate(SECTIONS)) + " }"
 
 
 def own_status(node):
@@ -62,92 +154,106 @@ def reviewers(node):
 
 
 def collaborators(repo):
-	"""Logins with access to repo, [] when gh cannot list them (no admin, offline)."""
+	"""Logins with access to repo, [] when they cannot be listed (no admin, offline)."""
 	try:
-		raw = subprocess.run(["gh", "api", f"repos/{repo}/collaborators", "--paginate", "--jq", ".[].login"],
-		                     capture_output=True, text=True, check=True, timeout=30).stdout
-		return raw.split()
-	except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+		return [c["login"] for c in api(f"/repos/{repo}/collaborators?per_page=100")]
+	except (Error, ValueError, KeyError, TypeError):
 		return []
 
 
 def request_review(repo, number, login):
-	"""Ask login to review PR number; the gh error text, or "" on success."""
-	# ponytail: REST, not `gh pr edit` — that one dies on the Projects-classic deprecation warning
+	"""Ask login to review PR number; the error text, or "" on success."""
 	try:
-		r = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers", "-f", f"reviewers[]={login}"],
-		                   capture_output=True, text=True, timeout=30)
-	except subprocess.TimeoutExpired as e:
+		call(f"/repos/{repo}/pulls/{number}/requested_reviewers", "POST", {"reviewers": [login]})
+	except Error as e:
 		return str(e)
-	return "" if r.returncode == 0 else r.stderr.strip()
+	return ""
 
 
-VERDICT_FLAG = {"approve": "--approve", "request_changes": "--request-changes", "comment": "--comment"}
+def git_auth():
+	"""Env that lets a clone reach a private repo with the same token the API uses.
+
+	ponytail: GIT_CONFIG_* in the environment, not `-c` in argv — argv is world-readable in `ps` for the
+	length of a clone. It does not survive into the new checkout, so `persist_auth()` writes it there.
+	"""
+	tok = token()
+	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
+	        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {tok}"} if tok else {}
+
+
+def persist_auth(dest):
+	"""Put the token in a fresh checkout's config so later pulls on the refresh tick stay authorised.
+
+	ponytail: appended by hand rather than `git config`, which would put the token back in argv — the
+	thing git_auth() exists to avoid. chmod first: the secret is never on disk world-readable.
+	"""
+	tok, cfg = token(), os.path.join(dest, ".git", "config")
+	if not tok or not os.path.isfile(cfg):
+		return
+	os.chmod(cfg, 0o600)
+	with open(cfg, "a") as f:
+		f.write(f"[http]\n\textraHeader = Authorization: Bearer {tok}\n")
+
+
+VERDICT_EVENT = {"approve": "APPROVE", "request_changes": "REQUEST_CHANGES", "comment": "COMMENT"}
 
 
 def fetch():
 	"""[(section name, [pr] or None, error string or None)] — one entry per SECTIONS, plus REVIEWED."""
+	try:
+		data = gql(query(me()))
+	except (Error, ValueError, KeyError, TypeError) as e:
+		err = str(e).strip().splitlines()[0] if str(e).strip() else "github unreachable"
+		return [(name, None, err) for name, _ in SECTIONS] + [("REVIEWED", log.reviewed(), None)]
 	seen, out = set(), []
-	for name, flag in SECTIONS:
-		try:
-			raw = subprocess.run(
-				["gh", "search", "prs", "--state=open", flag, "--json", FIELDS, "--limit", "100"],
-				capture_output=True, text=True, check=True, timeout=60,
-			).stdout
-			prs = json.loads(raw)
-		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-			prs, err = [], getattr(e, "stderr", None) or str(e)
-			out.append((name, None, err.strip()))
-			continue
-		prs = [p for p in prs if p["url"] not in seen]  # ponytail: dedup across sections, first section wins
-		seen.update(p["url"] for p in prs)
+	for i, (name, _) in enumerate(SECTIONS):
+		prs = []
+		for n in (data.get(f"s{i}") or {}).get("nodes") or []:
+			if not n or n.get("url") in seen:  # ponytail: dedup across sections, first section wins
+				continue
+			seen.add(n["url"])
+			p = {k: n.get(k) for k in ROW}
+			p["checks"] = checks(n)
+			if h := n.get("headRefOid"):  # ponytail: absent field reads like a failed call — no head, not ""
+				p["head"] = h
+			# ponytail: reviewers on EVERY section, not just MINE. A "~alice" only ever painted on my
+			# own rows, so a comment on someone else's PR was visible to nobody looking at it. status
+			# stays MINE-only — own_status reads reviewDecision as "what is blocking ME", which is not
+			# the question an assigned or requested row asks.
+			p["reviewers"] = reviewers(n)
+			if name == "MINE":
+				p["status"] = own_status(n)
+			prs.append(p)
 		prs.sort(key=lambda p: p["updatedAt"], reverse=True)
 		out.append((name, prs, None))
-	if any(prs for _, prs, _ in out):  # review decision, CI and head commit: search has none of them, one graphql call does
-		try:
-			raw = subprocess.run(["gh", "api", "graphql", "-f", "query=" + META_QUERY],
-			                     capture_output=True, text=True, check=True, timeout=60).stdout
-			nodes = {n["url"]: n for s in json.loads(raw)["data"].values() for n in s["nodes"] if n}
-			for name, prs, _ in out:
-				for p in prs or []:
-					n = nodes.get(p["url"], {})
-					p["checks"] = checks(n)
-					if h := n.get("headRefOid"):  # ponytail: absent node reads like a failed call — no head, not ""
-						p["head"] = h
-					# ponytail: reviewers on EVERY section, not just MINE. A "~alice" only ever painted
-					# on my own rows, so a comment on someone else's PR was visible to nobody looking
-					# at it. status stays MINE-only — own_status reads reviewDecision as "what is
-					# blocking ME", which is not the question an assigned or requested row asks.
-					p["reviewers"] = reviewers(n)
-					if name == "MINE":
-						p["status"] = own_status(n)
-		except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, KeyError, AttributeError, TypeError):
-			pass  # ponytail: status is decoration, the list still renders without it
 	out.append(("REVIEWED", log.reviewed(), None))  # ponytail: not deduped, a reviewed PR may still be open above
 	return out
 
 
-DETAIL = "headRefName,additions,deletions,changedFiles,statusCheckRollup"
 CHECK = {"SUCCESS": "ok", "COMPLETED": "ok", "NEUTRAL": "ok", "SKIPPED": "skip",
          "FAILURE": "fail", "ERROR": "fail", "TIMED_OUT": "fail", "CANCELLED": "fail",
          "IN_PROGRESS": "run", "QUEUED": "run", "PENDING": "run", "WAITING": "run", "EXPECTED": "run"}
+DETAIL_QUERY = """{{ repository(owner: {owner}, name: {name}) {{ pullRequest(number: {number}) {{
+    headRefName additions deletions changedFiles
+    commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ contexts(first: 20) {{ nodes {{
+      ... on CheckRun {{ name conclusion status }}
+      ... on StatusContext {{ context state }} }} }} }} }} }} }} }} }} }}"""
 
 
 def detail(repo, number):
 	"""Branch, diff size and CI checks for ONE pr. {} on any failure.
 
-	ponytail: only ever for the selected row. Each of these is a separate gh call, so asking for the
-	whole list every refresh would make the dashboard slower than the thing it is showing. And a pane
+	ponytail: only ever for the selected row, and one query rather than a pull + a checks call. A pane
 	is decoration: if it cannot be had, the row is still right, so nothing here raises.
 	"""
+	owner, _, name = repo.partition("/")
 	try:
-		raw = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", DETAIL],
-		                     capture_output=True, text=True, check=True, timeout=30).stdout
-		d = json.loads(raw)
-	except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
+		d = gql(DETAIL_QUERY.format(owner=json.dumps(owner), name=json.dumps(name), number=int(number)),
+		        timeout=30)["repository"]["pullRequest"]
+	except (Error, ValueError, KeyError, TypeError):
 		return {}
 	checks = []
-	for c in d.get("statusCheckRollup") or []:
+	for c in contexts(d):
 		name = c.get("name") or c.get("context") or ""
 		raw_state = (c.get("conclusion") or c.get("state") or c.get("status") or "").upper()
 		if name:
@@ -156,16 +262,23 @@ def detail(repo, number):
 	        "files": d.get("changedFiles"), "checks": checks[:8]}
 
 
+def contexts(pr):
+	"""The check runs and status contexts on a PR's head commit, [] when it has none."""
+	for c in ((pr.get("commits") or {}).get("nodes") or []):
+		roll = (c.get("commit") or {}).get("statusCheckRollup") or {}
+		return (roll.get("contexts") or {}).get("nodes") or []
+	return []
+
+
 def post_review(repo, number, verdict, body):
-	"""Post the verdict on the PR. Raises CalledProcessError / TimeoutExpired on failure."""
-	subprocess.run(["gh", "pr", "review", str(number), "--repo", repo, VERDICT_FLAG[verdict], "--body", body],
-	               capture_output=True, text=True, check=True, timeout=60)
+	"""Post the verdict on the PR. Raises Error on failure."""
+	call(f"/repos/{repo}/pulls/{number}/reviews", "POST",
+	     {"event": VERDICT_EVENT[verdict], "body": body}, timeout=60)
 
 
 def comment(repo, number, body):
-	"""Post a plain comment on the PR. Raises CalledProcessError / TimeoutExpired on failure."""
-	subprocess.run(["gh", "pr", "comment", str(number), "--repo", repo, "--body", body],
-	               capture_output=True, text=True, check=True, timeout=60)
+	"""Post a plain comment on the PR. Raises Error on failure."""
+	call(f"/repos/{repo}/issues/{number}/comments", "POST", {"body": body}, timeout=60)
 
 
 def open_in_browser(url):
@@ -193,20 +306,17 @@ def copy(text):
 
 
 PR_CONTEXT_MAX = 200_000  # chars; a diff bigger than this is cut, since a context window is not free
-CONTEXT = "title,author,baseRefName,headRefName,body,additions,deletions,changedFiles,labels"
+CONTEXT = {"title": "title", "body": "body", "additions": "additions", "deletions": "deletions",
+           "changed_files": "changedFiles", "base": "baseRefName", "head": "headRefName",
+           "user": "author", "labels": "labels"}
 
 
 def context(repo, number):
-	"""`gh pr view` + `gh pr diff` as one blob, for a model that cannot run gh itself. Raises on failure.
-
-	ponytail: --json with named fields, not the plain `gh pr view`. That prints the same thing but asks
-	GraphQL for projectCards too, which now fails outright on repos with classic projects — the whole
-	command exits 1 over a field nothing here wants.
-	"""
-	head = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", CONTEXT],
-	                      capture_output=True, text=True, check=True, timeout=120).stdout
-	pr = json.loads(head)
-	diff = subprocess.run(["gh", "pr", "diff", str(number), "--repo", repo],
-	                      capture_output=True, text=True, check=True, timeout=120).stdout
-	text = "\n".join(f"{k}: {json.dumps(v) if isinstance(v, (dict, list)) else v}" for k, v in pr.items()) + "\n\n" + diff
+	"""The PR and its diff as one blob, for a model that cannot read GitHub itself. Raises on failure."""
+	pr = api(f"/repos/{repo}/pulls/{number}", timeout=120)
+	diff = call(f"/repos/{repo}/pulls/{number}", accept="application/vnd.github.v3.diff", timeout=120)
+	flat = {"user": (pr.get("user") or {}).get("login"), "base": (pr.get("base") or {}).get("ref"),
+	        "head": (pr.get("head") or {}).get("ref"), "labels": [l.get("name") for l in pr.get("labels") or []]}
+	text = "\n".join(f"{name}: {json.dumps(v) if isinstance(v, (dict, list)) else v}"
+	                 for key, name in CONTEXT.items() if (v := flat.get(key, pr.get(key))) is not None) + "\n\n" + diff
 	return text[:PR_CONTEXT_MAX] + ("\n\n[diff truncated]" if len(text) > PR_CONTEXT_MAX else "")

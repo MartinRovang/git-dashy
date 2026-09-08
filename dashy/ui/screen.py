@@ -1053,7 +1053,7 @@ def esc_menu(scr, state, sel):
 
 
 def add_reviewer(scr, state, sel, pr):
-	"""Pick a collaborator of the PR's repo (or type a login when gh cannot list them) and request their review."""
+	"""Pick a collaborator of the PR's repo (or type a login when the API cannot list them) and request their review."""
 	repo, number = pr["repository"]["nameWithOwner"], pr["number"]
 	draw(scr, state, sel, prompt=f" {art.SPINNER[0]} fetching collaborators of {repo}…")
 	scr.refresh()  # show the prompt before blocking on gh
