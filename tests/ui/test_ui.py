@@ -1717,3 +1717,64 @@ def test_f_clears_the_diffs_gh_failed_on(screen, monkeypatch):
 	monkeypatch.setattr(diff, "retry", lambda: hit.append(1))
 	_drive(screen, monkeypatch, [ord("f")])
 	assert hit == [1]
+
+
+def test_a_file_only_finding_is_reachable_in_the_code_tab(screen, monkeypatch, st):
+	"""The empty-scope guard hid exactly the marks code_rows' orphan branch exists to emit.
+
+	It asked `not shown and not any(m["file"] is None ...)`. A mark whose FILE matched but whose LINE
+	did not is in neither set — a file-only loc, which the finding schema explicitly allows, or a line
+	the diff does not carry. So the pane said "the review marked nothing" and the finding could not be
+	reached at all, contradicting anchor()'s promise that a finding landing nowhere is kept.
+	"""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "blocking", "loc": "auto.py", "text": "the whole file is the problem"}])
+	st.code_at = 0
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "the whole file is the problem" in out, out
+	assert "the review marked nothing" not in out, out
+
+
+def test_a_finding_on_a_line_the_diff_does_not_carry_is_reachable_too(screen, monkeypatch, st):
+	"""The other half of the same hole: right file, a line outside every hunk."""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "note", "loc": "auto.py:9999", "text": "right file wrong line"}])
+	st.code_at = 0
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "right file wrong line" in out, out
+	assert "the review marked nothing" not in out, out
+
+
+def test_the_pane_still_says_so_when_the_review_really_marked_nothing(screen, monkeypatch, st):
+	"""The guard must not have been turned off — with NO findings at all it still explains itself."""
+	pr = _code_pr(monkeypatch, st, findings=[])
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	assert "the review marked nothing" in scr.text()
+
+
+def test_the_sticky_path_names_the_file_the_window_is_inside(screen, monkeypatch, st):
+	"""Untested: no assertion anywhere covered "↑ in" or which path it showed.
+
+	Scrolled past a file's own header, the pane has to keep saying which file you are reading, or a
+	long diff becomes a wall of lines with no way to tell where you are.
+
+	ponytail: SCOPED and SHORT, which is the only combination that can produce this row. In full scope
+	n/N moves by file, so the window always opens on a file header; and in any pane tall enough to hold
+	the whole narrowed diff the window is clamped to the top, header included. The row exists for a pane
+	shorter than what it is showing, so the test has to ask for one — at h=34 it correctly never appears.
+	"""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "note", "loc": "auto.py:139", "text": "somewhere in the middle"}])
+	assert st.code_scope == "marks" and st.code_context == 3
+	st.code_at = 0
+	scr = FakeScr(h=22, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 22, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "↑ in" in out, out
+	assert "gitdashy/auto.py" in out, out       # the path it names, not merely that it named one
+	assert "somewhere in the middle" in out     # and the mark it scrolled to is still on screen

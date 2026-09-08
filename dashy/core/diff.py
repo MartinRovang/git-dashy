@@ -20,6 +20,14 @@ CONTEXTS = [3, 8, 0]   # lines kept either side of a marked line; c steps this r
 # retry() is then the difference between them — a parallel _FAILED set was a second place to forget.
 # The lock is not decoration: fetch() now runs on a worker thread while f calls retry() on the UI one,
 # and a set changing size mid-iteration raised straight out of the key handler and unwound curses.
+# ponytail: BOUNDED, and LRU. Only failures were ever dropped (by retry()), so every diff gh DID
+# produce stayed for the life of the process — a push adds an entry rather than replacing one, and each
+# holds the whole diff text. The layer above this one goes to the trouble of _evict()ing per PR; the
+# layer actually holding the megabytes did not. Ordered by last use, oldest evicted first.
+# ponytail: a PLAIN dict, ordered by insertion since 3.7, and re-inserted to mark a use. OrderedDict
+# would read better and breaks every test that patches this with `{}` — and the next one written that
+# way, silently, inside a keypress. The container stays the obvious one; the eviction is three lines.
+_KEEP = 24   # diffs kept; a dashboard shows a handful of PRs and re-reads the rest in one subprocess
 _CACHE = {}   # (repo, number, head) -> diff text | None. Keyed by HEAD, so a push invalidates it
 _LOCK = threading.Lock()
 _GEN = 0   # bumped by retry(); part of the key State caches on, so f reaches past ITS cache too
@@ -47,6 +55,7 @@ def fetch(repo, number, head=""):
 	key = (repo, number, head)
 	with _LOCK:
 		if key in _CACHE:
+			_CACHE[key] = _CACHE.pop(key)   # ponytail: a look is a use, or the pane you are reading ages out
 			return _CACHE[key] or ""
 	try:
 		# ponytail: OUTSIDE the lock. It is a subprocess with a 20s ceiling, and holding the lock across
@@ -60,7 +69,10 @@ def fetch(repo, number, head=""):
 		# the cache existed was the one input it did not cover.
 		got = None
 	with _LOCK:
+		_CACHE.pop(key, None)   # ponytail: re-inserted, so a refetch of a known PR moves to the newest end
 		_CACHE[key] = got
+		while len(_CACHE) > _KEEP:
+			del _CACHE[next(iter(_CACHE))]
 	return got or ""
 
 
@@ -128,10 +140,19 @@ def parse(text):
 
 
 def _where(loc):
-	""""a/b.py:141" -> ("a/b.py", 141); "a/b.py" -> ("a/b.py", 0). A file-only finding still lands."""
+	""""a/b.py:141" -> ("a/b.py", 141); "a/b.py" -> ("a/b.py", 0). A file-only finding still lands.
+
+	ponytail: "a/b.py:141:5" is a COLUMN, and the reviewer writes it. One rpartition read that as
+	("a/b.py:141", 5) — a path no file matches and a line number that is really a column, so the finding
+	silently became an orphan. The column is dropped: the pane anchors to lines, and a line is what the
+	reader is being sent to.
+	"""
 	loc = (loc or "").strip()
 	path, _, tail = loc.rpartition(":")
-	return (path, int(tail)) if path and tail.isdigit() else (loc, 0)
+	if not (path and tail.isdigit()):
+		return (loc, 0)
+	head, _, mid = path.rpartition(":")
+	return (head, int(mid)) if head and mid.isdigit() else (path, int(tail))
 
 
 def _same_file(a, b):

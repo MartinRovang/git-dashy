@@ -56,10 +56,21 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 # blue) and the bar greys; anything not listed keeps the default. New theme = one more line.
 THEMES = {
 	"dashy": {},
-	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61},
-	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243},
-	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60},
+	# ponytail: 151/181 are the diff's added/removed foregrounds and are SEMANTIC — the same green and
+	# red the rest of the table already themes, at a lighter weight. They follow each theme's own choice
+	# rather than staying dashy-coloured inside a dracula pane. The greys (244, 250, 252, 255) are left
+	# alone on purpose, as they always have been: a grey reads the same under every theme.
+	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61,
+	            151: 84, 181: 210},
+	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243,
+	            151: 142, 181: 167},
+	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60,
+	         151: 108, 181: 174},
 }
+# ponytail: 22 and 52 — the dark green/red BACKGROUNDS behind a changed line — are deliberately not
+# themed here. Picking a tint that still reads against dracula's or nord's own background is a judgement
+# only someone looking at the terminal can make, and a value guessed from the table is worse than the
+# neutral one. Left for whoever has the screen in front of them; the mapping slot is here when they do.
 
 # age, repo, pr, author and state are fixed; the title takes what is left. Mirrors the design's grid.
 # ponytail: reviewers has a column of its own. Folded into the state cell they all took the state's
@@ -74,7 +85,7 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
+KEYS = (("nav", "j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
         ("config", "m model · d depth · e effort · x voices · h hunters · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
@@ -561,7 +572,13 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 		return
 	scoped = state.code_scope == "marks"
 	shown = diff.narrow(files, state.code_context) if scoped else files
-	if scoped and not shown and not any(m["file"] is None for m in marks):
+	# ponytail: built BEFORE the guard, and the guard asks IT. The old test was `not shown and not any(
+	# m["file"] is None ...)`, which held for a mark whose file matched but whose LINE did not — a
+	# file-only loc, which the finding schema explicitly allows, or a line the diff does not carry. Such
+	# a mark is in neither set, so the pane said "the review marked nothing" and the finding was
+	# unreachable, contradicting both anchor()'s promise and code_rows' own orphan branch below.
+	rows = code_rows(shown, marks, scoped)
+	if scoped and not rows:
 		at(y, x0 + 2, "the review marked nothing — D shows the whole diff", width - 3, C(1))
 		return
 
@@ -571,7 +588,6 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 		at(y, x0 + width - 11, "D toggle", 9, C(25))
 	y += 1
 
-	rows = code_rows(shown, marks, scoped)
 	# ponytail: n/N moves to the next ANCHOR, and what anchors depends on the scope: a mark when you are
 	# reading the review, a file when you are reading the whole change. One key, because they are the
 	# same gesture — and the full diff had no way to scroll at all while advertising a `}` that did
@@ -641,7 +657,7 @@ def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
 			if mark:
 				at(y, x0 + 1, diff.MARK.get(mark, '·'), 1, find_c(mark) | curses.A_BOLD)
 			at(y, x0 + 3, "" if v["del"] else str(v["n"]).rjust(5), 5, C(25))
-			at(y, x0 + 9, v["sign"] if v["sign"] != " " else " ", 1, tone)
+			at(y, x0 + 9, v["sign"], 1, tone)
 			# ponytail: tabs expanded, or the gutter walks and the diff stops reading by shape.
 			body = v["text"].replace("\t", "    ")[:max(1, width - 12)]
 			at(y, x0 + 10, body.ljust(max(1, width - 12)), max(1, width - 12), tone)
@@ -1681,7 +1697,7 @@ def main(scr, interval, auto, model):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
-		elif k == ord("v") and current and (current.get("review") or log.last(current["url"])):
+		elif k == ord("v") and code_ready(current):
 			# ponytail: reading a past review moved off ⏎ with the rest. `v` because the dream already
 			# uses [v] view full for exactly this — one idiom for "show me the whole thing in less".
 			# ponytail: any row with a review, not only a REVIEWED one. The pane shows a summary of the

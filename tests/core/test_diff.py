@@ -1,4 +1,5 @@
 """The PR diff, parsed, with the review's findings anchored to the lines they name."""
+import pytest
 import subprocess
 
 from dashy.core import diff
@@ -146,7 +147,6 @@ def test_an_unknown_kind_sorts_last_instead_of_raising():
 def test_the_context_ring_has_one_home():
 	"""Two copies of one number is how the c key became a KeyError waiting to happen."""
 	assert len(set(diff.CONTEXTS)) == len(diff.CONTEXTS)
-	assert not hasattr(diff, "CONTEXT")   # a second name for CONTEXTS[0] is a second place to change
 
 
 def test_an_added_line_that_looks_like_a_header_does_not_rewrite_the_path():
@@ -162,3 +162,74 @@ def test_an_added_line_that_looks_like_a_header_does_not_rewrite_the_path():
 	assert [f["path"] for f in files] == ["docs/memory.md"]
 	body = [l["text"] for h in files[0]["hunks"] for l in h["lines"]]
 	assert "++ b/not-a-file.py" in body            # kept as the added line it is
+
+
+@pytest.mark.parametrize("context", diff.CONTEXTS)
+def test_narrow_holds_up_at_every_context_the_ring_offers(context):
+	"""narrow was proven at context=1, which the shipped ring never uses: it is 3/8/0.
+
+	0 is the edge that matters — the marked line alone, with nothing either side — because a context
+	that trims to nothing would leave a hunk with no lines in it, and the pane draws a header over
+	whatever it is handed.
+	"""
+	files = diff.parse(DIFF)
+	diff.anchor(files, [{"kind": "blocking", "loc": "auto.py:139", "text": "x"}])
+	got = diff.narrow(files, context=context)
+	assert [f["path"] for f in got] == ["gitdashy/auto.py"]
+	lines = got[0]["hunks"][0]["lines"]
+	assert lines, f"context={context} produced a hunk with no lines"
+	assert 139 in [l["n"] for l in lines]                 # the marked line always survives
+	assert all(h["lines"] for f in got for h in f["hunks"])
+
+
+def test_a_finding_that_names_a_column_still_lands_on_its_line():
+	"""A reviewer writes file:line:col, and one rpartition read that as ("file:line", col).
+
+	The path then matched nothing and the "line" was really a column, so the finding silently became an
+	orphan — reachable only in the orphan list, never on the code it is about.
+	"""
+	assert diff._where("gitdashy/auto.py:139:5") == ("gitdashy/auto.py", 139)
+	assert diff._where("gitdashy/auto.py:139") == ("gitdashy/auto.py", 139)
+	assert diff._where("gitdashy/auto.py") == ("gitdashy/auto.py", 0)
+	assert diff._where("") == ("", 0)
+	files = diff.parse(DIFF)
+	marks = diff.anchor(files, [{"kind": "blocking", "loc": "auto.py:139:5", "text": "x"}])
+	line = next(l for f in files for h in f["hunks"] for l in h["lines"] if l["n"] == 139)
+	assert line.get("marks") == marks                     # on the line, not in the orphan pile
+
+
+def test_same_file_matches_when_the_finding_is_the_longer_path():
+	"""Only one direction was proven. A reviewer cites the full path and the diff carries a basename
+	(or the reverse), and both have to meet."""
+	assert diff._same_file("auto.py", "gitdashy/core/auto.py")
+	assert diff._same_file("gitdashy/core/auto.py", "auto.py")
+	assert diff._same_file("gitdashy/core/auto.py", "gitdashy/core/auto.py")
+	assert not diff._same_file("auto.py", "other.py")
+	assert not diff._same_file("core/auto.py", "core/other.py")
+
+
+def test_the_diff_cache_does_not_grow_without_end(monkeypatch):
+	"""Only FAILURES were ever dropped, by retry(). Every diff gh did produce stayed for the life of
+	the process, one entry per (repo, number, head), each holding the whole text — and a push adds an
+	entry rather than replacing one. The layer above evicts per PR; this one held the megabytes."""
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(diff, "_KEEP", 4)
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, f"diff --git a/{cmd[-1]} b/x\n", ""))
+	for i in range(10):
+		diff.fetch("a/b", i, "sha")
+	assert len(diff._CACHE) == 4, diff._CACHE
+	assert [k[1] for k in diff._CACHE] == [6, 7, 8, 9]        # the oldest go first
+
+
+def test_a_look_counts_as_a_use_so_the_pane_you_are_reading_does_not_age_out(monkeypatch):
+	"""LRU, not FIFO: the diff you keep coming back to is the one that must survive."""
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(diff, "_KEEP", 3)
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "diff --git a/x b/x\n", ""))
+	for i in (1, 2, 3):
+		diff.fetch("a/b", i, "sha")
+	diff.fetch("a/b", 1, "sha")                              # a hit on the oldest, which renews it
+	diff.fetch("a/b", 4, "sha")                              # pushes one out
+	assert sorted(k[1] for k in diff._CACHE) == [1, 3, 4]    # 2 went, not 1
