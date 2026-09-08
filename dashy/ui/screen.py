@@ -10,7 +10,8 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import bind, github, install, knowledge, log, memory, review as review_mod, team, update
+from ..core import (bind, diff, github, install, knowledge, log, memory, review as review_mod, team,
+                    update)
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
@@ -43,16 +44,34 @@ COLORS = [  # (pair, 256-colour fg, 8-colour fg, bg256, bg8)
 	(24, 73, curses.COLOR_CYAN, -1, -1),           # a PR number
 	(25, 238, curses.COLOR_BLACK, -1, -1),         # rules and separators, one step above the background
 	(26, 252, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # the selected row: a tint, not reverse video
+	# ponytail: the diff reads by BACKGROUND, not by a leading character. A + and a − are one column and
+	# the eye skips them; a tinted row is the shape of the change before you have read a word of it.
+	(32, 151, curses.COLOR_GREEN, 22, curses.COLOR_BLACK),   # an added line
+	(33, 181, curses.COLOR_RED, 52, curses.COLOR_BLACK),     # a removed line
+	(34, 252, curses.COLOR_WHITE, 238, curses.COLOR_BLACK),  # a line a finding is about
+	(35, 16, curses.COLOR_BLACK, 75, curses.COLOR_CYAN),     # the chip you are on
+	(36, 250, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # a chip you are not on
 	(27, 244, curses.COLOR_WHITE, 236, curses.COLOR_BLACK),  # dim on the selected row
 ]
 # ponytail: a theme swaps the 256-colour values above, nothing else. Keys are the accents (cyan, red, green, yellow,
 # blue) and the bar greys; anything not listed keeps the default. New theme = one more line.
 THEMES = {
 	"dashy": {},
-	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61},
-	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243},
-	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60},
+	# ponytail: 151/181 are the diff's added/removed foregrounds and are SEMANTIC — the same green and
+	# red the rest of the table already themes, at a lighter weight. They follow each theme's own choice
+	# rather than staying dashy-coloured inside a dracula pane. The greys (244, 250, 252, 255) are left
+	# alone on purpose, as they always have been: a grey reads the same under every theme.
+	"dracula": {75: 117, 203: 210, 78: 84, 221: 228, 111: 141, 237: 236, 235: 234, 240: 61,
+	            151: 84, 181: 210},
+	"gruvbox": {75: 108, 203: 167, 78: 142, 221: 214, 111: 109, 237: 237, 235: 235, 240: 243,
+	            151: 142, 181: 167},
+	"nord": {75: 110, 203: 174, 78: 108, 221: 222, 111: 146, 237: 238, 235: 236, 240: 60,
+	         151: 108, 181: 174},
 }
+# ponytail: 22 and 52 — the dark green/red BACKGROUNDS behind a changed line — are deliberately not
+# themed here. Picking a tint that still reads against dracula's or nord's own background is a judgement
+# only someone looking at the terminal can make, and a value guessed from the table is worse than the
+# neutral one. Left for whoever has the screen in front of them; the mapping slot is here when they do.
 
 # age, repo, pr, author and state are fixed; the title takes what is left. Mirrors the design's grid.
 # ponytail: reviewers has a column of its own. Folded into the state cell they all took the state's
@@ -67,7 +86,7 @@ PANE_MIN_H = 16  # and rows: a pane beside a four-row list is worth less than th
 # declined — "⏎ has meant review since the first version" — and took p for the pane, which #8 later
 # shipped as pre-review. Taken deliberately rather than by redraw: one release of churn on the two keys
 # used most, instead of a permanent divergence between the design and the thing. f refresh, v read.
-KEYS = (("nav", "j/k move · ⏎ pane · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
+KEYS = (("nav", "j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold"), ("run", "r review · p pre-review · Y open pre-review · a auto"),
         ("config", "m model · d depth · e effort · x voices · h hunters · i interval"), ("app", "Z dream · f refresh · v view · T team · u update · q quit"))
 
 
@@ -485,6 +504,190 @@ TONE = {"ok": (4, "✓"), "fail": (3, "✗"), "run": (5, "~"), "skip": (1, "·")
 FIND = {"blocking": 3, "note": 5, "nit": 1}
 
 
+def find_c(kind):
+	"""The colour for a finding kind. Dim for a kind this table does not name — never a KeyError.
+
+	ponytail: every one of these lookups happens inside draw(). log.KINDS decides what a finding may
+	be, and it is a dict; adding a row to it must change how the pane LOOKS, not whether it runs.
+	"""
+	return C(FIND.get(kind, 1))
+
+
+def code_ready(pr):
+	"""Whether the code tab has anything to answer keys with — it needs a review to draw against.
+
+	ponytail: the branch guarded on the TAB alone, so on a row with no review D was swallowed by a pane
+	showing "no review yet" instead of toggling drafts. A mode may only take a key while it can use it.
+	"""
+	return bool(pr and (pr.get("review") or log.last(pr["url"])))
+
+
+def code_rows(files, marks, scoped):
+	"""The pane as a flat list of (kind, payload) rows, so it can be windowed like the PR list is.
+
+	ponytail: built before it is drawn, because n/N has to SCROLL to a mark and a renderer that draws
+	straight down cannot. Without this the jump strip is decoration — it moved a variable nothing read,
+	and a diff longer than the pane simply had no way to reach its own second half.
+	"""
+	rows, landed = [], set()
+	for f in files:
+		rows.append(("file", f))
+		for hunk in f["hunks"]:
+			rows.append(("hunk", hunk))
+			for l in hunk["lines"]:
+				rows.append(("line", l))
+				for m in (l.get("marks") or []) if scoped else []:
+					rows.append(("note", m))
+					landed.add(id(m))
+		rows.append(("gap", None))
+	# ponytail: EVERY mark gets a row, not just the ones with no file. A finding on a file the diff does
+	# touch but a line it does not contain had `file` set, so it was not an orphan, and nothing emitted
+	# it — it appeared as a chip with no body and no way to reach it. anchor() promises a finding that
+	# lands nowhere is kept; this is the half of that promise the pane owes. Identity, because anchor
+	# puts the same dict on the line and in marks.
+	for m in [m for m in marks if id(m) not in landed] if scoped else []:
+		rows.append(("orphan", m))
+	return rows
+
+
+def code_pane(at, line, state, pr, rev, x0, width, y, bottom):
+	"""The review against the code it is about: scope, a jump strip, hunks, and each note on its line.
+
+	ponytail: `at` and `line` come from detail(), so every write here is bounded by the one helper that
+	knows the pane. A pane that draws its own writes is how the out-of-bounds bugs in this file happened.
+	"""
+	repo = pr.get("repository", {}).get("nameWithOwner", "")
+	if state.code_pr != pr["url"]:
+		# ponytail: the jump index counts THIS PR's marks. Carrying it to the next row landed you on
+		# mark 5 of a review with two, or on an unrelated line — the number survived, its meaning did not.
+		state.code_pr, state.code_at = pr["url"], 0
+	got = state.want_diff(repo, pr.get("number"), pr.get("head", ""), log.findings(rev))
+	if got is None:
+		# ponytail: `gh pr diff` used to run HERE, in a function draw() calls twenty times a second. A
+		# big PR stuttered every keypress and one gh could not answer froze the dashboard outright.
+		at(y, x0 + 2, "reading the diff…", width - 3, C(1))
+		return
+	files, marks = got
+	if not files:
+		# ponytail: says WHY there is nothing. A diff gh will not print — too large, a fork it cannot
+		# reach, no network — looks identical to a PR with no changes, and only one of those is worth
+		# pressing 2 again for.
+		at(y, x0 + 2, "no diff to show — gh could not read it, or nothing changed", width - 3, C(1))
+		return
+	scoped = state.code_scope == "marks"
+	shown = diff.narrow(files, state.code_context) if scoped else files
+	# ponytail: built BEFORE the guard, and the guard asks IT. The old test was `not shown and not any(
+	# m["file"] is None ...)`, which held for a mark whose file matched but whose LINE did not — a
+	# file-only loc, which the finding schema explicitly allows, or a line the diff does not carry. Such
+	# a mark is in neither set, so the pane said "the review marked nothing" and the finding was
+	# unreachable, contradicting both anchor()'s promise and code_rows' own orphan branch below.
+	rows = code_rows(shown, marks, scoped)
+	if scoped and not rows:
+		at(y, x0 + 2, "the review marked nothing — D shows the whole diff", width - 3, C(1))
+		return
+
+	line(y, [("SCOPE", C(25)), (" marks only ", C(35) if scoped else C(36)),
+	         (" full diff ", C(36) if scoped else C(35))])
+	if width > 40:
+		at(y, x0 + width - 11, "D toggle", 9, C(25))
+	y += 1
+
+	# ponytail: n/N moves to the next ANCHOR, and what anchors depends on the scope: a mark when you are
+	# reading the review, a file when you are reading the whole change. One key, because they are the
+	# same gesture — and the full diff had no way to scroll at all while advertising a `}` that did
+	# nothing, which is worse than not offering it.
+	jump = [i for i, (k, _v) in enumerate(rows)
+	        if k in (("note", "orphan") if scoped else ("file",))]
+	cur = max(0, min(state.code_at, len(jump) - 1)) if jump else 0
+	state.code_at = cur
+
+	# ponytail: the chips are built FROM the jump rows, so chip i and jump i are the same thing by
+	# construction. They used to be two spaces — chips enumerated marks, jump counted note rows — so one
+	# orphan made every chip after it name the wrong mark, and the last chip could not be reached at all.
+	anchors = [rows[i][1] for i in jump]
+	chips = ([f"{i + 1}{diff.MARK.get(m['kind'], '·')} {m['path'].rsplit('/', 1)[-1]}" + (f":{m['n']}" if m["n"] else "")
+	          for i, m in enumerate(anchors)] if scoped else
+	         [f"{f['path'].rsplit('/', 1)[-1]} +{f['add']}−{f['dele']}" for f in anchors])
+	if chips:
+		x = x0 + 2
+		at(y, x, "MARKS" if scoped else "FILES", 6, C(25))
+		x += 7
+		for i, c in enumerate(chips):
+			if x + len(c) + 2 >= x0 + width - 13:
+				at(y, x, "…", 1, C(1))
+				break
+			at(y, x, f" {c} ", len(c) + 2, C(35) if (scoped and i == cur) else C(36))
+			x += len(c) + 3
+		if width > 46:
+			at(y, x0 + width - 13, "n/N mark" if scoped else "n/N file", 12, C(25))
+		y += 1
+	y += 1
+
+	# ponytail: the window starts a little ABOVE the mark, not on it — a line with no lead-in is a
+	# quotation without its sentence, and the context either side is the reason narrow() keeps it.
+	room = bottom - y - 1
+	# ponytail: the lead-in is for a MARK — a line with no lines above it is a quotation without its
+	# sentence — and it YIELDS to the thing it is leading in to. Three fixed rows pushed the note off
+	# the bottom of a short pane, so jumping to a finding showed the line and not what was said about
+	# it, which is the one thing the jump is for. A file jump wants the header itself at the top:
+	# backing up put you in the tail of the file before it, under a sticky path naming the one you left.
+	def window(room):
+		lead = min(3, max(0, room - 2)) if scoped else 0   # the lead-in yields to the thing it leads to
+		return min(max(0, jump[cur] - lead) if jump else 0, max(0, len(rows) - room))
+
+	top = window(room)
+	# ponytail: a sticky path when the window has scrolled past the file header. A hunk with no file
+	# name over it is a diff you cannot act on — the line number means nothing without the path, and
+	# that was true of every mark far enough into a file to need scrolling to.
+	seen = next((v["path"] for k, v in reversed(rows[:top + 1]) if k == "file"), "")
+	if seen and not any(k == "file" for k, _ in rows[top:top + 3]):
+		at(y, x0 + 2, seen, max(1, width - 12), C(2))
+		at(y, x0 + width - 10, "↑ in", 8, C(25))
+		y += 1
+		room -= 1
+		top = window(room)   # the sticky row cost us a line, so the window has to be found again
+
+	for kind, v in rows[top:top + max(1, room)]:
+		if y >= bottom - 1:
+			break
+		if kind == "file":
+			at(y, x0 + 2, v["path"], max(1, width - 24), C(2) | curses.A_BOLD)
+			at(y, x0 + width - 22, f"+{v['add']} −{v['dele']}", 20, C(1))
+		elif kind == "hunk":
+			at(y, x0 + 2, v["header"][:width - 4], max(1, width - 4), C(25))
+		elif kind == "line":
+			mark = diff.worst(v)
+			tone = C(34) if mark else C(32) if v["sign"] == "+" else C(33) if v["sign"] == "-" else 0
+			if mark:
+				at(y, x0 + 1, diff.MARK.get(mark, '·'), 1, find_c(mark) | curses.A_BOLD)
+			at(y, x0 + 3, "" if v["del"] else str(v["n"]).rjust(5), 5, C(25))
+			at(y, x0 + 9, v["sign"], 1, tone)
+			# ponytail: tabs expanded, or the gutter walks and the diff stops reading by shape.
+			body = v["text"].replace("\t", "    ")[:max(1, width - 12)]
+			at(y, x0 + 10, body.ljust(max(1, width - 12)), max(1, width - 12), tone)
+		elif kind == "note":
+			at(y, x0 + 3, v["kind"], 9, find_c(v["kind"]))
+			at(y, x0 + 13, " ".join(v["text"].split())[:max(1, width - 15)], max(1, width - 15), C(1))
+		elif kind == "orphan":
+			# ponytail: two different misses, and the difference is what you would do about it. No file
+			# at all means the review is about something the change did not touch; a file with no such
+			# line means it is about a line this diff does not carry.
+			# ponytail: it carries the finding's TEXT, like a note row does. Showing only the loc said
+			# that something was lost without saying what — a finding is KEPT only if it can be read.
+			why = "not in this diff" if v["file"] is None else "line not in this diff"
+			at(y, x0 + 2, v["kind"], 9, find_c(v["kind"]))
+			said = f"{' '.join(v['text'].split())} · {v['loc']} {why}"
+			at(y, x0 + 12, said[:max(1, width - 14)], max(1, width - 14), C(1))
+		y += 1
+
+	# ponytail: the keys this pane answers to, in the pane. The global footer carries the app's keys and
+	# has no room for a mode's; a key nobody can see is a key nobody presses.
+	more = "" if top + room >= len(rows) else f"  ·  {len(rows) - top - room} more"
+	at(bottom - 1, x0 + 2, f"n/N {'mark' if scoped else 'file'}   D {'full diff' if scoped else 'marks only'}"
+	                       + (f"   c context ±{state.code_context}" if scoped else "") + more,
+	   max(1, width - 3), C(25))
+
+
 def detail(scr, state, h, x0, width, pr, resolve=None):
 	"""The selected PR, beside the list: what it is, what CI thinks, what the review found, what you can do.
 
@@ -521,9 +724,14 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 		at(4, x0 + 2, "no row selected", width - 3, C(1))
 		return
 	y = 4
-	line(y, [("SELECTED PR", C(25)), ("", 0)])
-	if width > 34:
-		at(y, x0 + width - 10, "⏎ close", 8, C(25))
+	# ponytail: the tab is on the header row, where the pane says what it is. `2` opens the review
+	# against the code it is about; `1` comes back. A finding that names a line you then have to go and
+	# find somewhere else is a reference nobody follows, which is the whole reason the code tab exists.
+	code = state.pane_tab == "code"
+	line(y, [("SELECTED PR", C(25)), ("│", C(25)),
+	         (" 1 summary ", C(36) if code else C(35)), (" 2 code ", C(35) if code else C(36))])
+	if width > 46:
+		at(y, x0 + width - 10, "⏎ close", 8, C(25))   # ponytail: ⏎ toggles the pane; esc opens the menu
 	y += 2
 	line(y, [("#" + str(pr["number"]), C(24)), (pr["repository"]["name"], C(1)),
 	         ("· " + age(pr["updatedAt"]), C(1))])
@@ -546,6 +754,14 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 	text, whose = memory.brief(repo_name, resolve(repo_name) if resolve else None)
 	line(y, [("BRIEF", C(25)), (whose if text else whose + " · none", C(1))])
 	y += 2
+	rev = pr.get("review") or log.last(pr["url"]) or {}
+	if code:
+		# ponytail: the header above stays — which PR, whose, how big — because the code tab answers
+		# "what did the review mean" and you still need to know what you are looking at while it does.
+		if rev:
+			return code_pane(at, line, state, pr, rev, x0, width, y, h - 2)
+		at(y, x0 + 2, "no review yet — r reviews this PR, p pre-reviews it", width - 3, C(1))
+		return
 	if d.get("checks"):
 		line(y, [("CHECKS", C(25))])
 		y += 1
@@ -555,9 +771,6 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 			cells += [(mark, C(pair)), (c["name"], C(1))]
 		line(y, cells)
 		y += 2
-	rev = pr.get("review") or {}
-	if not rev:
-		rev = log.last(pr["url"]) or {}
 	if rev:
 		line(y, [("AI REVIEW", C(25))])
 		if width > 30:
@@ -568,14 +781,14 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 		y += 1
 		found = log.findings(rev)
 		if found:
-			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", C(FIND[k]))
+			counts = [(f"{sum(1 for f in found if f['kind'] == k)} {k}", find_c(k))
 			          for k in ("blocking", "note", "nit") if any(f["kind"] == k for f in found)]
 			line(y, counts)
 			y += 1
 			for f in found:
 				if y >= h - 6:
 					break
-				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, C(FIND[f["kind"]]))
+				at(y, x0 + 2, f["kind"][:8].ljust(9), 9, find_c(f["kind"]))
 				room = width - 13
 				# ponytail: the file's BASENAME, not its path. "features/library/ui/LibraryLanding.tsx:19"
 				# is most of a pane on its own, so the finding itself — the part you actually read — was
@@ -585,7 +798,7 @@ def detail(scr, state, h, x0, width, pr, resolve=None):
 				at(y, x0 + 11, txt if len(txt) <= room else txt[:room - 1] + "…", room, C(1))
 				y += 1
 			if len(found) > 0 and width > 26:
-				at(y, x0 + width - 12, "v read all", 10, C(25))
+				at(y, x0 + width - 12, "2 in code", 10, C(23))
 		elif rev.get("summary"):
 			for chunk in textwrap.wrap(rev["summary"], max(10, width - 4))[:2]:
 				at(y, x0 + 2, chunk, width - 3, C(1))
@@ -1423,7 +1636,24 @@ def main(scr, interval, auto, model):
 			sel += 1
 		elif k in (ord("k"), curses.KEY_UP):
 			sel -= 1
+		# ponytail: ABOVE the global D / n. Both are bound twice — D toggles drafts, n edits this repo's
+		# memory — and an elif chain gives the first branch the key. Sitting below them, this branch could
+		# only ever be reached by N and c, so two of the four keys the pane documents did nothing.
+		elif (state.pane_tab == "code" and state.pane and current and code_ready(current)
+		      and k in (ord("D"), ord("n"), ord("N"), ord("c"))):
+			if k == ord("D"):
+				state.code_scope = "diff" if state.code_scope == "marks" else "marks"
+			elif k == ord("c"):
+				# ponytail: cycles rather than growing. ±3 is the default because it is a hunk's worth
+				# of why; 0 is the line alone, 8 is "show me the function". Steps diff.CONTEXTS by
+				# index, so the ring cannot disagree with the default it starts on.
+				ring = diff.CONTEXTS
+				here = ring.index(state.code_context) if state.code_context in ring else 0
+				state.code_context = ring[(here + 1) % len(ring)]
+			else:
+				state.code_at += 1 if k == ord("n") else -1
 		elif k == ord("f"):
+			diff.retry()  # ponytail: f means "look again", so a diff gh failed to read is worth retrying
 			state.wake.set()  # ponytail: f for fetch. r became review, and o was already open-in-browser
 		elif k == ord("a"):
 			n = 0 if state.auto else len(state.pending_rr())
@@ -1468,11 +1698,15 @@ def main(scr, interval, auto, model):
 			drafts_screen(scr, state, sel)
 		elif k == ord("b"):
 			bind_screen(scr, state, sel, current)
+		elif k in (ord("1"), ord("2")) and state.pane:
+			state.pane_tab = "summary" if k == ord("1") else "code"
+		elif k == 9 and state.pane:  # Tab: the two faces of the pane, without leaving the row
+			state.pane_tab = "code" if state.pane_tab == "summary" else "summary"
 		elif k == ord("T"):
 			team_setup(scr, state, sel)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
-		elif k == ord("v") and current and (current.get("review") or log.last(current["url"])):
+		elif k == ord("v") and code_ready(current):
 			# ponytail: reading a past review moved off ⏎ with the rest. `v` because the dream already
 			# uses [v] view full for exactly this — one idiom for "show me the whole thing in less".
 			# ponytail: any row with a review, not only a REVIEWED one. The pane shows a summary of the

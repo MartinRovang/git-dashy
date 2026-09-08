@@ -260,7 +260,7 @@ why the real one failed.
 
 ### The shipped corpus
 
-`corpus/` in this repository: about 1,200 words of engineering discipline and a blank
+`corpus/` in this repository: about 1,000 words of engineering discipline and a blank
 `USER.md.template`. It is deliberately small — short enough that you will read it before
 agreeing to load it in every session.
 
