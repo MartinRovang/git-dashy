@@ -54,6 +54,16 @@ def test_the_token_never_leaves_the_api_host(monkeypatch):
 	assert headers[-1]["Authorization"] == "Bearer gho_x"
 
 
+def test_the_token_is_dropped_when_a_redirect_leaves_the_host():
+	"""urllib copies every header onto a redirect, so the check in call() guards only the first request."""
+	h = github._StripAuthOnRedirect()
+	req = github.urllib.request.Request("https://api.github.com/x", headers={"Authorization": "Bearer gho_x"})
+	same = h.redirect_request(req, None, 302, "", {}, "https://api.github.com/y")
+	off = h.redirect_request(req, None, 302, "", {}, "https://evil.example.com/y")
+	assert same.get_header("Authorization") == "Bearer gho_x"
+	assert not any(k.lower() == "authorization" for k in off.headers)
+
+
 def test_call_turns_an_http_error_into_an_oserror_with_githubs_message(monkeypatch):
 	import io
 	import urllib.error
@@ -131,12 +141,14 @@ def test_fetch_handles_bad_json(monkeypatch):
 def test_fetch_joins_ci_and_head_onto_every_section(monkeypatch):
 	a = node("a", headRefOid="aaa", reviewDecision="APPROVED",
 	         commits={"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]})
-	b = node("b", headRefOid="bbb", commits={"nodes": [{"commit": {"statusCheckRollup": None}}]})
+	b = node("b", headRefOid="bbb", commits={"nodes": [{"commit": {"statusCheckRollup": None}}]},
+	         latestReviews={"nodes": [{"author": {"login": "erin"}, "state": "COMMENTED"}]})
 	monkeypatch.setattr(github.urllib.request, "urlopen", api(lambda url, body: gql_nodes([a], [b], [])))
 	secs = github.fetch()
 	a, b = secs[0][1][0], secs[1][1][0]
 	assert (a["head"], a["checks"], a["status"]) == ("aaa", "✗", "✓ approved")
 	assert (b["head"], b["checks"]) == ("bbb", "") and "status" not in b  # no checks configured, not my PR
+	assert b["reviewers"] == "~erin"  # reviewers on EVERY section, not just MINE
 	assert github.checks({"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}) == "●"
 
 
@@ -183,6 +195,32 @@ def test_reviewers_merges_requests_over_latest_reviews():
 	                                     {"requestedReviewer": {}}, {"requestedReviewer": None}]}}  # a Team: not asked for
 	assert github.reviewers(node) == "✓bob ·carol ·alice"
 	assert github.reviewers({}) == ""
+
+
+def test_a_comment_survives_its_still_standing_review_request():
+	"""A COMMENTED review does not clear the request, so the request must not erase the comment."""
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "COMMENTED"}]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "bob"}}]}}
+	assert github.reviewers(node) == "~bob"
+
+
+def test_a_dismissed_review_reads_as_not_yet_looked_not_as_a_comment():
+	"""Dismissing a review re-requests the reviewer; DISMISSED has no glyph and must not fall back to ~."""
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "DISMISSED"}]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "bob"}}]}}
+	assert github.reviewers(node) == "·bob"
+
+
+def test_persist_auth_writes_the_token_into_the_checkout_not_argv(tmp_path, monkeypatch):
+	"""The clone's GIT_CONFIG_* env dies with the process; the refresh tick still has to authenticate."""
+	monkeypatch.setenv("GH_TOKEN", "gho_x")
+	cfg = tmp_path / ".git" / "config"
+	cfg.parent.mkdir()
+	cfg.write_text("[core]\n")
+	github.persist_auth(str(tmp_path))
+	assert "extraHeader = Authorization: Bearer gho_x" in cfg.read_text()
+	assert oct(cfg.stat().st_mode)[-3:] == "600"  # a token on disk is never world-readable
+	github.persist_auth(str(tmp_path / "nope"))   # a failed clone left no config: nothing to write
 
 
 def test_collaborators_and_request_review(monkeypatch):

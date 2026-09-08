@@ -18,18 +18,17 @@ CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->" 
 CORPUS_HOME = os.path.expanduser("~/.agent-corpus")  # where an installed corpus lives, independent of gitdashy
 IMPORT = "@prs-memory/general.md"  # the line that says the wiring is already there, block or not
 REGISTRY = os.path.expanduser("~/.prs_mirrors")  # one JSON object per line; the filesystem keeps the setting
+STALE = "@prs-team/"  # the pre-2026-09-08 block imported one team globally; its presence means "rewrite"
 BLOCK = f"""{BEGIN}
 # Review memory
 
-Cross-repo facts gitdashy's PR reviews have earned: yours first, then the team's. Written only once two
-independent observations agreed, so trust them — but they are what the code turned out to be, not rules.
-The team file does not exist until you are in a team, and a missing import is simply skipped. Facts about
-one repo arrive separately, through that repo's own mirror.
+Cross-repo facts gitdashy's PR reviews have earned — yours. Written only once two independent
+observations agreed, so trust them, but they are what the code turned out to be, not rules. The brief
+(what the work is for) and a team's facts arrive per repo, through that repo's own mirror: which brief
+and which team apply is a property of the repo you are in, not of the machine, and a review of that
+repo is told exactly the same ones.
 
-@prs-memory/project.md
-@prs-team/project.md
 {IMPORT}
-@prs-team/general.md
 {END}
 """
 
@@ -39,25 +38,159 @@ def claude_dir():
 
 
 def links():
-	"""(link, target) for the two paths a session reads memory through.
+	"""(link, target) for the one path a session reads memory through.
 
-	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
-	joined. With none or several it points inside TEAMS at a DOTTED name, which key_of can never produce
-	and joined() skips — so no team can ever occupy it. It dangles, which the loader already degrades on (a missing @import target is skipped and its siblings still
-	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
-	into every session on the machine, which is the defect this whole line of work removes. Making the
-	route itself per-repo is the deferred session-scoping work, SPEC 5+6.
+	ponytail: ONE link now. There used to be a second, `prs-team`, pointing at one team's memory so its
+	general facts loaded into every session on the machine. That was the wrong scope the moment there
+	were two teams and a dangling link once there were — and even with one it told a repo bound to
+	another team, or to none, how that team works. Team knowledge rides the per-repo mirror, through
+	the binding, like everything else that is the team's. See stale_team_link() for the retirement.
 	"""
+	return [(os.path.join(claude_dir(), "prs-memory"), config.LOCAL_MEMORY)]
+
+
+def stale_team_link():
+	"""The retired `prs-team` symlink, if this machine still has one and it is ours. "" otherwise.
+
+	ponytail: ours means it points into the team store — the plural one, or the pre-plural checkout —
+	which is the only place install ever pointed it. Anything else there is someone's own and is left alone.
+	"""
+	link = os.path.join(claude_dir(), "prs-team")
+	if not os.path.islink(link):
+		return ""
+	target = os.path.abspath(os.path.join(os.path.dirname(link), os.readlink(link)))
+	# ponytail: an EMPTY store root means "no store configured", NOT "everywhere". abspath("") is the
+	# CURRENT WORKING DIRECTORY, so a blank PRS_TEAMS/PRS_TEAM — which is exactly what `--demo` sets —
+	# made every link under cwd count as ours, and retire() deletes what it matches. Launch the demo from
+	# $HOME with a hand-made ~/.claude/prs-team -> ~/work/notes and the link is gone. A relative root is
+	# refused for the same reason: it is only meaningful against a cwd this has no business trusting.
+	roots = (config.TEAMS, os.path.join(config.TEAM, "memory") if config.TEAM else "")
+	stores = [os.path.abspath(r) for r in roots if r and os.path.isabs(r)]
+	return link if any(target == st or target.startswith(st + os.sep) for st in stores) else ""
+
+
+def retire(dry=False):
+	"""Retire the pre-2026-09-08 team link and the imports that went through it. [] when nothing to do.
+
+	ponytail: one callable, because it runs from two places — `gitdashy install`, and every LAUNCH,
+	the way team.migrate() moves a pre-plural checkout. Nothing re-runs install after an update, so a
+	migration that waits for it waits forever on most machines; meanwhile a one-team user had the
+	team's general facts in context twice, and leaking into repos bound to no team.
+	ponytail: it rewrites only text between markers it wrote. A hand-wired import is REPORTED, never
+	touched — and reported here rather than skipped, because the link it went through is gone and the
+	loader drops a dangling @import without a word. A retirement that leaves one behind half happened.
+	ponytail: NEVER RAISES, the same contract team.migrate() states one line above it in the launch
+	path — it runs before the first draw, so an exception here is a dashboard that never appears, every
+	launch, over a migration the user never asked for. A read-only ~/.claude, a CLAUDE.md whose realpath
+	is in a dotfiles checkout, a root-owned file: each of those is a report line, not a traceback. The
+	failure is SAID rather than swallowed, because a migration that silently did not happen is one the
+	user finds out about when their session stops loading the team's facts.
+	"""
+	out, did = [], "would " if dry else ""
+	if old := stale_team_link():
+		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts AND its project brief reach a "
+		           "session through its repo's mirror now, so a repo with no mirror gets neither: "
+		           "`gitdashy init --into .agent/team --loader CLAUDE.local.md` wires one")
+		if not dry:
+			try:
+				os.remove(old)
+			except OSError as e:
+				out[-1] = f"gitdashy: could not retire {knowledge.tilde(old)} — {e.strerror or e}; remove it by hand"
+	md = os.path.join(claude_dir(), "CLAUDE.md")
+	text = _read(md)
+	# ponytail: fence-aware on BOTH sides, like _strip_blocks. A raw `STALE in text` took this branch for
+	# a CLAUDE.md that merely QUOTED the old block in a code sample — docs/install.md shows exactly that
+	# — stripped nothing, and appended BLOCK again on every run, never reaching "ok".
+	if STALE in _inside_blocks(text):
+		out.append(f"{did}update the import block in {knowledge.tilde(md)} — the team imports are per repo now")
+		if not dry:
+			try:
+				_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
+			except OSError as e:
+				out[-1] = (f"gitdashy: could not update the import block in {knowledge.tilde(md)} — "
+				           f"{e.strerror or e}; the team imports are per repo now")
+	if hand_wired_team_import(text):
+		out.append(f"NOTE  {knowledge.tilde(md)} still imports {STALE}… outside a block we wrote — "
+		           "those lines point at nothing now; remove them by hand")
+	return out
+
+
+def _inside_blocks(text):
+	"""The lines inside every begin..end block we wrote, fence-aware — a quoted block is text, not ours."""
+	return _split_blocks(text, BEGIN, END)[0]
+
+
+def hand_wired_team_import(text=None):
+	"""True while CLAUDE.md imports @prs-team/ outside a block we wrote and outside a fence."""
+	text = _read(os.path.join(claude_dir(), "CLAUDE.md")) if text is None else text
+	return any(STALE in l for l, out in _outside(_strip_blocks(text, BEGIN, END)) if out)
+
+
+def corpus_remembers(ident=None):
+	"""Whether the installed identity ever tells a session to `gitdashy remember`. None when there is none.
+
+	ponytail: a heuristic, and it says what it looked for. gitdashy cannot write a user's corpus, and
+	the one this tool was built next to lacked the instruction for months while every draft sat at (1)
+	— the pipeline's second observer was silent and nothing said so. A check that reports beats a
+	sentence in a README the reader is assumed to have followed.
+	"""
+	ident = ident or os.path.join(claude_dir(), "identity")
+	if not os.path.isdir(ident):
+		return None
+	# ponytail: listdir raises on a directory it cannot read, and this is reached from every draw
+	# through session_notes(). isdir() above answers "is it there", never "can it be opened".
+	try:
+		names = [n for n in os.listdir(ident) if n.endswith(".md")]
+	except OSError:
+		return None  # unreadable is not "a corpus without the instruction" — it is nothing we can say
+	return any("gitdashy remember" in _read(os.path.join(ident, n)) for n in names)
+
+
+_NOTES = (None, [])  # (fingerprint, notes) — see session_notes
+
+
+def _notes_key():
+	"""A stat-level fingerprint of every file session_notes() would read.
+
+	ponytail: (mtime_ns, size) per file, the same key log._CACHE uses — mtime alone re-reads on a
+	same-nanosecond rewrite, size alone misses an edit that keeps the length. The DIRECTORY's own mtime
+	is not enough: it moves when a file is added or removed, not when one is edited in place.
+	"""
+	def stamp(path):
+		"""(mtime_ns, size), or why not. ponytail: the miss is part of the KEY — "gone" and "back again"
+		have to differ, or a file deleted and restored between draws reads as no change at all."""
+		try:
+			st = os.stat(path)
+			return st.st_mtime_ns, st.st_size
+		except OSError:
+			return None
+
 	d = claude_dir()
-	return [(os.path.join(d, "prs-memory"), config.LOCAL_MEMORY),
-	        # ponytail: the FIRST joined team, and only when there is exactly one. A symlink names one
-	        # directory; with several joined there is no honest answer, and pointing it at whichever
-	        # sorted first would put one team's cross-repo facts into every session on the machine.
-	        # That whole route is the deferred session-scoping work (SPEC 5+6) — this just refuses to
-	        # guess in the meantime.
-	        (os.path.join(d, "prs-team"),
-	         os.path.join(team.dirs()[0], "memory") if len(team.dirs()) == 1
-	         else os.path.join(config.TEAMS, ".no-single-team", "memory"))]
+	ident = os.path.join(d, "identity")
+	try:
+		names = sorted(n for n in os.listdir(ident) if n.endswith(".md"))
+	except OSError:
+		names = []
+	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")))
+
+
+def session_notes():
+	"""Short standing notes for the Knowledge row: what a session here is NOT being told, and why.
+
+	ponytail: CACHED on a stat-level key, because header_groups() calls this and draw() calls that on
+	every tick — 50ms while anything spins. Uncached it read every identity/*.md in full, read the whole
+	CLAUDE.md, and ran _strip_blocks() over it, twice a second for the life of the process. The values
+	beside it on that row cost one stat each; this now costs the same order, and still notices an edit.
+	"""
+	global _NOTES
+	if _NOTES[0] != (key := _notes_key()):
+		out = []
+		if corpus_remembers() is False:
+			out.append("corpus never says `gitdashy remember`")
+		if hand_wired_team_import():
+			out.append("CLAUDE.md imports @prs-team by hand")
+		_NOTES = (key, out)
+	return _NOTES[1]
 
 
 def _fence(line, open_at):
@@ -89,6 +222,42 @@ def _outside(text):
 		yield line, was is None and at is None
 
 
+def _split_blocks(text, begin, end):
+	"""(inside, outside): the lines within every begin..end block we wrote, and the text without them.
+
+	ponytail: ONE walk answers both, and that is not only a saving. They used to be two functions with
+	two different ideas of an UNCLOSED block: _inside_blocks treated everything after a lone `begin` as
+	ours, while this loop treats it as not ours and leaves it alone. retire() asked the first and acted
+	with the second, so a CLAUDE.md holding an unclosed marker over an `@prs-team/` line reported
+	"ours", stripped nothing, and appended BLOCK — and on the NEXT launch the strip ran from the user's
+	own unclosed marker to the appended END and deleted everything in between. Answering both questions
+	from one walk is what makes that disagreement unrepresentable.
+
+	ponytail: a config copied between machines, or two installs racing, leaves the block twice —
+	and removing one of two is worse than removing none, because it reads as a clean uninstall.
+	ponytail: markers inside a fence are text. CLAUDE.md is the user's own file, and quoting our
+	install block in a code sample is a normal thing to do — eating it on uninstall is data loss
+	in the same file this whole path exists to protect.
+	"""
+	held = []
+	while True:
+		lines = list(_outside(text))
+		at = next((i for i, (l, out) in enumerate(lines) if out and begin in l), None)
+		if at is None:
+			break
+		close = next((i for i, (l, out) in enumerate(lines) if i >= at and out and end in l), None)
+		if close is None:
+			break  # ponytail: an unclosed marker is NOT a block of ours — nothing held, nothing stripped
+		held += [l for l, _ in lines[at + 1:close]]
+		head = "\n".join(l for l, _ in lines[:at])
+		tail = "\n".join(l for l, _ in lines[close + 1:])
+		# ponytail: splitlines() drops the terminator, so rejoining a file that ended in a newline gave
+		# it back without one. It is a user-owned file; leave it shaped the way they had it.
+		body = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n").rstrip("\n")
+		text = body + "\n" if text.endswith("\n") and not body.endswith("\n") else body
+	return "\n".join(held), text
+
+
 def _strip_blocks(text, begin, end):
 	"""Every begin..end block gone, not just the first.
 
@@ -98,27 +267,24 @@ def _strip_blocks(text, begin, end):
 	install block in a code sample is a normal thing to do — eating it on uninstall is data loss
 	in the same file this whole path exists to protect.
 	"""
-	while True:
-		lines = list(_outside(text))
-		at = next((i for i, (l, out) in enumerate(lines) if out and begin in l), None)
-		if at is None:
-			break
-		close = next((i for i, (l, out) in enumerate(lines) if i >= at and out and end in l), None)
-		if close is None:
-			break
-		head = "\n".join(l for l, _ in lines[:at])
-		tail = "\n".join(l for l, _ in lines[close + 1:])
-		# ponytail: splitlines() drops the terminator, so rejoining a file that ended in a newline gave
-		# it back without one. It is a user-owned file; leave it shaped the way they had it.
-		body = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n").rstrip("\n")
-		text = body + "\n" if text.endswith("\n") and not body.endswith("\n") else body
-	return text
+	return _split_blocks(text, begin, end)[1]
 
 
 def _read(p):
+	"""A file's text, or "" for any reason it cannot be read.
+
+	ponytail: OSError, not FileNotFoundError. "Not there" and "there but unreadable" are the same answer
+	to every one of this module's twenty callers — none of them can do anything with the difference —
+	and the narrow catch made an existing-but-unreadable file raise instead. That reached two places
+	that must never raise: retire(), which runs before the first draw, and session_notes(), which
+	row() calls on EVERY draw. One `sudo claude` leaves a root-owned ~/.claude/CLAUDE.md and the
+	dashboard is gone, every tick, until someone chowns it back.
+	ponytail: reading is the only thing widened. A WRITE that fails still reports — see retire(), where
+	each write says what it could not do. Silence is right for a read and wrong for a write.
+	"""
 	try:
 		return open(p).read()
-	except FileNotFoundError:
+	except OSError:
 		return ""
 
 
@@ -190,8 +356,14 @@ def explain():
 		         else "EXISTS, will be left alone" if os.path.lexists(link) else "new")
 		out.append(f"  · symlink {knowledge.tilde(link)} -> {knowledge.tilde(target)}   [{state}]")
 	md = os.path.join(d, "CLAUDE.md")
-	out.append(f"  · append four imports to {knowledge.tilde(md)}, inside a marked block"
+	n = BLOCK.count("\n@")  # ponytail: counted, not written down — "four" outlived the block it described
+	out.append(f"  · append {n} import{'s' if n != 1 else ''} to {knowledge.tilde(md)}, inside a marked block"
 	           + ("   [already there]" if IMPORT in _read(md) else "   [new]"))
+	# ponytail: the consent screen must name the migration it is asking consent for. It said nothing
+	# about removing a symlink and rewriting a block in the user's own config — this install's whole
+	# promise is that it shows what it will touch first. The same call apply() makes, in dry mode.
+	for line in retire(dry=True):
+		out.append("  · " + line[len("would "):] if line.startswith("would ") else "  · " + line)
 	out.append("")
 	out.append("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.")
 	out.append("Cross-repo facts load live through the symlink — the session reads the same file a review")
@@ -222,6 +394,7 @@ def apply(dry=False):
 				if target == config.LOCAL_MEMORY:
 					os.makedirs(target, exist_ok=True)
 				os.symlink(target, link)
+	out += retire(dry)
 	md = os.path.join(d, "CLAUDE.md")
 	text = _read(md)
 	if IMPORT in text:
@@ -246,6 +419,10 @@ def remove(dry=False):
 			out.append(f"SKIP    {knowledge.tilde(link)} is not the link we made — left alone")
 		else:
 			out.append(f"ok      {knowledge.tilde(link)} is not there")
+	if old := stale_team_link():
+		out.append(f"{did}remove  {knowledge.tilde(old)}   (the retired team link)")
+		if not dry:
+			os.remove(old)
 	md = os.path.join(claude_dir(), "CLAUDE.md")
 	text = _read(md)
 	if BEGIN in text and END in text:
@@ -428,8 +605,17 @@ and who it is working with. Installed by `gitdashy install --full` from {os.path
 def full_explain(corpus, url=""):
 	"""What a full install changes. Returns report lines."""
 	d, out = claude_dir(), []
-	names = corpus_files(corpus)
-	words = sum(len(open(os.path.join(corpus, "identity", n)).read().split()) for n in names)
+	# ponytail: explain what apply will DO. apply imports from CORPUS_HOME when it exists; reading the
+	# shipped corpus here named the wrong files and the wrong cost to anyone who had pointed
+	# CORPUS_HOME at their own corpus — "import 3 files: AGENT.md, AGENTS.md, RULES.md" on a machine
+	# about to import six others.
+	src = CORPUS_HOME if os.path.isdir(CORPUS_HOME) else corpus
+	# ponytail: with --corpus URL and no CORPUS_HOME yet, the remote's identity/ cannot be read before the
+	# clone. Naming the SHIPPED corpus's files and token cost here described a corpus that was about to be
+	# replaced by a different one — an unknown is disclosed as unknown, never filled in with a stand-in.
+	unread = bool(url) and not os.path.isdir(CORPUS_HOME)
+	names = corpus_files(src)
+	words = sum(len(open(os.path.join(src, "identity", n)).read().split()) for n in names)
 	out.append("gitdashy install --full puts an agent corpus on this machine, so every coding session")
 	out.append("works to the same discipline — and adds the review-memory wiring `install` does.")
 	out.append("")
@@ -439,18 +625,33 @@ def full_explain(corpus, url=""):
 	out.append(f"  · {'clone ' + url if url else 'copy the corpus gitdashy ships'} to {knowledge.tilde(CORPUS_HOME)}"
 	           + ("   [EXISTS, will be left alone]" if os.path.isdir(CORPUS_HOME) else "   [new]"))
 	out.append(f"  · symlink {knowledge.tilde(os.path.join(d, 'identity'))} -> that corpus's identity/")
-	out.append(f"  · import {len(names)} files into {knowledge.tilde(os.path.join(d, 'CLAUDE.md'))}: {', '.join(names)}")
+	into = knowledge.tilde(os.path.join(d, "CLAUDE.md"))
+	out.append(f"  · import that corpus's identity/*.md into {into} — which files, and how many, cannot be"
+	           if unread else
+	           f"  · import {len(names)} files into {into}: {', '.join(names)}")
+	if unread:
+		out.append("    known until it is cloned")
 	out.append("  · seed USER.md from the template, for you to fill in, if it is not there already")
 	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
 	out.append("  · everything plain `gitdashy install` does, for review memory")
 	out.append("")
 	out.append("What that costs, every session on this machine, permanently:")
-	out.append(f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
+	out.append("  · however many tokens that corpus's identity/ holds — unknown until it is cloned"
+	           if unread else
+	           f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
 	out.append("  · one hook running at the start of every session, in every repo")
 	out.append("")
 	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
 	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
 	out.append("that git can see, and exits quietly if it is not in a repo.")
+	out.append("")
+	# ponytail: until this corpus shipped a bin/, the corpus was DATA — markdown imported into context,
+	# templates copied. The hook now RUNS a script out of it, so a --corpus URL is no longer only text you
+	# read: it is code that executes at every session start. That is a different thing to agree to, and
+	# consent that does not name it is not consent to it.
+	out.append("It also RUNS one script from that corpus if it ships an executable bin/budget-check.sh —")
+	out.append("shell, at every session start, in every repo. A corpus is code you run, not only text you")
+	out.append("read: `--corpus URL` grants that to whoever can push to it.")
 	out.append("")
 	out.append("`gitdashy install --full --uninstall` reverses all of it. The corpus is left on disk,")
 	out.append("because by then you may have edited it.")
@@ -561,6 +762,12 @@ def full_apply(corpus, url="", dry=False):
 				# there. Only reachable when CORPUS_HOME pre-existed — otherwise the clone's own undo
 				# takes it — which is exactly the case where the directory is not ours to litter.
 				undo.append((f"the seeded {knowledge.tilde(user)}", lambda: os.remove(user)))
+		if corpus_remembers(ident) is False:
+			# ponytail: said at the one moment they could act on it. gitdashy cannot write their corpus;
+			# it can say that without this line the reviews have no second observer and every draft
+			# they ever file stays at (1). The dashboard's Knowledge row keeps saying it afterwards.
+			out.append("NOTE  this corpus never tells a session to `gitdashy remember` — add that to its AGENT.md,"
+			           " or nothing a session learns reaches the reviews")
 		md = os.path.join(d, "CLAUDE.md")
 		text = _read(md)
 		if CBEGIN in text:

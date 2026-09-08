@@ -1,12 +1,13 @@
 """Shared fixtures. ponytail: one fake screen, one temp log, no framework."""
 import json
 import os
+import shutil
 import urllib.request
 
 import pytest
 
 from dashy import demo, config
-from dashy.core import bind, github, log, memory, review, state, team, update
+from dashy.core import bind, github, install, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
@@ -40,6 +41,14 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
 	monkeypatch.setattr(team, "NAME", "")
 	monkeypatch.setattr(team, "ERROR", "")
+	# ponytail: the agent config too. install.session_notes()/corpus_remembers() read claude_dir(), so a
+	# UI test that does not set this reads the DEVELOPER's real ~/.claude — the Knowledge row then says
+	# something different on their laptop than in CI, and a header test passes or fails on whose machine
+	# it ran. Same class as the ~/.prs_teams pin above.
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+	# ponytail: and the cache keyed off it, exactly as log._CACHE is pinned. A module-global that
+	# survives a test carries one test's tmp_path answer into the next one's assertions.
+	monkeypatch.setattr(install, "_NOTES", (None, []))
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: github.py talks HTTP now, so a test that forgets to fake it would hit the real API with
@@ -54,7 +63,12 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(github, "GRAPHQL", "https://api.github.com/graphql")
 	# ponytail: pin what api_cmd READS, not api_cmd itself — a stub here would have hidden the very bug
 	# it exists to keep out of the suite (a `gitdashy` on PATH that is a different, older build).
-	monkeypatch.setattr(review.shutil, "which", lambda c: os.path.join(review.HERE, "prs.py"))
+	# ponytail: `gitdashy` alone — review.shutil IS the shutil module, so a blanket lambda answered for
+	# every caller in every module (github.copy's clipboard probe included) and swallowed `path=`.
+	orig_which = shutil.which
+	monkeypatch.setattr(review.shutil, "which", lambda c, *a, **kw:
+	                    os.path.join(review.HERE, "prs.py") if c == "gitdashy" and not (a or kw)
+	                    else orig_which(c, *a, **kw))
 	monkeypatch.setattr(github, "_me", "")  # the login is cached for the process; not across tests
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs
 	# while install() swapped eight, so github.copy, collaborators, request_review, self_review and

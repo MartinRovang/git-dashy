@@ -810,7 +810,7 @@ def test_a_finding_shows_its_text_not_mostly_its_path(screen):
 	assert "LibraryLanding.tsx:19" in out                       # the file, short
 	assert "features/library/ui/LibraryLanding" not in out      # not the whole path
 	assert "Count is derived" in out                            # and the finding itself is readable
-	assert "v read all" in out                                  # with a way to open the whole review
+	assert "2 in code" in out   # ponytail: the pane points at the code tab; v is still in the footer
 
 
 def test_v_reads_the_review_from_any_row_that_has_one(screen, monkeypatch):
@@ -1428,3 +1428,479 @@ def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st
 	monkeypatch.setattr(ui.team, "ERROR", "")
 	ui._join_team(screen, st, 0)
 	assert said == [] and st.wake.is_set()
+
+
+def test_launch_retires_the_team_link_and_says_so_once(screen, monkeypatch):
+	"""Nothing re-runs install after an update, so the migration runs at launch like team.migrate()
+	does. Only a CHANGE earns a keypress; a hand-wired import it cannot touch is a standing note."""
+	from dashy.core import install
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	monkeypatch.setattr(install, "retire", lambda: ["retire ~/.claude/prs-team — a team's facts reach a session through its repo's mirror now"])
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0]
+
+	said.clear()
+	monkeypatch.setattr(install, "retire", lambda: ["NOTE  ~/.claude/CLAUDE.md still imports @prs-team/… by hand"])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                                  # not a nag on every launch
+
+	monkeypatch.setattr(install, "retire", lambda: [])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []
+
+
+def test_launch_really_retires_a_stale_link_and_is_silent_the_second_time(screen, monkeypatch, tmp_path):
+	"""The other launch test replaces retire() wholesale, so the migration is only proven against a fake.
+
+	This one runs the real thing against a real stale link, which is the only way the wiring between
+	the launch path and stale_team_link() is checked at all.
+	"""
+	from dashy import config
+	from dashy.core import install
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0], said
+	assert not os.path.lexists(str(cfg / "prs-team"))   # the link is actually gone
+
+	said.clear()
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                   # idempotent: nothing left to say
+
+
+DIFF_FIXTURE = """diff --git a/gitdashy/auto.py b/gitdashy/auto.py
+--- a/gitdashy/auto.py
++++ b/gitdashy/auto.py
+@@ -136,7 +136,12 @@ class Auto:
+     def _sweep(self, prs):
+         for pr in prs:
+-            self.in_flight.discard(pr.id)
++            self.in_flight.discard(pr.id)
++            verdict = self._verdict_for(pr)
+             self.persist_verdict(pr, verdict)
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,4 +1,5 @@
+ # Changelog
++## 1.34.0
+ ## 1.33.2
+"""
+
+
+def _prime(st, pr):
+	"""Drive want_diff to completion, the way the dashboard does across successive draws.
+
+	ponytail: the pane fetches OFF the draw thread, so a test that draws once sees "reading the diff…".
+	Waiting here rather than stubbing want_diff keeps the threading in the path under test — it is
+	where the freeze was.
+	"""
+	findings = ui.log.findings(pr.get("review"))
+	for _ in range(300):
+		if st.want_diff("a/b", pr["number"], "", findings) is not None:
+			return
+		time.sleep(0.01)
+	raise AssertionError("the diff never landed")
+
+
+def _code_pr(monkeypatch, st, findings=None, text=DIFF_FIXTURE):
+	from dashy.core import diff
+	monkeypatch.setattr(diff, "_CACHE", {("a/b", 23, ""): text})
+	pr = dict(PR, number=23, url="u23", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
+	          review={"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	                  "findings": findings if findings is not None else [
+	                      {"kind": "blocking", "loc": "auto.py:139", "text": "the discard runs before the verdict is written"},
+	                      {"kind": "note", "loc": "CHANGELOG.md:2", "text": "entry missing the version bump"}]})
+	monkeypatch.setattr(st, "want_detail", lambda p: {})
+	st.sections = [("MINE", [pr], None)]
+	st.pane_tab = "code"
+	st.code_pr = pr["url"]   # the fixture stands for "already looking at this one"; see the reset test
+	_prime(st, pr)
+	return pr
+
+
+# ponytail: x0 + width must fit the screen — at() bounds by the PANE, and draw() always derives the
+# pane from the terminal width, so a test that asks for a pane wider than its screen is asking for
+# something production cannot produce.
+PANE_X, PANE_W = 40, 90
+
+
+def test_the_code_tab_puts_each_finding_on_the_line_it_names(screen, monkeypatch, st):
+	"""A finding that cites a line you then have to go and find somewhere else is one nobody follows."""
+	pr = _code_pr(monkeypatch, st)
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "1 summary" in out and "2 code" in out
+	assert "gitdashy/auto.py" in out
+	assert "verdict = self._verdict_for(pr)" in out              # the line
+	assert "blocking" in out and "the discard runs before" in out  # its finding, under it
+	assert "◆" in out                                            # and a mark in the gutter
+
+
+def test_marks_only_hides_what_the_review_did_not_mark(screen, monkeypatch, st):
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "blocking", "loc": "auto.py:139", "text": "x"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "CHANGELOG" not in screen.text()      # unmarked, so it is not in the way
+	screen.erase()
+	st.code_scope = "diff"
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "CHANGELOG.md" in out                  # D shows the whole change
+	assert "blocking" not in out                  # and the notes step aside; the marks stay
+
+
+def test_n_moves_between_marks_and_between_files(screen, monkeypatch, st):
+	"""The strip used to move a variable nothing read — the pane drew from the top whatever it said."""
+	pr = _code_pr(monkeypatch, st)
+	st.code_at = 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 22, PANE_X, PANE_W, pr)
+	assert "entry missing the version bump" in screen.text()   # scrolled to the second mark
+	screen.erase()
+	st.code_scope, st.code_at = "diff", 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 22, PANE_X, PANE_W, pr)
+	out = screen.text()
+	assert "CHANGELOG.md" in out and "n/N file" in out          # and to the second FILE
+
+
+def test_a_finding_about_a_file_outside_the_diff_is_still_shown(screen, monkeypatch, st):
+	"""The pane must not be quieter than the summary it replaces."""
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "note", "loc": "gone/away.py:9", "text": "missing"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "not in this diff" in screen.text() and "gone/away.py:9" in screen.text()
+
+
+def test_the_code_tab_says_why_it_is_empty(screen, monkeypatch, st):
+	pr = _code_pr(monkeypatch, st, text="")
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)
+	assert "no diff to show" in screen.text()      # not an empty pane you press 2 at again
+	screen.erase()
+	pr2 = dict(pr); pr2.pop("review")
+	monkeypatch.setattr(ui.log, "last", lambda url: None)
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr2)
+	assert "no review yet" in screen.text()
+
+
+def test_the_code_pane_never_writes_outside_itself(screen, monkeypatch, st):
+	"""Every width and height, including the ones where the pane has almost no room."""
+	pr = _code_pr(monkeypatch, st)
+	for scope in ("marks", "diff"):
+		st.code_scope = scope
+		for h in range(8, 34):
+			for w in range(30, 120, 7):
+				scr = FakeScr(h=h, w=PANE_X + w + 2)
+				ui.detail(scr, st, h, PANE_X, w, pr)   # must not raise
+
+
+# ponytail: these drive main()'s KEY DISPATCH, not the pane. Every other code-tab test reaches into
+# st.code_scope / st.code_at directly, which is exactly why D and n could be swallowed by the global
+# handlers above them and still look tested: the pane was right, and nothing could reach it.
+def _drive(screen, monkeypatch, keys, tab="summary", review=True):
+	"""Run main() over a key sequence and hand back the State it built."""
+	box, real = {}, ui.State
+	rev = {"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	       "findings": [{"kind": "note", "loc": "a.py:1", "text": "t"}]}
+	def make(interval, model=None):
+		st = box["st"] = real(interval, model)
+		pr = dict(PR, number=23, url="u23", repository={"nameWithOwner": "a/b", "name": "git-dashy"})
+		if review:
+			pr["review"] = rev
+		else:
+			pr.pop("review", None)
+			monkeypatch.setattr(ui.log, "last", lambda url: None)
+		st.sections = [("MINE", [pr], None)]
+		st.pane, st.pane_tab = True, tab
+		return st
+	monkeypatch.setattr(ui, "State", make)
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(config, "SETTINGS", "")
+	screen.getch, screen.timeout = _keys(*keys, ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	return box["st"]
+
+
+def test_the_code_tab_keys_are_not_swallowed_by_the_global_ones(screen, monkeypatch):
+	"""D and n are each bound twice. An elif chain gives the key to the FIRST branch, and this was last."""
+	edited = []
+	monkeypatch.setattr(ui, "edit_memory", lambda *a: edited.append(a))
+	st = _drive(screen, monkeypatch, [ord("2"), ord("D"), ord("c"), ord("n")])
+	assert st.pane_tab == "code"
+	assert st.code_scope == "diff"        # D reached the pane
+	assert st.drafts is False             # and did NOT toggle the drafts view on the way
+	assert st.code_context == 8           # c stepped the ring
+	assert st.code_at == 1                # n moved the jump
+	assert edited == []                   # and did not open $EDITOR over the top of the dashboard
+
+
+def test_the_global_D_and_n_still_work_on_the_summary_tab(screen, monkeypatch):
+	"""Hoisting the code branch must not take the keys away from the handlers that owned them."""
+	edited = []
+	monkeypatch.setattr(ui, "edit_memory", lambda scr, st, sel, repo: edited.append(repo))
+	st = _drive(screen, monkeypatch, [ord("D"), ord("n")])
+	assert st.drafts is True and edited == ["a/b"]
+	assert st.code_scope == "marks" and st.code_at == 0   # the pane was not touched
+
+
+def test_tab_and_the_number_keys_move_between_the_two_faces(screen, monkeypatch):
+	st = _drive(screen, monkeypatch, [ord("2")])
+	assert st.pane_tab == "code"
+	assert _drive(screen, monkeypatch, [ord("2"), ord("1")]).pane_tab == "summary"
+	assert _drive(screen, monkeypatch, [9]).pane_tab == "code"
+	assert _drive(screen, monkeypatch, [9, 9]).pane_tab == "summary"
+
+
+def test_the_context_key_cycles_the_whole_ring(screen, monkeypatch):
+	from dashy.core import diff
+	seen = [_drive(screen, monkeypatch, [ord("2")] + [ord("c")] * n).code_context
+	        for n in range(len(diff.CONTEXTS) + 1)]
+	assert seen == diff.CONTEXTS + [diff.CONTEXTS[0]]   # steps every value and comes home
+
+
+def test_every_colour_pair_is_defined_once():
+	"""init_colors calls init_pair in order, so a repeat silently repaints the earlier one's meaning."""
+	nums = [row[0] for row in ui.COLORS]
+	dupes = sorted({n for n in nums if nums.count(n) > 1})
+	assert not dupes, f"colour pairs defined twice: {dupes}"
+
+
+def test_an_unknown_finding_kind_does_not_take_the_pane_down(screen, monkeypatch, st):
+	"""log.KINDS decides what a finding may be; adding a row must change how it LOOKS, not whether it runs."""
+	monkeypatch.setitem(ui.log.KINDS, "wildcard", "dim")
+	pr = _code_pr(monkeypatch, st, findings=[{"kind": "wildcard", "loc": "auto.py:139", "text": "a new kind"}])
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)     # must not raise out of draw()
+	assert "a new kind" in screen.text()
+
+
+def test_moving_to_another_pr_resets_the_mark_jump(screen, monkeypatch, st):
+	"""code_at counts THIS review's marks; carrying it over landed you on mark 5 of a review with two."""
+	pr = _code_pr(monkeypatch, st)
+	st.code_at = 1
+	screen.w = PANE_X + PANE_W + 2
+	ui.detail(screen, st, 30, PANE_X, PANE_W, dict(pr, url="another"))
+	assert st.code_at == 0 and st.code_pr == "another"
+
+
+def test_the_pane_never_runs_gh_on_the_draw_thread(screen, monkeypatch, st):
+	"""`gh pr diff` ran inside code_pane, and draw() is called twenty times a second."""
+	import subprocess as sp
+	import threading as th
+	from dashy.core import diff
+	where = []
+	monkeypatch.setattr(diff, "_CACHE", {})
+	monkeypatch.setattr(sp, "run", lambda cmd, **k: where.append(th.current_thread())
+	                    or sp.CompletedProcess(cmd, 0, DIFF_FIXTURE, ""))
+	pr = dict(PR, number=99, url="u99", repository={"nameWithOwner": "a/b", "name": "git-dashy"},
+	          review={"verdict": "approve", "at": "x", "model": "opus", "body": "b",
+	                  "findings": [{"kind": "note", "loc": "auto.py:139", "text": "t"}]})
+	monkeypatch.setattr(st, "want_detail", lambda p: {})
+	st.sections, st.pane_tab = [("MINE", [pr], None)], "code"
+	screen.w = PANE_X + PANE_W + 2
+
+	ui.detail(screen, st, 30, PANE_X, PANE_W, pr)      # one draw: it must return without shelling out
+	assert "reading the diff" in screen.text()
+	for _ in range(400):
+		if where:
+			break
+		time.sleep(0.005)
+	assert where and all(t is not th.main_thread() for t in where)
+
+
+def test_every_mark_gets_a_row_and_the_chips_agree_with_the_jumps(screen, monkeypatch, st):
+	"""chips enumerated marks while jump counted note rows — one orphan and every chip after it lied."""
+	from dashy.core import diff
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "blocking", "loc": "auto.py:139", "text": "this one is on a line"},
+		{"kind": "note", "loc": "gone/away.py:9", "text": "no such file in the diff"},
+		{"kind": "nit", "loc": "auto.py:9999", "text": "right file wrong line"}])
+	files = diff.parse(DIFF_FIXTURE)
+	marks = diff.anchor(files, ui.log.findings(pr["review"]))
+	rows = ui.code_rows(files, marks, True)
+	anchors = [v for k, v in rows if k in ("note", "orphan")]
+	assert len(anchors) == len(marks) == 3          # every mark is reachable, none counted twice
+
+	# ponytail: each mark in turn, because the pane scrolls to the one n is on — "all three on screen"
+	# would be a claim about the window, and the claim under test is that each one is REACHABLE.
+	# order is anchor.marks' order: on a line, then the same file's unmatched line, then no file at all
+	for i, want in enumerate(["this one is on a line", "right file wrong line", "no such file in the diff"]):
+		st.code_at = i
+		scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+		ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+		out = scr.text()
+		assert want in out, (i, want)
+		assert st.code_at == i                       # n reaches it; it is not clamped away
+	assert "not in this diff" in out                  # and each says which kind of miss it is
+
+
+def test_the_code_tab_gives_its_keys_back_when_it_has_nothing_to_show(screen, monkeypatch):
+	"""On a row with no review the tab draws "no review yet"; D must still reach the drafts toggle."""
+	st = _drive(screen, monkeypatch, [ord("2"), ord("D")], review=False)
+	assert st.pane_tab == "code"
+	assert st.drafts is True and st.code_scope == "marks"
+
+
+def test_f_clears_the_diffs_gh_failed_on(screen, monkeypatch):
+	"""The key that means "go and look again" has to reach the diff cache, not only the PR list."""
+	from dashy.core import diff
+	hit = []
+	monkeypatch.setattr(diff, "retry", lambda: hit.append(1))
+	_drive(screen, monkeypatch, [ord("f")])
+	assert hit == [1]
+
+
+def test_a_file_only_finding_is_reachable_in_the_code_tab(screen, monkeypatch, st):
+	"""The empty-scope guard hid exactly the marks code_rows' orphan branch exists to emit.
+
+	It asked `not shown and not any(m["file"] is None ...)`. A mark whose FILE matched but whose LINE
+	did not is in neither set — a file-only loc, which the finding schema explicitly allows, or a line
+	the diff does not carry. So the pane said "the review marked nothing" and the finding could not be
+	reached at all, contradicting anchor()'s promise that a finding landing nowhere is kept.
+	"""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "blocking", "loc": "auto.py", "text": "the whole file is the problem"}])
+	st.code_at = 0
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "the whole file is the problem" in out, out
+	assert "the review marked nothing" not in out, out
+
+
+def test_a_finding_on_a_line_the_diff_does_not_carry_is_reachable_too(screen, monkeypatch, st):
+	"""The other half of the same hole: right file, a line outside every hunk."""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "note", "loc": "auto.py:9999", "text": "right file wrong line"}])
+	st.code_at = 0
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "right file wrong line" in out, out
+	assert "the review marked nothing" not in out, out
+
+
+def test_the_pane_still_says_so_when_the_review_really_marked_nothing(screen, monkeypatch, st):
+	"""The guard must not have been turned off — with NO findings at all it still explains itself."""
+	pr = _code_pr(monkeypatch, st, findings=[])
+	scr = FakeScr(h=34, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 34, PANE_X, PANE_W, pr)
+	assert "the review marked nothing" in scr.text()
+
+
+def test_the_sticky_path_names_the_file_the_window_is_inside(screen, monkeypatch, st):
+	"""Untested: no assertion anywhere covered "↑ in" or which path it showed.
+
+	Scrolled past a file's own header, the pane has to keep saying which file you are reading, or a
+	long diff becomes a wall of lines with no way to tell where you are.
+
+	ponytail: SCOPED and SHORT, which is the only combination that can produce this row. In full scope
+	n/N moves by file, so the window always opens on a file header; and in any pane tall enough to hold
+	the whole narrowed diff the window is clamped to the top, header included. The row exists for a pane
+	shorter than what it is showing, so the test has to ask for one — at h=34 it correctly never appears.
+	"""
+	pr = _code_pr(monkeypatch, st, findings=[
+		{"kind": "note", "loc": "auto.py:139", "text": "somewhere in the middle"}])
+	assert st.code_scope == "marks" and st.code_context == 3
+	st.code_at = 0
+	scr = FakeScr(h=22, w=PANE_X + PANE_W + 2)
+	ui.detail(scr, st, 22, PANE_X, PANE_W, pr)
+	out = scr.text()
+	assert "↑ in" in out, out
+	assert "gitdashy/auto.py" in out, out       # the path it names, not merely that it named one
+	assert "somewhere in the middle" in out     # and the mark it scrolled to is still on screen
+
+
+def _know_rows(state):
+	"""The Knowledge group's rows, wherever that group sits."""
+	return next(rows for _, key, rows in ui.header_groups(state) if key == "K")
+
+
+def test_every_session_note_is_reachable_and_none_lengthens_the_memory_row(screen, monkeypatch, st):
+	"""Notes used to be glued onto Memory's value, then clipped to 40 — and both were wrong.
+
+	Glued on, two notes added ~80 characters to one value and the header degradation loop folds K to a
+	chip before it drops anything else, so having a note made the Knowledge group VANISH rather than say
+	anything. Clipped to 40, the first note renders at exactly 40 characters, so the SECOND was dropped
+	whole — and a note is precisely the thing that must not go missing quietly. As rows they cost the
+	header nothing once K is a chip, and group_menu lists them under it.
+	"""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _know_rows(st)
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	noted = _know_rows(st)
+
+	memory_bare = next(v for _, n, v, _ in bare if n == "Memory")
+	memory_noted = next(v for _, n, v, _ in noted if n == "Memory")
+	assert memory_noted == memory_bare              # the Memory value is untouched by a note
+
+	values = [v for _, n, v, _ in noted if n == "Note"]
+	assert len(values) == 2, noted                  # BOTH, not just the one that fitted in 40 chars
+	assert "corpus never says" in values[0] and "imports @prs-team" in values[1]
+	assert all(k == "" for k, n, _, _ in noted if n == "Note")   # inert on Enter
+
+
+def _popup_inner(state):
+	"""The width group_menu's popup would ask for. Exactly popup()'s own arithmetic, at screen.py:923."""
+	rows = _know_rows(state)
+	name_w = max(len(name) for _, name, _, _ in rows)
+	lines = [f"{name.ljust(name_w)}   {value}" for _, name, value, _ in rows]
+	return max([len(l) for l in lines] + [len("Knowledge")]) + 6
+
+
+def test_a_session_note_does_not_widen_the_k_popup(screen, monkeypatch, st):
+	"""popup() clamps x but never inner, so its width is decided entirely by its longest line.
+
+	ponytail: asserted as a DELTA against the same popup with no notes, not against a fixed column
+	count. The absolute width is set by the Memory and Store rows, which carry filesystem paths — under
+	pytest those are long tmp_path strings, so an absolute bound would fail on the fixture rather than
+	on the thing under test, and pass or fail by how deep the temp directory happened to be.
+	ponytail: and asserted on INNER, the number popup() computes. The first version of this test
+	rendered into a FakeScr and asserted every row was <= w, which cannot fail: FakeScr's addnstr
+	silently drops anything past its right edge and line() slices to w, so it was true by construction
+	and passed with the clip removed entirely.
+	"""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _popup_inner(st)
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	noted = _popup_inner(st)
+	# ponytail: a note is its own ROW, so it can only widen the popup if it is longer than the widest
+	# row already there — the paths. Glued onto Memory's value it widened it by ~80 every time.
+	assert noted == bare, (bare, noted)

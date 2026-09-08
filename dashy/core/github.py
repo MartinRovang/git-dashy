@@ -21,6 +21,23 @@ API = os.environ.get("GITHUB_API", "https://api.github.com")
 GRAPHQL = API.replace("/api/v3", "/api").rstrip("/") + "/graphql"
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+	"""Drop the token when a 3xx leaves the host it was issued for.
+
+	ponytail: urllib copies every header onto the redirected request, so the host check in `call()` would
+	guard only the request this code builds, not the one urllib may end up sending. Installed globally
+	because `urlopen` is what the rest of the module calls — one opener, no plumbing through every site.
+	"""
+	def redirect_request(self, req, fp, code, msg, headers, newurl):
+		new = super().redirect_request(req, fp, code, msg, headers, newurl)
+		if new and urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname:
+			new.headers = {k: v for k, v in new.headers.items() if k.lower() != "authorization"}
+		return new
+
+
+urllib.request.install_opener(urllib.request.build_opener(_StripAuthOnRedirect))
+
+
 class Error(OSError):
 	"""ponytail: an OSError, so every `except OSError` already guarding these calls still catches it."""
 
@@ -123,12 +140,17 @@ def reviewers(node):
 	out = {}
 	for n in (node.get("latestReviews") or {}).get("nodes") or []:
 		if n and n.get("author"):
-			out[n["author"]["login"]] = REVIEW_GLYPH.get(n.get("state"), "~")
+			out[n["author"]["login"]] = n.get("state")
 	for n in (node.get("reviewRequests") or {}).get("nodes") or []:
 		r = (n or {}).get("requestedReviewer") or {}
-		if r.get("login"):
-			out[r["login"]] = "·"  # a fresh request supersedes an older review
-	return " ".join(g + who for who, g in out.items())
+		# ponytail: a fresh request supersedes an older review — EXCEPT a comment. GitHub clears the
+		# request when a review approves or requests changes, so a reviewer in BOTH lists really was
+		# asked again. Commenting clears nothing, so the standing request is the ORIGINAL one, and
+		# stomping it made every comment invisible to everyone but the person who left it.
+		# Compare the STATE, not the glyph: DISMISSED has no glyph and must not read as a comment.
+		if r.get("login") and out.get(r["login"]) != "COMMENTED":
+			out[r["login"]] = "PENDING"
+	return " ".join(REVIEW_GLYPH.get(s, "·") + who for who, s in out.items())
 
 
 def collaborators(repo):
@@ -149,14 +171,28 @@ def request_review(repo, number, login):
 
 
 def git_auth():
-	"""git flags that let a clone/push reach a private repo with the same token the API uses.
+	"""Env that lets a clone reach a private repo with the same token the API uses.
 
-	ponytail: -c persists into the clone's own config, so later pulls on the refresh tick stay authorised
-	without a credential helper. The token lands in that checkout's .git/config — same machine, same
-	token, and the alternative was requiring `gh auth setup-git`.
+	ponytail: GIT_CONFIG_* in the environment, not `-c` in argv — argv is world-readable in `ps` for the
+	length of a clone. It does not survive into the new checkout, so `persist_auth()` writes it there.
 	"""
 	tok = token()
-	return ["-c", f"http.extraHeader=Authorization: Bearer {tok}"] if tok else []
+	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
+	        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {tok}"} if tok else {}
+
+
+def persist_auth(dest):
+	"""Put the token in a fresh checkout's config so later pulls on the refresh tick stay authorised.
+
+	ponytail: appended by hand rather than `git config`, which would put the token back in argv — the
+	thing git_auth() exists to avoid. chmod first: the secret is never on disk world-readable.
+	"""
+	tok, cfg = token(), os.path.join(dest, ".git", "config")
+	if not tok or not os.path.isfile(cfg):
+		return
+	os.chmod(cfg, 0o600)
+	with open(cfg, "a") as f:
+		f.write(f"[http]\n\textraHeader = Authorization: Bearer {tok}\n")
 
 
 VERDICT_EVENT = {"approve": "APPROVE", "request_changes": "REQUEST_CHANGES", "comment": "COMMENT"}
@@ -180,8 +216,13 @@ def fetch():
 			p["checks"] = checks(n)
 			if h := n.get("headRefOid"):  # ponytail: absent field reads like a failed call — no head, not ""
 				p["head"] = h
+			# ponytail: reviewers on EVERY section, not just MINE. A "~alice" only ever painted on my
+			# own rows, so a comment on someone else's PR was visible to nobody looking at it. status
+			# stays MINE-only — own_status reads reviewDecision as "what is blocking ME", which is not
+			# the question an assigned or requested row asks.
+			p["reviewers"] = reviewers(n)
 			if name == "MINE":
-				p["status"], p["reviewers"] = own_status(n), reviewers(n)
+				p["status"] = own_status(n)
 			prs.append(p)
 		prs.sort(key=lambda p: p["updatedAt"], reverse=True)
 		out.append((name, prs, None))

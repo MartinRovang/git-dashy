@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 import subprocess
 
 from dashy import config
@@ -24,7 +25,8 @@ def test_install_links_and_imports_then_is_a_no_op(monkeypatch, tmp_path):
 	out = install.apply()
 	assert os.path.realpath(cfg / "prs-memory") == str(tmp_path / "mem")
 	assert "@prs-memory/general.md" in (cfg / "CLAUDE.md").read_text()
-	assert "@prs-team/general.md" in (cfg / "CLAUDE.md").read_text()
+	assert "@prs-team/" not in (cfg / "CLAUDE.md").read_text()   # a team's facts are per repo, not global
+	assert not (cfg / "prs-team").exists()
 	assert all(l.startswith(("link", "add")) for l in out)
 	again = install.apply()
 	assert all(l.startswith("ok") for l in again)  # nothing done twice
@@ -422,13 +424,13 @@ def test_setup_will_not_eat_a_template_you_filled_in(monkeypatch, tmp_path):
 	assert "new" in seeded.read_text() and "old" not in seeded.read_text()
 
 
-def test_a_solo_brief_is_imported_too(monkeypatch, tmp_path):
-	"""setup writes ~/.prs_memory/project.md; without this import a session never sees it."""
+def test_the_brief_is_never_imported_globally(monkeypatch, tmp_path):
+	"""A session used to get your brief through the block AND the team's through the mirror — two
+	statements of what the work is for. The mirror carries the ONE brief(repo) picks; the block none."""
 	cfg = fresh(monkeypatch, tmp_path)
 	install.apply()
 	block = (cfg / "CLAUDE.md").read_text()
-	assert "@prs-memory/project.md" in block and "@prs-team/project.md" in block
-	assert block.index("prs-memory/project") < block.index("prs-team/project")  # yours first, as everywhere
+	assert "project.md" not in block and "@prs-team/" not in block
 
 
 def test_forgetting_a_mirror_does_not_rewrite_the_registry(monkeypatch, tmp_path):
@@ -843,3 +845,572 @@ def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
 	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
 	assert "no origin" not in note and "no name" not in note
 	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says
+
+
+def test_install_retires_the_old_team_link_and_rewrites_its_block(monkeypatch, tmp_path):
+	"""The pre-2026-09-08 install pointed `prs-team` at ONE team's memory and imported it into every
+	session on the machine. With several teams it dangled; with one it told every repo how that team
+	works. A dangling @import is skipped silently, so the block has to be rewritten, not left."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	old_block = install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md")
+	(cfg / "CLAUDE.md").write_text("# mine\n\n" + old_block)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))   # dangling, ours
+	(cfg / "prs-memory").symlink_to(str(tmp_path / "mem"))
+
+	dry = install.apply(dry=True)
+	assert any("would retire" in l and "prs-team" in l for l in dry)
+	assert (cfg / "prs-team").is_symlink()                     # a dry run touches nothing
+
+	out = install.apply()
+	assert any(l.startswith("retire") for l in out) and any("update the import block" in l for l in out)
+	assert not (cfg / "prs-team").exists()
+	text = (cfg / "CLAUDE.md").read_text()
+	assert "@prs-team/" not in text and text.count(install.IMPORT) == 1
+	assert text.startswith("# mine\n")                          # the user's own lines survive the rewrite
+	assert all(l.startswith("ok") for l in install.apply())     # and it is done once
+
+
+def test_install_leaves_a_prs_team_link_that_is_not_ours(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "theirs").mkdir()
+	os.symlink(str(tmp_path / "theirs"), str(cfg / "prs-team"))  # someone's own link, same name
+	install.apply()
+	assert (cfg / "prs-team").is_symlink()
+	install.remove()
+	assert (cfg / "prs-team").is_symlink()
+
+
+def test_uninstall_removes_a_retired_team_link_too(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	install.apply()
+	os.symlink(str(tmp_path / "team" / "memory"), str(cfg / "prs-team"))   # the pre-plural target
+	out = install.remove()
+	assert any("retired team link" in l for l in out)
+	assert not (cfg / "prs-team").exists() and not (cfg / "prs-memory").exists()
+
+
+def test_install_says_so_when_the_stale_team_import_is_not_in_our_block(monkeypatch, tmp_path):
+	"""A hand-wired CLAUDE.md is not ours to rewrite. But the link it imports through is retired, so the
+	import now dangles and the loader skips it silently — the retirement has to be said out loud."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(cfg / "CLAUDE.md").write_text("# mine\n@prs-memory/general.md\n@prs-team/general.md\n")
+	os.symlink(str(tmp_path / "teams" / "x" / "memory"), str(cfg / "prs-team"))
+	out = install.apply()
+	assert not (cfg / "prs-team").exists()
+	assert any(l.startswith("NOTE") and "remove them by hand" in l for l in out)
+	assert (cfg / "CLAUDE.md").read_text().count("\n") == 3   # untouched
+
+
+def test_explain_counts_the_imports_it_will_write_and_names_the_migration(monkeypatch, tmp_path):
+	"""The consent screen said "four imports" after the block had two, and nothing about removing a
+	symlink and rewriting a block in the user's own config — the thing it was asking consent for."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	n = install.BLOCK.count("\n@")
+	assert any(f"append {n} import" in l for l in install.explain())
+	assert not any("retire" in l for l in install.explain())       # nothing to migrate on a fresh machine
+
+	os.symlink(str(tmp_path / "teams" / "x" / "memory"), str(cfg / "prs-team"))
+	(cfg / "CLAUDE.md").write_text(install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md"))
+	out = install.explain()
+	assert any("retire" in l and "prs-team" in l for l in out)
+	assert any("update the import block" in l for l in out)
+	assert (cfg / "prs-team").is_symlink()                           # explain() explains; it does nothing
+
+
+def test_a_claude_md_that_only_quotes_the_old_block_is_left_alone(monkeypatch, tmp_path):
+	"""A raw substring test took the rewrite branch for a CLAUDE.md that QUOTED the old block in a code
+	sample, stripped nothing, and appended BLOCK again on every run — never reaching "ok"."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	quoted = "# notes\n\n```\n" + install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md") + "```\n"
+	(cfg / "CLAUDE.md").write_text(quoted)
+	for _ in range(2):
+		out = install.apply()
+		assert not any("update" in l or "NOTE" in l for l in out), out
+	assert (cfg / "CLAUDE.md").read_text() == quoted
+	assert install.retire() == []
+
+
+def test_a_relative_link_is_judged_from_its_own_directory(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(cfg / "teams"))          # so a relative "teams/x" is inside it
+	os.symlink("teams/x/memory", str(cfg / "prs-team"))
+	monkeypatch.chdir(tmp_path)                                        # an unlucky cwd must not change the answer
+	assert install.stale_team_link() == str(cfg / "prs-team")
+
+
+def test_session_notes_say_what_a_session_is_not_being_told(monkeypatch, tmp_path):
+	"""The tool this was built next to lacked the `remember` instruction for months while every draft
+	sat at (1). A check that reports beats a README line the reader is assumed to have followed."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert install.corpus_remembers() is None and install.session_notes() == []   # no corpus: nothing to say
+	ident = cfg / "identity"
+	ident.mkdir()
+	(ident / "AGENT.md").write_text("# me\nbe good\n")
+	assert install.corpus_remembers() is False
+	assert install.session_notes() == ["corpus never says `gitdashy remember`"]
+	(ident / "AGENT.md").write_text("# me\n`gitdashy remember` what will still be true next month\n")
+	assert install.session_notes() == []
+	(cfg / "CLAUDE.md").write_text("@prs-memory/general.md\n@prs-team/general.md\n")
+	assert install.session_notes() == ["CLAUDE.md imports @prs-team by hand"]
+	(cfg / "CLAUDE.md").write_text("```\n@prs-team/general.md\n```\n")   # quoted, not wired
+	assert install.session_notes() == []
+
+
+def test_full_install_says_when_the_corpus_never_tells_a_session_to_remember(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(install, "CORPUS_HOME", str(tmp_path / "corpus"))
+	monkeypatch.setattr(install, "HOOK", str(tmp_path / "hook.sh"))
+	(tmp_path / "hook.sh").write_text("#!/bin/sh\n")
+	os.chmod(tmp_path / "hook.sh", 0o755)
+	(tmp_path / "corpus" / "identity").mkdir(parents=True)
+	(tmp_path / "corpus" / "identity" / "AGENT.md").write_text("# quiet\n")
+	out = install.full_apply(str(tmp_path / "corpus"))
+	assert any(l.startswith("NOTE") and "gitdashy remember" in l for l in out), out
+	install.full_remove()
+	(tmp_path / "corpus" / "identity" / "AGENT.md").write_text("# loud\nrun `gitdashy remember` for durable facts\n")
+	out = install.full_apply(str(tmp_path / "corpus"))
+	assert not any("gitdashy remember" in l for l in out), out
+
+
+def test_a_blank_store_root_does_not_make_every_link_ours(monkeypatch, tmp_path):
+	"""abspath("") is the CURRENT WORKING DIRECTORY, not "nowhere".
+
+	`gitdashy --demo` blanks config.TEAM and config.TEAMS, and PRS_TEAMS= does the same. With the
+	prefix test taken against cwd, any symlink under the directory you happened to launch from counted
+	as gitdashy's own — and retire() deletes what it matches. This is the case
+	test_install_leaves_a_prs_team_link_that_is_not_ours exists to forbid, reached by a different door.
+	"""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	mine = tmp_path / "work" / "notes"          # the user's own, under what will be cwd
+	mine.mkdir(parents=True)
+	os.symlink(str(mine), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", "")
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.chdir(tmp_path)
+	assert install.stale_team_link() == ""       # not ours: no store is configured at all
+	assert install.retire() == []                # so nothing is retired, and the link survives
+	assert os.path.islink(str(cfg / "prs-team"))
+
+
+def test_a_relative_store_root_is_refused_too(monkeypatch, tmp_path):
+	"""Same door, one step along: a relative root is only meaningful against a cwd this cannot trust."""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	mine = tmp_path / "teams" / "acme"
+	mine.mkdir(parents=True)
+	os.symlink(str(mine), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", "teams")   # relative: resolves against whatever cwd happens to be
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.chdir(tmp_path)
+	assert install.stale_team_link() == ""
+
+
+def test_the_real_store_root_still_matches(monkeypatch, tmp_path):
+	"""The guard must not have turned the whole check off — the link it IS for is still retired."""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	assert install.stale_team_link() == str(cfg / "prs-team")
+
+
+def test_the_retirement_says_the_brief_goes_with_the_facts(monkeypatch, tmp_path):
+	"""A repo with no mirror loses the BRIEF as well, and that is the half the message was silent on.
+
+	The global @prs-memory/project.md import is gone after migration, so someone who installed without
+	--full, or never ran `gitdashy init` in a repo, gets no brief at all — and the one place they are
+	told about the change only mentioned the facts.
+	"""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	said = " ".join(install.retire(dry=True))
+	assert "brief" in said, said
+	assert "gitdashy init" in said, said          # and what to do about it
+
+
+def test_session_notes_is_not_full_file_io_on_every_draw(monkeypatch, tmp_path):
+	"""header_groups() calls this and draw() calls that on every tick — 50ms while anything spins.
+
+	Uncached it read every identity/*.md, the whole CLAUDE.md, and ran _strip_blocks() over it, twice a
+	second forever. Cached on a stat-level key it still has to notice an edit, so both halves are here.
+	"""
+	cfg = tmp_path / "claude"
+	(cfg / "identity").mkdir(parents=True)
+	(cfg / "identity" / "AGENT.md").write_text("no instruction here\n")
+	(cfg / "CLAUDE.md").write_text("nothing\n")
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	reads = []
+	real = install._read
+	monkeypatch.setattr(install, "_read", lambda p: reads.append(p) or real(p))
+
+	assert "corpus never says `gitdashy remember`" in install.session_notes()
+	first = len(reads)
+	assert first > 0                                   # it really did read, the first time
+	for _ in range(20):
+		install.session_notes()
+	assert len(reads) == first, reads                  # and not once more, twenty draws later
+
+	(cfg / "identity" / "AGENT.md").write_text("file it with `gitdashy remember` when you learn one\n")
+	assert install.session_notes() == []                # but an edit is still seen
+	assert len(reads) > first
+
+
+def test_the_hook_actually_runs_the_drafts_count_line(tmp_path):
+	"""No test in the suite executed this script's step 4, so the line was only proven by reading it.
+
+	A stub `gitdashy` on PATH stands in for the real one: what is under test is that the hook calls it
+	and lets its stdout through, not what `drafts --count` itself decides.
+	"""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	binp = tmp_path / "bin"
+	binp.mkdir()
+	stub = binp / "gitdashy"
+	stub.write_text('#!/usr/bin/env bash\n'
+	                'if [ "$1" = "drafts" ]; then echo "gitdashy: 2 drafts waiting for acme/web"; fi\n'
+	                'exit 0\n')
+	stub.chmod(0o755)
+	env = {**os.environ, "PATH": f"{binp}:{os.environ['PATH']}", "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                     capture_output=True, text=True, env=env).stdout
+	assert "2 drafts waiting for acme/web" in out, out
+
+
+def test_the_hook_survives_a_gitdashy_that_is_not_there(tmp_path):
+	"""command -v guards it; without that the hook fails at the end of every session on a machine
+	mid-uninstall, which is a hook the user removes.
+
+	ponytail: the real PATH with only the entries holding a `gitdashy` removed. A hand-built PATH of
+	just git and bash exited 0 at step 1 — `grep` was gone too, so the ignore could not be verified and
+	the hook bailed before reaching the guard under test. Removing one tool is the smaller change, and
+	it is the one the case is actually about.
+	"""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	kept = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+	                       if d and not os.path.exists(os.path.join(d, "gitdashy")))
+	assert shutil.which("gitdashy", path=kept) is None           # the guard really has nothing to find
+	env = {**os.environ, "PATH": kept, "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+	done = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                      capture_output=True, text=True, env=env)
+	assert done.returncode == 0, done.stderr
+	assert os.path.isdir(str(wt / ".agent"))                     # and every step before it still ran
+	assert os.path.exists(str(wt / "CLAUDE.local.md"))
+
+
+def test_the_session_hook_says_what_it_is_loading(tmp_path):
+	"""'Know what you are loading' was a sentence in a README. One line at session start is a guard
+	that does not depend on being remembered; the corpus that ships this hook grew to twice its stated
+	ceiling before anyone measured."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	cfg = tmp_path / "cfg"
+	(cfg / "identity").mkdir(parents=True)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                     capture_output=True, text=True, env=env).stdout
+	assert "[budget] identity ~13 tok" in out, out  # 10 words * 1.35, the estimate the corpus uses
+	assert "STATE.md" not in out  # none seeded from a corpus with no templates, so none reported
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert seen.strip() == ""  # still writes nothing git can see
+
+
+def test_a_corpus_that_ships_its_own_budget_check_runs_it_instead(tmp_path):
+	"""A corpus knows its own budgets better than a generic total does; when it ships the check, the
+	hook defers to it and says nothing of its own. Guarded on -x, so a corpus without one gets the
+	generic line rather than a hook pointing at a missing command."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
+	check.chmod(0o755)
+	out = subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt), capture_output=True, text=True).stdout
+	assert "[budget] mine 1 / 2 tok" in out, out
+	assert "identity ~" not in out  # the generic line yields to the corpus's own
+
+
+def test_explain_describes_the_corpus_that_will_actually_be_imported(monkeypatch, tmp_path):
+	"""Explain read the shipped corpus while apply imported CORPUS_HOME. With CORPUS_HOME pointed at
+	your own corpus, the report named the wrong files and the wrong cost right before asking you
+	to agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)                       # CORPUS_HOME now exists, seeded from the shipped one
+	extra = os.path.join(install.CORPUS_HOME, "identity", "EXTRA.md")
+	open(extra, "w").write("a corpus the user has since made their own\n")
+	out = "\n".join(install.full_explain(corpus))
+	assert "EXTRA.md" in out, out                    # from CORPUS_HOME, not from the shipped corpus
+	# ponytail: the count and the cost, not only the name. `assert "AGENTS.md" not in out` used to stand
+	# here and could not fail — neither corpus has that file any more, so it passed with the fix reverted.
+	# These two move when `src` moves, which is the thing the fix changed.
+	home, shipped = install.corpus_files(install.CORPUS_HOME), install.corpus_files(corpus)
+	assert len(home) != len(shipped)                            # or neither assertion below can fail
+	assert f"import {len(home)} files" in out, out              # EXTRA.md is COUNTED, not only listed
+	words = sum(len(open(os.path.join(install.CORPUS_HOME, "identity", n)).read().split()) for n in home)
+	assert f"{int(words * 1.35):,} tokens" in out, out          # and the cost is measured there too
+
+
+def test_explain_does_not_pass_off_the_shipped_corpus_as_the_one_being_cloned(monkeypatch, tmp_path):
+	"""--corpus URL with no CORPUS_HOME yet cannot know the remote's files, and said the shipped ones.
+
+	The report named 3 files and a token cost for a corpus that was about to be replaced by a different
+	one — the number a reader consents to was measured from something they will never load.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus, url="https://example.invalid/theirs.git"))
+	assert "https://example.invalid/theirs.git" in out, out
+	assert "cannot be" in out and "until it is cloned" in out, out
+	shipped = install.corpus_files(corpus)
+	assert f"import {len(shipped)} files" not in out, out       # no file list stated as fact
+	assert "tokens of instructions" not in out, out             # and no cost stated as fact
+
+
+def test_full_explain_names_the_shell_it_will_run(monkeypatch, tmp_path):
+	"""The consent screen has to name the exec, because the exec is the new kind of thing.
+
+	Until this corpus shipped a bin/, a corpus was DATA: markdown imported into context, templates
+	copied. The hook now runs a script out of it at every session start, in every repo — so
+	`--corpus URL` is code you execute, not only text you read, and consent that does not say so is
+	not consent to it.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus))
+	assert "budget-check.sh" in out, out
+	assert "RUNS" in out or "runs" in out, out
+	assert "every session start" in out, out
+
+
+def _hook_repo(tmp_path):
+	"""A git repo and an agent-config dir, the two things the hook reads before it says anything."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	cfg = tmp_path / "cfg"
+	(cfg / "identity").mkdir(parents=True)
+	return wt, cfg
+
+
+def _run_hook(wt, cfg, corpus):
+	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	return subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt),
+	                      capture_output=True, text=True, env=env).stdout
+
+
+def test_the_hook_reports_a_seeded_STATE_md_beside_the_identity_total(tmp_path):
+	"""The branch that fires on every real --full install, and had no test.
+
+	Step 2 seeds .agent/STATE.md from the corpus template, so by the time step 5 runs there is one to
+	report; the only hook test asserted it was ABSENT, which is the case a corpus with no templates
+	produces and not the one a user gets.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	corpus = tmp_path / "corpus"
+	(corpus / "repo-template").mkdir(parents=True)
+	(corpus / "repo-template" / "STATE.md").write_text("a b c d\n")
+	out = _run_hook(wt, cfg, corpus)
+	assert "identity ~13 tok" in out, out
+	assert ".agent/STATE.md ~5 tok" in out, out   # 4 words * 1.35
+	assert out.count("[budget]") == 1, out        # one line, one prefix, not one per part
+
+
+def test_a_budget_check_without_the_executable_bit_falls_back(tmp_path):
+	"""The case the -x guard exists for, and the only one that was never run.
+
+	A corpus cloned without the bit set (or shipped with it lost) must get the generic line, not a hook
+	that points at a command it cannot run.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
+	check.chmod(0o644)                            # present, not executable
+	out = _run_hook(wt, cfg, corpus)
+	assert "identity ~13 tok" in out, out
+	assert "mine 1 / 2 tok" not in out, out
+
+
+def test_no_identity_directory_says_nothing_rather_than_zero(tmp_path):
+	"""An absence reported as a measurement is worse than an absence reported as silence.
+
+	"identity ~0 tok" reads as "the corpus is loaded and empty", which a reader acts on; the corpus is
+	simply not installed.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	out = _run_hook(wt, cfg, tmp_path / "no-such-corpus")
+	assert "identity" not in out, out
+	assert "~0 tok" not in out, out
+
+
+def test_a_corpus_check_that_will_not_stop_talking_is_capped(tmp_path):
+	"""Third-party stdout lands in the session context at every start, in every repo.
+
+	Unbounded, a check that prints 200 lines puts 200 of them there — the cost is paid by the session
+	the budget line exists to protect.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\nfor i in $(seq 200); do echo \"line $i\"; done\n")
+	check.chmod(0o755)
+	out = _run_hook(wt, cfg, corpus)
+	assert out.count("[budget]") == 5, out
+
+
+def test_retire_never_raises_on_a_config_it_cannot_write(monkeypatch, tmp_path):
+	"""team.migrate() states the contract one line above this in the launch path: never raises, because
+	it runs before the first draw and an exception there is a dashboard that never appears.
+
+	retire() did the opposite — os.remove() and _write_text() propagated OSError straight out of main().
+	A read-only ~/.claude, a CLAUDE.md whose realpath is in a checkout the user cannot write, a
+	root-owned file: every launch dead, with no way out but removing the link by hand.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "org-t" / "memory").mkdir(parents=True)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))
+	(cfg / "CLAUDE.md").write_text("# mine\n\n" + install.BLOCK.replace(
+		install.IMPORT, install.IMPORT + "\n@prs-team/general.md"))
+
+	def refuse(*a, **kw):
+		raise OSError(13, "Permission denied")
+	monkeypatch.setattr(install.os, "remove", refuse)
+	monkeypatch.setattr(install, "_write_text", refuse)
+
+	out = install.retire()                       # the whole point: this returns rather than raising
+	assert any("could not retire" in l for l in out), out
+	assert any("could not update the import block" in l for l in out), out
+	assert all("Permission denied" in l for l in out if l.startswith("gitdashy:")), out
+	assert (cfg / "prs-team").is_symlink()       # and it says so instead of pretending it happened
+
+
+def test_a_failed_retirement_is_said_not_swallowed(monkeypatch, tmp_path):
+	"""Reported, not silently skipped. A migration that did not happen and said nothing is one the user
+	discovers when their sessions quietly stop loading the team's facts."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "org-t" / "memory").mkdir(parents=True)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(install.os, "remove", lambda *a, **kw: (_ for _ in ()).throw(OSError(30, "Read-only file system")))
+	out = install.retire()
+	assert out and "Read-only file system" in out[0] and "by hand" in out[0], out
+	# ponytail: a LAUNCH shows the first non-NOTE line, so the failure has to survive that filter or the
+	# one place the user would see it drops it.
+	assert not out[0].startswith("NOTE")
+
+
+def test_an_unclosed_marker_is_not_a_block_of_ours(monkeypatch, tmp_path):
+	"""The two fence walkers disagreed about an unclosed `begin`, and retire() asked one and acted on
+	the other.
+
+	_inside_blocks treated everything after a lone marker as ours; _strip_blocks treated it as not ours
+	and did nothing. So a CLAUDE.md holding an unclosed marker over an `@prs-team/` line reported
+	"ours", stripped nothing, and appended BLOCK — and on the NEXT launch the strip ran from the user's
+	own unclosed marker all the way to the appended END and deleted everything in between. In the file
+	this whole path exists to protect.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	mine = f"# mine\n\n{install.BEGIN}\n# Review memory\n\n@prs-team/general.md\nkeep this line\n"
+	(cfg / "CLAUDE.md").write_text(mine)
+
+	assert install.STALE not in install._inside_blocks(mine)     # not ours: there is no closing marker
+	install.retire()
+	after = (cfg / "CLAUDE.md").read_text()
+	assert after.count(install.BEGIN) == 1, after                # no second block appended
+	assert "keep this line" in after                             # and nothing of theirs eaten
+	install.retire()                                             # idempotent, and still no data loss
+	assert (cfg / "CLAUDE.md").read_text() == after
+
+
+def test_the_two_answers_come_from_one_walk_and_cannot_disagree():
+	"""_split_blocks returns (inside, outside) together, so 'is this ours' and 'remove ours' are the
+	same decision rather than two functions that have to be kept in step by hand."""
+	text = f"# mine\n{install.BEGIN}\nheld\n{install.END}\ntail\n"
+	inside, outside = install._split_blocks(text, install.BEGIN, install.END)
+	assert inside == "held"
+	assert install.BEGIN not in outside and "tail" in outside and "# mine" in outside
+	assert install._inside_blocks(text) == inside
+	assert install._strip_blocks(text, install.BEGIN, install.END) == outside
+	# an unclosed one: nothing held, nothing stripped, and the two still agree
+	lone = f"# mine\n{install.BEGIN}\nheld\n"
+	assert install._split_blocks(lone, install.BEGIN, install.END) == ("", lone)
+
+
+def test_a_launch_survives_a_claude_md_it_cannot_read(monkeypatch, tmp_path):
+	"""The last round wrapped the two WRITES and left the read, which happens first.
+
+	`_read` caught FileNotFoundError, not OSError, so an existing-but-unreadable file raised — and
+	`text = _read(md)` sits above both try blocks. One `sudo claude` leaves a root-owned
+	~/.claude/CLAUDE.md and retire() then tracebacks out of main() before the first draw, which is the
+	exact case the docstring added last round claims is "a report line, not a traceback".
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	md = cfg / "CLAUDE.md"
+	md.write_text("# mine\n")
+	md.chmod(0o000)
+	try:
+		assert install.retire() == []          # returns, says nothing it cannot support, does not raise
+		assert install._read(str(md)) == ""    # unreadable and absent are one answer to every caller
+	finally:
+		md.chmod(0o644)
+
+
+def test_a_draw_survives_an_unreadable_agent_config(monkeypatch, tmp_path):
+	"""session_notes() is called from row() on EVERY draw, so this is not a launch-only crash.
+
+	corpus_remembers() reached both an unguarded os.listdir and a _read that only caught a missing
+	file; either one raising takes the dashboard down every tick until someone chowns the file back.
+	_notes_key() guarded its own OSError correctly, so the cache key computed and then the body raised.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	ident = cfg / "identity"
+	ident.mkdir()
+	(ident / "AGENT.md").write_text("no instruction here\n")
+	ident.chmod(0o000)
+	try:
+		assert install.corpus_remembers() is None   # unreadable is not "a corpus without the instruction"
+		assert install.session_notes() == []        # and nothing is claimed about it
+	finally:
+		ident.chmod(0o755)
+
+	ident.chmod(0o755)
+	(cfg / "CLAUDE.md").write_text("# mine\n")
+	(cfg / "CLAUDE.md").chmod(0o000)
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	try:
+		install.session_notes()                     # the other half: hand_wired_team_import's read
+	finally:
+		(cfg / "CLAUDE.md").chmod(0o644)

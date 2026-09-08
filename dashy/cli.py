@@ -23,7 +23,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
-       gitdashy drafts [--repo owner/name]
+       gitdashy drafts [--repo owner/name] [--count]
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--leave KEY]
 
@@ -53,8 +53,8 @@ self-review runs the reviewer over one of your OWN PRs and posts nothing — a p
   separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
   on the same diff, so only a later real review landing on the same fact independently promotes it.
 
-install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
-  directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
+install wires this machine so every session reads the cross-repo facts: one symlink in the agent config
+  directory and one import. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
   by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
@@ -111,6 +111,8 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 (each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
 S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
 L local memory dir, C where all team checkouts live, n repo memory, g general memory ($EDITOR),
+1/2 or Tab switch the pane between the review summary and the code it is about,
+  in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
 b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop), Z dream (Claude tidies all memory, you approve),
 T teams (n start, a join, e edit its brief, d describe, c connect a remote, x leave), u install the newest release, f refresh, q quit."""
@@ -392,10 +394,22 @@ def api(argv):
 def drafts(argv):
 	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
 	team.activate()
-	only = arg("--repo", "", str, argv)
+	count = "--count" in argv
+	# ponytail: --count is for a session hook, so it defaults to the repo you are standing in and reads
+	# only the local store — no network, and nothing printed when there is nothing to say.
+	only = arg("--repo", "", str, argv) or (team.origin_slug(".") if count else "")
+	if count and not only:
+		# ponytail: a repo we cannot name has nothing waiting FOR IT. Without this a local-only repo —
+		# a git repo, which is all the hook requires — was told every draft on the machine was its own.
+		return
 	rows = memory.waiting()
 	if only:
 		rows = [r for r in rows if (r[0] or "general") == only]
+	if count:
+		if rows:
+			print(f"gitdashy: {len(rows)} draft{'s' if len(rows) != 1 else ''} waiting for {only}"
+			      " — `gitdashy drafts` lists them, W in the dashboard promotes or drops them")
+		return
 	if not rows:
 		return print("  nothing waiting — every observation so far is either a fact or gone")
 	rows.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))

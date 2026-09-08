@@ -123,6 +123,8 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
+| `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
+| `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
@@ -150,7 +152,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
-| `gitdashy drafts` | what a review proposed and no second review has confirmed yet |
+| `gitdashy drafts` | what a review proposed and no second review has confirmed yet; `--count` is one line for a session hook |
 | `gitdashy teams [--new NAME] [--join URL] [--connect URL] [--leave KEY]` | start, join, connect or leave a team; bare, it lists what each covers |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
 | `gitdashy install --full` | the whole thing — an agent corpus in every session too, from [`corpus/`](corpus/) or your own |
@@ -343,8 +345,12 @@ the ones on screen or leave them as the baseline.
 ### Agent sessions
 
 What the reviews learn is worth having open in the editor too. `gitdashy sync-memory --into PATH`
-copies the memory into a repo as two read-only mirrors — `general.md` and `repo.md` — for an agent
-session working there to read:
+copies the memory into a repo as a read-only mirror, `repo.md`, for an agent session working there to
+read. It holds that repo's facts from every source bound to it — and, above them, the one brief a review
+of that repo would get and the bound team's general facts, so a session and a review of one repo are
+told the same things by the same team.
+Your own general facts are not in it: they load live, everywhere, through `gitdashy install`. (`--general`
+mirrors them too, for an agent that has not wired that route.)
 
 ```sh
 cd ~/src/my-repo
