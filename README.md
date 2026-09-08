@@ -150,7 +150,7 @@ What needs installing is the other half: making a regular coding session read th
 |---|---|
 | `gitdashy install` | once per machine — every session reads the cross-repo facts (it explains itself and asks first) |
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
-| `gitdashy setup` | asks who you are and what the work is for, and writes both briefs |
+| `gitdashy setup` | asks who you are and what the work is for; `install --full` asks only the first, because a brief belongs to a repo and not to a machine |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
 | `gitdashy drafts` | what a review proposed and no second review has confirmed yet; `--count` is one line for a session hook |
 | `gitdashy teams [--new NAME] [--join URL] [--connect URL] [--leave KEY]` | start, join, connect or leave a team; bare, it lists what each covers |
