@@ -428,8 +428,17 @@ and who it is working with. Installed by `gitdashy install --full` from {os.path
 def full_explain(corpus, url=""):
 	"""What a full install changes. Returns report lines."""
 	d, out = claude_dir(), []
-	names = corpus_files(corpus)
-	words = sum(len(open(os.path.join(corpus, "identity", n)).read().split()) for n in names)
+	# ponytail: explain what apply will DO. apply imports from CORPUS_HOME when it exists; reading the
+	# shipped corpus here named the wrong files and the wrong cost to anyone who had pointed
+	# CORPUS_HOME at their own corpus — "import 3 files: AGENT.md, AGENTS.md, RULES.md" on a machine
+	# about to import six others.
+	src = CORPUS_HOME if os.path.isdir(CORPUS_HOME) else corpus
+	# ponytail: with --corpus URL and no CORPUS_HOME yet, the remote's identity/ cannot be read before the
+	# clone. Naming the SHIPPED corpus's files and token cost here described a corpus that was about to be
+	# replaced by a different one — an unknown is disclosed as unknown, never filled in with a stand-in.
+	unread = bool(url) and not os.path.isdir(CORPUS_HOME)
+	names = corpus_files(src)
+	words = sum(len(open(os.path.join(src, "identity", n)).read().split()) for n in names)
 	out.append("gitdashy install --full puts an agent corpus on this machine, so every coding session")
 	out.append("works to the same discipline — and adds the review-memory wiring `install` does.")
 	out.append("")
@@ -439,18 +448,33 @@ def full_explain(corpus, url=""):
 	out.append(f"  · {'clone ' + url if url else 'copy the corpus gitdashy ships'} to {knowledge.tilde(CORPUS_HOME)}"
 	           + ("   [EXISTS, will be left alone]" if os.path.isdir(CORPUS_HOME) else "   [new]"))
 	out.append(f"  · symlink {knowledge.tilde(os.path.join(d, 'identity'))} -> that corpus's identity/")
-	out.append(f"  · import {len(names)} files into {knowledge.tilde(os.path.join(d, 'CLAUDE.md'))}: {', '.join(names)}")
+	into = knowledge.tilde(os.path.join(d, "CLAUDE.md"))
+	out.append(f"  · import that corpus's identity/*.md into {into} — which files, and how many, cannot be"
+	           if unread else
+	           f"  · import {len(names)} files into {into}: {', '.join(names)}")
+	if unread:
+		out.append("    known until it is cloned")
 	out.append("  · seed USER.md from the template, for you to fill in, if it is not there already")
 	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
 	out.append("  · everything plain `gitdashy install` does, for review memory")
 	out.append("")
 	out.append("What that costs, every session on this machine, permanently:")
-	out.append(f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
+	out.append("  · however many tokens that corpus's identity/ holds — unknown until it is cloned"
+	           if unread else
+	           f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
 	out.append("  · one hook running at the start of every session, in every repo")
 	out.append("")
 	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
 	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
 	out.append("that git can see, and exits quietly if it is not in a repo.")
+	out.append("")
+	# ponytail: until this corpus shipped a bin/, the corpus was DATA — markdown imported into context,
+	# templates copied. The hook now RUNS a script out of it, so a --corpus URL is no longer only text you
+	# read: it is code that executes at every session start. That is a different thing to agree to, and
+	# consent that does not name it is not consent to it.
+	out.append("It also RUNS one script from that corpus if it ships an executable bin/budget-check.sh —")
+	out.append("shell, at every session start, in every repo. A corpus is code you run, not only text you")
+	out.append("read: `--corpus URL` grants that to whoever can push to it.")
 	out.append("")
 	out.append("`gitdashy install --full --uninstall` reverses all of it. The corpus is left on disk,")
 	out.append("because by then you may have edited it.")

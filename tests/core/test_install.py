@@ -843,3 +843,169 @@ def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
 	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
 	assert "no origin" not in note and "no name" not in note
 	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says
+
+
+def test_the_session_hook_says_what_it_is_loading(tmp_path):
+	"""'Know what you are loading' was a sentence in a README. One line at session start is a guard
+	that does not depend on being remembered; the corpus that ships this hook grew to twice its stated
+	ceiling before anyone measured."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	cfg = tmp_path / "cfg"
+	(cfg / "identity").mkdir(parents=True)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                     capture_output=True, text=True, env=env).stdout
+	assert "[budget] identity ~13 tok" in out, out  # 10 words * 1.35, the estimate the corpus uses
+	assert "STATE.md" not in out  # none seeded from a corpus with no templates, so none reported
+	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
+	assert seen.strip() == ""  # still writes nothing git can see
+
+
+def test_a_corpus_that_ships_its_own_budget_check_runs_it_instead(tmp_path):
+	"""A corpus knows its own budgets better than a generic total does; when it ships the check, the
+	hook defers to it and says nothing of its own. Guarded on -x, so a corpus without one gets the
+	generic line rather than a hook pointing at a missing command."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
+	check.chmod(0o755)
+	out = subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt), capture_output=True, text=True).stdout
+	assert "[budget] mine 1 / 2 tok" in out, out
+	assert "identity ~" not in out  # the generic line yields to the corpus's own
+
+
+def test_explain_describes_the_corpus_that_will_actually_be_imported(monkeypatch, tmp_path):
+	"""Explain read the shipped corpus while apply imported CORPUS_HOME. With CORPUS_HOME pointed at
+	your own corpus, the report named the wrong files and the wrong cost right before asking you
+	to agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)                       # CORPUS_HOME now exists, seeded from the shipped one
+	extra = os.path.join(install.CORPUS_HOME, "identity", "EXTRA.md")
+	open(extra, "w").write("a corpus the user has since made their own\n")
+	out = "\n".join(install.full_explain(corpus))
+	assert "EXTRA.md" in out, out                    # from CORPUS_HOME, not from the shipped corpus
+	# ponytail: the count and the cost, not only the name. `assert "AGENTS.md" not in out` used to stand
+	# here and could not fail — neither corpus has that file any more, so it passed with the fix reverted.
+	# These two move when `src` moves, which is the thing the fix changed.
+	home, shipped = install.corpus_files(install.CORPUS_HOME), install.corpus_files(corpus)
+	assert len(home) != len(shipped)                            # or neither assertion below can fail
+	assert f"import {len(home)} files" in out, out              # EXTRA.md is COUNTED, not only listed
+	words = sum(len(open(os.path.join(install.CORPUS_HOME, "identity", n)).read().split()) for n in home)
+	assert f"{int(words * 1.35):,} tokens" in out, out          # and the cost is measured there too
+
+
+def test_explain_does_not_pass_off_the_shipped_corpus_as_the_one_being_cloned(monkeypatch, tmp_path):
+	"""--corpus URL with no CORPUS_HOME yet cannot know the remote's files, and said the shipped ones.
+
+	The report named 3 files and a token cost for a corpus that was about to be replaced by a different
+	one — the number a reader consents to was measured from something they will never load.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus, url="https://example.invalid/theirs.git"))
+	assert "https://example.invalid/theirs.git" in out, out
+	assert "cannot be" in out and "until it is cloned" in out, out
+	shipped = install.corpus_files(corpus)
+	assert f"import {len(shipped)} files" not in out, out       # no file list stated as fact
+	assert "tokens of instructions" not in out, out             # and no cost stated as fact
+
+
+def test_full_explain_names_the_shell_it_will_run(monkeypatch, tmp_path):
+	"""The consent screen has to name the exec, because the exec is the new kind of thing.
+
+	Until this corpus shipped a bin/, a corpus was DATA: markdown imported into context, templates
+	copied. The hook now runs a script out of it at every session start, in every repo — so
+	`--corpus URL` is code you execute, not only text you read, and consent that does not say so is
+	not consent to it.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus))
+	assert "budget-check.sh" in out, out
+	assert "RUNS" in out or "runs" in out, out
+	assert "every session start" in out, out
+
+
+def _hook_repo(tmp_path):
+	"""A git repo and an agent-config dir, the two things the hook reads before it says anything."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	cfg = tmp_path / "cfg"
+	(cfg / "identity").mkdir(parents=True)
+	return wt, cfg
+
+
+def _run_hook(wt, cfg, corpus):
+	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	return subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt),
+	                      capture_output=True, text=True, env=env).stdout
+
+
+def test_the_hook_reports_a_seeded_STATE_md_beside_the_identity_total(tmp_path):
+	"""The branch that fires on every real --full install, and had no test.
+
+	Step 2 seeds .agent/STATE.md from the corpus template, so by the time step 5 runs there is one to
+	report; the only hook test asserted it was ABSENT, which is the case a corpus with no templates
+	produces and not the one a user gets.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	corpus = tmp_path / "corpus"
+	(corpus / "repo-template").mkdir(parents=True)
+	(corpus / "repo-template" / "STATE.md").write_text("a b c d\n")
+	out = _run_hook(wt, cfg, corpus)
+	assert "identity ~13 tok" in out, out
+	assert ".agent/STATE.md ~5 tok" in out, out   # 4 words * 1.35
+	assert out.count("[budget]") == 1, out        # one line, one prefix, not one per part
+
+
+def test_a_budget_check_without_the_executable_bit_falls_back(tmp_path):
+	"""The case the -x guard exists for, and the only one that was never run.
+
+	A corpus cloned without the bit set (or shipped with it lost) must get the generic line, not a hook
+	that points at a command it cannot run.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
+	check.chmod(0o644)                            # present, not executable
+	out = _run_hook(wt, cfg, corpus)
+	assert "identity ~13 tok" in out, out
+	assert "mine 1 / 2 tok" not in out, out
+
+
+def test_no_identity_directory_says_nothing_rather_than_zero(tmp_path):
+	"""An absence reported as a measurement is worse than an absence reported as silence.
+
+	"identity ~0 tok" reads as "the corpus is loaded and empty", which a reader acts on; the corpus is
+	simply not installed.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	out = _run_hook(wt, cfg, tmp_path / "no-such-corpus")
+	assert "identity" not in out, out
+	assert "~0 tok" not in out, out
+
+
+def test_a_corpus_check_that_will_not_stop_talking_is_capped(tmp_path):
+	"""Third-party stdout lands in the session context at every start, in every repo.
+
+	Unbounded, a check that prints 200 lines puts 200 of them there — the cost is paid by the session
+	the budget line exists to protect.
+	"""
+	wt, cfg = _hook_repo(tmp_path)
+	corpus = tmp_path / "corpus"
+	(corpus / "bin").mkdir(parents=True)
+	check = corpus / "bin" / "budget-check.sh"
+	check.write_text("#!/usr/bin/env bash\nfor i in $(seq 200); do echo \"line $i\"; done\n")
+	check.chmod(0o755)
+	out = _run_hook(wt, cfg, corpus)
+	assert out.count("[budget]") == 5, out
