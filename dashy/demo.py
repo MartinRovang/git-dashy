@@ -58,7 +58,8 @@ def install():
 	mine = [dict(pr(101, "Add retry to webhook client", hours=2, now=now), status="· awaiting review", reviewers="✓bob ·carol", checks="✓"),
 	        dict(pr(98, "WIP: migrate to pydantic v2 and drop the hand-rolled validators in the ingest and export paths",
 	                hours=30, draft=True, now=now), reviewers="")]  # long title: overflows most terminals, shows the marquee
-	rr = [dict(pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1, now=now), checks="✗"),
+	rr = [dict(pr(212, "Fix off-by-one in pagination", "acme/web", "bob", 1, now=now), checks="✗",
+	           reviewers="~erin ·me"),  # a comment on someone else's PR: visible to everyone, not just erin
 	      dict(pr(207, "Cache user lookups in session middleware", "acme/web", "carol", 5, now=now), checks="●"),
 	      pr(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48, now=now)]
 	late = pr(213, "Hotfix: null check in export job", "acme/web", "bob", 0, now=now)  # 3rd refresh, exercises auto

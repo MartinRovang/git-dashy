@@ -57,7 +57,8 @@ def test_fetch_joins_ci_and_head_from_graphql_for_every_section(monkeypatch):
 			return Result(json.dumps({"data": {
 				"mine": {"nodes": [{"url": "a", "headRefOid": "aaa", "reviewDecision": "APPROVED",
 				                    "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]}}]},
-				"rr": {"nodes": [{"url": "b", "headRefOid": "bbb", "commits": {"nodes": [{"commit": {"statusCheckRollup": None}}]}}]},
+				"rr": {"nodes": [{"url": "b", "headRefOid": "bbb", "commits": {"nodes": [{"commit": {"statusCheckRollup": None}}]},
+				                  "latestReviews": {"nodes": [{"author": {"login": "erin"}, "state": "COMMENTED"}]}}]},
 				"asg": {"nodes": []}}}))
 		return Result(json.dumps(per_flag[cmd[4]]))
 	monkeypatch.setattr(subprocess, "run", fake_run)
@@ -65,6 +66,7 @@ def test_fetch_joins_ci_and_head_from_graphql_for_every_section(monkeypatch):
 	a, b = secs[0][1][0], secs[1][1][0]
 	assert (a["head"], a["checks"], a["status"]) == ("aaa", "✗", "✓ approved")
 	assert (b["head"], b["checks"]) == ("bbb", "") and "status" not in b  # no checks configured, not my PR
+	assert b["reviewers"] == "~erin"  # reviewers on EVERY section, not just MINE
 	assert github.checks({"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}) == "●"
 
 
@@ -117,6 +119,20 @@ def test_reviewers_merges_requests_over_latest_reviews():
 	                                     {"requestedReviewer": {}}, {"requestedReviewer": None}]}}  # a Team: not asked for
 	assert github.reviewers(node) == "✓bob ·carol ·alice"
 	assert github.reviewers({}) == ""
+
+
+def test_a_comment_survives_its_still_standing_review_request():
+	"""A COMMENTED review does not clear the request, so the request must not erase the comment."""
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "COMMENTED"}]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "bob"}}]}}
+	assert github.reviewers(node) == "~bob"
+
+
+def test_a_dismissed_review_reads_as_not_yet_looked_not_as_a_comment():
+	"""Dismissing a review re-requests the reviewer; DISMISSED has no glyph and must not fall back to ~."""
+	node = {"latestReviews": {"nodes": [{"author": {"login": "bob"}, "state": "DISMISSED"}]},
+	        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "bob"}}]}}
+	assert github.reviewers(node) == "·bob"
 
 
 def test_collaborators_and_request_review_shell_out(monkeypatch):
