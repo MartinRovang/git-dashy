@@ -17,7 +17,7 @@ your reviews already have.
 | press `T` in the dashboard | the same, shared with a team and gated by `P` | a private git repo you name |
 | `gitdashy install` | **coding sessions read it too** | two symlinks and one block in your agent config |
 | `gitdashy init` in a repo | sessions there also read that repo's own facts | that repo's `.git/info/exclude` and the file you name |
-| `gitdashy install --full` | **the whole thing** — an agent corpus in every session, plus all of the above | the above, and one `SessionStart` hook |
+| `gitdashy install --full` | **the whole thing** — an agent corpus in every session, plus all of the above | the above, and two hooks: `SessionStart` and `Stop` |
 
 Each tier is additive and independent, and turning one on later is **retroactive** —
 months of learning become visible the moment you install, with nothing to migrate.
@@ -181,8 +181,13 @@ gitdashy install --full --corpus git@host:you/corpus.git   # or your own
 - imports those files in `~/.claude/CLAUDE.md`, in a block separate from the memory one,
   so either can be removed without the other
 - seeds `USER.md` from `USER.md.template` if absent — and never overwrites what you wrote
-- registers **one** `SessionStart` hook, gitdashy's own — so any corpus works, not only one that happens to ship the script, added surgically: your other settings and other
-  hooks are preserved, and installing twice never doubles it
+- registers **two** hooks, gitdashy's own — so any corpus works, not only one that happens to ship the scripts. Added surgically: your other settings and other
+  hooks are preserved, and installing twice never doubles either
+  - `SessionStart` — seeds a repo's `.agent/` notes and mirrors its review memory, before the session starts
+  - `Stop` — when a session ends, asks it to write down what it learned, but only if it actually fought
+    something. **It can hold a session open for that one question** — once, never twice, never on a
+    routine session. It reads the transcript and nothing else, and sends nothing anywhere. See
+    [memory.md](memory.md) for why an instruction was not enough
 - everything plain `install` does
 
 ### The hook — and where the agent-specific line falls

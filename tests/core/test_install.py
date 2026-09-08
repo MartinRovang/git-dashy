@@ -1472,3 +1472,38 @@ def test_the_consent_screen_names_the_stop_hook_and_what_it_can_do(monkeypatch, 
 	assert "hold a session open" in out, out
 	assert "never twice" in out, out
 	assert "sends nothing anywhere" in out, out
+
+
+def test_one_missing_hook_script_does_not_cost_you_the_other(monkeypatch, tmp_path):
+	"""The per-hook SKIP claims exactly this, and nothing proved it.
+
+	Registration walks HOOK_TABLE; a script that is present but not executable must skip its own row
+	and leave the other registered, rather than aborting the loop or writing a hook that cannot run.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	dead = tmp_path / "not-executable.sh"
+	dead.write_text("#!/usr/bin/env bash\nexit 0\n")
+	dead.chmod(0o644)
+	monkeypatch.setattr(install, "HOOK_TABLE",
+	                    (install.HOOK_TABLE[0],
+	                     ("Stop", str(dead), install.STOP_MATCH, "x", False)))
+	out = install.full_apply(corpus)
+	assert any("SKIP" in l and "no Stop hook" in l for l in out), out
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "SessionStart") == 1        # the other one still landed
+	assert not settings.get("hooks", {}).get("Stop")
+
+
+def test_the_install_doc_names_every_hook_that_is_actually_registered(monkeypatch, tmp_path):
+	"""docs/install.md is what README calls "the full account — every file it writes".
+
+	It said install registers "one SessionStart hook" while HOOK_TABLE had grown to two, and it
+	understated it precisely for the hook that can hold a session open. Prose nobody checks is the
+	thing that goes stale, so the check is here rather than in someone's memory: the doc has to name
+	every event the code actually registers.
+	"""
+	doc = open(os.path.join(install.HERE, "docs", "install.md")).read()
+	for event, *_ in install.HOOK_TABLE:
+		assert f"`{event}`" in doc, f"docs/install.md never names the {event} hook"
+	# and the one consequence a reader must not have to discover at runtime
+	assert "hold a session open" in doc, doc[:0] or "docs/install.md does not say the Stop hook can block"

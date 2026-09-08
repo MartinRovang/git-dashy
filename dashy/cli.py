@@ -22,7 +22,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy drafts [--repo owner/name] [--count]
-       gitdashy friction [--transcript PATH | --interrupts N --denials N] [--repo owner/name]
+       gitdashy friction [--claude-hook | --interrupts N --denials N] [--repo owner/name]
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--leave KEY]
 
@@ -443,37 +443,40 @@ def teams(argv):
 def friction(argv):
 	"""Ask, when a session hit something worth remembering. The contract every agent is wired against.
 
-	Three ways in, one policy behind all of them:
+	Two ways in, one policy behind both:
 
 	    gitdashy friction --interrupts N --denials N     any agent that can count its own signals
-	    gitdashy friction --transcript PATH              a Claude Code transcript, counted here
 	    gitdashy friction --claude-hook                  Claude's Stop hook JSON on stdin, its JSON out
 
 	Prints the reason and exits 0 when there is one; prints nothing when there is not. Silence is the
 	normal answer — most sessions are routine, and one that fires every time is a prompt nobody reads.
+
+	ponytail: there was a third door, `--transcript PATH`, and nothing wired it: --claude-hook covers
+	Claude and --interrupts/--denials covers everyone else. It also resolved filed_since BEFORE counting
+	while the hook path does it after, so the two entry points disagreed about a session that had both
+	friction and a draft. One door fewer is one disagreement fewer. `echo '{"transcript_path":"..."}' |
+	gitdashy friction --claude-hook` does the same job for a person debugging one.
 	"""
-	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
-	if "--claude-hook" in argv:
-		try:
-			hook = json.loads(sys.stdin.read() or "{}")
-		except ValueError:
-			return  # ponytail: a hook that cannot parse its own input says nothing, never blocks a stop
-		# ponytail: stop_hook_active means WE already blocked this stop once. Blocking again is a loop the
-		# user cannot leave except by killing the session, so the second ask is never made.
-		if hook.get("stop_hook_active") or not (path := hook.get("transcript_path")):
-			return
-		said = friction_mod.reason(*friction_mod.claude_signals(path))
-		if said and not friction_mod.filed_since(repo, friction_mod.started_at(path)):
-			print(json.dumps({"decision": "block", "reason": said}))
+	if "--claude-hook" not in argv:
+		if said := friction_mod.reason(arg("--interrupts", 0, int, argv), arg("--denials", 0, int, argv)):
+			print(said)
 		return
-	if path := arg("--transcript", "", str, argv):
-		if friction_mod.filed_since(repo, friction_mod.started_at(path)):
-			return  # this session already filed one; asking again teaches it the prompt is noise
-		counted = friction_mod.claude_signals(path)
-	else:
-		counted = (arg("--interrupts", 0, int, argv), arg("--denials", 0, int, argv))
-	if said := friction_mod.reason(*counted):
-		print(said)
+	try:
+		hook = json.loads(sys.stdin.read() or "{}")
+	except ValueError:
+		return  # ponytail: a hook that cannot parse its own input says nothing, never blocks a stop
+	# ponytail: stop_hook_active means WE already blocked this stop once. Blocking again is a loop the
+	# user cannot leave except by killing the session, so the second ask is never made.
+	if hook.get("stop_hook_active") or not (path := hook.get("transcript_path")):
+		return
+	if not (said := friction_mod.reason(*friction_mod.claude_signals(path))):
+		return
+	# ponytail: the repo is resolved HERE, not at the top. origin_slug() forks `git`, and this runs at
+	# the end of every session in every repo — above the check it paid for that fork on every routine
+	# session and then discarded the answer, which is ~99% of them.
+	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
+	if not friction_mod.filed_since(repo, friction_mod.started_at(path)):
+		print(json.dumps({"decision": "block", "reason": said}))
 
 
 def run(argv=None):
