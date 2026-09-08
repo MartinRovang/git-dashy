@@ -1,16 +1,26 @@
 # Who you are
 
-Just you. What is being *built* goes in `project.md` — `gitdashy setup` will ask you for
-both. On your own that file is yours; in a team it is the team's, written once and read by
-everyone. Either way it is not this file, and you should not restate it here.
+Just you — the parts that do not change when you change project. `gitdashy setup` asks for
+the two below and nothing else.
+
+What is being *built*, and **who owns which parts of it**, go in `project.md`, because both
+are properties of a project rather than of you. On your own that file is yours; in a team it
+is the team's, written once and read by everyone, and a review of a repo bound to it is told
+the same thing you are. Either way it is not this file.
+
+That distinction is worth holding: this file is loaded by every session in every repo, so a
+paragraph about one product here is a paragraph in the context of work on every other. If you
+find yourself writing "on the X platform we…", it belongs in that project's brief.
 
 A few honest lines beat a long empty form.
 
 **Name:**
 
-**Role:** — what you do, and where you are strongest
-
 **How you work:** — where you want friction and where you do not. Corrections you have
 had to make more than once belong here; they are the highest-value lines in the file.
 
-**What you own:** — the parts of the system that are yours to answer for
+---
+
+Anything else you add is kept. `gitdashy setup` rewrites only the sections it asked about
+and leaves every other one exactly as you wrote it, so this is your file to grow — as long
+as what you grow it with is true wherever you are working.

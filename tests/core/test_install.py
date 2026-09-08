@@ -316,13 +316,17 @@ def test_setup_writes_only_what_was_answered(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	home = tmp_path / "corpus"
 	(home / "identity").mkdir(parents=True)
-	answers = iter(["Nils", "", "ask first", "", "a platform", "", "CE marking", ""])
+	answers = iter(["Nils", "ask first", "a platform", "", "CE marking", "", "Pontus owns the viewer"])
 	out = install.setup(lambda p: next(answers), str(home))
 	user = (home / "identity" / "USER.md").read_text()
 	assert "## Name\n\nNils" in user and "## How you work\n\nask first" in user
-	assert "## Role" not in user and "## What you own" not in user  # blanks are skipped, not left empty
+	assert "## Why it matters" not in user  # blanks are skipped, not left empty
 	brief = (tmp_path / "mem" / "project.md").read_text()
 	assert "## The project\n\na platform" in brief and "## Constraints\n\nCE marking" in brief
+	# ponytail: ownership is a property of the PROJECT, so it lands in the brief a review of that repo
+	# reads — not in a USER.md that every session in every repo loads.
+	assert "## Who does what\n\nPontus owns the viewer" in brief, brief
+	assert "own" not in user.lower(), user
 	assert any("wrote" in l and "USER.md" in l for l in out)
 
 
@@ -492,15 +496,21 @@ def test_setup_blank_keeps_what_is_there(monkeypatch, tmp_path):
 	home = tmp_path / "corpus"
 	(home / "identity").mkdir(parents=True)
 	user = home / "identity" / "USER.md"
-	full = iter(["Martin R", "Engineer", "ask first", "the viewer", "", "", "", ""])
+	full = iter(["Martin R", "ask first", "", "", "", "", ""])
 	install.setup(lambda p: next(full), str(home))
-	user.write_text(user.read_text() + "\n## Hand added\n\nsomething I wrote\n")
-	partial = iter(["Martin Rovang", "", "", "", "", "", "", ""])
+	# ponytail: sections setup no longer ASKS about — including Role and What you own, which it used to
+	# and does not any more. This is the migration: someone who answered them before keeps every word,
+	# because compose() writes back what it was not given rather than what it did not ask for. A
+	# rescoping that silently emptied the file it was rescoping would be worse than the wrong scope.
+	user.write_text(user.read_text() + "\n## Role\n\nEngineer\n\n## What you own\n\nthe viewer\n"
+	                                   "\n## Hand added\n\nsomething I wrote\n")
+	partial = iter(["Martin Rovang", "", "", "", "", "", ""])
 	install.setup(lambda p: next(partial), str(home))
 	got = install.sections(user.read_text())
 	assert got["Name"] == "Martin Rovang"          # answered, so replaced
-	assert got["Role"] == "Engineer"               # blank, so kept
-	assert got["How you work"] == "ask first" and got["What you own"] == "the viewer"
+	assert got["How you work"] == "ask first"      # blank, so kept
+	assert got["Role"] == "Engineer"               # no longer asked about, and STILL THERE
+	assert got["What you own"] == "the viewer"
 	assert got["Hand added"] == "something I wrote"  # never asked about, still there
 
 
@@ -1598,3 +1608,36 @@ def test_the_install_offer_is_done_once_you_have_said_who_you_are(monkeypatch, t
 	install.setup(lambda q: "answered", project=False)
 	assert install.setup_done(project=False) is True            # and now there is nothing left to ask
 	assert install.setup_done() is False                        # but the brief is still unwritten
+
+
+def test_install_asks_nothing_that_changes_when_you_change_project(monkeypatch, tmp_path):
+	"""The whole point of the rescoping, stated as a property rather than a list.
+
+	`Role` and `What you own` were asked at machine scope and are answers about one project — which is
+	how the corpus's own USER.md ended up with ten of its thirteen sections about a single platform, in
+	a file every session in every repo loads. Its cross-cutting section says so out loud.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q.split(" —")[0].split("\n")[0]) or "x", project=False)
+	assert asked == ["Name", "How you work"], asked
+	for gone in ("Role", "What you own", "The project"):
+		assert gone not in asked, asked
+
+
+def test_ownership_is_asked_with_the_project_and_lands_in_its_brief(monkeypatch, tmp_path):
+	"""Who owns what is a property of a project, and a review of that repo is the thing that needs it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q.split(" —")[0].split("\n")[0]) or "answer", project=True)
+	assert "Who does what" in asked, asked
+	assert asked.index("Who does what") > asked.index("The project"), asked   # with the project, after it
+	brief = _read_text(memory.brief_path())
+	assert "## Who does what" in brief, brief
+	assert "## Who does what" not in _read_text(os.path.join(install.CORPUS_HOME, "identity", "USER.md"))
+
+
+def _read_text(p):
+	return open(p).read() if os.path.exists(p) else ""

@@ -244,15 +244,27 @@ on disk**, because by then it is yours and may not look like what was installed.
 A full install ends by offering **one** brief — who you are — and runs `gitdashy setup` for
 it if you say yes. Decline and nothing is waiting on it; run `gitdashy setup` whenever.
 
-It does **not** ask what the work is for, because that is not a property of this machine.
+It does **not** ask what the work is for, or who owns which parts of it, because neither is
+a property of this machine.
 Who you are is: one person, one `USER.md`. What the work is for belongs to a *repo*, and a
 person works on more than one — asked once at install time it wrote a single
 `~/.prs_memory/project.md` that every repo bound to no team then read, so a second project
 inherited the first one's brief. That is the same failure `brief()` was rewritten to stop
 for teams, arriving through the personal slot instead.
 
-`gitdashy setup` still asks for it, and says plainly that the personal brief covers **every**
-repo bound to no team. To give each project its own, bind it to a team — which needs no
+The same reasoning took two questions out of `USER.md`. It used to ask for your **Role** and
+**what you own** — both answers about one project, in a file every session in every repo
+loads. The corpus's own `USER.md` is the evidence: ten of its thirteen sections describe a
+single platform, and its cross-cutting section says so in its own opening line. Ownership
+moved to the project brief, where binding scopes it and where a review of that repo is
+actually told it. Install now asks two questions, `Name` and `How you work`, neither of which
+changes when you change project.
+
+Nothing you already wrote is lost: `setup` rewrites only the sections it asked about, so an
+existing `Role` or `What you own` stays exactly as you left it.
+
+`gitdashy setup` still asks for the brief, and says plainly that the personal one covers
+**every** repo bound to no team. To give each project its own, bind it to a team — which needs no
 remote and no other people:
 
 ```sh

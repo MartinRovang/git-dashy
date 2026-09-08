@@ -886,14 +886,23 @@ def full_remove(dry=False):
 	return out + [""] + remove(dry)
 
 
+# ponytail: ONLY what is true of you whatever you are working on. "Role" and "What you own" used to be
+# here and are not: a person's role differs per project, and what they own is a property OF a project —
+# which put a paragraph about one product into a file every session in every repo loads. The corpus's
+# own USER.md is the proof: ten of its thirteen sections are about one platform, and its cross-cutting
+# section says so out loud ("these are cross-cutting: they hold in every repo"). Ownership moved to the
+# project brief, where it is scoped by binding and where a review of that repo is actually told it.
 ASK_YOU = (("Name", "what you would like to be called"),
-           ("Role", "what you do, and where you are strongest"),
-           ("How you work", "where you want friction and where you do not"),
-           ("What you own", "the parts of the system that are yours to answer for"))
+           ("How you work", "where you want friction and where you do not"))
 ASK_PROJECT = (("The project", "what it is, and who uses it"),
                ("Why it matters", "the outcome that makes the work worth doing"),
                ("Constraints", "regulatory, contractual, performance — anything with real consequences"),
-               ("How the code is shaped", "what a newcomer would otherwise learn the hard way"))
+               ("How the code is shaped", "what a newcomer would otherwise learn the hard way"),
+               # ponytail: WHO, not only what. Ownership is a property of the project, so it belongs
+               # here rather than in USER.md — and a review of one of these repos is told it, which is
+               # the point. Shared with the team when the brief is a team's: on a small team "who
+               # answers for this" is something everyone benefits from and nobody should have to ask.
+               ("Who does what", "who owns which parts, you included"))
 
 
 SETUP_MARK = "<!-- written by gitdashy setup -->"
