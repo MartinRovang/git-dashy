@@ -1,10 +1,13 @@
 import json
+import logging
 import os
+import sys
+import threading
 
 import pytest
 
 from dashy import cli, config
-from dashy.core import install as install_mod, memory, team
+from dashy.core import install as install_mod, memory, state, team
 
 
 def facts(p):
@@ -409,3 +412,32 @@ def test_drafts_count_says_nothing_for_a_repo_it_cannot_name(monkeypatch, capsys
 	memory.append(None, "a general guess")
 	cli.drafts(["gitdashy", "drafts", "--count"])
 	assert capsys.readouterr().out == ""
+
+
+def test_debug_writes_log_file(monkeypatch, tmp_path, capsys):
+	"""--debug: a swallowed exception lands in the file with its traceback; a crash lands there AND on stderr."""
+	path = tmp_path / "dbg.log"
+	monkeypatch.setattr(config, "DEBUG_LOG", str(path))
+	monkeypatch.setattr(logging.root, "handlers", [])  # basicConfig is a no-op once a handler exists
+	monkeypatch.setattr(logging.root, "level", logging.root.level)
+	monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+	monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+	cli.debug(["gitdashy"])
+	assert oct(path.stat().st_mode)[-3:] == "600"
+	try:
+		raise ValueError("boom")
+	except ValueError:
+		state.LOG.exception("tick failed")
+		sys.excepthook(*sys.exc_info())
+	text = path.read_text()
+	assert "starting" in text and "tick failed" in text and "uncaught" in text and text.count("ValueError: boom") == 2
+	assert "ValueError: boom" in capsys.readouterr().err
+	for h in logging.root.handlers:
+		h.close()
+
+
+def test_logger_silent_without_debug(monkeypatch, capsys):
+	"""The NullHandler on `dashy` keeps logging.lastResort off the curses screen."""
+	monkeypatch.setattr(logging.root, "handlers", [])
+	state.LOG.error("tick failed")
+	assert capsys.readouterr().err == ""

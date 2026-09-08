@@ -5,6 +5,7 @@ prompt for those backends. Claude reads it itself, with the one command it is gi
 a backend proves it can drive one, not before.
 """
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -31,6 +32,7 @@ def ask(prompt, model, system="", tools="", timeout=900):
 	"""Run the prompt. Returns (text, cost_usd_or_None, ms). Raises like subprocess does."""
 	who, name = provider(model)
 	started = time.time()
+	logging.getLogger(__name__).debug("ask %s:%s tools=%s prompt=%d chars", who, name, tools, len(prompt))
 	if who == "claude":
 		cmd = ["claude", "-p", prompt, "--output-format", "json", "--safe-mode", "--model", name]
 		if system:
@@ -88,6 +90,7 @@ def ping(model):
 	try:
 		said, _, _ = ask("Reply with exactly: OK", model, timeout=120)
 	except Exception as e:  # ponytail: a check that reports its own failure, so every backend fails the same way
+		logging.getLogger(__name__).exception("ping %s failed", model)
 		return [(f"could not reach {provider(model)[0]}", False, str(getattr(e, "reason", None) or e)[:120])]
 	return [(f"{provider(model)[0]} answers", "OK" in said.upper(), said[:80])]
 

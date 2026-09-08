@@ -3,9 +3,11 @@ import base64
 import curses
 import itertools
 import json
+import logging
 import os
 import signal
 import sys
+import threading
 
 from . import HERE, VERSION, config, demo
 from .core import (bind as bind_mod, friction as friction_mod, github, install as install_mod, knowledge,
@@ -14,7 +16,7 @@ from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--version] [--help]
+Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
@@ -38,6 +40,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
+  --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
 
 sync-memory copies this repo's review memory into PATH as a read-only mirror, so an agent session there
   reads what the reviews learned. --repo defaults to this directory's origin. Cross-repo facts are left out:
@@ -536,8 +539,20 @@ def friction(argv):
 		print(json.dumps({"decision": "block", "reason": said}))
 
 
+def debug(argv):
+	"""Dump the log to config.DEBUG_LOG, tracebacks included. The screen shows one line per failure; this keeps the rest."""
+	logging.basicConfig(filename=config.DEBUG_LOG, level=logging.DEBUG, format="%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s")
+	os.chmod(config.DEBUG_LOG, 0o600)  # every PR url and traceback lands here
+	# Log, then hand over to the default hooks: a crash still prints to the terminal.
+	sys.excepthook = lambda *a: (logging.critical("uncaught", exc_info=a), sys.__excepthook__(*a))
+	threading.excepthook = lambda a: (logging.critical("uncaught in thread %s", a.thread.name, exc_info=(a.exc_type, a.exc_value, a.exc_traceback)), threading.__excepthook__(a))
+	logging.info("gitdashy %s starting: %s", VERSION, argv)
+
+
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
+	if "--debug" in argv or os.environ.get("PRS_DEBUG"):
+		debug(argv)
 	if "--help" in argv or "-h" in argv:
 		return print(USAGE)
 	if "--version" in argv:
