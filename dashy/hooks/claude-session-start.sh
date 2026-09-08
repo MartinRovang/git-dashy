@@ -42,4 +42,29 @@ fi
 # 4. this repo's review memory, if gitdashy is around. --no-pull: a hook has seconds, not a network.
 command -v gitdashy >/dev/null 2>&1 && \
   gitdashy init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || true
+
+# 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
+#    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to
+#    twice its stated ceiling before anyone measured. One line, at the moment it is true, in context.
+#    A corpus that ships its own check knows its own budgets better — it runs instead, and this step
+#    is silent. Never blocks: a budget is information at session start, not a gate.
+if [ -x "$CORPUS/bin/budget-check.sh" ]; then
+  # ponytail: BOUNDED. This is a third-party script whose stdout lands in the session context at every
+  # start — an unbounded pipe let a check that printed 200 lines put 200 of them there, in every repo,
+  # forever. A budget is a handful of lines by definition; anything past that is a broken check, and the
+  # cap is what stops it costing the session it is reporting on.
+  "$CORPUS/bin/budget-check.sh" 2>/dev/null | head -5 | sed 's/^/[budget] /' || true
+else
+  ID="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/identity"
+  tok() { cat "$@" 2>/dev/null | awk '{w+=NF} END{printf "%d", w*1.35}'; }
+  line=""
+  # ponytail: no identity/ at all is an ABSENCE, and "identity ~0 tok" reports it as a measurement —
+  # a reader acts on 0 as though the corpus were loaded and empty. Say nothing rather than say zero.
+  # The glob is tested for a real file: unmatched, bash leaves the pattern itself as the argument.
+  for f in "$ID"/*.md; do
+    [ -f "$f" ] && { line="identity ~$(tok "$ID"/*.md) tok"; break; }
+  done
+  [ -f .agent/STATE.md ] && line="${line:+$line · }.agent/STATE.md ~$(tok .agent/STATE.md) tok"
+  [ -n "$line" ] && echo "[budget] $line"
+fi
 exit 0
