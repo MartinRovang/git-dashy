@@ -48,16 +48,17 @@ def reviewers(node):
 	out = {}
 	for n in (node.get("latestReviews") or {}).get("nodes") or []:
 		if n and n.get("author"):
-			out[n["author"]["login"]] = REVIEW_GLYPH.get(n.get("state"), "~")
+			out[n["author"]["login"]] = n.get("state")
 	for n in (node.get("reviewRequests") or {}).get("nodes") or []:
 		r = (n or {}).get("requestedReviewer") or {}
 		# ponytail: a fresh request supersedes an older review — EXCEPT a comment. GitHub clears the
 		# request when a review approves or requests changes, so a reviewer in BOTH lists really was
 		# asked again. Commenting clears nothing, so the standing request is the ORIGINAL one, and
 		# stomping it made every comment invisible to everyone but the person who left it.
-		if r.get("login") and out.get(r["login"]) != "~":
-			out[r["login"]] = "·"
-	return " ".join(g + who for who, g in out.items())
+		# Compare the STATE, not the glyph: DISMISSED has no glyph and must not read as a comment.
+		if r.get("login") and out.get(r["login"]) != "COMMENTED":
+			out[r["login"]] = "PENDING"
+	return " ".join(REVIEW_GLYPH.get(s, "·") + who for who, s in out.items())
 
 
 def collaborators(repo):
