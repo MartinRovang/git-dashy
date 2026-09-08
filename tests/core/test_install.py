@@ -1,5 +1,7 @@
+import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 
@@ -1414,3 +1416,59 @@ def test_a_draw_survives_an_unreadable_agent_config(monkeypatch, tmp_path):
 		install.session_notes()                     # the other half: hand_wired_team_import's read
 	finally:
 		(cfg / "CLAUDE.md").chmod(0o644)
+
+
+def test_full_install_registers_both_hooks_and_uninstall_removes_both(monkeypatch, tmp_path):
+	"""The Stop hook is what makes the friction ask a mechanism rather than an instruction.
+
+	Registered but never removed, it would fail at the end of every session forever once the checkout
+	it points into is gone, with nothing naming gitdashy as the cause — so both halves are one test.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	cmds = {event: [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
+	        for event in ("SessionStart", "Stop")}
+	assert any(install.HOOK_MATCH in c for c in cmds["SessionStart"]), cmds
+	assert any(install.STOP_MATCH in c for c in cmds["Stop"]), cmds
+	# ponytail: the Stop hook takes NO argument — everything it judges arrives on stdin. The
+	# SessionStart one is passed the corpus home, and passing it to both would be a silent no-op today
+	# and a wrong path the day the stop hook reads argv.
+	stop = next(c for c in cmds["Stop"] if install.STOP_MATCH in c)
+	assert stop.strip() == shlex.quote(install.STOP_HOOK)
+
+	install.full_apply(corpus)                                   # idempotent: no second copy of either
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "Stop") == 1
+	assert install._count(settings, "SessionStart") == 1
+
+	install.full_remove()
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert not settings.get("hooks", {}).get("Stop"), settings
+	assert not settings.get("hooks", {}).get("SessionStart"), settings
+
+
+def test_uninstall_leaves_somebody_elses_stop_hook_alone(monkeypatch, tmp_path):
+	"""Same rule the SessionStart match already follows: enough path to be ours, so a hook of another
+	tool's that happens to run on Stop is not swept away with ours."""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	sp = os.path.join(d, "settings.json")
+	theirs = {"type": "command", "command": "/opt/other/claude-stop.sh"}
+	open(sp, "w").write(json.dumps({"hooks": {"Stop": [{"hooks": [theirs]}]}}))
+	install.full_apply(corpus)
+	install.full_remove()
+	settings = json.loads(open(sp).read())
+	left = [h["command"] for g in settings["hooks"]["Stop"] for h in g["hooks"]]
+	assert left == ["/opt/other/claude-stop.sh"], settings
+
+
+def test_the_consent_screen_names_the_stop_hook_and_what_it_can_do(monkeypatch, tmp_path):
+	"""#31's blocking finding, one door along: a hook that gains a new kind of power and a consent
+	screen that still describes the old one. A Stop hook can HOLD A SESSION OPEN, which is done to the
+	user rather than for them, so the screen has to say that before they agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus))
+	assert "Stop hook" in out, out
+	assert "hold a session open" in out, out
+	assert "never twice" in out, out
+	assert "sends nothing anywhere" in out, out
