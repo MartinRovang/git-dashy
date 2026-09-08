@@ -8,7 +8,7 @@ from dashy import config
 from dashy.core import github, log, review as review_mod, state, team, update
 from dashy.core.state import State
 
-from conftest import PR
+from conftest import PR, fake_http, gql_nodes
 
 
 def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
@@ -115,17 +115,23 @@ def test_loop_wait_reads_interval_each_slice(monkeypatch):
 	monkeypatch.setattr(github, "fetch", lambda: [("MINE", [], None)])
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	monkeypatch.setattr(config, "SPLASH_MIN", 0)
-	waits = []
+	# ponytail: this used to raise on the second wait unconditionally, so it never observed whether the
+	# loop EXITED because of the new interval — it pinned the slice size and nothing else. Hoisting the
+	# deadline out of the condition then broke `i` with the suite still green. Counting TICKS is what
+	# distinguishes "noticed" from "kept waiting": one tick means the shrink was ignored.
+	ticks, waits = [], []
+	monkeypatch.setattr(State, "tick", lambda self, t0: ticks.append(t0) or setattr(self, "fetched_at", time.time()))
 	def wait(t):
 		waits.append(t)
 		st.interval = 0  # shrink mid-wait: loop must notice and refetch instead of sleeping 600 slices
-		if len(waits) > 1:
-			raise SystemExit
+		if len(ticks) > 1:
+			raise SystemExit  # it noticed: a second refresh started
+		assert len(waits) < 6, "the wait ignored the new interval"  # else this spins for 600 slices
 		return False
 	monkeypatch.setattr(st.wake, "wait", wait)
 	with pytest.raises(SystemExit):
 		st.loop()
-	assert waits == [1, 1]
+	assert waits == [1, 1] and len(ticks) == 2
 
 
 def test_set_auto_include_existing_reviews_listed_prs(monkeypatch):
@@ -507,3 +513,100 @@ def test_retry_survives_a_fetch_landing_while_it_runs(monkeypatch):
 		t.join(2)
 		sys.setswitchinterval(old_interval)
 	assert not boom, boom
+
+
+def ticks(st, monkeypatch, tick, stop_after=3):
+	"""Run loop() for `stop_after` waits, then break out. ponytail: SystemExit, so the guard under
+	test — which catches Exception — cannot swallow the thing ending the test."""
+	monkeypatch.setattr(State, "tick", tick)
+	seen = []
+	def wait(t):
+		seen.append(1)
+		if len(seen) >= stop_after:
+			raise SystemExit
+		return False
+	monkeypatch.setattr(st.wake, "wait", wait)
+	with pytest.raises(SystemExit):
+		st.loop()
+	return len(seen)
+
+
+def test_a_tick_that_raises_is_reported_and_retried(monkeypatch):
+	"""The refresh thread must outlive anything one tick can throw.
+
+	ponytail: it did not. One unreadable line in the review log unwound out of the thread's run() and
+	nothing restarts it — fetching stayed True, so the dashboard reported a refresh in progress
+	forever, and f only sets an event nobody was waiting on any more.
+	"""
+	st = State(0)
+	st.fetching = True
+	tried = []
+	def boom(self, t0):
+		tried.append(t0)
+		raise RuntimeError("gh: could not resolve host\nsecond line")
+	ticks(st, monkeypatch, boom)
+	assert len(tried) > 1                    # it kept trying
+	assert st.fetching is False              # and stopped claiming to be mid-refresh
+	assert st.error == "second line"         # ponytail: last line, like every other error surface here
+
+
+def test_a_first_tick_that_raises_still_schedules_the_next(monkeypatch):
+	"""ponytail: fetched_at is None until a tick lands, and `fetched_at + interval` raised TypeError
+	on the very line scheduling the retry — the second way this thread could die, and the one a guard
+	around the work alone would not have caught."""
+	st = State(60)
+	assert st.fetched_at is None
+	ticks(st, monkeypatch, lambda self, t0: (_ for _ in ()).throw(ValueError("nope")))
+	assert st.error == "nope"
+
+
+def test_a_tick_that_lands_clears_the_last_failure(monkeypatch):
+	st = State(0)
+	st.error = "gh: could not resolve host"
+	one_loop(st, monkeypatch, [("MINE", [], None)])
+	assert st.error == ""
+
+
+@pytest.mark.parametrize("api_ok", [True, False])
+def test_fetch_survives_a_log_line_it_cannot_read(monkeypatch, api_ok):
+	"""The end-to-end shape of the freeze: fetch() reads the log with no handler of its own.
+
+	ponytail: BOTH of fetch()'s paths. The early return for a failed API call appends REVIEWED too, so
+	testing only the happy one would leave the branch a broken log is most likely to be taken WITH —
+	an outage and a half-written append arrive together — completely uncovered.
+	ponytail: this pinned github.subprocess before drop-gh, which patched a seam fetch() no longer has.
+	It still passed, because no token means the API raises anyway; a test that cannot fail is worse
+	than no test, so it now stubs what fetch() actually calls.
+	"""
+	with open(log.LOG, "w") as f:
+		f.write('{"at":"2020-01-0\n')  # a torn append
+	if api_ok:
+		monkeypatch.setattr(github.urllib.request, "urlopen",
+		                    fake_http(lambda url, body: gql_nodes([], [], [])))
+		monkeypatch.setattr(github, "_me", "tester")
+	else:
+		monkeypatch.setattr(github, "gql",
+		                    lambda *a, **kw: (_ for _ in ()).throw(github.Error("github unreachable")))
+	assert github.fetch()[-1] == ("REVIEWED", [], None)
+
+
+def test_a_failed_tick_waits_a_full_interval_before_retrying(monkeypatch):
+	"""ponytail: fetched_at is the last SUCCESSFUL fetch, so once a tick failed the deadline it implies
+	is already in the past — the loop fell straight out of the wait and retried every second, hammering
+	gh for as long as the outage lasted. A failed attempt backs off from ITSELF."""
+	st = State(300)
+	st.fetched_at = time.time() - 600  # a good fetch, long enough ago that its deadline has passed
+	tries, waits = [], []
+	def boom(self, t0):
+		tries.append(t0)
+		raise RuntimeError("gh exploded")
+	monkeypatch.setattr(State, "tick", boom)
+	def wait(t):
+		waits.append(t)
+		if len(waits) >= 4:
+			raise SystemExit  # four slices in and still waiting: backing off, not hammering
+		return False
+	monkeypatch.setattr(st.wake, "wait", wait)
+	with pytest.raises(SystemExit):
+		st.loop()
+	assert len(tries) == 1 and st.error == "gh exploded"

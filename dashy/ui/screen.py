@@ -220,6 +220,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 		# the row filter — as `busy` it spun every finished PR forever ("⠋ ✓ approved… 0s").
 		keep = busy | set(reviews)
 		since = dict(state.started_at)
+		failed = state.error  # ponytail: under the same lock as fetched_at — the two are one answer
 	# ponytail: ONE resolver for the whole frame — the rows group by it and the pane names the brief with
 	# it. The pane used to call memory.brief(), which opened ~/.prs_bindings itself on every draw, beside
 	# a resolver built for exactly this reason.
@@ -252,8 +253,15 @@ def draw(scr, state, sel, prompt=None, now=None):
 	spin = art.SPINNER[int(now * 8) % len(art.SPINNER)]  # ponytail: frame from the clock, no animation state
 	rspin = art.REFRESH_SPINNER[int(now * 10) % len(art.REFRESH_SPINNER)]  # 10fps under the 20fps tick: every frame lands on a redraw
 	ago = None if fetched_at is None else age(datetime.fromtimestamp(fetched_at, timezone.utc).isoformat())
-	status = f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
-	nxt = "" if fetched_at is None else f"{rspin} refreshing…" if state.fetching else \
+	# ponytail: a failed tick OWNS this slot until one lands. The refresh thread retries forever now
+	# rather than dying, so without this a refresh that cannot reach gh looks exactly like a quiet one —
+	# the same rule the Memory row follows for its history: a net that is off says so every time.
+	status = f"✗ refresh failed: {failed}" if failed else \
+		f"{spin} fetching…" if ago is None else "updated just now" if ago == "now" else f"updated {ago} ago"
+	# ponytail: nothing when the last tick failed. fetched_at is the last SUCCESSFUL fetch, so the
+	# countdown beside "✗ refresh failed" was computed from a deadline already past — it rendered
+	# "next refresh 0s" next to a line saying the refresh had not happened. Two contradicting claims.
+	nxt = "" if fetched_at is None or failed else f"{rspin} refreshing…" if state.fetching else \
 		f"next refresh {max(0, int(fetched_at + state.interval - now))}s / {state.interval // 60}m"
 	vals = list(reviews.values())
 	running = len(busy)  # ponytail: the set, so an error whose text ends in "..." is not an agent
@@ -282,7 +290,7 @@ def draw(scr, state, sel, prompt=None, now=None):
 	# not on the ladder — they are clipped, and the prompt wins when the two cannot share the row
 	left = {"badge": [(badge, C(8) | curses.A_BOLD)], "prs": [(f"    {total} PRs", C(7) | curses.A_BOLD)],
 	        "agents": [(f"  ·  {running} agents running", C(10) | curses.A_BOLD if running else C(9))]}
-	right = {"status": hint("r", C(10)) + [(status, C(9))],
+	right = {"status": hint("r", C(10)) + [(status, C(12) | curses.A_BOLD if failed else C(9))],
 	         "nxt": [("  ·  ", C(9))] + hint("i", C(10)) + [(nxt, C(9), "i")] if nxt else [],
 	         "auto": [("   ", C(7)), (" AUTO ", C(5) | curses.A_REVERSE | curses.A_BOLD)] if state.auto else [],
 	         "update": [("   ", C(7)), (f" ↑ update to v{state.update} · u ", C(4) | curses.A_REVERSE | curses.A_BOLD)] if state.update else []}

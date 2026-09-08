@@ -632,18 +632,26 @@ def full_explain(corpus, url=""):
 	if unread:
 		out.append("    known until it is cloned")
 	out.append("  · seed USER.md from the template, for you to fill in, if it is not there already")
-	out.append(f"  · register a SessionStart hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
+	out.append(f"  · register a SessionStart and a Stop hook in {knowledge.tilde(os.path.join(d, 'settings.json'))}")
 	out.append("  · everything plain `gitdashy install` does, for review memory")
 	out.append("")
 	out.append("What that costs, every session on this machine, permanently:")
 	out.append("  · however many tokens that corpus's identity/ holds — unknown until it is cloned"
 	           if unread else
 	           f"  · about {int(words * 1.35):,} tokens of instructions, before you have typed anything")
-	out.append("  · one hook running at the start of every session, in every repo")
+	out.append("  · one hook at the start of every session, and one at the end, in every repo")
 	out.append("")
-	out.append("The hook seeds .agent/ notes in a repo, excludes them from git (via .git/info/exclude,")
-	out.append("never the tracked .gitignore), and mirrors that repo's review memory. It writes nothing")
-	out.append("that git can see, and exits quietly if it is not in a repo.")
+	out.append("The SessionStart hook seeds .agent/ notes in a repo, excludes them from git (via")
+	out.append(".git/info/exclude, never the tracked .gitignore), and mirrors that repo's review memory.")
+	out.append("It writes nothing that git can see, and exits quietly if it is not in a repo.")
+	out.append("")
+	# ponytail: the Stop hook can BLOCK a stop, which is a thing done TO the session rather than for it,
+	# so the consent screen says so in those words. #31's blocking finding was this same rule one door
+	# along: a hook that gained a new kind of power and a consent screen that still described the old one.
+	out.append("The Stop hook reads the session transcript when a session ends and, if you interrupted")
+	out.append("or refused tool calls enough times, asks the agent once to write down what it learned.")
+	out.append("It can hold a session open for that one question — never twice, and never on a routine")
+	out.append("session. It reads only the transcript, and sends nothing anywhere.")
 	out.append("")
 	# ponytail: until this corpus shipped a bin/, the corpus was DATA — markdown imported into context,
 	# templates copied. The hook now RUNS a script out of it, so a --corpus URL is no longer only text you
@@ -664,22 +672,30 @@ HOOK = os.path.join(HERE, "dashy", "hooks", "claude-session-start.sh")
 # ponytail: enough path to be ours. A bare filename would match — and uninstall would delete —
 # somebody else's hook that happened to be called the same thing.
 HOOK_MATCH = os.path.join("dashy", "hooks", "claude-session-start.sh")
+STOP_HOOK = os.path.join(HERE, "dashy", "hooks", "claude-stop.sh")
+STOP_MATCH = os.path.join("dashy", "hooks", "claude-stop.sh")
+
+# ponytail: a TABLE, so a third hook is a row rather than a fourth copy of the register block and a
+# fourth branch in uninstall. (event, script, match, what the status line says, whether it is passed
+# the corpus home). The Stop hook takes no argument: everything it judges comes in on stdin.
+HOOK_TABLE = (("SessionStart", HOOK, HOOK_MATCH, "Preparing repo notes", True),
+              ("Stop", STOP_HOOK, STOP_MATCH, "Checking what this session learned", False))
 
 
-def _count(settings):
-	"""How many SessionStart hooks there are in total, across every group."""
-	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get("SessionStart", []))
+def _count(settings, event):
+	"""How many of `event`'s hooks there are in total, across every group."""
+	return sum(len(g.get("hooks", [])) for g in settings.get("hooks", {}).get(event, []))
 
 
-def _hooks(settings, script):
-	"""SessionStart groups with our hook taken out. Empty groups are dropped.
+def _hooks(settings, script, event):
+	"""`event`'s groups with our hook taken out. Empty groups are dropped.
 
 	ponytail: callers compare HOOK counts, never group counts. Ours can end up sharing a group with
 	somebody else's — then the group survives, the count of groups is unchanged, and a group-count
 	check concludes we were never installed and appends a second copy.
 	"""
 	out = []
-	for group in settings.get("hooks", {}).get("SessionStart", []):
+	for group in settings.get("hooks", {}).get(event, []):
 		kept = [h for h in group.get("hooks", []) if script not in str(h.get("command", ""))]
 		if kept:
 			out.append({**group, "hooks": kept})
@@ -783,25 +799,29 @@ def full_apply(corpus, url="", dry=False):
 				# added to stop this path leaving things behind.
 				# ponytail: a file we created is removed, not left empty. Undo means the state before.
 				undo.append((f"the imports in {knowledge.tilde(md)}", lambda: _unwrite(md, text)))
-		script = HOOK
 		sp = os.path.join(d, "settings.json")
 		try:
 			settings = json.loads(_read(sp) or "{}")
 		except ValueError:
 			return fail(f"{knowledge.tilde(sp)} is not valid JSON — fix it first")
-		script_ok = os.path.isfile(script) and os.access(script, os.X_OK)
-		if _count({"hooks": {"SessionStart": _hooks(settings, HOOK_MATCH)}}) != _count(settings):
-			out.append("ok    the SessionStart hook is already registered")
-		elif not script_ok:  # ponytail: only reachable if gitdashy's own install is damaged
-			out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no hook registered")
-		else:
-			out.append(f"{did}hook  register SessionStart -> {knowledge.tilde(script)}")
-			if not dry:
-				settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
-					{"hooks": [{"type": "command", "command": f"{shlex.quote(script)} {shlex.quote(home)}",
-					            "timeout": 10,
-					            "statusMessage": "Preparing repo notes"}]})
-				_write_json(sp, settings)
+		wrote = False
+		for event, script, match, saying, takes_home in HOOK_TABLE:
+			if _count({"hooks": {event: _hooks(settings, match, event)}}, event) != _count(settings, event):
+				out.append(f"ok    the {event} hook is already registered")
+			elif not (os.path.isfile(script) and os.access(script, os.X_OK)):
+				# ponytail: only reachable if gitdashy's own install is damaged — but reported per hook,
+				# because one missing script must not silently cost you the other.
+				out.append(f"SKIP  {knowledge.tilde(script)} is missing or not executable — no {event} hook")
+			else:
+				out.append(f"{did}hook  register {event} -> {knowledge.tilde(script)}")
+				if not dry:
+					cmd = shlex.quote(script) + (f" {shlex.quote(home)}" if takes_home else "")
+					settings.setdefault("hooks", {}).setdefault(event, []).append(
+						{"hooks": [{"type": "command", "command": cmd,
+						            "timeout": 10, "statusMessage": saying}]})
+					wrote = True
+		if wrote:
+			_write_json(sp, settings)
 		return out + [""] + (apply(dry) if not dry else [f"{did}do    everything plain `install` does"])
 
 	# ponytail: only fail() unwound, so anything that RAISED walked out past the undo list — a
@@ -836,15 +856,23 @@ def full_remove(dry=False):
 	except ValueError:
 		out.append(f"SKIP    {knowledge.tilde(sp)} is not valid JSON — remove the hook by hand")
 		settings = None
-	if settings is not None and settings.get("hooks", {}).get("SessionStart"):
-		kept = _hooks(settings, HOOK_MATCH)
-		if _count({"hooks": {"SessionStart": kept}}) != _count(settings):
-			out.append(f"{did}remove  the SessionStart hook from {knowledge.tilde(sp)}")
+	# ponytail: every hook in the table, not the one this branch happened to add. An uninstall that
+	# leaves a Stop hook pointing into a checkout the user then deletes fails at the end of every
+	# session, forever, with nothing naming gitdashy as the cause.
+	dropped = False
+	for event, _, match, _, _ in HOOK_TABLE if settings is not None else ():
+		if not settings.get("hooks", {}).get(event):
+			continue
+		kept = _hooks(settings, match, event)
+		if _count({"hooks": {event: kept}}, event) != _count(settings, event):
+			out.append(f"{did}remove  the {event} hook from {knowledge.tilde(sp)}")
 			if not dry:
-				settings["hooks"]["SessionStart"] = kept
+				settings["hooks"][event] = kept
 				if not kept:
-					settings["hooks"].pop("SessionStart")
-				_write_json(sp, settings)
+					settings["hooks"].pop(event)
+				dropped = True
+	if dropped:
+		_write_json(sp, settings)
 	known = registered()
 	if known:
 		out.append(f"{did}forget  {len(known)} mirror{'s' if len(known) > 1 else ''} — the import each repo"
@@ -858,14 +886,23 @@ def full_remove(dry=False):
 	return out + [""] + remove(dry)
 
 
+# ponytail: ONLY what is true of you whatever you are working on. "Role" and "What you own" used to be
+# here and are not: a person's role differs per project, and what they own is a property OF a project —
+# which put a paragraph about one product into a file every session in every repo loads. The corpus's
+# own USER.md is the proof: ten of its thirteen sections are about one platform, and its cross-cutting
+# section says so out loud ("these are cross-cutting: they hold in every repo"). Ownership moved to the
+# project brief, where it is scoped by binding and where a review of that repo is actually told it.
 ASK_YOU = (("Name", "what you would like to be called"),
-           ("Role", "what you do, and where you are strongest"),
-           ("How you work", "where you want friction and where you do not"),
-           ("What you own", "the parts of the system that are yours to answer for"))
+           ("How you work", "where you want friction and where you do not"))
 ASK_PROJECT = (("The project", "what it is, and who uses it"),
                ("Why it matters", "the outcome that makes the work worth doing"),
                ("Constraints", "regulatory, contractual, performance — anything with real consequences"),
-               ("How the code is shaped", "what a newcomer would otherwise learn the hard way"))
+               ("How the code is shaped", "what a newcomer would otherwise learn the hard way"),
+               # ponytail: WHO, not only what. Ownership is a property of the project, so it belongs
+               # here rather than in USER.md — and a review of one of these repos is told it, which is
+               # the point. Shared with the team when the brief is a team's: on a small team "who
+               # answers for this" is something everyone benefits from and nobody should have to ask.
+               ("Who does what", "who owns which parts, you included"))
 
 
 SETUP_MARK = "<!-- written by gitdashy setup -->"
@@ -938,22 +975,32 @@ def compose(title, lead, answers, extra=()):
 	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
-def setup_done(corpus_home=None):
-	"""True when both briefs are already written, so there is nothing to offer."""
+def setup_done(corpus_home=None, project=True):
+	"""True when there is nothing left to offer. `project` False asks only about USER.md.
+
+	ponytail: the install-time offer passes project=False, because it no longer asks the project
+	question — and a "done" that still waited on a brief nobody was going to be asked for would offer
+	the prompt forever on a machine that answered everything it was asked.
+	"""
 	from . import memory
 	home = corpus_home or CORPUS_HOME
 	user = os.path.join(home, "identity", "USER.md")
 	tmpl = os.path.join(home, "identity", "USER.md.template")
 	mine = _read(user).strip() and _read(user).strip() != _read(tmpl).strip()  # a seeded template is not done
-	return bool(mine) and memory.brief_written()
+	return bool(mine) and (memory.brief_written() if project else True)
 
 
-def setup(ask, corpus_home=None):
-	"""Walk the two briefs a corpus needs, writing only what was answered. Returns report lines.
+def setup(ask, corpus_home=None, project=True):
+	"""Walk the briefs a corpus needs, writing only what was answered. Returns report lines.
 
 	ponytail: asked rather than templated. A blank template is a template nobody fills in, and an agent
 	that knows neither who you are nor what the work is for reasons from the code alone — which is the
 	one thing it can already see.
+	ponytail: `project` False skips the project brief, and `install --full` passes it. WHO YOU ARE is a
+	property of the machine; WHAT THE WORK IS FOR is a property of a repo, and a person works on more
+	than one. Asked once at install time it wrote a single ~/.prs_memory/project.md that every repo
+	bound to no team then read — one product's brief in every review of every other, which is the exact
+	failure brief() was rewritten to stop. Binding already scopes it; `gitdashy setup` still asks.
 	"""
 	out = []
 	home = corpus_home or CORPUS_HOME
@@ -994,6 +1041,16 @@ def setup(ask, corpus_home=None):
 	else:
 		out.append(f"SKIP   no corpus at {knowledge.tilde(home)} — run `gitdashy install --full` first")
 	from . import bind, memory, team
+	if not project:
+		# ponytail: BEFORE anything that works out which brief would be written. Below this the code
+		# resolves a team and says "writing your own brief" — a sentence about a file nobody is being
+		# asked for, printed to someone who just declined to be asked. The pointer matters more than the
+		# skip: they will look for the question they are used to, so this says where it went.
+		return out + ["",
+		              "note   no project brief asked for here — what the work is for belongs to a repo, not",
+		              "       to this machine. `gitdashy setup` writes one; `gitdashy teams --new NAME` and",
+		              "       `gitdashy bind --owner OWNER --team NAME` give each project its own."]
+
 	# ponytail: a team brief now reaches only the repos BOUND to that team, so the old line — "every
 	# review reads it" — became false the moment selection stopped being "yours and theirs, always".
 	# Saying which reviews read it is the part someone acts on.
@@ -1013,7 +1070,11 @@ def setup(ask, corpus_home=None):
 		out.append(f"note   several teams joined ({', '.join(joined)}) — writing your own brief; edit a "
 		           f"team's with T then e in the dashboard")
 	dest = memory.brief_path(slug)
-	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
+	# ponytail: says what it COVERS, not just whose it is. "yours" reads as "scoped to me" and it is the
+	# opposite — one file, every unbound repo, so a second project inherits the first one's brief.
+	whose = ("yours, and EVERY repo bound to no team reads it — one brief for all of them, so bind each "
+	         "project to its own team (`gitdashy teams --new`, `gitdashy bind`) if you have more than one"
+	         if mine else
 	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")
 	if slug and not dest:
 		# ponytail: brief_path returns "" for a team this machine does not have. It cannot happen while

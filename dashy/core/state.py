@@ -72,6 +72,7 @@ class State:
 		self.hints = False  # ? toggles: show each setting's key next to it in the header
 		self.update = ""  # newer released version, refreshed with each fetch
 		self.fetching = False
+		self.error = ""  # why the last refresh failed, "" while ticks are landing — see loop()
 		self.known = None  # urls wanted from me at the last fetch; None until the first fetch lands
 
 	def want_detail(self, pr):
@@ -196,81 +197,111 @@ class State:
 		threading.Thread(target=run, daemon=True).start()
 
 	def loop(self):
+		"""Refresh forever. A tick that raises is reported and retried; it never ends the thread.
+
+		ponytail: the guard is here rather than on each call this makes, because the ways a tick can
+		raise are not enumerable — it reads a log other machines append to and merge, a registry, a
+		settings file and four subprocesses. One unreadable line in the review log used to unwind out of
+		this thread's run(), and nothing restarts it: fetching stayed True, no key reaches a thread that
+		is gone, and f only sets an event nobody waits on any more. The dashboard was over, silently.
+		"""
 		while True:
-			t0, self.fetching = time.time(), True
-			team.pull()  # newest team log + memory before we read them
-			memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
-			memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
-			refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
-			data = github.fetch()
-			stale = log.mark_rereviews(data)
-			newer = update.update_available()
-			if self.fetched_at is None:
-				time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
-			with self.lock:
-				self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
-				for u in stale:  # forget the old verdict so r / auto can review the new push
-					# ponytail: same guard as the sweep below. `stale` is read off the REVIEWED section of
-					# THIS fetch, so a fetch that started before our verdict landed still holds the previous
-					# entry, calls the head we just reviewed a new push, drops the verdict — and auto starts
-					# the identical review a second later.
-					if not in_flight(self, u) and self.done_at.get(u, 0) <= t0:
+			t0 = time.time()
+			try:
+				self.tick(t0)
+				base = self.fetched_at  # ponytail: the fetch's own time, so the header's countdown agrees
+			except Exception as e:  # noqa: BLE001 — the whole point: a failed tick is a row, not the end
+				with self.lock:
+					self.fetching = False
+					self.error = (str(e).strip().splitlines() or [type(e).__name__])[-1][:60]
+				# ponytail: from THIS attempt, not from fetched_at. That holds the last SUCCESSFUL fetch,
+				# so the moment one tick failed the deadline was already in the past — the loop fell
+				# straight out of the wait and retried every second, hammering gh for as long as the
+				# failure lasted. It also covers the FIRST tick, where fetched_at is still None.
+				base = t0
+			# ponytail: `base + self.interval` is evaluated per slice, and `interval` is the reason.
+			# Hoisting it into a variable above the loop is the natural way to write this and silently
+			# breaks `i`: settings()["i"] assigns state.interval and does NOT set state.wake, so
+			# dropping 30m to 1m waited out the remaining 29 instead of refetching now.
+			while not self.wake.wait(1) and time.time() < base + self.interval:
+				pass  # 1s slices, so a change to either side takes effect within the second
+			self.wake.clear()
+
+	def tick(self, t0):
+		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
+		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
+			self.fetching = True
+		team.pull()  # newest team log + memory before we read them
+		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
+		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
+		refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
+		data = github.fetch()
+		stale = log.mark_rereviews(data)
+		newer = update.update_available()
+		if self.fetched_at is None:
+			time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
+		with self.lock:
+			self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
+			self.error = ""  # this tick landed, so whatever the last one said is over
+			for u in stale:  # forget the old verdict so r / auto can review the new push
+				# ponytail: same guard as the sweep below. `stale` is read off the REVIEWED section of
+				# THIS fetch, so a fetch that started before our verdict landed still holds the previous
+				# entry, calls the head we just reviewed a new push, drops the verdict — and auto starts
+				# the identical review a second later.
+				if not in_flight(self, u) and self.done_at.get(u, 0) <= t0:
+					self.reviews.pop(u, None)
+					self.seen_at.pop(u, None)
+			# ponytail: and forget it for ANY row whose PR has moved since. `stale` comes from
+			# log.mark_rereviews, which only ever names REVIEW REQUESTED urls — so a finished
+			# pre-review masked GitHub's decision on a MINE row until restart, and a colleague
+			# approving your PR never showed. One rule for both: a verdict describes one revision.
+			# ponytail: baselined on the first fetch that STARTED after the work finished. Posting a
+			# review bumps updatedAt itself, so the value we held is already stale — and a fetch that
+			# was in flight when the verdict landed carries the pre-post value, which is why the
+			# start time is compared rather than merely "the next fetch".
+			for name, prs, _err in data:
+				if name == "REVIEWED":
+					# ponytail: not a live row. Its updatedAt is the log timestamp, which never equals
+					# the live row's value, so sweeping it dropped every verdict on the next tick.
+					continue
+				for p in prs or []:
+					u = p["url"]
+					if u not in self.reviews or in_flight(self, u):
+						continue
+					# ponytail: .get, not a subscript. A KeyError here runs on the refresh thread and
+					# takes the whole loop down; a PR without the field simply never goes stale.
+					# ponytail: by head on a REVIEW REQUESTED row, like mark_rereviews. updatedAt there
+					# comes from the lagging search index — the tick after a verdict can still read the
+					# pre-post value and the next the post-post one — and a reply on the thread bumps
+					# it too; both dropped the verdict and auto reviewed the same head again. On MINE
+					# rows updatedAt stays: a colleague's approval must be allowed to unmask GitHub.
+					if name == "REVIEW REQUESTED":
+						at = p.get("head")  # no head means the graphql call failed; not a reason to call it moved
+					else:
+						at = p.get("updatedAt")
+					if at is None:
+						continue
+					if self.done_at.get(u, 0) > t0:
+						# ponytail: this fetch STARTED before the work finished, so it carries the
+						# pre-post updatedAt. Baselining on it would sweep our own verdict on the
+						# next tick — which the comment below claimed to avoid and did not.
+						continue
+					if u not in self.seen_at:
+						self.seen_at[u] = at
+					elif self.seen_at[u] != at:
 						self.reviews.pop(u, None)
 						self.seen_at.pop(u, None)
-				# ponytail: and forget it for ANY row whose PR has moved since. `stale` comes from
-				# log.mark_rereviews, which only ever names REVIEW REQUESTED urls — so a finished
-				# pre-review masked GitHub's decision on a MINE row until restart, and a colleague
-				# approving your PR never showed. One rule for both: a verdict describes one revision.
-				# ponytail: baselined on the first fetch that STARTED after the work finished. Posting a
-				# review bumps updatedAt itself, so the value we held is already stale — and a fetch that
-				# was in flight when the verdict landed carries the pre-post value, which is why the
-				# start time is compared rather than merely "the next fetch".
-				for name, prs, _err in data:
-					if name == "REVIEWED":
-						# ponytail: not a live row. Its updatedAt is the log timestamp, which never equals
-						# the live row's value, so sweeping it dropped every verdict on the next tick.
-						continue
-					for p in prs or []:
-						u = p["url"]
-						if u not in self.reviews or in_flight(self, u):
-							continue
-						# ponytail: .get, not a subscript. A KeyError here runs on the refresh thread and
-						# takes the whole loop down; a PR without the field simply never goes stale.
-						# ponytail: by head on a REVIEW REQUESTED row, like mark_rereviews. updatedAt there
-						# comes from the lagging search index — the tick after a verdict can still read the
-						# pre-post value and the next the post-post one — and a reply on the thread bumps
-						# it too; both dropped the verdict and auto reviewed the same head again. On MINE
-						# rows updatedAt stays: a colleague's approval must be allowed to unmask GitHub.
-						if name == "REVIEW REQUESTED":
-							at = p.get("head")  # no head means the graphql call failed; not a reason to call it moved
-						else:
-							at = p.get("updatedAt")
-						if at is None:
-							continue
-						if self.done_at.get(u, 0) > t0:
-							# ponytail: this fetch STARTED before the work finished, so it carries the
-							# pre-post updatedAt. Baselining on it would sweep our own verdict on the
-							# next tick — which the comment below claimed to avoid and did not.
-							continue
-						if u not in self.seen_at:
-							self.seen_at[u] = at
-						elif self.seen_at[u] != at:
-							self.reviews.pop(u, None)
-							self.seen_at.pop(u, None)
-				new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
-				       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
-			for p in new:
-				self.start_review(p)
-			asks = [(name, prs, err) for name, prs, err in data if name in ("REVIEW REQUESTED", "ASSIGNED")]
-			if not any(err for _, _, err in asks):  # a failed section would look like every PR left, then came back
-				wanted = {p["url"]: (p, name) for name, prs, _ in asks for p in prs}
-				if self.known is not None and config.NOTIFY:
-					for u in wanted.keys() - self.known:
-						notify(*wanted[u])
-				self.known = set(wanted)
-			while not self.wake.wait(1) and time.time() < self.fetched_at + self.interval:
-				pass  # 1s slices so an interval change via i takes effect now
-			self.wake.clear()
+			new = [p for name, prs, _ in data if name == "REVIEW REQUESTED" for p in prs or []
+			       if self.auto and p["url"] not in self.auto_baseline and p["url"] not in self.reviews] if self.auto else []
+		for p in new:
+			self.start_review(p)
+		asks = [(name, prs, err) for name, prs, err in data if name in ("REVIEW REQUESTED", "ASSIGNED")]
+		if not any(err for _, _, err in asks):  # a failed section would look like every PR left, then came back
+			wanted = {p["url"]: (p, name) for name, prs, _ in asks for p in prs}
+			if self.known is not None and config.NOTIFY:
+				for u in wanted.keys() - self.known:
+					notify(*wanted[u])
+			self.known = set(wanted)
 
 
 def notify_cmd(pr, section):

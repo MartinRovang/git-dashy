@@ -49,6 +49,14 @@ def isolated(monkeypatch, tmp_path):
 	# ponytail: and the cache keyed off it, exactly as log._CACHE is pinned. A module-global that
 	# survives a test carries one test's tmp_path answer into the next one's assertions.
 	monkeypatch.setattr(install, "_NOTES", (None, []))
+	# ponytail: and the review lens. config.INSTRUCTIONS is read from $PRS_INSTRUCTIONS at import, and
+	# review() appends that file to every prompt — so a developer who actually uses --instructions ran a
+	# suite that asserted on prompt CONTENT and LENGTH with their own text folded in. Two review tests
+	# failed on this machine and passed in CI, which reads as "main is broken" rather than "your
+	# environment leaked in". Same class as CLAUDE_CONFIG_DIR above; the env var is cleared too, because
+	# anything re-reading config at import time would pick it back up.
+	monkeypatch.delenv("PRS_INSTRUCTIONS", raising=False)
+	monkeypatch.setattr(config, "INSTRUCTIONS", "")
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: github.py talks HTTP now, so a test that forgets to fake it would hit the real API with

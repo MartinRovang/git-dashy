@@ -78,3 +78,63 @@ def test_a_pr_with_no_head_is_never_called_pushed_to():
 	unknown = dict(PR, url="p", updatedAt="2021-01-01T00:00:00Z")  # graphql failed: no head on the row
 	assert mark_rereviews([("REVIEW REQUESTED", [unknown], None), ("REVIEWED", reviewed(), None)]) == []
 	assert "prev" not in unknown
+
+
+def test_reviewed_skips_lines_it_cannot_read():
+	"""One bad line must not cost the rest of the file — the rule logged_repos() already had.
+
+	ponytail: github.fetch() calls reviewed() from the refresh thread with no handler of its own, so
+	each of these used to end that thread for good. The log is appended to concurrently and, in team
+	mode, merged with merge=union: a torn append and a conflict marker are both things it really holds.
+	"""
+	good = {"at": "2020-01-01T00:00:00+00:00", "model": "opus", "verdict": "approve", "summary": "", "body": "",
+	        "pr": {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 1, "url": "keep"}}
+	with open(log.LOG, "w") as f:
+		f.write(json.dumps(good) + "\n")
+		f.write('{"at":"2020-01-0\n')                                    # a torn append
+		f.write("<<<<<<< HEAD\n")                                        # a union-merge conflict marker
+		f.write(json.dumps({**good, "at": 5}) + "\n")                    # `at` that is not text
+		f.write(json.dumps({"at": "2020-01-01T00:00:00+00:00"}) + "\n")  # no "pr" at all
+	assert [p["url"] for p in reviewed()] == ["keep"]
+
+
+def test_an_unknown_verdict_drops_its_entry():
+	"""ponytail: _parse is the ONE gate, so `verdict in config.STATUS` is what makes the three
+	config.STATUS[...] subscripts downstream safe. Asserted here so that stays true: relaxing the gate
+	to keep such an entry would put a KeyError back into reviewed(), mark_rereviews and detail() at once."""
+	good = {"at": "2020-01-01T00:00:00+00:00", "model": "opus", "verdict": "approve", "summary": "",
+	        "body": "", "pr": {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 1, "url": "keep"}}
+	with open(log.LOG, "w") as f:
+		f.write(json.dumps(good) + "\n")
+		f.write(json.dumps({**good, "verdict": "needs_work",
+		                    "pr": {**good["pr"], "url": "gone"}}) + "\n")
+	assert [p["url"] for p in reviewed()] == ["keep"]
+
+
+def test_an_entry_written_without_an_offset_is_read_as_utc():
+	"""ponytail: `at` used to be written naive. Every comparison is against an aware value — this one
+	on the refresh thread, the history cutoff and age() on the draw thread — and each raised TypeError."""
+	with open(log.LOG, "w") as f:
+		f.write(json.dumps({"at": "2020-01-01T00:00:00", "model": "opus", "verdict": "approve", "summary": "",
+		                    "body": "", "pr": {"repository": {"nameWithOwner": "a/b", "name": "b"},
+		                                       "number": 1, "url": "u"}}) + "\n")
+	got = reviewed()
+	assert got[0]["review"]["at"] == "2020-01-01T00:00:00+00:00"
+	moved = dict(PR, url="u", updatedAt="2021-01-01T00:00:00Z")
+	assert mark_rereviews([("REVIEW REQUESTED", [moved], None), ("REVIEWED", got, None)]) == ["u"]
+
+
+def test_entries_from_other_offsets_sort_by_instant_not_by_text():
+	"""ponytail: reviewed() sorts on the STRING `at` becomes, so making it merely aware was not enough.
+	09:30+02:00 is 07:30Z — the EARLIER instant — but sorts after 08:00+00:00 as raw text, so it came
+	back first in a list whose whole job is "newest first". Converting to UTC in the gate makes the
+	lexical order the chronological one."""
+	base = {"model": "opus", "verdict": "approve", "summary": "", "body": "",
+	        "pr": {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 1}}
+	with open(log.LOG, "w") as f:
+		f.write(json.dumps({**base, "at": "2020-01-01T08:00:00+00:00",
+		                    "pr": {**base["pr"], "url": "at_0800z"}}) + "\n")
+		f.write(json.dumps({**base, "at": "2020-01-01T09:30:00+02:00",  # 07:30Z, half an hour earlier
+		                    "pr": {**base["pr"], "url": "at_0730z"}}) + "\n")
+	assert [p["url"] for p in reviewed()] == ["at_0800z", "at_0730z"]
+	assert all(p["review"]["at"].endswith("+00:00") for p in reviewed())

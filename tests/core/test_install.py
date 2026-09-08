@@ -1,10 +1,12 @@
+import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 
 from dashy import config
-from dashy.core import install, mirror, state, team
+from dashy.core import install, memory, mirror, state, team
 
 
 def fresh(monkeypatch, tmp_path):
@@ -314,13 +316,17 @@ def test_setup_writes_only_what_was_answered(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	home = tmp_path / "corpus"
 	(home / "identity").mkdir(parents=True)
-	answers = iter(["Nils", "", "ask first", "", "a platform", "", "CE marking", ""])
+	answers = iter(["Nils", "ask first", "a platform", "", "CE marking", "", "Pontus owns the viewer"])
 	out = install.setup(lambda p: next(answers), str(home))
 	user = (home / "identity" / "USER.md").read_text()
 	assert "## Name\n\nNils" in user and "## How you work\n\nask first" in user
-	assert "## Role" not in user and "## What you own" not in user  # blanks are skipped, not left empty
+	assert "## Why it matters" not in user  # blanks are skipped, not left empty
 	brief = (tmp_path / "mem" / "project.md").read_text()
 	assert "## The project\n\na platform" in brief and "## Constraints\n\nCE marking" in brief
+	# ponytail: ownership is a property of the PROJECT, so it lands in the brief a review of that repo
+	# reads — not in a USER.md that every session in every repo loads.
+	assert "## Who does what\n\nPontus owns the viewer" in brief, brief
+	assert "own" not in user.lower(), user
 	assert any("wrote" in l and "USER.md" in l for l in out)
 
 
@@ -490,15 +496,21 @@ def test_setup_blank_keeps_what_is_there(monkeypatch, tmp_path):
 	home = tmp_path / "corpus"
 	(home / "identity").mkdir(parents=True)
 	user = home / "identity" / "USER.md"
-	full = iter(["Martin R", "Engineer", "ask first", "the viewer", "", "", "", ""])
+	full = iter(["Martin R", "ask first", "", "", "", "", ""])
 	install.setup(lambda p: next(full), str(home))
-	user.write_text(user.read_text() + "\n## Hand added\n\nsomething I wrote\n")
-	partial = iter(["Martin Rovang", "", "", "", "", "", "", ""])
+	# ponytail: sections setup no longer ASKS about — including Role and What you own, which it used to
+	# and does not any more. This is the migration: someone who answered them before keeps every word,
+	# because compose() writes back what it was not given rather than what it did not ask for. A
+	# rescoping that silently emptied the file it was rescoping would be worse than the wrong scope.
+	user.write_text(user.read_text() + "\n## Role\n\nEngineer\n\n## What you own\n\nthe viewer\n"
+	                                   "\n## Hand added\n\nsomething I wrote\n")
+	partial = iter(["Martin Rovang", "", "", "", "", "", ""])
 	install.setup(lambda p: next(partial), str(home))
 	got = install.sections(user.read_text())
 	assert got["Name"] == "Martin Rovang"          # answered, so replaced
-	assert got["Role"] == "Engineer"               # blank, so kept
-	assert got["How you work"] == "ask first" and got["What you own"] == "the viewer"
+	assert got["How you work"] == "ask first"      # blank, so kept
+	assert got["Role"] == "Engineer"               # no longer asked about, and STILL THERE
+	assert got["What you own"] == "the viewer"
 	assert got["Hand added"] == "something I wrote"  # never asked about, still there
 
 
@@ -1414,3 +1426,218 @@ def test_a_draw_survives_an_unreadable_agent_config(monkeypatch, tmp_path):
 		install.session_notes()                     # the other half: hand_wired_team_import's read
 	finally:
 		(cfg / "CLAUDE.md").chmod(0o644)
+
+
+def test_full_install_registers_both_hooks_and_uninstall_removes_both(monkeypatch, tmp_path):
+	"""The Stop hook is what makes the friction ask a mechanism rather than an instruction.
+
+	Registered but never removed, it would fail at the end of every session forever once the checkout
+	it points into is gone, with nothing naming gitdashy as the cause — so both halves are one test.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	cmds = {event: [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
+	        for event in ("SessionStart", "Stop")}
+	assert any(install.HOOK_MATCH in c for c in cmds["SessionStart"]), cmds
+	assert any(install.STOP_MATCH in c for c in cmds["Stop"]), cmds
+	# ponytail: the Stop hook takes NO argument — everything it judges arrives on stdin. The
+	# SessionStart one is passed the corpus home, and passing it to both would be a silent no-op today
+	# and a wrong path the day the stop hook reads argv.
+	stop = next(c for c in cmds["Stop"] if install.STOP_MATCH in c)
+	assert stop.strip() == shlex.quote(install.STOP_HOOK)
+
+	install.full_apply(corpus)                                   # idempotent: no second copy of either
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "Stop") == 1
+	assert install._count(settings, "SessionStart") == 1
+
+	install.full_remove()
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert not settings.get("hooks", {}).get("Stop"), settings
+	assert not settings.get("hooks", {}).get("SessionStart"), settings
+
+
+def test_uninstall_leaves_somebody_elses_stop_hook_alone(monkeypatch, tmp_path):
+	"""Same rule the SessionStart match already follows: enough path to be ours, so a hook of another
+	tool's that happens to run on Stop is not swept away with ours."""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	sp = os.path.join(d, "settings.json")
+	theirs = {"type": "command", "command": "/opt/other/claude-stop.sh"}
+	open(sp, "w").write(json.dumps({"hooks": {"Stop": [{"hooks": [theirs]}]}}))
+	install.full_apply(corpus)
+	install.full_remove()
+	settings = json.loads(open(sp).read())
+	left = [h["command"] for g in settings["hooks"]["Stop"] for h in g["hooks"]]
+	assert left == ["/opt/other/claude-stop.sh"], settings
+
+
+def test_the_consent_screen_names_the_stop_hook_and_what_it_can_do(monkeypatch, tmp_path):
+	"""#31's blocking finding, one door along: a hook that gains a new kind of power and a consent
+	screen that still describes the old one. A Stop hook can HOLD A SESSION OPEN, which is done to the
+	user rather than for them, so the screen has to say that before they agree to it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	out = "\n".join(install.full_explain(corpus))
+	assert "Stop hook" in out, out
+	assert "hold a session open" in out, out
+	assert "never twice" in out, out
+	assert "sends nothing anywhere" in out, out
+
+
+def test_one_missing_hook_script_does_not_cost_you_the_other(monkeypatch, tmp_path):
+	"""The per-hook SKIP claims exactly this, and nothing proved it.
+
+	Registration walks HOOK_TABLE; a script that is present but not executable must skip its own row
+	and leave the other registered, rather than aborting the loop or writing a hook that cannot run.
+	"""
+	d, corpus = full_env(monkeypatch, tmp_path)
+	dead = tmp_path / "not-executable.sh"
+	dead.write_text("#!/usr/bin/env bash\nexit 0\n")
+	dead.chmod(0o644)
+	monkeypatch.setattr(install, "HOOK_TABLE",
+	                    (install.HOOK_TABLE[0],
+	                     ("Stop", str(dead), install.STOP_MATCH, "x", False)))
+	out = install.full_apply(corpus)
+	assert any("SKIP" in l and "no Stop hook" in l for l in out), out
+	settings = json.loads(open(os.path.join(d, "settings.json")).read())
+	assert install._count(settings, "SessionStart") == 1        # the other one still landed
+	assert not settings.get("hooks", {}).get("Stop")
+
+
+def test_the_install_doc_names_every_hook_that_is_actually_registered(monkeypatch, tmp_path):
+	"""docs/install.md is what README calls "the full account — every file it writes".
+
+	It said install registers "one SessionStart hook" while HOOK_TABLE had grown to two, and it
+	understated it precisely for the hook that can hold a session open. Prose nobody checks is the
+	thing that goes stale, so the check is here rather than in someone's memory: the doc has to name
+	every event the code actually registers.
+	"""
+	doc = open(os.path.join(install.HERE, "docs", "install.md")).read()
+	for event, *_ in install.HOOK_TABLE:
+		assert f"`{event}`" in doc, f"docs/install.md never names the {event} hook"
+	# and the one consequence a reader must not have to discover at runtime
+	assert "hold a session open" in doc, doc[:0] or "docs/install.md does not say the Stop hook can block"
+
+
+def test_the_stop_hook_script_actually_runs_and_finds_its_own_entry_point(tmp_path):
+	"""The one new file no test executed — this repo runs its shell hooks for real everywhere else.
+
+	The `../..` walk, the `prs.py` name and the `[ -x ]` fail-quiet were all unproven: rename prs.py or
+	move the hook one directory and the whole suite still passes while the hook silently stops asking,
+	forever, with no failure anywhere. Which is the exact shape of the bug this feature exists to fix.
+	"""
+	tr = tmp_path / "t.jsonl"
+	tr.write_text("".join(json.dumps({"type": "user", "interruptedMessageId": str(i)}) + "\n"
+	                      for i in range(3)))
+	body = json.dumps({"transcript_path": str(tr), "stop_hook_active": False})
+	# ponytail: PATH without gitdashy on it, which is the point — the hook must reach its own entry
+	# point from BASH_SOURCE, not from whatever `gitdashy` happens to come first after every session.
+	kept = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+	                       if d and not os.path.exists(os.path.join(d, "gitdashy")))
+	assert shutil.which("gitdashy", path=kept) is None
+	env = {**os.environ, "PATH": kept, "PRS_MEMORY": str(tmp_path / "mem")}
+	done = subprocess.run(["bash", install.STOP_HOOK], input=body,
+	                      capture_output=True, text=True, env=env)
+	assert done.returncode == 0, done.stderr
+	assert json.loads(done.stdout)["decision"] == "block", done.stdout
+
+
+def test_the_stop_hook_is_quiet_when_its_entry_point_is_gone(tmp_path):
+	"""Fails CLOSED. A checkout half-removed is the normal state mid-uninstall, and a hook that fails
+	loudly at the end of every session is a hook the user rips out."""
+	moved = tmp_path / "hooks"
+	moved.mkdir()
+	copy = moved / "claude-stop.sh"
+	shutil.copy(install.STOP_HOOK, str(copy))      # same script, nowhere near a prs.py
+	done = subprocess.run(["bash", str(copy)], input='{"transcript_path":"/nope"}',
+	                      capture_output=True, text=True)
+	assert done.returncode == 0, done.stderr
+	assert done.stdout == "", done.stdout
+
+
+def test_a_full_install_does_not_ask_what_the_work_is_for(monkeypatch, tmp_path):
+	"""Who you are is a property of the MACHINE. What the work is for is a property of a repo.
+
+	Asked once at install time it wrote a single ~/.prs_memory/project.md that every repo bound to no
+	team then read — so a second project inherited the first one's brief, which is precisely the
+	failure brief() was rewritten to stop for the team case.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)                                    # or there is no identity/ to ask about
+	asked = []
+	out = install.setup(lambda q: asked.append(q) or "x", project=False)
+	assert any("Name" in q for q in asked), asked                 # USER.md still asked for
+	assert not any("The project" in q for q in asked), asked      # the brief is not
+	assert not os.path.exists(memory.brief_path()), "wrote a machine-wide brief anyway"
+	said = "\n".join(out)
+	assert "belongs to a repo, not" in said, said                 # and says where it went
+	assert "gitdashy setup" in said and "gitdashy bind" in said, said
+
+
+def test_gitdashy_setup_still_asks_for_both(monkeypatch, tmp_path):
+	"""The deliberate command keeps the question — it is only the machine-level install that drops it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q) or "x")
+	assert any("Name" in q for q in asked) and any("The project" in q for q in asked), asked
+	assert os.path.exists(memory.brief_path())
+
+
+def test_the_personal_brief_says_it_covers_every_unbound_repo(monkeypatch, tmp_path):
+	""""yours" reads as "scoped to me" and is the opposite: one file, every repo bound to no team.
+
+	Someone with a second project has to be told that before they answer, not after they notice one
+	product's brief in the reviews of another.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	# ponytail: the REPORT, not the prompts — the sentence is printed above the questions, which is
+	# where someone reads it before answering. Asserting on `ask` arguments missed it entirely.
+	said = "\n".join(install.setup(lambda q: "x"))
+	assert "EVERY repo bound to no team" in said, said
+	assert "gitdashy bind" in said, said
+
+
+def test_the_install_offer_is_done_once_you_have_said_who_you_are(monkeypatch, tmp_path):
+	"""setup_done still waited on a brief the install no longer asks for, so the offer would have
+	returned on every install forever on a machine that answered everything it was asked."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	assert install.setup_done(project=False) is False           # USER.md is still the seeded template
+	install.setup(lambda q: "answered", project=False)
+	assert install.setup_done(project=False) is True            # and now there is nothing left to ask
+	assert install.setup_done() is False                        # but the brief is still unwritten
+
+
+def test_install_asks_nothing_that_changes_when_you_change_project(monkeypatch, tmp_path):
+	"""The whole point of the rescoping, stated as a property rather than a list.
+
+	`Role` and `What you own` were asked at machine scope and are answers about one project — which is
+	how the corpus's own USER.md ended up with ten of its thirteen sections about a single platform, in
+	a file every session in every repo loads. Its cross-cutting section says so out loud.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q.split(" —")[0].split("\n")[0]) or "x", project=False)
+	assert asked == ["Name", "How you work"], asked
+	for gone in ("Role", "What you own", "The project"):
+		assert gone not in asked, asked
+
+
+def test_ownership_is_asked_with_the_project_and_lands_in_its_brief(monkeypatch, tmp_path):
+	"""Who owns what is a property of a project, and a review of that repo is the thing that needs it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q.split(" —")[0].split("\n")[0]) or "answer", project=True)
+	assert "Who does what" in asked, asked
+	assert asked.index("Who does what") > asked.index("The project"), asked   # with the project, after it
+	brief = _read_text(memory.brief_path())
+	assert "## Who does what" in brief, brief
+	assert "## Who does what" not in _read_text(os.path.join(install.CORPUS_HOME, "identity", "USER.md"))
+
+
+def _read_text(p):
+	return open(p).read() if os.path.exists(p) else ""
