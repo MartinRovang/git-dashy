@@ -1333,27 +1333,53 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
-def _new_team(scr, state, sel):
-	"""Start a team that does not exist anywhere yet: a name, a description, a place. No host."""
+def _owner_of(current):
+	"""The owner of the selected row's repo, "" when no row is selected."""
+	return bind.key((current or {}).get("repository", {}).get("nameWithOwner", "")).split("/")[0]
+
+
+def _new_team(scr, state, sel, current=None):
+	"""Start a team: a name, one line about it, done. It lands under ~/.prs_teams and opens its screen.
+
+	ponytail: no "Where?". The question read as "where is the project", and the answer — the parent of
+	every checkout on the machine — was adopted wholesale. A team kept somewhere else is `teams --new
+	--at DIR` in a shell, on purpose, and start() refuses anything that is not empty.
+	ponytail: started from a PR row, it offers to cover that row's owner right away. A team started
+	with T was inert until somebody found the bind key; this is the one thing that makes it do something.
+	"""
 	name = ask(scr, state, sel, " Name the new team (this is what your repos get bound to):")
 	if not name:
 		return
 	desc = ask(scr, state, sel, " One line: what is this team for? (shared with everyone who joins)")
-	# ponytail: EMPTY, said in the prompt. "a path to keep it somewhere else" read as "where is the project",
-	# and the answer was the parent of every checkout on the machine — which start() then adopted wholesale.
-	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or an EMPTY directory to keep the checkout in)")
-	if err := team.start(name, desc, at):
+	if err := team.start(name, desc):
 		return confirm(scr, state, sel, f" {err}  [any key]") and None
 	state.wake.set()
 	key = team.key_of(name)
-	confirm(scr, state, sel, f" started {key} · no remote yet — c connects one when you have it  [any key]")
+	if owner := _owner_of(current):
+		_cover(scr, state, sel, key, owner)
+	_team_screen(scr, state, sel, key, current)
 
 
-def _connect_team(scr, state, sel, joined):
-	"""Point a team at a git repo, once there is one. The key does not change, so bindings hold."""
-	if not (key := _pick_team(scr, state, sel, joined, "Connect")):
+def _cover(scr, state, sel, key, owner):
+	"""Cover `owner`/* with team `key`: bound here, and declared in the team for everyone who joins.
+
+	ponytail: one y/n that says what it discloses — every repo under the owner, on every member's
+	machine, reads this team's brief and facts, and facts about them may be shared here. Both writes
+	happen or neither: the local rule is what the person asked for, the declaration is what makes it
+	reach a colleague, and a team.json nobody bound to locally would be a rule that works only elsewhere.
+	"""
+	name = team.info(key)["name"]
+	# ponytail: under team.FOOTER, or the [y/n] falls off an 80-column footer.
+	if not confirm(scr, state, sel, f" {name} covers {owner}/* — here, and for everyone who joins? [y/n]"):
 		return
-	url = ask(scr, state, sel, f" Git URL for {key} (any host — it just has to be a repo you can push to):")
+	if err := team.cover(key, owner) or bind.bind_owner(owner, key):
+		return confirm(scr, state, sel, f" {err}  [any key]") and None
+	state.wake.set()
+
+
+def _connect_team(scr, state, sel, key):
+	"""Point a team at a git repo, once there is one. The key does not change, so bindings hold."""
+	url = ask(scr, state, sel, f" Git URL for {key} (an EMPTY repo you can push to — one with history is a team to join):")
 	if not url:
 		return
 	if err := team.connect(key, url):
@@ -1362,23 +1388,8 @@ def _connect_team(scr, state, sel, joined):
 		confirm(scr, state, sel, f" {key} now pushes to {url}  [any key]")
 
 
-def _pick_team(scr, state, sel, joined, verb):
-	"""Which team, when there is more than one. "" when the answer is not one we have."""
-	key = joined[0] if len(joined) == 1 else ask(scr, state, sel, f" {verb} which team? ({', '.join(joined)})")
-	if not key:
-		return ""            # ponytail: an empty answer is a cancel, and a cancel says nothing
-	if not team.dir_of(key):
-		# ponytail: a TYPO is not a cancel. It used to return the same "" and the screen just came back,
-		# so a mistyped key looked exactly like changing your mind.
-		confirm(scr, state, sel, f" not in {key} — joined: {', '.join(joined)}  [any key]")
-		return ""
-	return key
-
-
-def _edit_brief(scr, state, sel, joined):
+def _edit_brief(scr, state, sel, key):
 	"""Open a team's brief in $EDITOR and push it. This is the file every review of its repos reads."""
-	if not (key := _pick_team(scr, state, sel, joined, "Edit the brief of")):
-		return
 	path = os.path.join(team.dir_of(key), "memory", memory.PROJECT)
 	os.makedirs(os.path.dirname(path), exist_ok=True)
 	team.seed_project(path)  # ponytail: never overwrites — a template only when there is nothing yet
@@ -1389,10 +1400,8 @@ def _edit_brief(scr, state, sel, joined):
 	team.push_dir(team.dir_of(key), f"memory: the brief for {key}", "sync")
 
 
-def _describe_team(scr, state, sel, joined):
+def _describe_team(scr, state, sel, key):
 	"""Change what a team says it is. Shared, because it lives in the team's own team.json."""
-	if not (key := _pick_team(scr, state, sel, joined, "Describe")):
-		return
 	it = team.info(key)
 	desc = ask(scr, state, sel, f" One line: what is {it['name']} for?  [now: {it['description'][:40] or 'nothing yet'}]")
 	if not desc:
@@ -1402,11 +1411,12 @@ def _describe_team(scr, state, sel, joined):
 	team.push_dir(team.dir_of(key), f"team: describe {key}", "sync")
 
 
-def _join_team(scr, state, sel):
-	"""Join a team that already exists: any git URL, or a checkout on this machine."""
-	repo = ask(scr, state, sel, " Existing team (a git URL, a path, or owner/name on GitHub):")
+def _join_team(scr, state, sel, current=None):
+	"""Join a team that already exists: any git URL, a bare repo on this machine, or owner/name."""
+	repo = ask(scr, state, sel, " Existing team (a git URL, owner/name on GitHub, or a path to a bare repo):")
 	if not repo:
 		return
+	before = set(team.joined())
 	if err := team.setup(repo):
 		confirm(scr, state, sel, f" {err}  [any key]")
 		return
@@ -1416,23 +1426,24 @@ def _join_team(scr, state, sel):
 	# silent: the only sign was a clipped line on the T row that the next successful pull clears.
 	if team.ERROR:
 		confirm(scr, state, sel, f" joined, but could not publish: {team.ERROR[:70]}  [any key]")
+	# ponytail: land on what you just joined — its brief, its remote, what it declares — not back on a list.
+	if fresh := sorted(set(team.joined()) - before):
+		_team_screen(scr, state, sel, fresh[0], current)
 
 
-def _leave_team(scr, state, sel, joined):
-	"""Drop one team's checkout, having said which one and what that removes."""
-	# ponytail: names WHICH team. "Leave the team" is not a sentence that says what it will delete once
-	# there are several, and this prompt is the last thing anyone reads before files go.
-	if not (name := _pick_team(scr, state, sel, joined, "Leave")):
-		return
-	d = team.dir_of(name)
+def _leave_team(scr, state, sel, key):
+	"""Drop one team's checkout, having said which one and what that removes. True when it left."""
+	d = team.dir_of(key)
 	where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
 	         if os.path.islink(d) else f"files in {d} are deleted")
-	if not confirm(scr, state, sel, f" team {name} · {where} · leave it? [y/n]"):
-		return
-	if err := knowledge.leave(name):
+	# ponytail: names WHICH team and what goes. This prompt is the last thing anyone reads before files go.
+	if not confirm(scr, state, sel, f" team {key} · {where} · leave it? [y/n]"):
+		return False
+	if err := knowledge.leave(key):
 		confirm(scr, state, sel, f" {err}  [any key]")
-	else:
-		state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
+		return False
+	state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
+	return True
 
 
 def bind_screen(scr, state, sel, pr):
@@ -1480,33 +1491,84 @@ def bind_screen(scr, state, sel, pr):
 			state.wake.set()
 
 
-def team_setup(scr, state, sel):
-	"""The teams you are in: join another, or leave one.
+def _team_screen(scr, state, sel, key, current=None):
+	"""One team: what it has, then the verbs for it. Every write here is about THIS team, named in the title.
 
-	ponytail: JOIN stays reachable once you are in a team. This used to return after offering to leave,
-	so a second team could not be joined from anywhere — the store, the resolution and the log all
-	handled several while no surface could produce one. A capability nothing can reach is not shipped.
+	ponytail: the old panel put six verbs on the list and each began with "which team?" as a typed
+	key. Showing the team first — where it lives, whether it has a remote, what it declares and what is
+	bound here — is what makes the verbs safe to offer: you see what you are about to change.
+	"""
+	while True:
+		if not (d := team.dir_of(key)):
+			return
+		it = team.info(key)
+		url = team._url(d)
+		mine = sorted(o + "/*" for o, t in bind.owners().items() if t == key)
+		repos = [r for r, t in bind.bindings().items() if t == key]
+		here = ", ".join(mine[:3]) + (f" +{len(mine) - 3}" if len(mine) > 3 else "")
+		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x) or "nothing bound here yet"
+		lines = [("what", it["description"] or "nothing yet — d describes it"),
+		         ("lives at", knowledge.tilde(os.path.realpath(d))),
+		         ("remote", (team.host_of(url) or url) if url else "none — c connects one"),
+		         ("declares", ", ".join(team.covers(key)) or "nothing — o covers an owner"),
+		         ("here", here)]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"{it['name']}  ({key})", lines,
+		      "[e] brief  [d] describe  [c] connect  [o] cover  [x] leave  [esc] back")
+		k = scr.getch()
+		if k == ord("e"):
+			_edit_brief(scr, state, sel, key)
+		elif k == ord("d"):
+			_describe_team(scr, state, sel, key)
+		elif k == ord("c"):
+			_connect_team(scr, state, sel, key)
+		elif k == ord("o"):
+			owner = _owner_of(current) or bind.owner_key(ask(scr, state, sel, " Cover which owner? (e.g. neomedsys):"))
+			if owner:
+				_cover(scr, state, sel, key, owner)
+		elif k == ord("x"):
+			if _leave_team(scr, state, sel, key):
+				return
+		elif k in (27, ord("q")):
+			return
+
+
+def team_setup(scr, state, sel, current=None):
+	"""The teams you are in: a number opens one, n starts one, a joins one.
+
+	ponytail: with ONE team joined its verbs work from the list too — pressing 1 first would be
+	ceremony for the common case. With several, the list offers only numbers, so nothing here ever
+	asks "which team?" as typed text.
 	"""
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
+		rows = [(f"{i + 1}  {team.info(s)['name']}", (team.host_of(u) or "remote") if (u := team._url(team.dir_of(s))) else "no remote yet")
+		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
-		      [(team.info(s)["name"], "no remote yet" if not team.has_remote(team.dir_of(s)) else "")
-		       for s in joined] or [("a team is a git repo of shared memory", "")],
-		      "[n] start  [a] join  [e] edit brief  [d] describe  [c] connect  [x] leave  [esc] close")
+		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
+		      ("[1-8] open   " if len(joined) > 1 else "[1] open   " if joined else "") + "[n] start   [a] join   [esc] close")
 		k = scr.getch()
 		if k == ord("n"):
-			_new_team(scr, state, sel)
-		elif k == ord("e") and joined:
-			_edit_brief(scr, state, sel, joined)
-		elif k == ord("d") and joined:
-			_describe_team(scr, state, sel, joined)
-		elif k == ord("c") and joined:
-			_connect_team(scr, state, sel, joined)
+			_new_team(scr, state, sel, current)
 		elif k == ord("a"):
-			_join_team(scr, state, sel)
-		elif k == ord("x") and joined:
-			_leave_team(scr, state, sel, joined)
+			_join_team(scr, state, sel, current)
+		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
+			_team_screen(scr, state, sel, joined[k - ord("1")], current)
+		elif len(joined) == 1 and k in (ord("e"), ord("d"), ord("c"), ord("o"), ord("x")):
+			only = joined[0]
+			if k == ord("e"):
+				_edit_brief(scr, state, sel, only)
+			elif k == ord("d"):
+				_describe_team(scr, state, sel, only)
+			elif k == ord("c"):
+				_connect_team(scr, state, sel, only)
+			elif k == ord("o"):
+				owner = _owner_of(current) or bind.owner_key(ask(scr, state, sel, " Cover which owner? (e.g. neomedsys):"))
+				if owner:
+					_cover(scr, state, sel, only, owner)
+			elif k == ord("x"):
+				_leave_team(scr, state, sel, only)
 		elif k in (27, ord("q")):
 			return
 
@@ -1723,7 +1785,7 @@ def main(scr, interval, auto, model):
 		elif k == 9 and state.pane:  # Tab: the two faces of the pane, without leaving the row
 			state.pane_tab = "code" if state.pane_tab == "summary" else "summary"
 		elif k == ord("T"):
-			team_setup(scr, state, sel)
+			team_setup(scr, state, sel, current)
 		elif k == ord("u") and state.update:
 			update_screen(scr, state, sel)
 		elif k == ord("v") and code_ready(current):
