@@ -8,6 +8,22 @@ from .. import config
 LOG = config.LOG  # module attr so --demo and tests can point it elsewhere
 
 
+def when(iso):
+	"""An entry's timestamp as an aware datetime in UTC, whatever offset it carried.
+
+	ponytail: `at` predates the offset, so entries written before it read back NAIVE — and everything
+	that compares one compares it against an aware value. Kept as a function of its own because _parse
+	leans on it raising: an `at` that is not a timestamp at all comes out as the ValueError that gate
+	already catches, rather than as a fourth type check beside the three.
+	"""
+	at = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+	# ponytail: converted to UTC, not merely made aware. reviewed() sorts on the STRING this becomes,
+	# so an entry from a machine at +02:00 sorted by literal text rather than by instant — 09:30+02:00
+	# is 07:30Z, earlier than 08:00Z, and came back first in a list whose whole job is "newest first".
+	# Unreachable while every writer emits UTC, which is exactly how long it stays unreachable.
+	return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
 def logs():
 	"""Every log to read: yours, then each joined team's. ponytail: lazy import — team imports this."""
 	from . import team
@@ -49,8 +65,18 @@ def _parse(line):
 		# in the row, so a line missing "at" — or carrying "pr": 7 — took the dashboard down on every
 		# frame. The guard exists precisely so a half-written append cannot do that; checking two of the
 		# three fields is checking none of them.
-		return e if (isinstance(e, dict) and isinstance(e.get("pr"), dict)
-		             and isinstance(e.get("at"), str) and e.get("verdict") in config.STATUS) else None
+		if not (isinstance(e, dict) and isinstance(e.get("pr"), dict)
+		        and isinstance(e.get("at"), str) and e.get("verdict") in config.STATUS):
+			return None
+		# ponytail: and `at` is PARSED, not merely typed. Being a str is not being a timestamp, and
+		# mark_rereviews on the refresh thread and age() on the draw thread both hand it to
+		# fromisoformat — so "at": "yesterday" raised in the two threads this gate exists to keep safe.
+		# Written back AWARE for the same reason: an entry from before `at` carried an offset read back
+		# naive, and comparing it against an aware value is a TypeError. Normalising in the gate means no
+		# reader has to know the file holds two shapes — and it settles the sort in reviewed(), where a
+		# naive string is a prefix of its own aware form and so sorted before it.
+		e["at"] = when(e["at"]).isoformat()
+		return e
 	except ValueError:
 		return None
 
@@ -143,7 +169,7 @@ def mark_rereviews(sections):
 				continue
 			changed = p["head"] != e["head"]
 		else:
-			changed = datetime.fromisoformat(p["updatedAt"].replace("Z", "+00:00")) > datetime.fromisoformat(e["at"])
+			changed = when(p["updatedAt"]) > when(e["at"])
 		if changed:
 			p["prev"] = f"↻ re-review · was {config.STATUS[e['verdict']]}"
 			out.append(p["url"])
