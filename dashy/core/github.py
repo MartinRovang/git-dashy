@@ -170,13 +170,17 @@ def request_review(repo, number, login):
 	return ""
 
 
+GITHUB = "https://github.com/"  # ponytail: the header is scoped to this remote — an unscoped extraHeader
+                                # would hand the token to ANY http remote the checkout later talks to.
+
+
 def git_auth():
 	"""Env that lets a clone reach a private repo with the same token the API uses.
 
 	ponytail: GIT_CONFIG_* in the environment, not `-c` in argv — argv is world-readable in `ps` for the
 	length of a clone. It does not survive into the new checkout, so `persist_auth()` writes it there.
 	"""
-	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
+	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"http.{GITHUB}.extraHeader",
 	        "GIT_CONFIG_VALUE_0": f"Authorization: {h}"} if (h := git_header()) else {}
 
 
@@ -202,7 +206,7 @@ def persist_auth(dest):
 		return
 	os.chmod(cfg, 0o600)
 	with open(cfg, "a") as f:
-		f.write(f"[http]\n\textraHeader = Authorization: {h}\n")
+		f.write(f'[http "{GITHUB}"]\n\textraHeader = Authorization: {h}\n')
 
 
 VERDICT_EVENT = {"approve": "APPROVE", "request_changes": "REQUEST_CHANGES", "comment": "COMMENT"}

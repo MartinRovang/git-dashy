@@ -218,9 +218,21 @@ def test_persist_auth_writes_the_token_into_the_checkout_not_argv(tmp_path, monk
 	cfg.parent.mkdir()
 	cfg.write_text("[core]\n")
 	github.persist_auth(str(tmp_path))
-	assert "extraHeader = Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2hvX3g=" in cfg.read_text()
+	assert '[http "https://github.com/"]\n\textraHeader = Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2hvX3g=' in cfg.read_text()
 	assert oct(cfg.stat().st_mode)[-3:] == "600"  # a token on disk is never world-readable
 	github.persist_auth(str(tmp_path / "nope"))   # a failed clone left no config: nothing to write
+
+
+def test_no_token_means_no_header_anywhere(tmp_path, monkeypatch):
+	"""Both callers early-out on git_header() == "": nothing in the env, nothing written to disk."""
+	monkeypatch.delenv("GH_TOKEN", raising=False)
+	monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+	cfg = tmp_path / ".git" / "config"
+	cfg.parent.mkdir()
+	cfg.write_text("[core]\n")
+	assert github.git_header() == "" and github.git_auth() == {}
+	github.persist_auth(str(tmp_path))
+	assert cfg.read_text() == "[core]\n"
 
 
 def test_collaborators_and_request_review(monkeypatch):
