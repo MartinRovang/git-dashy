@@ -293,7 +293,11 @@ def test_drafts_count_is_one_line_for_the_repo_you_stand_in_and_silent_when_empt
 	"""For a session hook: the pull toward W that was missing. Reads the local store only."""
 	from dashy import cli
 	from dashy.core import memory, team
-	monkeypatch.setattr(team, "activate", lambda: None)
+	# ponytail: team.activate() runs for real here. Stubbing it out was stubbing out the very seam the
+	# "local store only" claim rests on — the test then proved nothing about the network, only that a
+	# no-op does nothing. What must hold is that team.pull() is never reached, so that is asserted.
+	monkeypatch.setattr(team, "pull", lambda: (_ for _ in ()).throw(AssertionError("drafts --count must not pull")))
+	monkeypatch.setattr(team, "pull_dir", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("drafts --count must not pull")))
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	cli.drafts(["gitdashy", "drafts", "--count"])

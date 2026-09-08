@@ -59,7 +59,13 @@ def stale_team_link():
 	if not os.path.islink(link):
 		return ""
 	target = os.path.abspath(os.path.join(os.path.dirname(link), os.readlink(link)))
-	stores = (os.path.abspath(config.TEAMS), os.path.abspath(os.path.join(config.TEAM, "memory")))
+	# ponytail: an EMPTY store root means "no store configured", NOT "everywhere". abspath("") is the
+	# CURRENT WORKING DIRECTORY, so a blank PRS_TEAMS/PRS_TEAM — which is exactly what `--demo` sets —
+	# made every link under cwd count as ours, and retire() deletes what it matches. Launch the demo from
+	# $HOME with a hand-made ~/.claude/prs-team -> ~/work/notes and the link is gone. A relative root is
+	# refused for the same reason: it is only meaningful against a cwd this has no business trusting.
+	roots = (config.TEAMS, os.path.join(config.TEAM, "memory") if config.TEAM else "")
+	stores = [os.path.abspath(r) for r in roots if r and os.path.isabs(r)]
 	return link if any(target == st or target.startswith(st + os.sep) for st in stores) else ""
 
 
@@ -76,7 +82,9 @@ def retire(dry=False):
 	"""
 	out, did = [], "would " if dry else ""
 	if old := stale_team_link():
-		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts reach a session through its repo's mirror now")
+		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts AND its project brief reach a "
+		           "session through its repo's mirror now, so a repo with no mirror gets neither: "
+		           "`gitdashy init --into .agent/team --loader CLAUDE.local.md` wires one")
 		if not dry:
 			os.remove(old)
 	md = os.path.join(claude_dir(), "CLAUDE.md")
@@ -128,14 +136,51 @@ def corpus_remembers(ident=None):
 	           for n in os.listdir(ident) if n.endswith(".md"))
 
 
+_NOTES = (None, [])  # (fingerprint, notes) — see session_notes
+
+
+def _notes_key():
+	"""A stat-level fingerprint of every file session_notes() would read.
+
+	ponytail: (mtime_ns, size) per file, the same key log._CACHE uses — mtime alone re-reads on a
+	same-nanosecond rewrite, size alone misses an edit that keeps the length. The DIRECTORY's own mtime
+	is not enough: it moves when a file is added or removed, not when one is edited in place.
+	"""
+	d = claude_dir()
+	out = [d]
+	ident = os.path.join(d, "identity")
+	try:
+		for n in sorted(os.listdir(ident)):
+			if n.endswith(".md"):
+				st = os.stat(os.path.join(ident, n))
+				out.append((n, st.st_mtime_ns, st.st_size))
+	except OSError:
+		out.append("no identity")
+	try:
+		st = os.stat(os.path.join(d, "CLAUDE.md"))
+		out.append((st.st_mtime_ns, st.st_size))
+	except OSError:
+		out.append("no CLAUDE.md")
+	return tuple(out)
+
+
 def session_notes():
-	"""Short standing notes for the Knowledge row: what a session here is NOT being told, and why."""
-	out = []
-	if corpus_remembers() is False:
-		out.append("corpus never says `gitdashy remember`")
-	if hand_wired_team_import():
-		out.append("CLAUDE.md imports @prs-team by hand")
-	return out
+	"""Short standing notes for the Knowledge row: what a session here is NOT being told, and why.
+
+	ponytail: CACHED on a stat-level key, because header_groups() calls this and draw() calls that on
+	every tick — 50ms while anything spins. Uncached it read every identity/*.md in full, read the whole
+	CLAUDE.md, and ran _strip_blocks() over it, twice a second for the life of the process. The values
+	beside it on that row cost one stat each; this now costs the same order, and still notices an edit.
+	"""
+	global _NOTES
+	if _NOTES[0] != (key := _notes_key()):
+		out = []
+		if corpus_remembers() is False:
+			out.append("corpus never says `gitdashy remember`")
+		if hand_wired_team_import():
+			out.append("CLAUDE.md imports @prs-team by hand")
+		_NOTES = (key, out)
+	return _NOTES[1]
 
 
 def _fence(line, open_at):

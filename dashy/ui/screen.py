@@ -1399,8 +1399,8 @@ def main(scr, interval, auto, model):
 	# ponytail: the team link retirement, at launch and said once, for the same reason migrate() is —
 	# nothing re-runs install after an update. Only a CHANGE is worth a keypress; a hand-wired import
 	# it could not touch is a standing note on the Knowledge row, not a nag on every launch.
-	if done := [l for l in install.retire() if not l.startswith("NOTE")]:
-		confirm(scr, state, 0, f" {done[0][:110]}  [any key]")
+	if done := next((l for l in install.retire() if not l.startswith("NOTE")), ""):
+		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too

@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 import subprocess
 
 from dashy import config
@@ -977,3 +978,145 @@ def test_full_install_says_when_the_corpus_never_tells_a_session_to_remember(mon
 	(tmp_path / "corpus" / "identity" / "AGENT.md").write_text("# loud\nrun `gitdashy remember` for durable facts\n")
 	out = install.full_apply(str(tmp_path / "corpus"))
 	assert not any("gitdashy remember" in l for l in out), out
+
+
+def test_a_blank_store_root_does_not_make_every_link_ours(monkeypatch, tmp_path):
+	"""abspath("") is the CURRENT WORKING DIRECTORY, not "nowhere".
+
+	`gitdashy --demo` blanks config.TEAM and config.TEAMS, and PRS_TEAMS= does the same. With the
+	prefix test taken against cwd, any symlink under the directory you happened to launch from counted
+	as gitdashy's own — and retire() deletes what it matches. This is the case
+	test_install_leaves_a_prs_team_link_that_is_not_ours exists to forbid, reached by a different door.
+	"""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	mine = tmp_path / "work" / "notes"          # the user's own, under what will be cwd
+	mine.mkdir(parents=True)
+	os.symlink(str(mine), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", "")
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.chdir(tmp_path)
+	assert install.stale_team_link() == ""       # not ours: no store is configured at all
+	assert install.retire() == []                # so nothing is retired, and the link survives
+	assert os.path.islink(str(cfg / "prs-team"))
+
+
+def test_a_relative_store_root_is_refused_too(monkeypatch, tmp_path):
+	"""Same door, one step along: a relative root is only meaningful against a cwd this cannot trust."""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	mine = tmp_path / "teams" / "acme"
+	mine.mkdir(parents=True)
+	os.symlink(str(mine), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", "teams")   # relative: resolves against whatever cwd happens to be
+	monkeypatch.setattr(config, "TEAM", "")
+	monkeypatch.chdir(tmp_path)
+	assert install.stale_team_link() == ""
+
+
+def test_the_real_store_root_still_matches(monkeypatch, tmp_path):
+	"""The guard must not have turned the whole check off — the link it IS for is still retired."""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	assert install.stale_team_link() == str(cfg / "prs-team")
+
+
+def test_the_retirement_says_the_brief_goes_with_the_facts(monkeypatch, tmp_path):
+	"""A repo with no mirror loses the BRIEF as well, and that is the half the message was silent on.
+
+	The global @prs-memory/project.md import is gone after migration, so someone who installed without
+	--full, or never ran `gitdashy init` in a repo, gets no brief at all — and the one place they are
+	told about the change only mentioned the facts.
+	"""
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	said = " ".join(install.retire(dry=True))
+	assert "brief" in said, said
+	assert "gitdashy init" in said, said          # and what to do about it
+
+
+def test_session_notes_is_not_full_file_io_on_every_draw(monkeypatch, tmp_path):
+	"""header_groups() calls this and draw() calls that on every tick — 50ms while anything spins.
+
+	Uncached it read every identity/*.md, the whole CLAUDE.md, and ran _strip_blocks() over it, twice a
+	second forever. Cached on a stat-level key it still has to notice an edit, so both halves are here.
+	"""
+	cfg = tmp_path / "claude"
+	(cfg / "identity").mkdir(parents=True)
+	(cfg / "identity" / "AGENT.md").write_text("no instruction here\n")
+	(cfg / "CLAUDE.md").write_text("nothing\n")
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	reads = []
+	real = install._read
+	monkeypatch.setattr(install, "_read", lambda p: reads.append(p) or real(p))
+
+	assert "corpus never says `gitdashy remember`" in install.session_notes()
+	first = len(reads)
+	assert first > 0                                   # it really did read, the first time
+	for _ in range(20):
+		install.session_notes()
+	assert len(reads) == first, reads                  # and not once more, twenty draws later
+
+	(cfg / "identity" / "AGENT.md").write_text("file it with `gitdashy remember` when you learn one\n")
+	assert install.session_notes() == []                # but an edit is still seen
+	assert len(reads) > first
+
+
+def test_the_hook_actually_runs_the_drafts_count_line(tmp_path):
+	"""No test in the suite executed this script's step 4, so the line was only proven by reading it.
+
+	A stub `gitdashy` on PATH stands in for the real one: what is under test is that the hook calls it
+	and lets its stdout through, not what `drafts --count` itself decides.
+	"""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	binp = tmp_path / "bin"
+	binp.mkdir()
+	stub = binp / "gitdashy"
+	stub.write_text('#!/usr/bin/env bash\n'
+	                'if [ "$1" = "drafts" ]; then echo "gitdashy: 2 drafts waiting for acme/web"; fi\n'
+	                'exit 0\n')
+	stub.chmod(0o755)
+	env = {**os.environ, "PATH": f"{binp}:{os.environ['PATH']}", "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                     capture_output=True, text=True, env=env).stdout
+	assert "2 drafts waiting for acme/web" in out, out
+
+
+def test_the_hook_survives_a_gitdashy_that_is_not_there(tmp_path):
+	"""command -v guards it; without that the hook fails at the end of every session on a machine
+	mid-uninstall, which is a hook the user removes.
+
+	ponytail: the real PATH with only the entries holding a `gitdashy` removed. A hand-built PATH of
+	just git and bash exited 0 at step 1 — `grep` was gone too, so the ignore could not be verified and
+	the hook bailed before reaching the guard under test. Removing one tool is the smaller change, and
+	it is the one the case is actually about.
+	"""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	kept = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+	                       if d and not os.path.exists(os.path.join(d, "gitdashy")))
+	assert shutil.which("gitdashy", path=kept) is None           # the guard really has nothing to find
+	env = {**os.environ, "PATH": kept, "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+	done = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	                      capture_output=True, text=True, env=env)
+	assert done.returncode == 0, done.stderr
+	assert os.path.isdir(str(wt / ".agent"))                     # and every step before it still ran
+	assert os.path.exists(str(wt / "CLAUDE.local.md"))

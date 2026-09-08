@@ -19,7 +19,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
-       gitdashy drafts [--repo owner/name]
+       gitdashy drafts [--repo owner/name] [--count]
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--leave KEY]
 
@@ -49,8 +49,8 @@ self-review runs the reviewer over one of your OWN PRs and posts nothing — a p
   separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
   on the same diff, so only a later real review landing on the same fact independently promotes it.
 
-install wires this machine so every session reads the cross-repo facts: two symlinks in the agent config
-  directory and two imports. It explains itself and asks before writing anything (--yes to skip the ask,
+install wires this machine so every session reads the cross-repo facts: one symlink in the agent config
+  directory and one import. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
   by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
@@ -356,7 +356,7 @@ def drafts(argv):
 		rows = [r for r in rows if (r[0] or "general") == only]
 	if count:
 		if rows:
-			print(f"gitdashy: {len(rows)} draft{'s' if len(rows) != 1 else ''} waiting for {only or 'general'}"
+			print(f"gitdashy: {len(rows)} draft{'s' if len(rows) != 1 else ''} waiting for {only}"
 			      " — `gitdashy drafts` lists them, W in the dashboard promotes or drops them")
 		return
 	if not rows:

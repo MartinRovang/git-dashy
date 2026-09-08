@@ -78,3 +78,44 @@ def test_demo_puts_back_everything_it_swapped(monkeypatch, tmp_path):
 	for (m, n), o in originals.items():
 		assert getattr(m, n) is o, f"{m.__name__}.{n} was not put back"
 	assert demo.SWAPPED == {}
+
+
+def test_a_demo_launch_leaves_the_real_agent_config_alone(screen, monkeypatch, tmp_path):
+	"""--demo is documented as "nothing touches gh, claude or your real log", and demo.install()'s own
+	docstring says EVERY call-out is swapped here.
+
+	The launch-time link retirement was a new call-out and was not, so a demo run read and rewrote the
+	user's ~/.claude/CLAUDE.md and unlinked a symlink under it. Blanking the store roots stops the link
+	being matched; it does not stop the CLAUDE.md rewrite.
+	"""
+	from dashy import config
+	from dashy.core import install, team
+	cfg = tmp_path / "claude"
+	(cfg / "identity").mkdir(parents=True)
+	md = cfg / "CLAUDE.md"
+	# ponytail: the REAL markers, with STALE inside them. A CLAUDE.md that does not satisfy
+	# `STALE in _inside_blocks(text)` is one retire() would leave alone anyway, so the assertion below
+	# would hold with or without the swap — it pinned nothing. This is a file retire() really rewrites.
+	md.write_text(f"# mine\n\n{install.BEGIN}\n# Review memory\n\n{install.STALE}general.md\n"
+	              f"@prs-memory/general.md\n{install.END}\n")
+	assert install.STALE in install._inside_blocks(md.read_text())   # or this test proves nothing
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	monkeypatch.setenv("TMPDIR", str(tmp_path))
+	before = md.read_bytes()
+
+	demo.install()
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "migrate", lambda: "")
+	screen.getch, screen.timeout = iter([ord("q")]).__next__, lambda t: None
+	ui.main(screen, 60, False, "opus")
+
+	assert md.read_bytes() == before                    # byte-identical: nothing rewrote it
+	assert os.path.islink(str(cfg / "prs-team"))        # and nothing unlinked it

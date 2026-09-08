@@ -1457,3 +1457,38 @@ def test_launch_retires_the_team_link_and_says_so_once(screen, monkeypatch):
 	screen.getch = _keys(ord("q"))
 	ui.main(screen, 60, False, "opus")
 	assert said == []
+
+
+def test_launch_really_retires_a_stale_link_and_is_silent_the_second_time(screen, monkeypatch, tmp_path):
+	"""The other launch test replaces retire() wholesale, so the migration is only proven against a fake.
+
+	This one runs the real thing against a real stale link, which is the only way the wiring between
+	the launch path and stale_team_link() is checked at all.
+	"""
+	from dashy import config
+	from dashy.core import install
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0], said
+	assert not os.path.lexists(str(cfg / "prs-team"))   # the link is actually gone
+
+	said.clear()
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                   # idempotent: nothing left to say
