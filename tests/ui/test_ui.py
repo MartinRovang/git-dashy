@@ -1430,6 +1430,70 @@ def test_a_join_that_could_not_publish_says_so_on_screen(screen, monkeypatch, st
 	assert said == [] and st.wake.is_set()
 
 
+def test_launch_retires_the_team_link_and_says_so_once(screen, monkeypatch):
+	"""Nothing re-runs install after an update, so the migration runs at launch like team.migrate()
+	does. Only a CHANGE earns a keypress; a hand-wired import it cannot touch is a standing note."""
+	from dashy.core import install
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	monkeypatch.setattr(install, "retire", lambda: ["retire ~/.claude/prs-team — a team's facts reach a session through its repo's mirror now"])
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0]
+
+	said.clear()
+	monkeypatch.setattr(install, "retire", lambda: ["NOTE  ~/.claude/CLAUDE.md still imports @prs-team/… by hand"])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                                  # not a nag on every launch
+
+	monkeypatch.setattr(install, "retire", lambda: [])
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []
+
+
+def test_launch_really_retires_a_stale_link_and_is_silent_the_second_time(screen, monkeypatch, tmp_path):
+	"""The other launch test replaces retire() wholesale, so the migration is only proven against a fake.
+
+	This one runs the real thing against a real stale link, which is the only way the wiring between
+	the launch path and stale_team_link() is checked at all.
+	"""
+	from dashy import config
+	from dashy.core import install
+	cfg = tmp_path / "claude"
+	cfg.mkdir()
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+	teams = tmp_path / "teams"
+	(teams / "acme" / "memory").mkdir(parents=True)
+	os.symlink(str(teams / "acme" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(config, "TEAMS", str(teams))
+	monkeypatch.setattr(config, "TEAM", "")
+	said = []
+	monkeypatch.setattr(ui, "init_colors", lambda: None)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(ui.team, "activate", lambda: None)
+	monkeypatch.setattr(ui.team, "migrate", lambda: "")
+	monkeypatch.setattr(config, "SETTINGS", "")
+
+	screen.getch, screen.timeout = _keys(ord("q")), lambda t: None
+	ui.main(screen, 60, False, "opus")
+	assert len(said) == 1 and "retire" in said[0], said
+	assert not os.path.lexists(str(cfg / "prs-team"))   # the link is actually gone
+
+	said.clear()
+	screen.getch = _keys(ord("q"))
+	ui.main(screen, 60, False, "opus")
+	assert said == []                                   # idempotent: nothing left to say
+
+
 DIFF_FIXTURE = """diff --git a/gitdashy/auto.py b/gitdashy/auto.py
 --- a/gitdashy/auto.py
 +++ b/gitdashy/auto.py
@@ -1778,3 +1842,65 @@ def test_the_sticky_path_names_the_file_the_window_is_inside(screen, monkeypatch
 	assert "↑ in" in out, out
 	assert "gitdashy/auto.py" in out, out       # the path it names, not merely that it named one
 	assert "somewhere in the middle" in out     # and the mark it scrolled to is still on screen
+
+
+def _know_rows(state):
+	"""The Knowledge group's rows, wherever that group sits."""
+	return next(rows for _, key, rows in ui.header_groups(state) if key == "K")
+
+
+def test_every_session_note_is_reachable_and_none_lengthens_the_memory_row(screen, monkeypatch, st):
+	"""Notes used to be glued onto Memory's value, then clipped to 40 — and both were wrong.
+
+	Glued on, two notes added ~80 characters to one value and the header degradation loop folds K to a
+	chip before it drops anything else, so having a note made the Knowledge group VANISH rather than say
+	anything. Clipped to 40, the first note renders at exactly 40 characters, so the SECOND was dropped
+	whole — and a note is precisely the thing that must not go missing quietly. As rows they cost the
+	header nothing once K is a chip, and group_menu lists them under it.
+	"""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _know_rows(st)
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	noted = _know_rows(st)
+
+	memory_bare = next(v for _, n, v, _ in bare if n == "Memory")
+	memory_noted = next(v for _, n, v, _ in noted if n == "Memory")
+	assert memory_noted == memory_bare              # the Memory value is untouched by a note
+
+	values = [v for _, n, v, _ in noted if n == "Note"]
+	assert len(values) == 2, noted                  # BOTH, not just the one that fitted in 40 chars
+	assert "corpus never says" in values[0] and "imports @prs-team" in values[1]
+	assert all(k == "" for k, n, _, _ in noted if n == "Note")   # inert on Enter
+
+
+def _popup_inner(state):
+	"""The width group_menu's popup would ask for. Exactly popup()'s own arithmetic, at screen.py:923."""
+	rows = _know_rows(state)
+	name_w = max(len(name) for _, name, _, _ in rows)
+	lines = [f"{name.ljust(name_w)}   {value}" for _, name, value, _ in rows]
+	return max([len(l) for l in lines] + [len("Knowledge")]) + 6
+
+
+def test_a_session_note_does_not_widen_the_k_popup(screen, monkeypatch, st):
+	"""popup() clamps x but never inner, so its width is decided entirely by its longest line.
+
+	ponytail: asserted as a DELTA against the same popup with no notes, not against a fixed column
+	count. The absolute width is set by the Memory and Store rows, which carry filesystem paths — under
+	pytest those are long tmp_path strings, so an absolute bound would fail on the fixture rather than
+	on the thing under test, and pass or fail by how deep the temp directory happened to be.
+	ponytail: and asserted on INNER, the number popup() computes. The first version of this test
+	rendered into a FakeScr and asserted every row was <= w, which cannot fail: FakeScr's addnstr
+	silently drops anything past its right edge and line() slices to w, so it was true by construction
+	and passed with the clip removed entirely.
+	"""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _popup_inner(st)
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	noted = _popup_inner(st)
+	# ponytail: a note is its own ROW, so it can only widen the popup if it is longer than the widest
+	# row already there — the paths. Glued onto Memory's value it widened it by ~80 every time.
+	assert noted == bare, (bare, noted)

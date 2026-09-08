@@ -3,7 +3,7 @@ import json
 import pytest
 
 from dashy import demo, config
-from dashy.core import bind, github, log, memory, review, state, team, update
+from dashy.core import bind, github, install, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
@@ -37,6 +37,14 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
 	monkeypatch.setattr(team, "NAME", "")
 	monkeypatch.setattr(team, "ERROR", "")
+	# ponytail: the agent config too. install.session_notes()/corpus_remembers() read claude_dir(), so a
+	# UI test that does not set this reads the DEVELOPER's real ~/.claude — the Knowledge row then says
+	# something different on their laptop than in CI, and a header test passes or fails on whose machine
+	# it ran. Same class as the ~/.prs_teams pin above.
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+	# ponytail: and the cache keyed off it, exactly as log._CACHE is pinned. A module-global that
+	# survives a test carries one test's tmp_path answer into the next one's assertions.
+	monkeypatch.setattr(install, "_NOTES", (None, []))
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs

@@ -10,7 +10,8 @@ import time
 from datetime import datetime, timezone
 
 from .. import HERE, VERSION, config
-from ..core import bind, diff, github, knowledge, log, memory, review as review_mod, team, update
+from ..core import (bind, diff, github, install, knowledge, log, memory, review as review_mod, team,
+                    update)
 from ..core.state import State, in_flight
 from . import art
 from .rows import age, rows
@@ -133,6 +134,17 @@ def header_groups(state):
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
 	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
+	# ponytail: session_notes() are standing, not errors — what a session on this machine is NOT being
+	# told. A missing `remember` instruction starved the whole pipeline for weeks with nothing saying so.
+	# ponytail: A ROW EACH, not appended to Memory's value. Glued on they made that one value ~80 chars
+	# longer, and the header degradation loop folds K to a chip before it drops anything else — so the
+	# effect of having a note was that the Knowledge group VANISHED rather than said anything. Clipping
+	# them to 40 fixed the width and broke the feature instead: the first note renders at exactly 40
+	# characters, so the SECOND was dropped whole, and a note is precisely the thing that must not go
+	# missing quietly. As rows they cost the header nothing once K is a chip, and group_menu lists them
+	# in full under it — the escape hatch Team's own clip relies on ("T shows it whole") and notes had none.
+	# ponytail: an empty key, so ⏎ on one is inert; group_menu only acts on a key it recognises.
+	know += [("", "Note", n, "on") for n in install.session_notes()]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
 		know.append(("C", "Store", knowledge.show(config.TEAMS), None))
 	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
@@ -1605,6 +1617,11 @@ def main(scr, interval, auto, model):
 			confirm(scr, state, 0, f" {line[:110]}  [any key]")
 		else:
 			team.ERROR = line[:60]
+	# ponytail: the team link retirement, at launch and said once, for the same reason migrate() is —
+	# nothing re-runs install after an update. Only a CHANGE is worth a keypress; a hand-wired import
+	# it could not touch is a standing note on the Knowledge row, not a nag on every launch.
+	if done := next((l for l in install.retire() if not l.startswith("NOTE")), ""):
+		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
