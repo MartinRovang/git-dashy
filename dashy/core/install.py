@@ -18,18 +18,17 @@ CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->" 
 CORPUS_HOME = os.path.expanduser("~/.agent-corpus")  # where an installed corpus lives, independent of gitdashy
 IMPORT = "@prs-memory/general.md"  # the line that says the wiring is already there, block or not
 REGISTRY = os.path.expanduser("~/.prs_mirrors")  # one JSON object per line; the filesystem keeps the setting
+STALE = "@prs-team/"  # the pre-2026-09-08 block imported one team globally; its presence means "rewrite"
 BLOCK = f"""{BEGIN}
 # Review memory
 
-Cross-repo facts gitdashy's PR reviews have earned: yours first, then the team's. Written only once two
-independent observations agreed, so trust them — but they are what the code turned out to be, not rules.
-The team file does not exist until you are in a team, and a missing import is simply skipped. Facts about
-one repo arrive separately, through that repo's own mirror.
+Cross-repo facts gitdashy's PR reviews have earned — yours. Written only once two independent
+observations agreed, so trust them, but they are what the code turned out to be, not rules. A team's
+facts and its brief arrive per repo, through that repo's own mirror, because which team applies is a
+property of the repo you are in and not of the machine.
 
 @prs-memory/project.md
-@prs-team/project.md
 {IMPORT}
-@prs-team/general.md
 {END}
 """
 
@@ -39,25 +38,29 @@ def claude_dir():
 
 
 def links():
-	"""(link, target) for the two paths a session reads memory through.
+	"""(link, target) for the one path a session reads memory through.
 
-	ponytail: the team link names ONE directory, so it can only be honest when exactly one team is
-	joined. With none or several it points inside TEAMS at a DOTTED name, which key_of can never produce
-	and joined() skips — so no team can ever occupy it. It dangles, which the loader already degrades on (a missing @import target is skipped and its siblings still
-	load, verified). Pointing it at whichever team sorted first would put one team's cross-repo facts
-	into every session on the machine, which is the defect this whole line of work removes. Making the
-	route itself per-repo is the deferred session-scoping work, SPEC 5+6.
+	ponytail: ONE link now. There used to be a second, `prs-team`, pointing at one team's memory so its
+	general facts loaded into every session on the machine. That was the wrong scope the moment there
+	were two teams and a dangling link once there were — and even with one it told a repo bound to
+	another team, or to none, how that team works. Team knowledge rides the per-repo mirror, through
+	the binding, like everything else that is the team's. See stale_team_link() for the retirement.
 	"""
-	d = claude_dir()
-	return [(os.path.join(d, "prs-memory"), config.LOCAL_MEMORY),
-	        # ponytail: the FIRST joined team, and only when there is exactly one. A symlink names one
-	        # directory; with several joined there is no honest answer, and pointing it at whichever
-	        # sorted first would put one team's cross-repo facts into every session on the machine.
-	        # That whole route is the deferred session-scoping work (SPEC 5+6) — this just refuses to
-	        # guess in the meantime.
-	        (os.path.join(d, "prs-team"),
-	         os.path.join(team.dirs()[0], "memory") if len(team.dirs()) == 1
-	         else os.path.join(config.TEAMS, ".no-single-team", "memory"))]
+	return [(os.path.join(claude_dir(), "prs-memory"), config.LOCAL_MEMORY)]
+
+
+def stale_team_link():
+	"""The retired `prs-team` symlink, if this machine still has one and it is ours. "" otherwise.
+
+	ponytail: ours means it points into the team store — the plural one, or the pre-plural checkout —
+	which is the only place install ever pointed it. Anything else there is someone's own and is left alone.
+	"""
+	link = os.path.join(claude_dir(), "prs-team")
+	if not os.path.islink(link):
+		return ""
+	target = os.path.abspath(os.readlink(link))
+	stores = (os.path.abspath(config.TEAMS), os.path.abspath(os.path.join(config.TEAM, "memory")))
+	return link if any(target == st or target.startswith(st + os.sep) for st in stores) else ""
 
 
 def _fence(line, open_at):
@@ -222,10 +225,26 @@ def apply(dry=False):
 				if target == config.LOCAL_MEMORY:
 					os.makedirs(target, exist_ok=True)
 				os.symlink(target, link)
+	if old := stale_team_link():
+		out.append(f"{did}retire {knowledge.tilde(old)} — a team's facts reach a session through its repo's mirror now")
+		if not dry:
+			os.remove(old)
 	md = os.path.join(d, "CLAUDE.md")
 	text = _read(md)
-	if IMPORT in text:
+	if BEGIN in text and END in text and STALE in text:
+		# ponytail: the block is ours, so it is rewritten rather than left importing a link that is gone.
+		# A dangling @import is skipped silently, which is exactly why it must not be left to be skipped.
+		out.append(f"{did}update the import block in {knowledge.tilde(md)} — the team imports are per repo now")
+		if not dry:
+			_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
+	elif IMPORT in text:
 		out.append(f"ok    {knowledge.tilde(md)} already imports the review memory")
+		if STALE in text:
+			# ponytail: wired by hand, so not ours to rewrite — but not ours to stay quiet about either.
+			# The link is gone, so that import now points at nothing and is skipped without a word;
+			# a retirement that leaves a silent dangling import behind has only half happened.
+			out.append(f"NOTE  {knowledge.tilde(md)} still imports {STALE}… outside a block we wrote — "
+			           "those lines point at nothing now; remove them by hand")
 	else:
 		out.append(f"{did}add   the import block to {knowledge.tilde(md)}")
 		if not dry:
@@ -246,6 +265,10 @@ def remove(dry=False):
 			out.append(f"SKIP    {knowledge.tilde(link)} is not the link we made — left alone")
 		else:
 			out.append(f"ok      {knowledge.tilde(link)} is not there")
+	if old := stale_team_link():
+		out.append(f"{did}remove  {knowledge.tilde(old)}   (the retired team link)")
+		if not dry:
+			os.remove(old)
 	md = os.path.join(claude_dir(), "CLAUDE.md")
 	text = _read(md)
 	if BEGIN in text and END in text:

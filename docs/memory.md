@@ -333,14 +333,12 @@ binding survives a re-clone or a move. Selection for repo `R`:
 | bound to nothing | yours | `yours · acme/api is bound to no team` |
 | none anywhere | — | `no brief written` |
 
-> **The session path is not scoped yet.** Everything in this section describes the REVIEW path. The
-> corpus block `gitdashy install` writes still imports `@prs-memory/project.md`, `@prs-team/project.md`
-> and `@prs-team/general.md` into every agent session in every repo — so a session still gets both
-> briefs concatenated and one team's cross-repo facts everywhere, exactly as before. That is SPEC §5+§6
-> (the mirror gains `project.md`, the block drops the globals, and existing machines need the block
-> rewritten), and it is deliberately a separate change: the migration is where the risk lives. Said
-> here rather than left for a reader to discover, because a doc claiming a rule the wiring does not
-> keep is worse than no doc.
+> **The session path is scoped the same way** (since 2026-09-08). `gitdashy install` writes one link and
+> imports only yours — `@prs-memory/project.md` and `@prs-memory/general.md`. A bound repo's mirror
+> (`repo.md`) carries the team's brief and general facts above the repo's own, from the same
+> `sources(repo)` a review uses, so a session and a review of one repo are told the same things by the
+> same team. An install from before this wrote a global `prs-team` link; the next `gitdashy install`
+> retires it and rewrites the block.
 
 **The binding decides everything the team knows about a repo**, not just the brief. `memory.sources(repo)`
 returns your memory alone for an unbound repo, so it reads no team facts — not even `general.md` — and

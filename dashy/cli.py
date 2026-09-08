@@ -343,10 +343,18 @@ def bind(argv):
 def drafts(argv):
 	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
 	team.activate()
-	only = arg("--repo", "", str, argv)
+	count = "--count" in argv
+	# ponytail: --count is for a session hook, so it defaults to the repo you are standing in and reads
+	# only the local store — no network, and nothing printed when there is nothing to say.
+	only = arg("--repo", "", str, argv) or (team.origin_slug(".") if count else "")
 	rows = memory.waiting()
 	if only:
 		rows = [r for r in rows if (r[0] or "general") == only]
+	if count:
+		if rows:
+			print(f"gitdashy: {len(rows)} draft{'s' if len(rows) != 1 else ''} waiting for {only or 'general'}"
+			      " — `gitdashy drafts` lists them, W in the dashboard promotes or drops them")
+		return
 	if not rows:
 		return print("  nothing waiting — every observation so far is either a fact or gone")
 	rows.sort(key=lambda r: ((r[0] or ""), r[3] == "self", -r[1]))

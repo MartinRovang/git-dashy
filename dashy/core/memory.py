@@ -282,6 +282,25 @@ def scope_text(scope=None, repo=None):
 	return "\n\n".join(parts)
 
 
+def team_context(repo):
+	"""What the BOUND team says that holds for every repo it covers: its brief, then its general facts.
+
+	'' for an unbound repo. Labelled, so a reader can tell the team's words from their own.
+
+	ponytail: a review of `repo` already reads both (sources() and brief()); a session in the same repo
+	read neither. The old session route was one global symlink to one team's general file — wrong the
+	moment there were two teams, dangling once there were, and even with one it told every repo on the
+	machine how that team works. Per repo, through the binding, like everything else that is the team's.
+	"""
+	parts = []
+	for label, base in sources(repo)[1:]:
+		if t := _brief_text(os.path.join(base, PROJECT)):
+			parts.append(f"### {label} — what the work is for\n{t}")
+		if t := _read(path(None, base)):
+			parts.append(f"### {label} — true of every repo it covers\n{t}")
+	return "\n\n".join(parts)
+
+
 def read(repo):
 	"""General + repo memory from the sources bound to `repo`, as one prompt block. '' when there is none."""
 	parts = [f"## {name}\n{t}" for name, r in (("General", None), (repo, repo)) if (t := scope_text(r, repo))]

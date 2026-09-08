@@ -24,7 +24,8 @@ def test_install_links_and_imports_then_is_a_no_op(monkeypatch, tmp_path):
 	out = install.apply()
 	assert os.path.realpath(cfg / "prs-memory") == str(tmp_path / "mem")
 	assert "@prs-memory/general.md" in (cfg / "CLAUDE.md").read_text()
-	assert "@prs-team/general.md" in (cfg / "CLAUDE.md").read_text()
+	assert "@prs-team/" not in (cfg / "CLAUDE.md").read_text()   # a team's facts are per repo, not global
+	assert not (cfg / "prs-team").exists()
 	assert all(l.startswith(("link", "add")) for l in out)
 	again = install.apply()
 	assert all(l.startswith("ok") for l in again)  # nothing done twice
@@ -427,8 +428,8 @@ def test_a_solo_brief_is_imported_too(monkeypatch, tmp_path):
 	cfg = fresh(monkeypatch, tmp_path)
 	install.apply()
 	block = (cfg / "CLAUDE.md").read_text()
-	assert "@prs-memory/project.md" in block and "@prs-team/project.md" in block
-	assert block.index("prs-memory/project") < block.index("prs-team/project")  # yours first, as everywhere
+	assert "@prs-memory/project.md" in block
+	assert "@prs-team/project.md" not in block   # the team's brief rides the repo mirror, through the binding
 
 
 def test_forgetting_a_mirror_does_not_rewrite_the_registry(monkeypatch, tmp_path):
@@ -843,3 +844,61 @@ def test_setup_tells_several_teams_apart_from_no_team(monkeypatch, tmp_path):
 	assert "--team" not in note  # setup parses no arguments; it must not advise a flag it does not have
 	assert "no origin" not in note and "no name" not in note
 	assert os.path.exists(memory.brief_path())   # and it still wrote YOUR brief, as it says
+
+
+def test_install_retires_the_old_team_link_and_rewrites_its_block(monkeypatch, tmp_path):
+	"""The pre-2026-09-08 install pointed `prs-team` at ONE team's memory and imported it into every
+	session on the machine. With several teams it dangled; with one it told every repo how that team
+	works. A dangling @import is skipped silently, so the block has to be rewritten, not left."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	old_block = install.BLOCK.replace(install.IMPORT, install.IMPORT + "\n@prs-team/general.md")
+	(cfg / "CLAUDE.md").write_text("# mine\n\n" + old_block)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))   # dangling, ours
+	(cfg / "prs-memory").symlink_to(str(tmp_path / "mem"))
+
+	dry = install.apply(dry=True)
+	assert any("would retire" in l and "prs-team" in l for l in dry)
+	assert (cfg / "prs-team").is_symlink()                     # a dry run touches nothing
+
+	out = install.apply()
+	assert any(l.startswith("retire") for l in out) and any("update the import block" in l for l in out)
+	assert not (cfg / "prs-team").exists()
+	text = (cfg / "CLAUDE.md").read_text()
+	assert "@prs-team/" not in text and text.count(install.IMPORT) == 1
+	assert text.startswith("# mine\n")                          # the user's own lines survive the rewrite
+	assert all(l.startswith("ok") for l in install.apply())     # and it is done once
+
+
+def test_install_leaves_a_prs_team_link_that_is_not_ours(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "theirs").mkdir()
+	os.symlink(str(tmp_path / "theirs"), str(cfg / "prs-team"))  # someone's own link, same name
+	install.apply()
+	assert (cfg / "prs-team").is_symlink()
+	install.remove()
+	assert (cfg / "prs-team").is_symlink()
+
+
+def test_uninstall_removes_a_retired_team_link_too(monkeypatch, tmp_path):
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	install.apply()
+	os.symlink(str(tmp_path / "team" / "memory"), str(cfg / "prs-team"))   # the pre-plural target
+	out = install.remove()
+	assert any("retired team link" in l for l in out)
+	assert not (cfg / "prs-team").exists() and not (cfg / "prs-memory").exists()
+
+
+def test_install_says_so_when_the_stale_team_import_is_not_in_our_block(monkeypatch, tmp_path):
+	"""A hand-wired CLAUDE.md is not ours to rewrite. But the link it imports through is retired, so the
+	import now dangles and the loader skips it silently — the retirement has to be said out loud."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(cfg / "CLAUDE.md").write_text("# mine\n@prs-memory/general.md\n@prs-team/general.md\n")
+	os.symlink(str(tmp_path / "teams" / "x" / "memory"), str(cfg / "prs-team"))
+	out = install.apply()
+	assert not (cfg / "prs-team").exists()
+	assert any(l.startswith("NOTE") and "remove them by hand" in l for l in out)
+	assert (cfg / "CLAUDE.md").read_text().count("\n") == 3   # untouched

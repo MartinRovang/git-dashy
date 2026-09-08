@@ -210,3 +210,39 @@ def test_the_report_falls_back_when_the_team_has_been_left(monkeypatch, tmp_path
 	shutil.rmtree(tmp_path / "teams" / "org-a")     # left, while the binding remains
 	out = mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
 	assert "from team org-a" not in out and str(tmp_path / "mem") in out
+
+
+def test_a_bound_repos_mirror_carries_the_teams_brief_and_general_facts(monkeypatch, tmp_path):
+	"""A review of a bound repo reads the team's brief and general facts; a session in it read neither.
+	They ride repo.md now — per repo, through the binding — and yours stay out, since they load live."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	seed(None, "mine general — loads live, not here")
+	seed(None, "team general: verify against the pushed head", str(shared))
+	seed("a/b", "team about a/b", str(shared))
+	(shared / "project.md").write_text("We build the thing.\n")
+	bind.bind("a/b", "org-t")
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	repo = (into / "repo.md").read_text()
+	assert "team org-t — what the work is for" in repo and "We build the thing." in repo
+	assert "team org-t — true of every repo it covers" in repo and "pushed head" in repo
+	assert "## a/b" in repo and "team about a/b" in repo
+	assert "mine general" not in repo                       # yours are global already
+	assert repo.index("We build the thing.") < repo.index("## a/b")   # context, then the repo
+
+	bind.forget("a/b")
+	mirror.sync(str(into), "a/b", pull=False)
+	assert not (into / "repo.md").exists()                  # unbound: nothing of theirs, nothing of yours here
+
+
+def test_an_unbound_repos_mirror_has_no_team_context(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	seed(None, "team general", str(shared))
+	(shared / "project.md").write_text("theirs\n")
+	seed("a/b", "mine about a/b")
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	repo = (into / "repo.md").read_text()
+	assert "mine about a/b" in repo and "team general" not in repo and "theirs" not in repo

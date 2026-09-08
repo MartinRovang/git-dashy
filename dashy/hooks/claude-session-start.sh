@@ -42,4 +42,7 @@ fi
 # 4. this repo's review memory, if gitdashy is around. --no-pull: a hook has seconds, not a network.
 command -v gitdashy >/dev/null 2>&1 && \
   gitdashy init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || true
+# drafts a review or a session filed for THIS repo that nothing has confirmed. Local store only, so it
+# fits the hook's budget; silent when there are none. The count is the pull toward W that was missing.
+command -v gitdashy >/dev/null 2>&1 && gitdashy drafts --count 2>/dev/null || true
 exit 0

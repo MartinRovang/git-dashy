@@ -34,29 +34,31 @@ One store, at every tier. Installing does not move, copy or convert it.
   neomedsys__neo-api.md          that repo's facts
   drafts/                        seen once; not facts yet, and never read into a prompt
 
-~/.prs_team/memory/              the team's, same shape, only when you are in a team
+~/.prs_teams/<key>/memory/       each team's, same shape, one checkout per team
 ```
 
-`$PRS_MEMORY` and `$PRS_TEAM` move them; so do `L` and `C` in the dashboard.
+`$PRS_MEMORY` and `$PRS_TEAMS` move them; so do `L` and `C` in the dashboard.
 
 ---
 
 ## What `gitdashy install` writes
 
-Two symlinks and one marked block. Nothing else. Your memory directory is created if it is not there;
-the team link is left pointing at nothing until you join one, and a missing import is simply skipped.
+One symlink and one marked block. Nothing else. Your memory directory is created if it is not there.
 
 ```
 ~/.claude/prs-memory  ->  ~/.prs_memory
-~/.claude/prs-team    ->  ~/.prs_team/memory      (harmless before you have a team)
 
 ~/.claude/CLAUDE.md   +=  <!-- gitdashy:begin -->
                           … @prs-memory/project.md   what YOU are building
-                          … @prs-team/project.md     what the TEAM is, once you join one
                           … @prs-memory/general.md   your cross-repo facts
-                          … @prs-team/general.md     the team's
                           <!-- gitdashy:end -->
 ```
+
+Nothing of a team's is wired globally. Which team applies is a property of the repo you are standing in,
+not of the machine, so a team's brief and general facts reach a session through that repo's own mirror
+(`gitdashy init`, below) — the same way a review of that repo gets them. Installs made before 2026-09-08
+also wrote a `prs-team` link and imported it; the next `gitdashy install` retires the link and rewrites
+the block, and says so.
 
 It **asks first**, showing exactly the above with your real paths and whether each item
 is new, already correct, or something it will refuse to touch. `--dry-run` shows and
@@ -143,9 +145,9 @@ Installing does not merge them.
 
 | | yours | the team's |
 |---|---|---|
-| store | `~/.prs_memory/` | `~/.prs_team/memory/` — different directory, different repo |
+| store | `~/.prs_memory/` | `~/.prs_teams/<key>/memory/` — different directory, different repo |
 | drafts | `drafts/`, yours only | never |
-| session route | `@prs-memory/general.md` | `@prs-team/general.md` — separate symlink, separate import |
+| session route | `@prs-memory/general.md`, global | the bound repo's `repo.md` mirror — per repo, never global |
 | in a prompt | `### mine` | `### team <name>` — read together, always labelled |
 
 Exactly three things write into team memory: **`P` → `t`** (you press it, one fact at a

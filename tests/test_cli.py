@@ -287,3 +287,22 @@ def test_teams_join_names_the_team_it_just_joined(monkeypatch, capsys, tmp_path)
 	monkeypatch.setattr(team, "setup", fake_setup)
 	cli.teams(["gitdashy", "teams", "--join", "somewhere/acme.git"])
 	assert "joined acme" in capsys.readouterr().out
+
+
+def test_drafts_count_is_one_line_for_the_repo_you_stand_in_and_silent_when_empty(monkeypatch, capsys, tmp_path):
+	"""For a session hook: the pull toward W that was missing. Reads the local store only."""
+	from dashy import cli
+	from dashy.core import memory, team
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	cli.drafts(["gitdashy", "drafts", "--count"])
+	assert capsys.readouterr().out == ""                       # nothing to say, nothing said
+	memory.append("acme/web", "one guess")
+	memory.append("acme/web", "another guess")
+	memory.append("acme/other", "not this repo")
+	cli.drafts(["gitdashy", "drafts", "--count"])
+	out = capsys.readouterr().out
+	assert out.startswith("gitdashy: 2 drafts waiting for acme/web") and "W" in out
+	cli.drafts(["gitdashy", "drafts", "--count", "--repo", "acme/other"])
+	assert "1 draft waiting for acme/other" in capsys.readouterr().out
