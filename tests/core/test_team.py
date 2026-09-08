@@ -104,7 +104,7 @@ def test_owner_name_clones_over_https_with_the_api_token(monkeypatch, tmp_path):
 	assert seen["cmd"][-2] == "https://github.com/org/review-team.git"
 	# the token rides in the ENV, never in argv — argv is world-readable in `ps` for the whole clone
 	assert "gho_x" not in " ".join(seen["cmd"])
-	assert seen["env"]["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer gho_x"
+	assert seen["env"]["GIT_CONFIG_VALUE_0"] == "Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2hvX3g="
 	assert seen["env"]["GIT_CONFIG_KEY_0"] == "http.extraHeader" and seen["env"]["GIT_CONFIG_COUNT"] == "1"
 
 

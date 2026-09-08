@@ -218,7 +218,7 @@ def test_persist_auth_writes_the_token_into_the_checkout_not_argv(tmp_path, monk
 	cfg.parent.mkdir()
 	cfg.write_text("[core]\n")
 	github.persist_auth(str(tmp_path))
-	assert "extraHeader = Authorization: Bearer gho_x" in cfg.read_text()
+	assert "extraHeader = Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2hvX3g=" in cfg.read_text()
 	assert oct(cfg.stat().st_mode)[-3:] == "600"  # a token on disk is never world-readable
 	github.persist_auth(str(tmp_path / "nope"))   # a failed clone left no config: nothing to write
 
