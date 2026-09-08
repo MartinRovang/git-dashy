@@ -1842,3 +1842,44 @@ def test_the_sticky_path_names_the_file_the_window_is_inside(screen, monkeypatch
 	assert "↑ in" in out, out
 	assert "gitdashy/auto.py" in out, out       # the path it names, not merely that it named one
 	assert "somewhere in the middle" in out     # and the mark it scrolled to is still on screen
+
+
+def _memory_value(state):
+	"""The Memory row's value from the Knowledge group, wherever that group sits."""
+	for _, _, rows in ui.header_groups(state):
+		for key, name, value, _ in rows:
+			if name == "Memory":
+				return value
+	raise AssertionError("no Memory row in header_groups")
+
+
+def test_a_session_note_is_clipped_like_the_row_below_it(screen, monkeypatch, st):
+	"""The notes were appended UNCLIPPED to a header value whose sibling one row down is team.ERROR[:40].
+
+	Two consequences, both from the layout rather than the string: the degradation loop folds K to a
+	chip before it drops anything else, so having a note made the Knowledge group DISAPPEAR rather than
+	say anything; and popup() sizes itself on its longest line and clamps only x, not inner, so opening
+	K on a machine with a note drew wider than an 80-column terminal.
+	"""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _memory_value(st)
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	noted = _memory_value(st)
+	assert len(noted) - len(bare) <= 40, noted     # the clip, matching team.ERROR[:40]
+	assert "corpus never says" in noted            # and it still SAYS something; clipped, not dropped
+
+
+@pytest.mark.parametrize("w", [72, 80, 100])
+def test_the_k_popup_fits_the_terminal_with_a_note_set(screen, monkeypatch, st, w):
+	"""popup() clamps x but never inner, so its width is decided entirely by its longest line."""
+	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes",
+	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
+	group = next(g for g in ui.header_groups(st) if any(r[1] == "Memory" for r in g[2]))
+	lines = [f"{name}  {value}" for _, name, value, _ in group[2]]
+	scr = FakeScr(h=30, w=w)
+	ui.popup(scr, 2, 4, group[0], lines, 0)        # FakeScr bounds it: an overrun raises out of addnstr
+	rows = [r for r in scr.text().splitlines() if r.strip()]
+	assert all(len(r) <= w for r in rows), max(rows, key=len)

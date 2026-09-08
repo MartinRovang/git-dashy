@@ -340,6 +340,24 @@ pattern alone cannot express:
 Precedence lives in one function (`bind._pick`), so the team a review uses and the label a screen shows
 can never disagree: exact binding, then an explicit unbind, then the owner rule.
 
+### What a binding grants
+
+Binding a repo to a team is a **trust decision**, not only a routing one. A bound repo's mirror
+(`.agent/team/repo.md`) carries the team's `project.md` and its general facts, and a coding session
+loads that file as *instructions*. `team.pull()` fetches both over git from the team remote.
+
+So: **anyone who can push to a team's remote can put text into the context of every session in every
+repo bound to that team.** Not a new capability — the retired global `prs-team` link carried the same
+text to every session on the machine, more widely and with no binding to scope it — but the boundary is
+now worth naming, because binding is the control:
+
+- Bind to a team whose remote you would give commit access to.
+- A repo bound to nothing reads your own memory and nothing else.
+- `gitdashy bind <repo> --forget` withdraws it; the mirror stops being refreshed on the next tick.
+
+The same is true of the facts themselves: they are prose a model wrote and two runs agreed on, and they
+reach a reviewer's prompt. Recurrence is a filter for *durability*, not for intent.
+
 Keyed by the origin slug, so a URL, an ssh remote and a bare `owner/name` all land on the same row and a
 binding survives a re-clone or a move. Selection for repo `R`:
 

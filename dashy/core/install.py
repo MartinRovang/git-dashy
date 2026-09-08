@@ -79,6 +79,12 @@ def retire(dry=False):
 	ponytail: it rewrites only text between markers it wrote. A hand-wired import is REPORTED, never
 	touched — and reported here rather than skipped, because the link it went through is gone and the
 	loader drops a dangling @import without a word. A retirement that leaves one behind half happened.
+	ponytail: NEVER RAISES, the same contract team.migrate() states one line above it in the launch
+	path — it runs before the first draw, so an exception here is a dashboard that never appears, every
+	launch, over a migration the user never asked for. A read-only ~/.claude, a CLAUDE.md whose realpath
+	is in a dotfiles checkout, a root-owned file: each of those is a report line, not a traceback. The
+	failure is SAID rather than swallowed, because a migration that silently did not happen is one the
+	user finds out about when their session stops loading the team's facts.
 	"""
 	out, did = [], "would " if dry else ""
 	if old := stale_team_link():
@@ -86,7 +92,10 @@ def retire(dry=False):
 		           "session through its repo's mirror now, so a repo with no mirror gets neither: "
 		           "`gitdashy init --into .agent/team --loader CLAUDE.local.md` wires one")
 		if not dry:
-			os.remove(old)
+			try:
+				os.remove(old)
+			except OSError as e:
+				out[-1] = f"gitdashy: could not retire {knowledge.tilde(old)} — {e.strerror or e}; remove it by hand"
 	md = os.path.join(claude_dir(), "CLAUDE.md")
 	text = _read(md)
 	# ponytail: fence-aware on BOTH sides, like _strip_blocks. A raw `STALE in text` took this branch for
@@ -95,7 +104,11 @@ def retire(dry=False):
 	if STALE in _inside_blocks(text):
 		out.append(f"{did}update the import block in {knowledge.tilde(md)} — the team imports are per repo now")
 		if not dry:
-			_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
+			try:
+				_write_text(md, _strip_blocks(text, BEGIN, END).rstrip("\n") + "\n\n" + BLOCK)
+			except OSError as e:
+				out[-1] = (f"gitdashy: could not update the import block in {knowledge.tilde(md)} — "
+				           f"{e.strerror or e}; the team imports are per repo now")
 	if hand_wired_team_import(text):
 		out.append(f"NOTE  {knowledge.tilde(md)} still imports {STALE}… outside a block we wrote — "
 		           "those lines point at nothing now; remove them by hand")
@@ -104,15 +117,7 @@ def retire(dry=False):
 
 def _inside_blocks(text):
 	"""The lines inside every begin..end block we wrote, fence-aware — a quoted block is text, not ours."""
-	held, inside = [], False
-	for line, out in _outside(text):
-		if out and BEGIN in line:
-			inside = True
-		elif out and END in line:
-			inside = False
-		elif inside:
-			held.append(line)
-	return "\n".join(held)
+	return _split_blocks(text, BEGIN, END)[0]
 
 
 def hand_wired_team_import(text=None):
@@ -146,22 +151,22 @@ def _notes_key():
 	same-nanosecond rewrite, size alone misses an edit that keeps the length. The DIRECTORY's own mtime
 	is not enough: it moves when a file is added or removed, not when one is edited in place.
 	"""
+	def stamp(path):
+		"""(mtime_ns, size), or why not. ponytail: the miss is part of the KEY — "gone" and "back again"
+		have to differ, or a file deleted and restored between draws reads as no change at all."""
+		try:
+			st = os.stat(path)
+			return st.st_mtime_ns, st.st_size
+		except OSError:
+			return None
+
 	d = claude_dir()
-	out = [d]
 	ident = os.path.join(d, "identity")
 	try:
-		for n in sorted(os.listdir(ident)):
-			if n.endswith(".md"):
-				st = os.stat(os.path.join(ident, n))
-				out.append((n, st.st_mtime_ns, st.st_size))
+		names = sorted(n for n in os.listdir(ident) if n.endswith(".md"))
 	except OSError:
-		out.append("no identity")
-	try:
-		st = os.stat(os.path.join(d, "CLAUDE.md"))
-		out.append((st.st_mtime_ns, st.st_size))
-	except OSError:
-		out.append("no CLAUDE.md")
-	return tuple(out)
+		names = []
+	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")))
 
 
 def session_notes():
@@ -212,6 +217,42 @@ def _outside(text):
 		yield line, was is None and at is None
 
 
+def _split_blocks(text, begin, end):
+	"""(inside, outside): the lines within every begin..end block we wrote, and the text without them.
+
+	ponytail: ONE walk answers both, and that is not only a saving. They used to be two functions with
+	two different ideas of an UNCLOSED block: _inside_blocks treated everything after a lone `begin` as
+	ours, while this loop treats it as not ours and leaves it alone. retire() asked the first and acted
+	with the second, so a CLAUDE.md holding an unclosed marker over an `@prs-team/` line reported
+	"ours", stripped nothing, and appended BLOCK — and on the NEXT launch the strip ran from the user's
+	own unclosed marker to the appended END and deleted everything in between. Answering both questions
+	from one walk is what makes that disagreement unrepresentable.
+
+	ponytail: a config copied between machines, or two installs racing, leaves the block twice —
+	and removing one of two is worse than removing none, because it reads as a clean uninstall.
+	ponytail: markers inside a fence are text. CLAUDE.md is the user's own file, and quoting our
+	install block in a code sample is a normal thing to do — eating it on uninstall is data loss
+	in the same file this whole path exists to protect.
+	"""
+	held = []
+	while True:
+		lines = list(_outside(text))
+		at = next((i for i, (l, out) in enumerate(lines) if out and begin in l), None)
+		if at is None:
+			break
+		close = next((i for i, (l, out) in enumerate(lines) if i >= at and out and end in l), None)
+		if close is None:
+			break  # ponytail: an unclosed marker is NOT a block of ours — nothing held, nothing stripped
+		held += [l for l, _ in lines[at + 1:close]]
+		head = "\n".join(l for l, _ in lines[:at])
+		tail = "\n".join(l for l, _ in lines[close + 1:])
+		# ponytail: splitlines() drops the terminator, so rejoining a file that ended in a newline gave
+		# it back without one. It is a user-owned file; leave it shaped the way they had it.
+		body = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n").rstrip("\n")
+		text = body + "\n" if text.endswith("\n") and not body.endswith("\n") else body
+	return "\n".join(held), text
+
+
 def _strip_blocks(text, begin, end):
 	"""Every begin..end block gone, not just the first.
 
@@ -221,21 +262,7 @@ def _strip_blocks(text, begin, end):
 	install block in a code sample is a normal thing to do — eating it on uninstall is data loss
 	in the same file this whole path exists to protect.
 	"""
-	while True:
-		lines = list(_outside(text))
-		at = next((i for i, (l, out) in enumerate(lines) if out and begin in l), None)
-		if at is None:
-			break
-		close = next((i for i, (l, out) in enumerate(lines) if i >= at and out and end in l), None)
-		if close is None:
-			break
-		head = "\n".join(l for l, _ in lines[:at])
-		tail = "\n".join(l for l, _ in lines[close + 1:])
-		# ponytail: splitlines() drops the terminator, so rejoining a file that ended in a newline gave
-		# it back without one. It is a user-owned file; leave it shaped the way they had it.
-		body = head.rstrip("\n") + ("\n" if head.strip() else "") + tail.lstrip("\n").rstrip("\n")
-		text = body + "\n" if text.endswith("\n") and not body.endswith("\n") else body
-	return text
+	return _split_blocks(text, begin, end)[1]
 
 
 def _read(p):

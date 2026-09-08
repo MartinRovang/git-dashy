@@ -65,9 +65,11 @@ def test_demo_puts_back_everything_it_swapped(monkeypatch, tmp_path):
 	"""
 	from dashy.core import update
 	monkeypatch.setenv("TMPDIR", str(tmp_path))
+	from dashy.core import install as install_mod
 	originals = {(m, n): getattr(m, n) for m, n in
 	             ((github, "fetch"), (github, "copy"), (github, "collaborators"), (github, "request_review"),
-	              (review_mod, "review"), (review_mod, "self_review"), (update, "update_available"))}
+	              (review_mod, "review"), (review_mod, "self_review"), (update, "update_available"),
+	              (install_mod, "retire"))}
 
 	demo.install()
 	assert all(getattr(m, n) is not o for (m, n), o in originals.items()), "install must swap all of them"

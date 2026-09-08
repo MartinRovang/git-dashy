@@ -37,11 +37,14 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "memory"))
 	monkeypatch.setattr(team, "NAME", "")
 	monkeypatch.setattr(team, "ERROR", "")
-	# ponytail: demo.install() swaps module attrs PERMANENTLY — that is how it works, no framework. Any
-	# it touches must be pinned here or the swap outlives the test that made it: the first test to run a
-	# demo left retire() a no-op for the whole session, and the launch-migration test then passed against
-	# a stub it never asked for. setattr to its own current value is enough; monkeypatch restores it.
-	monkeypatch.setattr(install, "retire", install.retire)
+	# ponytail: the agent config too. install.session_notes()/corpus_remembers() read claude_dir(), so a
+	# UI test that does not set this reads the DEVELOPER's real ~/.claude — the Knowledge row then says
+	# something different on their laptop than in CI, and a header test passes or fails on whose machine
+	# it ran. Same class as the ~/.prs_teams pin above.
+	monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+	# ponytail: and the cache keyed off it, exactly as log._CACHE is pinned. A module-global that
+	# survives a test carries one test's tmp_path answer into the next one's assertions.
+	monkeypatch.setattr(install, "_NOTES", (None, []))
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
 	# ponytail: --demo's install() must not leak into the next test. This used to name three attrs

@@ -1286,3 +1286,83 @@ def test_a_corpus_check_that_will_not_stop_talking_is_capped(tmp_path):
 	check.chmod(0o755)
 	out = _run_hook(wt, cfg, corpus)
 	assert out.count("[budget]") == 5, out
+
+
+def test_retire_never_raises_on_a_config_it_cannot_write(monkeypatch, tmp_path):
+	"""team.migrate() states the contract one line above this in the launch path: never raises, because
+	it runs before the first draw and an exception there is a dashboard that never appears.
+
+	retire() did the opposite — os.remove() and _write_text() propagated OSError straight out of main().
+	A read-only ~/.claude, a CLAUDE.md whose realpath is in a checkout the user cannot write, a
+	root-owned file: every launch dead, with no way out but removing the link by hand.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "org-t" / "memory").mkdir(parents=True)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))
+	(cfg / "CLAUDE.md").write_text("# mine\n\n" + install.BLOCK.replace(
+		install.IMPORT, install.IMPORT + "\n@prs-team/general.md"))
+
+	def refuse(*a, **kw):
+		raise OSError(13, "Permission denied")
+	monkeypatch.setattr(install.os, "remove", refuse)
+	monkeypatch.setattr(install, "_write_text", refuse)
+
+	out = install.retire()                       # the whole point: this returns rather than raising
+	assert any("could not retire" in l for l in out), out
+	assert any("could not update the import block" in l for l in out), out
+	assert all("Permission denied" in l for l in out if l.startswith("gitdashy:")), out
+	assert (cfg / "prs-team").is_symlink()       # and it says so instead of pretending it happened
+
+
+def test_a_failed_retirement_is_said_not_swallowed(monkeypatch, tmp_path):
+	"""Reported, not silently skipped. A migration that did not happen and said nothing is one the user
+	discovers when their sessions quietly stop loading the team's facts."""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "org-t" / "memory").mkdir(parents=True)
+	os.symlink(str(tmp_path / "teams" / "org-t" / "memory"), str(cfg / "prs-team"))
+	monkeypatch.setattr(install.os, "remove", lambda *a, **kw: (_ for _ in ()).throw(OSError(30, "Read-only file system")))
+	out = install.retire()
+	assert out and "Read-only file system" in out[0] and "by hand" in out[0], out
+	# ponytail: a LAUNCH shows the first non-NOTE line, so the failure has to survive that filter or the
+	# one place the user would see it drops it.
+	assert not out[0].startswith("NOTE")
+
+
+def test_an_unclosed_marker_is_not_a_block_of_ours(monkeypatch, tmp_path):
+	"""The two fence walkers disagreed about an unclosed `begin`, and retire() asked one and acted on
+	the other.
+
+	_inside_blocks treated everything after a lone marker as ours; _strip_blocks treated it as not ours
+	and did nothing. So a CLAUDE.md holding an unclosed marker over an `@prs-team/` line reported
+	"ours", stripped nothing, and appended BLOCK — and on the NEXT launch the strip ran from the user's
+	own unclosed marker all the way to the appended END and deleted everything in between. In the file
+	this whole path exists to protect.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	mine = f"# mine\n\n{install.BEGIN}\n# Review memory\n\n@prs-team/general.md\nkeep this line\n"
+	(cfg / "CLAUDE.md").write_text(mine)
+
+	assert install.STALE not in install._inside_blocks(mine)     # not ours: there is no closing marker
+	install.retire()
+	after = (cfg / "CLAUDE.md").read_text()
+	assert after.count(install.BEGIN) == 1, after                # no second block appended
+	assert "keep this line" in after                             # and nothing of theirs eaten
+	install.retire()                                             # idempotent, and still no data loss
+	assert (cfg / "CLAUDE.md").read_text() == after
+
+
+def test_the_two_answers_come_from_one_walk_and_cannot_disagree():
+	"""_split_blocks returns (inside, outside) together, so 'is this ours' and 'remove ours' are the
+	same decision rather than two functions that have to be kept in step by hand."""
+	text = f"# mine\n{install.BEGIN}\nheld\n{install.END}\ntail\n"
+	inside, outside = install._split_blocks(text, install.BEGIN, install.END)
+	assert inside == "held"
+	assert install.BEGIN not in outside and "tail" in outside and "# mine" in outside
+	assert install._inside_blocks(text) == inside
+	assert install._strip_blocks(text, install.BEGIN, install.END) == outside
+	# an unclosed one: nothing held, nothing stripped, and the two still agree
+	lone = f"# mine\n{install.BEGIN}\nheld\n"
+	assert install._split_blocks(lone, install.BEGIN, install.END) == ("", lone)

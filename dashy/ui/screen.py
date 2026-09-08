@@ -133,7 +133,12 @@ def header_groups(state):
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
 	# ponytail: session_notes() are standing, not errors — what a session on this machine is NOT being
 	# told. A missing `remember` instruction starved the whole pipeline for weeks with nothing saying so.
-	notes = "".join(f" · {n}" for n in install.session_notes())
+	# ponytail: CLIPPED at 40, like team.ERROR one row below and for the same reason. Unclipped, two
+	# notes add ~80 chars to this value; the header degradation loop folds K to a chip before it drops
+	# anything else, so on a normal-width terminal the effect of having a note was that the Knowledge
+	# group VANISHED rather than said anything — and group_menu's popup() sizes on the longest line and
+	# clamps only x, so opening K on a machine with a note drew wider than an 80-column terminal.
+	notes = "".join(f" · {n}" for n in install.session_notes())[:40]
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note() + notes, None),
 	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
