@@ -54,6 +54,7 @@ gitdashy --effort high --depth adaptive   # claude effort level; review depth ju
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
 gitdashy --version        # 1.16.0
 gitdashy --demo           # canned PRs, fake reviewer — no token, no claude, no real log
+gitdashy --debug          # also append API calls, reviews, ticks and every swallowed traceback to ~/.prs_debug.log
 gitdashy --help
 gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
 gitdashy remember "the viewer owns mask state"   # file what a coding session learned
@@ -456,6 +457,8 @@ Then `m` cycles them like any other model.
 | `PRS_OPENROUTER_URL` | `https://openrouter.ai/api/v1` | OpenRouter base url |
 | `PRS_LOCAL_URL` | `http://localhost:1234/v1` | base url for `local:` models: LM Studio, Ollama (`:11434/v1`), llama.cpp |
 | `PRS_LOCAL_KEY` | (none) | key for `local:` models, sent only when set |
+| `PRS_DEBUG` | unset | `1` = same as `--debug` |
+| `PRS_DEBUG_LOG` | `~/.prs_debug.log` | where `--debug` writes |
 | `PRS_LOG` | `~/.prs_reviewed.jsonl` | review log path |
 | `PRS_EFFORT` | `medium` | `--effort` passed to claude: low, medium, high, xhigh, max |
 | `PRS_DEPTH` | `adaptive` | review depth: low (skim), medium, high (very in-depth), adaptive (judged from the diff size) |

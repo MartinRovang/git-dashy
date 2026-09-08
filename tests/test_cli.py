@@ -409,3 +409,23 @@ def test_drafts_count_says_nothing_for_a_repo_it_cannot_name(monkeypatch, capsys
 	memory.append(None, "a general guess")
 	cli.drafts(["gitdashy", "drafts", "--count"])
 	assert capsys.readouterr().out == ""
+
+
+def test_debug_writes_log_file(monkeypatch, tmp_path):
+	"""--debug: a swallowed exception lands in the file with its traceback; without it, nothing is written."""
+	import logging
+	from dashy import cli
+	from dashy.core import state
+	path = tmp_path / "dbg.log"
+	monkeypatch.setattr(config, "DEBUG_LOG", str(path))
+	monkeypatch.setattr(logging.root, "handlers", [])  # basicConfig is a no-op once a handler exists
+	cli.debug()
+	try:
+		raise ValueError("boom")
+	except ValueError:
+		state.LOG.exception("tick failed")
+	text = path.read_text()
+	assert "starting" in text and "tick failed" in text and "ValueError: boom" in text
+	for h in logging.root.handlers:
+		h.close()
+	logging.root.handlers.clear()

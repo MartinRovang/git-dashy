@@ -5,6 +5,7 @@ every failure arrives as an Error (an OSError) instead of a string parsed out of
 """
 import base64
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -61,6 +62,7 @@ def call(path, method="GET", body=None, accept="application/vnd.github+json", ti
 		headers["Content-Type"] = "application/json"
 	req = urllib.request.Request(url, method=method,
 	                             data=json.dumps(body).encode() if body is not None else None, headers=headers)
+	logging.getLogger(__name__).debug("%s %s", method, url)
 	try:
 		with urllib.request.urlopen(req, timeout=timeout) as r:
 			return r.read().decode()

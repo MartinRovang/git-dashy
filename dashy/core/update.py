@@ -1,4 +1,5 @@
 """Self-update: track the newest vX.Y.Z tag on origin. ponytail: git is the package manager."""
+import logging
 import os
 import re
 import subprocess
@@ -18,6 +19,7 @@ def latest_release():
 		                     capture_output=True, text=True, check=True, timeout=60).stdout
 		return max(re.findall(r"refs/tags/v(\d+(?:\.\d+)*)$", out, re.M), key=vkey, default="")
 	except Exception:
+		logging.getLogger(__name__).exception("ls-remote failed")
 		return ""  # not a clone, no origin, offline
 
 
@@ -35,5 +37,6 @@ def apply_update(version):
 	except subprocess.CalledProcessError as e:
 		return (e.stderr or "checkout failed").strip().splitlines()[-1][:60]
 	except Exception as e:
+		logging.getLogger(__name__).exception("update to %s failed", version)
 		return str(e)[:60]
 	os.execv(sys.executable, [sys.executable, os.path.join(HERE, "prs.py"), *sys.argv[1:]])

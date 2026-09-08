@@ -1,4 +1,5 @@
 """Background refresh loop and everything the UI reads."""
+import logging
 import os
 import pathlib
 import subprocess
@@ -7,6 +8,8 @@ import time
 
 from .. import config
 from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
+
+LOG = logging.getLogger(__name__)
 
 
 def _evict(cache, drop):
@@ -39,6 +42,7 @@ def refresh_mirrors():
 		try:
 			mirror.sync(into, repo, pull=False)  # already pulled above; and this must not touch the network
 		except Exception:  # noqa: BLE001 — a stale registry entry is not worth losing the refresh loop over
+			LOG.exception("mirror sync %s failed", into)
 			continue
 
 
@@ -158,10 +162,13 @@ class State:
 			# ponytail: the row spins until this thread writes a status, so an exception review() does not
 			# catch would leave it spinning for the rest of the session with nothing to press. Catch here
 			# too, and the row says what happened.
+			LOG.info("review %s with %s", pr["url"], model)
 			try:
 				status = review_mod.review(pr, model)  # module attr: --demo and tests swap it
 			except Exception as e:
+				LOG.exception("review %s failed", pr["url"])
 				status = f"error: {e}"[:88]
+			LOG.info("review %s -> %s", pr["url"], status)
 			with self.lock:
 				self.reviews[pr["url"]] = status
 				self.running.discard(pr["url"])
@@ -182,7 +189,9 @@ class State:
 			try:  # ponytail: same reason as start_review — a dead thread must not wedge the row
 				status, _dest = review_mod.self_review(pr, model)  # module attr: --demo and tests swap it
 			except Exception as e:
+				LOG.exception("self-review %s failed", pr["url"])
 				status = f"error: {e}"[:88]
+			LOG.info("self-review %s -> %s", pr["url"], status)
 			with self.lock:
 				self.reviews[pr["url"]] = status  # ponytail: the path is not kept — it is derivable
 				self.running.discard(pr["url"])
@@ -211,6 +220,7 @@ class State:
 				self.tick(t0)
 				base = self.fetched_at  # ponytail: the fetch's own time, so the header's countdown agrees
 			except Exception as e:  # noqa: BLE001 — the whole point: a failed tick is a row, not the end
+				LOG.exception("tick failed")
 				with self.lock:
 					self.fetching = False
 					self.error = (str(e).strip().splitlines() or [type(e).__name__])[-1][:60]
@@ -229,6 +239,7 @@ class State:
 
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
+		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
 		team.pull()  # newest team log + memory before we read them
