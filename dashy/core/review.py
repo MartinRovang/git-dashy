@@ -2,18 +2,25 @@
 import datetime
 import json
 import os
+import shutil
+import sys
 import tempfile
 import subprocess
 
-from .. import config
+from .. import HERE, config
 from . import github, llm, log, memory, team
 
-PROMPT = """Review pull request {repo}#{number}. Use `gh pr view {number} --repo {repo}` and
-`gh pr diff {number} --repo {repo}` to read it. Look for bugs, logic errors, security issues and missing tests.
-{depth}{project}{memory}{prev}
+PROMPT = """Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
+{depth}{project}{memory}{prev}"""
+# ponytail: the contract goes LAST, after the tools, the pasted PR and the voices — everything appended
+# to the prompt used to land after it. A re-review was the case that showed: {prev} puts a whole earlier
+# review between the instruction to append sections and the moment of writing one, and since that earlier
+# review has no sections in it, the nearest example says not to write any. Twice it dropped them.
+CONTRACT = """
+
 Respond with ONLY a JSON object, no prose, no code fences:
 {{"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
- "body": "<markdown review, concise, list concrete findings with file:line>",
+ "body": "<markdown review, concise, list concrete findings with file:line{sections}>",
  "findings": [{{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}}],
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}}
@@ -26,14 +33,16 @@ This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}
 Your earlier review was:
 {body}
 
-Do not treat the PR as new. Say which earlier findings are fixed and which still stand, then review what changed since."""
+Do not treat the PR as new. Say which earlier findings are fixed and which still stand, then review what changed since.
+Anything that review said about your tools or the machine may since have been fixed — it was written against
+an older environment. Re-run the command before repeating a claim that one is missing or broken."""
 DEPTH = {
 	"low": "Depth: minimal. Skim the diff once, flag only obvious defects, keep the body to a few lines.",
 	"medium": "Depth: medium. Read the whole diff carefully, check the changed logic and its tests.",
-	"high": "Depth: very in-depth. Read the whole diff, then use `gh api` to read the surrounding files the changes touch, "
+	"high": "Depth: very in-depth. Read the whole diff, then read the surrounding files the changes touch, "
 	        "trace callers, check edge cases, error paths, concurrency and security thoroughly.",
 	"adaptive": "Depth: adaptive. Judge from the diff size and risk: a few trivial lines get a quick skim, "
-	            "a large or risky change gets a very in-depth review that reads surrounding code via `gh api`.",
+	            "a large or risky change gets a very in-depth review that reads the surrounding code too.",
 }
 VOICE = {  # ponytail: each is a prompt fragment; the model writes the sections into body, so no new JSON field
 	"review": "",
@@ -53,15 +62,48 @@ HUNTER = {  # a lens, not a style: each hunts one class of problem the main revi
 	         "cannot fail, mocks that hide the seam under test. One line per finding, `file:L<n>: what is unproven. the test.` "
 	         "Nothing found: `Covered.`",
 }
+EXPLORE = """
+
+Read the PR with `{cmd} api <github api path>`: a GET against the GitHub API, files decoded, `--diff` for
+a unified diff instead of json. It is the only command available to you. Start with the first two:
+
+  {cmd} api /repos/{repo}/pulls/{number}            the description, author, base and head
+  {cmd} api /repos/{repo}/pulls/{number} --diff     the diff
+  {cmd} api /repos/{repo}/contents/<file>?ref=<head branch>   read a file (no ref = base branch)
+  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1  every path in the repo, to find one
+  {cmd} api "/search/code?q=<symbol>+repo:{repo}"   where a symbol is used
+
+Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
+survive review.
+"""
 NO_TOOLS = """
 
-You cannot run any commands: ignore the instructions above to use `gh`. The pull request follows.
+You cannot run any commands. Judge the PR from what follows and say what you could not check.
+"""
+PR_FOLLOWS = """
+
+The pull request and its full diff follow.
 
 """
 NO_REVIEW = "\n\nDo NOT write the standard review prose: \"body\" holds ONLY the sections below. \"findings\" stays as specified."
 HELLO = """**Dashy is on its way!** {what} with model **{model}**, effort **{effort}**, depth **{depth}** ({why}), voices **{voices}**{hunters}."""
 WHY = {"adaptive": "Dashy picks the depth from the diff size and risk"}  # other depths: set by the reviewer
-TOOLS = "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+def api_cmd():
+	"""How a review calls back into gitdashy to read the repo: the installed name, else this checkout.
+
+	ponytail: one read-only GET command instead of a shell. It carries no token of its own — gitdashy
+	resolves that — so the reviewer can read the repo and nothing else.
+	ponytail: prs.py, not `-m dashy`. The review runs in a temp directory, and from there the package is
+	not importable unless it was pip-installed — prs.py puts its own checkout on sys.path.
+	ponytail: and the name on PATH is only used when it IS this checkout. A review ran with a prompt from
+	here while `gitdashy` on PATH was an older install with no `api` command — the reviewer's first tool
+	call fell through into the dashboard and crashed. The running code is the code that has the command.
+	"""
+	here = os.path.join(HERE, "prs.py")
+	found = shutil.which("gitdashy")
+	if found and os.path.realpath(found) == os.path.realpath(here):
+		return "gitdashy"
+	return f"{sys.executable} {here}"
 # ponytail: --safe-mode drops CLAUDE.md, skills, hooks and MCP for this call. Two reasons: a personal
 # CLAUDE.md is a dialogue protocol, and this call has no dialogue — it has a JSON contract it can break by
 # answering in prose. And without it the prompt would depend on which directory gitdashy was launched from.
@@ -156,6 +198,21 @@ def tail():
 	return ("" if "review" in v else NO_REVIEW) + "".join(VOICE[x] for x in v) + "".join(HUNTER[h] for h in on(config.HUNTERS, config.HUNTER))
 
 
+def sections():
+	"""The section headings the body must end with, in order. "" when none were asked for.
+
+	ponytail: the SCHEMA has to name them. Asking for them above and then describing "body" as a plain
+	markdown review left the last, most concrete word saying nothing about sections — and a re-review
+	dropped three of four. The instruction that says what a field contains is the field's description.
+	"""
+	names = [f"**{x.title()}**" for x in on(config.VOICES, config.VOICE) if x != "review"]
+	names += [f"**{h.title()}**" for h in on(config.HUNTERS, config.HUNTER)]
+	if not names:
+		return ""
+	return (", then every one of these sections, each after a `---` line, in this order: "
+	        + ", ".join(names) + " — none of them may be left out")
+
+
 def _verdict(repo, n, model, prev=None):
 	"""Build the prompt, run the reviewer, return its parsed verdict. Raises on failure.
 
@@ -167,16 +224,24 @@ def _verdict(repo, n, model, prev=None):
 	# dropped: a reviewer weighs "the team that owns this repo says" differently from "the person
 	# running me says, about their work in general", and it is the same value the UI shows.
 	mem, (brief, whose) = memory.read(repo), memory.brief(repo)
-	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH] + tail(),
+	prompt = PROMPT.format(repo=repo, number=n, depth=DEPTH[config.DEPTH],
 	                       project=f"\n\nWhat this is being built for, and for whom ({whose}):\n" + brief if brief else "",
 	                       memory="\n\nMemory from earlier reviews, trust it:\n" + mem if mem else "",
 	                       prev=PREV.format(at=prev["at"][:10], verdict=prev["verdict"], body=prev["body"]) if prev else "")
 	if config.INSTRUCTIONS:  # read per review, so the file can be edited while gitdashy runs
 		with open(config.INSTRUCTIONS) as f:
 			prompt += "\n\nAdditional instructions from the reviewer:\n" + f.read()
-	if llm.provider(model)[0] != "claude":  # no tool loop there, so the PR comes with the prompt
-		prompt += NO_TOOLS + github.context(repo, n)
-	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=TOOLS, timeout=TIMEOUT)
+	# ponytail: claude fetches the PR itself, with the one command it is given — pasting it in as well
+	# was the same bytes twice, and as an argv string a big diff died with E2BIG before claude started.
+	# A backend with no tool loop still gets it pasted; that goes over HTTP, where size is not a limit.
+	claude = llm.provider(model)[0] == "claude"
+	tools = f"Bash({api_cmd()} api:*)" if claude else ""
+	if claude:
+		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n)
+	else:
+		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
+	prompt += tail() + CONTRACT.format(sections=sections())  # how to write the body, then its shape — last, both
+	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):

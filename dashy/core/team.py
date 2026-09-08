@@ -8,7 +8,7 @@ import subprocess
 import threading
 
 from .. import config
-from . import log
+from . import github, log
 
 ERROR = ""  # last git failure, shown in the header until the next success
 NAME = ""  # the joined team keys, comma-joined, for the header strip only — resolution goes by key
@@ -17,7 +17,7 @@ CLONE = 300  # seconds a clone or repo-create may take before we give up on it
 BRANCH = "main"  # the branch a team gitdashy STARTS uses; a team it clones keeps its own
 
 
-def _remote(cmd, timeout=None):
+def _remote(cmd, extra_env=None, timeout=None):
 	"""Run a command that talks to a remote, and never let it wait on a human.
 
 	ponytail: a URL to a private repo makes git ask for a password. Inside curses that prompt is invisible
@@ -27,7 +27,7 @@ def _remote(cmd, timeout=None):
 	# ponytail: LC_ALL=C because we MATCH on git's stderr — "could not read ", "Authentication failed".
 	# On a localized machine those strings never appear, the auth branch never fires, and the user gets
 	# back the clipped fatal this whole path exists to replace. Parsing output means pinning its locale.
-	env = dict(os.environ, GIT_TERMINAL_PROMPT="0", LC_ALL="C", LANGUAGE="")
+	env = dict(os.environ, GIT_TERMINAL_PROMPT="0", LC_ALL="C", LANGUAGE="", **(extra_env or {}))
 	env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")  # keeps a user's own setting if they have one
 	try:
 		return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
@@ -509,7 +509,11 @@ def clone(repo, dest):
 	# people can reach. A bare owner/name is now expanded to a GitHub URL as a CONVENIENCE, and any
 	# other URL, ssh remote or path goes straight through untouched.
 	url = repo if local else f"https://github.com/{repo}.git"
-	if _note(_remote(["git", "clone", "-q", url, dest]), "join"):
+	# ponytail: the token rides along on THAT path only — it is github.com by construction there. A URL
+	# is the user's own host and gets nothing, and falls through to the ssh hint below.
+	auth = github.git_auth() if not local else {}
+	if _note(_remote(["git", "clone", "-q", url, dest], auth), "join"):
+		github.persist_auth(dest)  # the env config does not survive the clone; the checkout needs its own
 		return ""
 	# ponytail: git cannot ask. GIT_TERMINAL_PROMPT=0 is deliberate — a credential prompt inside curses
 	# is invisible and hangs the dashboard — so an https URL to a PRIVATE repo fails outright on a

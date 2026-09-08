@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -254,6 +255,86 @@ def test_drafts_prints_a_heading_for_every_group_including_general(monkeypatch, 
 	assert out.index("a/b") < out.index("a repo guess")
 
 
+def test_api_prints_a_file_decoded_and_json_as_json(monkeypatch, capsys):
+	"""The reviewer's one command. A file arrives base64 in an envelope; a model must not have to unwrap it."""
+	import base64
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: json.dumps(
+		{"encoding": "base64", "content": base64.b64encode(b"def f():\n\tpass\n").decode()}
+		if "contents" in path else {"number": 7}))
+	cli.api(["gitdashy", "api", "/repos/a/b/contents/x.py?ref=feat"])
+	assert capsys.readouterr().out == "def f():\n\tpass\n\n"
+	cli.api(["gitdashy", "api", "repos/a/b/pulls/7"])  # a path with no leading slash still works
+	assert json.loads(capsys.readouterr().out) == {"number": 7}
+
+
+def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: (_ for _ in ()).throw(github.Error("404 x: Not Found")))
+	with pytest.raises(SystemExit, match="Not Found"):
+		cli.api(["gitdashy", "api", "/repos/a/b/pulls/9"])
+	with pytest.raises(SystemExit, match="needs a path"):
+		cli.api(["gitdashy", "api"])
+
+
+def test_no_token_says_so_instead_of_opening_the_dashboard(monkeypatch, capsys):
+	"""Every call needs one, so without it the dashboard is three rows of 401 under curses."""
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(config, "SETTINGS", "")
+	cli.run(["gitdashy"])
+	out = capsys.readouterr().out
+	assert "no GitHub token" in out and "export GH_TOKEN" in out and "--demo" in out
+	monkeypatch.setenv("GH_TOKEN", "gho_x")
+	opened = []
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: opened.append(a))
+	cli.run(["gitdashy"])
+	assert opened  # with one, it starts
+
+
+def test_an_unknown_command_is_an_error_not_the_dashboard(monkeypatch):
+	"""`gitdashy api …` against a build with no api command fell through into curses.wrapper, so a review
+	whose first tool call hit an older install crashed instead of being told the command was not there."""
+	from dashy import cli
+	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	with pytest.raises(SystemExit, match="no command 'bogus'"):
+		cli.run(["gitdashy", "bogus"])
+	with pytest.raises(SystemExit, match="no command 'pr'"):  # a command from some other build, or a typo
+		cli.run(["gitdashy", "pr", "view", "7"])
+
+
+def test_the_reviewers_command_points_at_the_running_code(monkeypatch, tmp_path):
+	"""A stale `gitdashy` on PATH is a different program: the prompt said `api` while the binary was a
+	build that had none. The bare name is used only when PATH resolves to this very checkout."""
+	from dashy.core import review
+	monkeypatch.setattr(review.shutil, "which", lambda c: str(tmp_path / "old-install" / "prs.py"))
+	assert review.api_cmd().endswith("prs.py") and "gitdashy" not in review.api_cmd().split("/")[-1]
+	monkeypatch.setattr(review.shutil, "which", lambda c: os.path.join(review.HERE, "prs.py"))
+	assert review.api_cmd() == "gitdashy"
+
+
+def test_api_asks_for_a_diff_when_told_to(monkeypatch, capsys):
+	"""A patch inside json is readable but escaped; --diff is the same GET with one header changed."""
+	from dashy import cli
+	from dashy.core import github
+	seen = []
+	monkeypatch.setattr(github, "call", lambda path, **kw: seen.append(kw["accept"]) or "diff --git a b")
+	cli.api(["gitdashy", "api", "/repos/a/b/compare/x...y", "--diff"])
+	assert seen == ["application/vnd.github.v3.diff"] and capsys.readouterr().out == "diff --git a b\n"
+	cli.api(["gitdashy", "api", "/repos/a/b/pulls/7"])
+	assert seen[-1] == "application/vnd.github+json"
+
+
+def test_api_refuses_a_url(monkeypatch):
+	"""The caller is a model that has just read an untrusted diff. A diff that talks it into pointing
+	this at another host must not get a request out of it, token or no token."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setattr(github, "call", lambda path, **kw: pytest.fail(f"called out to {path}"))
+	for url in ("https://evil.example.com/collect?t=", "http://169.254.169.254/latest/meta-data/", "//evil.example.com/x"):
+		with pytest.raises(SystemExit, match="not a URL"):
+			cli.api(["gitdashy", "api", url])
 def test_teams_lists_what_each_one_covers(monkeypatch, capsys, tmp_path):
 	from dashy import cli
 	from dashy.core import bind, team

@@ -20,8 +20,17 @@ printf '\n  %s%sgithub-dashy%s %s— smarter reviews, better code%s\n\n' "$B" "$
 
 [ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
 git -C "$DIR" fetch --tags -q
-TAG=$(git -C "$DIR" tag -l 'v*' --sort=-v:refname | head -1)   # newest release, or main if untagged
-git -C "$DIR" checkout -q "${TAG:-main}"
+# ponytail: REF installs a branch or tag by name. Running this script from a checkout of a branch
+# installed the newest RELEASE instead, silently — which is how a machine ended up with a dashboard
+# and a `gitdashy` on PATH from two different builds.
+if [ -n "${REF:-}" ]; then
+	git -C "$DIR" fetch -q origin "$REF"
+	git -C "$DIR" checkout -q -B "$REF" FETCH_HEAD
+	TAG=$REF
+else
+	TAG=$(git -C "$DIR" tag -l 'v*' --sort=-v:refname | head -1)   # newest release, or main if untagged
+	git -C "$DIR" checkout -q "${TAG:-main}"
+fi
 mkdir -p "$BIN"
 ln -sf "$DIR/prs.py" "$BIN/$NAME"
 ln -sf "$DIR/prs.py" "$BIN/prs"   # ponytail: keep the old name working for existing installs
@@ -33,7 +42,7 @@ warn() { printf '\n    %s⚠%s  %s\n' "$YELLOW" "$R" "$1"; }
 printf '  %s✓%s installed %s%s%s  %s→ %s%s\n\n' "$GREEN" "$R" "$B" "${TAG:-main}" "$R" "$DIM" "$DIR" "$R"
 printf '  Run it with %s%s%s%s in your terminal:\n\n' "$B" "$PINK" "$NAME" "$R"
 row "$NAME"          "your PRs, review-requested, assigned"
-row "$NAME --demo"   "try it with canned data (no gh, no claude)"
+row "$NAME --demo"   "try it with canned data (no token, no claude)"
 row "$NAME --help"   "all flags and keys"
 
 case ":$PATH:" in
@@ -41,5 +50,5 @@ case ":$PATH:" in
 	*) warn "$BIN is not on your PATH — add to your shell rc:"
 	   printf '       %sexport PATH="%s:$PATH"%s\n' "$CYAN" "$BIN" "$R" ;;
 esac
-command -v gh >/dev/null || warn "gh is required — https://cli.github.com"
+[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || warn "no github token — export GH_TOKEN=… (scope: repo)"
 printf '\n'

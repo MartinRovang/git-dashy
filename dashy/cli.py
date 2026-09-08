@@ -1,11 +1,14 @@
 """Argument parsing and the curses entry point. ponytail: sys.argv scan, argparse would be more code than this."""
+import base64
 import curses
 import itertools
+import json
 import os
+import signal
 import sys
 
 from . import HERE, VERSION, config, demo
-from .core import bind as bind_mod, install as install_mod, knowledge, memory, mirror, review as review_mod, team
+from .core import bind as bind_mod, github, install as install_mod, knowledge, memory, mirror, review as review_mod, team
 from .ui import screen
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
@@ -16,6 +19,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
+       gitdashy api PATH [--diff]
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
@@ -31,7 +35,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
   --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
-  --demo         canned PRs and a fake reviewer — nothing touches gh, claude or your real log
+  --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
 
 sync-memory copies this repo's review memory into PATH as a read-only mirror, so an agent session there
   reads what the reviews learned. --repo defaults to this directory's origin. Cross-repo facts are left out:
@@ -342,6 +346,51 @@ def bind(argv):
 	print(f"  reviews of {bind_mod.key(repo) or repo} read: {whose}" + ("" if text else " (nothing to read)"))
 
 
+NO_TOKEN = """  gitdashy: no GitHub token.
+
+  Set one and run again — a classic token with the `repo` scope, or a fine-grained
+  token with read access to the repos you review and write access to pull requests:
+
+      export GH_TOKEN=…          (or $GITHUB_TOKEN)
+      https://github.com/settings/tokens
+
+  Put it in your shell rc to keep it. Nothing else is needed: gitdashy talks to the
+  GitHub API itself and does not use the gh CLI.
+
+  To look around without one:  gitdashy --demo
+"""
+
+
+def api(argv):
+	"""GET one GitHub API path and print it, `--diff` for a unified diff. This is how a review reads the
+	repo now that gh is gone.
+
+	ponytail: GET only, github only, and a file arrives decoded rather than as base64 in an envelope.
+	It is the one command a review is allowed to run, so what it can do is what a reviewer may do: read.
+	ponytail: a PATH, never a URL. The caller is a model that has just read an untrusted diff, and a diff
+	that talks it into `gitdashy api https://elsewhere/…` must not be able to send anything anywhere.
+	github.call() withholds the token off-host as well — two locks, because this one is worth two.
+	"""
+	signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `| head` is a closed pipe, not a BrokenPipeError to print
+	path = next((a for a in argv[2:] if not a.startswith("-")), "")
+	if not path:
+		raise SystemExit("gitdashy: api needs a path, e.g. /repos/owner/name/contents/src/app.py")
+	if path.startswith(("http://", "https://", "//")):
+		raise SystemExit("gitdashy: api takes an API path, not a URL")
+	try:
+		accept = "application/vnd.github.v3.diff" if "--diff" in argv else "application/vnd.github+json"
+		raw = github.call(path if path.startswith("/") else "/" + path, accept=accept, timeout=60)
+	except OSError as e:
+		raise SystemExit(f"gitdashy: {e}")
+	try:
+		d = json.loads(raw)
+	except ValueError:
+		return print(raw)  # a diff, a raw file: already text
+	if isinstance(d, dict) and d.get("encoding") == "base64":
+		return print(base64.b64decode(d["content"]).decode(errors="replace"))
+	print(json.dumps(d, indent=1))
+
+
 def drafts(argv):
 	"""Show what gitdashy has heard once and not confirmed. Read-only; W in the dashboard acts on it."""
 	team.activate()
@@ -450,6 +499,8 @@ def run(argv=None):
 		return init(argv)
 	if len(argv) > 1 and argv[1] == "bind":
 		return bind(argv)
+	if len(argv) > 1 and argv[1] == "api":
+		return api(argv)
 	if len(argv) > 1 and argv[1] == "drafts":
 		return drafts(argv)
 	if len(argv) > 1 and argv[1] == "teams":
@@ -459,6 +510,11 @@ def run(argv=None):
 		for name, ok, detail in rows:
 			print(f"{'ok  ' if ok else 'FAIL'}  {name}" + ("" if ok else f"  ({detail})"))
 		raise SystemExit(0 if all(ok for _, ok, _ in rows) else 1)
+	# ponytail: an unknown subcommand is an ERROR, not the dashboard. `gitdashy api …` against a build
+	# without that command fell through to here and opened curses, which is how a review crashed rather
+	# than being told the command was not there. Last, so every command above still gets its turn.
+	if len(argv) > 1 and not argv[1].startswith("-"):
+		raise SystemExit(f"gitdashy: no command {argv[1]!r} in {VERSION} — see gitdashy --help")
 	if "--demo" in argv:
 		demo.install()
 	config.load()
@@ -473,5 +529,10 @@ def run(argv=None):
 	if set(config.HUNTER) - set(config.HUNTERS):
 		return print(f"gitdashy: --hunter must be from {', '.join(config.HUNTERS)}, not {config.HUNTER!r}")
 	config.INSTRUCTIONS = arg("--instructions", config.INSTRUCTIONS, str, argv)
+	# ponytail: last check before the screen goes up, and after the flags — a typo in --voice is still a
+	# typo without a token. Nothing in the dashboard works without one, and three rows of "401 Bad
+	# credentials" under curses is a worse way to learn that than a message with the fix in it.
+	if "--demo" not in argv and not github.token():
+		return print(NO_TOKEN)
 	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
 	               arg("--model", config.DEFAULT_MODEL, str, argv))

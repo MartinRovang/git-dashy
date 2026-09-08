@@ -17,7 +17,8 @@ GitHub.
 ## Requirements
 
 - Python 3.9+ (stdlib only — `curses`, no pip install)
-- [`gh`](https://cli.github.com) authenticated (`gh auth login`)
+- A GitHub token in `$GH_TOKEN` or `$GITHUB_TOKEN` (scope: `repo`). Nothing shells out to `gh` —
+  gitdashy talks to the API itself. (`$GITHUB_API` points it at GitHub Enterprise.)
 - [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
 
 ## Install
@@ -27,7 +28,15 @@ curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/inst
 ```
 
 Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `gitdashy` in
-`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in place. Or do it by hand:
+`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in
+place — and always to the newest **tag**, whatever branch you happen to be standing in. To install a branch
+or an older release, name it:
+
+```sh
+REF=feat/drop-gh ./install.sh     # or REF=v1.31.1, or REF=main
+```
+
+Or do it by hand:
 
 ```sh
 git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
@@ -44,7 +53,7 @@ gitdashy --model sonnet
 gitdashy --effort high --depth adaptive   # claude effort level; review depth judged from the PR size
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
 gitdashy --version        # 1.16.0
-gitdashy --demo           # canned PRs, fake reviewer — no gh, no claude, no real log
+gitdashy --demo           # canned PRs, fake reviewer — no token, no claude, no real log
 gitdashy --help
 gitdashy sync-memory --into .agent/team   # mirror the shared memory for an agent session in this repo
 gitdashy remember "the viewer owns mask state"   # file what a coding session learned
@@ -155,7 +164,7 @@ copy, and how to undo it.
 ## The review
 
 `Enter` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
-result with `gh pr review` as an **approve**, **request changes**, or **comment**. Reviews are
+result as an **approve**, **request changes**, or **comment**. Reviews are
 appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in the REVIEWED section,
 where `Enter` opens the summary and full review. A PR whose head commit moved since the verdict
 is flagged `↻ re-review · was <verdict>` and can be reviewed again — a new comment alone does not count.
@@ -179,7 +188,7 @@ while the dashboard is running. A missing file shows as `error:` on the row inst
 without it.
 
 Reviews run with `--safe-mode`, so the reviewer sees no `CLAUDE.md`, skills, hooks or MCP servers from
-your machine — only the prompt, the `gh` commands it is allowed, and a short built-in review lens: state
+your machine — only the prompt, one read-only command, and a short built-in review lens: state
 ownership, observability, blast radius, timing, and the seams between systems. Without it a review would
 inherit whatever instruction files sit in the directory gitdashy was launched from, so the same PR could
 be reviewed differently depending on where you started the dashboard. Your own house rules are unaffected
@@ -274,7 +283,8 @@ If your own memory directory is itself a git repo, gitdashy pushes it too — so
 you between machines without ever passing through the team. The header's `Knowledge` group shows
 `team org/review-team`, or the last git error in red.
 
-The `T` prompt takes `owner/name` (cloned with `gh`, and offered for creation if it does not exist), a
+The `T` prompt takes `owner/name` (cloned over https with your token, and offered for creation if it
+does not exist), a
 **local path**, or a **git URL** — `https://…` and `git@…` both clone with plain `git`. Remote prompts are
 disabled and the clone is bounded, so a repo your credentials cannot reach fails with an error on the header
 instead of hanging the dashboard on an invisible password prompt. Pressing `T` while already in a team offers
@@ -420,8 +430,11 @@ releases, not `main`. Non-git installs, no origin, or no network: the badge just
 
 Reviews run through the `claude` CLI by default. Name a model `openrouter:x-ai/grok-4` or
 `local:qwen3-coder` and it goes to that provider's OpenAI-compatible endpoint instead, as one chat
-completion: those backends get no tool loop, so gitdashy pastes `gh pr view` and `gh pr diff` into the
-prompt for them (a diff over 200k characters is cut). `--effort` carries over to OpenRouter as the
+completion: those backends get no tool loop and are told so. Every backend, Claude included, gets the PR
+and its diff pasted into the prompt (a diff over 200k characters is cut) — there is no `gh` to fetch it
+with any more. Claude alone can read further: it is allowed exactly one command, `gitdashy api <path>`, a
+read-only GET against the GitHub API that returns files decoded, which is how a deep review reaches the
+code around the diff. `--effort` carries over to OpenRouter as the
 model's reasoning budget (`xhigh` and `max` collapse onto `high`, since OpenRouter stops there): leave
 it at `low` unless a reasoning model is worth the wait. `gitdashy self-check` on another backend only
 proves the endpoint answers.
@@ -467,7 +480,7 @@ dashy/
     rows.py       sections -> flat draw rows, age()
   core/           what talks to the outside world
     state.py      background refresh loop, shared state
-    github.py     everything that shells out to gh
+    github.py     everything that talks to the GitHub API (urllib, no gh)
     review.py     runs Claude headless, posts the verdict
     log.py        ~/.prs_reviewed.jsonl store + detail view
     memory.py     ~/.prs_memory store, and the dream cleanup
