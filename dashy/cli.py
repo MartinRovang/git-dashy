@@ -539,19 +539,20 @@ def friction(argv):
 		print(json.dumps({"decision": "block", "reason": said}))
 
 
-def debug():
+def debug(argv):
 	"""Dump the log to config.DEBUG_LOG, tracebacks included. The screen shows one line per failure; this keeps the rest."""
 	logging.basicConfig(filename=config.DEBUG_LOG, level=logging.DEBUG, format="%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s")
-	logging.captureWarnings(True)
-	sys.excepthook = lambda *a: logging.critical("uncaught", exc_info=a)
-	threading.excepthook = lambda a: logging.critical("uncaught in thread %s", a.thread.name, exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
-	logging.info("gitdashy %s starting: %s", VERSION, sys.argv)
+	os.chmod(config.DEBUG_LOG, 0o600)  # every PR url and traceback lands here
+	# Log, then hand over to the default hooks: a crash still prints to the terminal.
+	sys.excepthook = lambda *a: (logging.critical("uncaught", exc_info=a), sys.__excepthook__(*a))
+	threading.excepthook = lambda a: (logging.critical("uncaught in thread %s", a.thread.name, exc_info=(a.exc_type, a.exc_value, a.exc_traceback)), threading.__excepthook__(a))
+	logging.info("gitdashy %s starting: %s", VERSION, argv)
 
 
 def run(argv=None):
 	argv = sys.argv if argv is None else argv
 	if "--debug" in argv or os.environ.get("PRS_DEBUG"):
-		debug()
+		debug(argv)
 	if "--help" in argv or "-h" in argv:
 		return print(USAGE)
 	if "--version" in argv:
