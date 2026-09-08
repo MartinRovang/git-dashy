@@ -5,6 +5,7 @@ every failure arrives as an Error (an OSError) instead of a string parsed out of
 """
 import base64
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -61,6 +62,7 @@ def call(path, method="GET", body=None, accept="application/vnd.github+json", ti
 		headers["Content-Type"] = "application/json"
 	req = urllib.request.Request(url, method=method,
 	                             data=json.dumps(body).encode() if body is not None else None, headers=headers)
+	logging.getLogger(__name__).debug("%s %s", method, url)
 	try:
 		with urllib.request.urlopen(req, timeout=timeout) as r:
 			return r.read().decode()
@@ -170,15 +172,29 @@ def request_review(repo, number, login):
 	return ""
 
 
+GITHUB = "https://github.com/"  # ponytail: the header is scoped to this remote — an unscoped extraHeader
+                                # would hand the token to ANY http remote the checkout later talks to.
+
+
 def git_auth():
 	"""Env that lets a clone reach a private repo with the same token the API uses.
 
 	ponytail: GIT_CONFIG_* in the environment, not `-c` in argv — argv is world-readable in `ps` for the
 	length of a clone. It does not survive into the new checkout, so `persist_auth()` writes it there.
 	"""
+	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"http.{GITHUB}.extraHeader",
+	        "GIT_CONFIG_VALUE_0": f"Authorization: {h}"} if (h := git_header()) else {}
+
+
+def git_header():
+	"""The Authorization value git's smart-http endpoint accepts for token(). "" without a token.
+
+	ponytail: Basic, not Bearer. The REST API takes a PAT either way; the git endpoint answers Bearer
+	with "remote: invalid credentials" and only takes the token as a Basic password — the form gh's
+	own credential helper sends. One place, so the clone and the persisted config cannot drift.
+	"""
 	tok = token()
-	return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
-	        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {tok}"} if tok else {}
+	return "Basic " + base64.b64encode(f"x-access-token:{tok}".encode()).decode() if tok else ""
 
 
 def persist_auth(dest):
@@ -187,12 +203,12 @@ def persist_auth(dest):
 	ponytail: appended by hand rather than `git config`, which would put the token back in argv — the
 	thing git_auth() exists to avoid. chmod first: the secret is never on disk world-readable.
 	"""
-	tok, cfg = token(), os.path.join(dest, ".git", "config")
-	if not tok or not os.path.isfile(cfg):
+	h, cfg = git_header(), os.path.join(dest, ".git", "config")
+	if not h or not os.path.isfile(cfg):
 		return
 	os.chmod(cfg, 0o600)
 	with open(cfg, "a") as f:
-		f.write(f"[http]\n\textraHeader = Authorization: Bearer {tok}\n")
+		f.write(f'[http "{GITHUB}"]\n\textraHeader = Authorization: {h}\n')
 
 
 VERDICT_EVENT = {"approve": "APPROVE", "request_changes": "REQUEST_CHANGES", "comment": "COMMENT"}

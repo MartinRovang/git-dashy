@@ -23,6 +23,7 @@ TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # the OLD 
 TEAMS = os.environ.get("PRS_TEAMS", os.path.expanduser("~/.prs_teams"))  # one checkout per team, dir name = slug
 MEMORY_DIR = os.environ.get("PRS_MEMORY", os.path.expanduser("~/.prs_memory"))  # general.md + one md per repo
 LOG = os.environ.get("PRS_LOG", os.path.expanduser("~/.prs_reviewed.jsonl"))  # jsonl, one review per line
+DEBUG_LOG = os.environ.get("PRS_DEBUG_LOG", os.path.expanduser("~/.prs_debug.log"))  # --debug / PRS_DEBUG=1 writes here
 # ponytail: joining a team moves LOG into the checkout; MEMORY_DIR stays yours, since memory.sources()
 # reads both. These two keep the solo locations, so K can show where memory lives and leaving has a home.
 LOCAL_MEMORY, LOCAL_LOG = MEMORY_DIR, LOG

@@ -1,6 +1,7 @@
 """The curses screen: colours, one draw() per tick, and the key loop."""
 import curses
 import difflib
+import logging
 import os
 import subprocess
 import random
@@ -1520,7 +1521,8 @@ def dream_screen(scr, state, sel):
 		try:
 			box[0] = memory.dream(state.model)  # module attr: --demo and tests swap it
 		except Exception as e:  # noqa: BLE001 — surfaced in the panel
-			box[0] = e
+			box[0] = e  # ponytail: before the log line — the panel polls this, and formatting a traceback takes a moment
+			logging.getLogger(__name__).exception("dream failed")
 	threading.Thread(target=run, daemon=True).start()
 	rng, t0 = random.Random(0), time.time()
 	scr.timeout(120)
