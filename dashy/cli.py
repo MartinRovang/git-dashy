@@ -58,7 +58,7 @@ self-review runs the reviewer over one of your OWN PRs and posts nothing — a p
 install wires this machine so every session reads the cross-repo facts: one symlink in the agent config
   directory and one import. It explains itself and asks before writing anything (--yes to skip the ask,
   --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
-  by offering the two briefs; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
+  by offering to say who you are; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
   none of this — they read memory through the prompt and always have.
 
 install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
@@ -109,6 +109,10 @@ setup asks for the two things a corpus cannot work out for itself: who you are, 
   for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
   one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
   than clearing it, the prompt shows you what that is, and sections you added by hand are left alone.
+  `install --full` asks only the first of the two: who you are is a property of this machine, and what
+  the work is for is a property of a repo. YOUR brief covers every repo bound to no team — one file for
+  all of them — so give each project its own team (`gitdashy teams --new`, then `gitdashy bind`) rather
+  than letting one product's brief reach the reviews of another.
 
 self-check makes one real claude call and proves the three things every review depends on: that the
   appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
@@ -189,17 +193,17 @@ def offer_setup(argv):
 	# bootstrap script run from an interactive shell inherits that tty, so isatty alone does not cover it.
 	if "--no-setup" in argv or "--yes" in argv or not sys.stdin.isatty():
 		return
-	if install_mod.setup_done():
-		return  # ponytail: nothing to offer when both briefs are already written
-	later = "`gitdashy setup` whenever you want them — nothing else is waiting on it."
+	if install_mod.setup_done(project=False):
+		return  # ponytail: nothing to offer once USER.md is written; the brief is not asked here
+	later = "`gitdashy setup` whenever you want to — nothing else is waiting on it."
 	try:
-		if input("\nAnswer the two briefs now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+		if input("\nSay who you are now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
 			return print(later)
 	except (EOFError, KeyboardInterrupt):
 		return print("\n" + later)
 	print("")
 	try:
-		setup(argv)
+		setup(argv, project=False)
 	except SystemExit as e:
 		# ponytail: cli.setup's own `ask` raises SystemExit on Ctrl-C, and SystemExit is a BaseException,
 		# so it walked past the handler above — the install had COMPLETED and printed its report, and the
@@ -225,17 +229,22 @@ def self_review(argv):
 	raise SystemExit(0 if dest else 1)
 
 
-def setup(argv):
-	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for."""
-	print("Two short briefs. Blank keeps what is already there — the prompt shows you what. "
-	      "Edit the files later; nothing here is final.\n")
+def setup(argv, project=True):
+	"""Ask for the two things a corpus cannot work out on its own: who you are, and what this is for.
+
+	ponytail: `project` False is the install-time path — who you are is machine-level, what the work is
+	for is not. See install.setup.
+	"""
+	print(("Two short briefs. " if project else "One short brief. ")
+	      + "Blank keeps what is already there — the prompt shows you what. "
+	        "Edit the files later; nothing here is final.\n")
 	def ask(prompt):
 		try:
 			return input(f"  {prompt}\n  > ").strip()
 		except (EOFError, KeyboardInterrupt):
 			raise SystemExit("\nnothing written")
 	team.activate()
-	print("\n" + "\n".join(install_mod.setup(ask)))
+	print("\n" + "\n".join(install_mod.setup(ask, project=project)))
 
 
 def init(argv):

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 from dashy import config
-from dashy.core import install, mirror, state, team
+from dashy.core import install, memory, mirror, state, team
 
 
 def fresh(monkeypatch, tmp_path):
@@ -1543,3 +1543,58 @@ def test_the_stop_hook_is_quiet_when_its_entry_point_is_gone(tmp_path):
 	                      capture_output=True, text=True)
 	assert done.returncode == 0, done.stderr
 	assert done.stdout == "", done.stdout
+
+
+def test_a_full_install_does_not_ask_what_the_work_is_for(monkeypatch, tmp_path):
+	"""Who you are is a property of the MACHINE. What the work is for is a property of a repo.
+
+	Asked once at install time it wrote a single ~/.prs_memory/project.md that every repo bound to no
+	team then read — so a second project inherited the first one's brief, which is precisely the
+	failure brief() was rewritten to stop for the team case.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)                                    # or there is no identity/ to ask about
+	asked = []
+	out = install.setup(lambda q: asked.append(q) or "x", project=False)
+	assert any("Name" in q for q in asked), asked                 # USER.md still asked for
+	assert not any("The project" in q for q in asked), asked      # the brief is not
+	assert not os.path.exists(memory.brief_path()), "wrote a machine-wide brief anyway"
+	said = "\n".join(out)
+	assert "belongs to a repo, not" in said, said                 # and says where it went
+	assert "gitdashy setup" in said and "gitdashy bind" in said, said
+
+
+def test_gitdashy_setup_still_asks_for_both(monkeypatch, tmp_path):
+	"""The deliberate command keeps the question — it is only the machine-level install that drops it."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	asked = []
+	install.setup(lambda q: asked.append(q) or "x")
+	assert any("Name" in q for q in asked) and any("The project" in q for q in asked), asked
+	assert os.path.exists(memory.brief_path())
+
+
+def test_the_personal_brief_says_it_covers_every_unbound_repo(monkeypatch, tmp_path):
+	""""yours" reads as "scoped to me" and is the opposite: one file, every repo bound to no team.
+
+	Someone with a second project has to be told that before they answer, not after they notice one
+	product's brief in the reviews of another.
+	"""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	# ponytail: the REPORT, not the prompts — the sentence is printed above the questions, which is
+	# where someone reads it before answering. Asserting on `ask` arguments missed it entirely.
+	said = "\n".join(install.setup(lambda q: "x"))
+	assert "EVERY repo bound to no team" in said, said
+	assert "gitdashy bind" in said, said
+
+
+def test_the_install_offer_is_done_once_you_have_said_who_you_are(monkeypatch, tmp_path):
+	"""setup_done still waited on a brief the install no longer asks for, so the offer would have
+	returned on every install forever on a machine that answered everything it was asked."""
+	_, corpus = full_env(monkeypatch, tmp_path)
+	install.full_apply(corpus)
+	assert install.setup_done(project=False) is False           # USER.md is still the seeded template
+	install.setup(lambda q: "answered", project=False)
+	assert install.setup_done(project=False) is True            # and now there is nothing left to ask
+	assert install.setup_done() is False                        # but the brief is still unwritten

@@ -144,7 +144,7 @@ def _offer_env(monkeypatch, tmp_path):
 	monkeypatch.setattr(install_mod, "CORPUS_HOME", str(tmp_path / "corpus-home"))
 	monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 	called = []
-	monkeypatch.setattr(cli, "setup", lambda argv: called.append(argv))
+	monkeypatch.setattr(cli, "setup", lambda argv, project=True: called.append((argv, project)))
 	return called
 
 
@@ -155,7 +155,8 @@ def test_declining_the_briefs_is_not_a_failed_install(monkeypatch, tmp_path, cap
 	non-zero — a wrapper checking $? read a finished install as a failed one.
 	"""
 	_offer_env(monkeypatch, tmp_path)
-	monkeypatch.setattr(cli, "setup", lambda argv: (_ for _ in ()).throw(SystemExit("\nnothing written")))
+	monkeypatch.setattr(cli, "setup",
+	                    lambda argv, project=True: (_ for _ in ()).throw(SystemExit("\nnothing written")))
 	monkeypatch.setattr("builtins.input", lambda _: "y")
 	cli.offer_setup(["gitdashy", "install", "--full"])       # must not raise
 	assert "nothing written" in capsys.readouterr().out
@@ -185,10 +186,13 @@ def test_saying_yes_reaches_setup_and_no_does_not(monkeypatch, tmp_path, capsys)
 	called = _offer_env(monkeypatch, tmp_path)
 	monkeypatch.setattr("builtins.input", lambda _: "n")
 	cli.offer_setup(["gitdashy", "install", "--full"])
-	assert called == [] and "whenever you want them" in capsys.readouterr().out
+	assert called == [] and "whenever you want to" in capsys.readouterr().out
 	monkeypatch.setattr("builtins.input", lambda _: "")   # blank is yes
 	cli.offer_setup(["gitdashy", "install", "--full"])
 	assert len(called) == 1
+	# ponytail: project=False is the whole point of the offer now — who you are is machine-level, what
+	# the work is for is not, and asking it here wrote one brief that every unbound repo then read.
+	assert called[0][1] is False
 
 
 def test_a_failed_full_install_never_offers_the_briefs(monkeypatch, tmp_path):

@@ -966,22 +966,32 @@ def compose(title, lead, answers, extra=()):
 	return f"{SETUP_MARK}\n# {title}\n\n{lead}\n\n{body}" if body else ""
 
 
-def setup_done(corpus_home=None):
-	"""True when both briefs are already written, so there is nothing to offer."""
+def setup_done(corpus_home=None, project=True):
+	"""True when there is nothing left to offer. `project` False asks only about USER.md.
+
+	ponytail: the install-time offer passes project=False, because it no longer asks the project
+	question — and a "done" that still waited on a brief nobody was going to be asked for would offer
+	the prompt forever on a machine that answered everything it was asked.
+	"""
 	from . import memory
 	home = corpus_home or CORPUS_HOME
 	user = os.path.join(home, "identity", "USER.md")
 	tmpl = os.path.join(home, "identity", "USER.md.template")
 	mine = _read(user).strip() and _read(user).strip() != _read(tmpl).strip()  # a seeded template is not done
-	return bool(mine) and memory.brief_written()
+	return bool(mine) and (memory.brief_written() if project else True)
 
 
-def setup(ask, corpus_home=None):
-	"""Walk the two briefs a corpus needs, writing only what was answered. Returns report lines.
+def setup(ask, corpus_home=None, project=True):
+	"""Walk the briefs a corpus needs, writing only what was answered. Returns report lines.
 
 	ponytail: asked rather than templated. A blank template is a template nobody fills in, and an agent
 	that knows neither who you are nor what the work is for reasons from the code alone — which is the
 	one thing it can already see.
+	ponytail: `project` False skips the project brief, and `install --full` passes it. WHO YOU ARE is a
+	property of the machine; WHAT THE WORK IS FOR is a property of a repo, and a person works on more
+	than one. Asked once at install time it wrote a single ~/.prs_memory/project.md that every repo
+	bound to no team then read — one product's brief in every review of every other, which is the exact
+	failure brief() was rewritten to stop. Binding already scopes it; `gitdashy setup` still asks.
 	"""
 	out = []
 	home = corpus_home or CORPUS_HOME
@@ -1022,6 +1032,16 @@ def setup(ask, corpus_home=None):
 	else:
 		out.append(f"SKIP   no corpus at {knowledge.tilde(home)} — run `gitdashy install --full` first")
 	from . import bind, memory, team
+	if not project:
+		# ponytail: BEFORE anything that works out which brief would be written. Below this the code
+		# resolves a team and says "writing your own brief" — a sentence about a file nobody is being
+		# asked for, printed to someone who just declined to be asked. The pointer matters more than the
+		# skip: they will look for the question they are used to, so this says where it went.
+		return out + ["",
+		              "note   no project brief asked for here — what the work is for belongs to a repo, not",
+		              "       to this machine. `gitdashy setup` writes one; `gitdashy teams --new NAME` and",
+		              "       `gitdashy bind --owner OWNER --team NAME` give each project its own."]
+
 	# ponytail: a team brief now reaches only the repos BOUND to that team, so the old line — "every
 	# review reads it" — became false the moment selection stopped being "yours and theirs, always".
 	# Saying which reviews read it is the part someone acts on.
@@ -1041,7 +1061,11 @@ def setup(ask, corpus_home=None):
 		out.append(f"note   several teams joined ({', '.join(joined)}) — writing your own brief; edit a "
 		           f"team's with T then e in the dashboard")
 	dest = memory.brief_path(slug)
-	whose = ("yours, and every review of a repo bound to no team reads it" if mine else
+	# ponytail: says what it COVERS, not just whose it is. "yours" reads as "scoped to me" and it is the
+	# opposite — one file, every unbound repo, so a second project inherits the first one's brief.
+	whose = ("yours, and EVERY repo bound to no team reads it — one brief for all of them, so bind each "
+	         "project to its own team (`gitdashy teams --new`, `gitdashy bind`) if you have more than one"
+	         if mine else
 	         f"the team's, shared with everyone in {slug}, and every review of a repo bound to it reads it")
 	if slug and not dest:
 		# ponytail: brief_path returns "" for a team this machine does not have. It cannot happen while

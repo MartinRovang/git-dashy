@@ -241,9 +241,27 @@ on disk**, because by then it is yours and may not look like what was installed.
 
 ### Filling the briefs
 
-A full install ends by offering the two briefs — who you are, and what the work is for —
-and runs `gitdashy setup` if you say yes. Decline and nothing is waiting on it; run
-`gitdashy setup` whenever. The offer is skipped by `--yes`, by `--no-setup`, and when stdin
+A full install ends by offering **one** brief — who you are — and runs `gitdashy setup` for
+it if you say yes. Decline and nothing is waiting on it; run `gitdashy setup` whenever.
+
+It does **not** ask what the work is for, because that is not a property of this machine.
+Who you are is: one person, one `USER.md`. What the work is for belongs to a *repo*, and a
+person works on more than one — asked once at install time it wrote a single
+`~/.prs_memory/project.md` that every repo bound to no team then read, so a second project
+inherited the first one's brief. That is the same failure `brief()` was rewritten to stop
+for teams, arriving through the personal slot instead.
+
+`gitdashy setup` still asks for it, and says plainly that the personal brief covers **every**
+repo bound to no team. To give each project its own, bind it to a team — which needs no
+remote and no other people:
+
+```sh
+gitdashy teams --new nms --desc "NMS Platform"
+gitdashy bind --owner neomedsys --team nms     # or `gitdashy bind owner/repo --team nms`
+```
+
+Then that team's `project.md` is the brief its repos read, and an unrelated clone correctly
+gets none. The offer is skipped by `--yes`, by `--no-setup`, and when stdin
 is not a terminal — `--yes` included because this command already tells you to pass it if
 you meant to install unattended, and a bootstrap script run from an interactive shell
 inherits that terminal, so `isatty` alone would still have stopped it.
