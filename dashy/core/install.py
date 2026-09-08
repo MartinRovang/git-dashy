@@ -137,8 +137,13 @@ def corpus_remembers(ident=None):
 	ident = ident or os.path.join(claude_dir(), "identity")
 	if not os.path.isdir(ident):
 		return None
-	return any("gitdashy remember" in _read(os.path.join(ident, n))
-	           for n in os.listdir(ident) if n.endswith(".md"))
+	# ponytail: listdir raises on a directory it cannot read, and this is reached from every draw
+	# through session_notes(). isdir() above answers "is it there", never "can it be opened".
+	try:
+		names = [n for n in os.listdir(ident) if n.endswith(".md")]
+	except OSError:
+		return None  # unreadable is not "a corpus without the instruction" — it is nothing we can say
+	return any("gitdashy remember" in _read(os.path.join(ident, n)) for n in names)
 
 
 _NOTES = (None, [])  # (fingerprint, notes) — see session_notes
@@ -266,9 +271,20 @@ def _strip_blocks(text, begin, end):
 
 
 def _read(p):
+	"""A file's text, or "" for any reason it cannot be read.
+
+	ponytail: OSError, not FileNotFoundError. "Not there" and "there but unreadable" are the same answer
+	to every one of this module's twenty callers — none of them can do anything with the difference —
+	and the narrow catch made an existing-but-unreadable file raise instead. That reached two places
+	that must never raise: retire(), which runs before the first draw, and session_notes(), which
+	row() calls on EVERY draw. One `sudo claude` leaves a root-owned ~/.claude/CLAUDE.md and the
+	dashboard is gone, every tick, until someone chowns it back.
+	ponytail: reading is the only thing widened. A WRITE that fails still reports — see retire(), where
+	each write says what it could not do. Silence is right for a read and wrong for a write.
+	"""
 	try:
 		return open(p).read()
-	except FileNotFoundError:
+	except OSError:
 		return ""
 
 

@@ -1844,42 +1844,63 @@ def test_the_sticky_path_names_the_file_the_window_is_inside(screen, monkeypatch
 	assert "somewhere in the middle" in out     # and the mark it scrolled to is still on screen
 
 
-def _memory_value(state):
-	"""The Memory row's value from the Knowledge group, wherever that group sits."""
-	for _, _, rows in ui.header_groups(state):
-		for key, name, value, _ in rows:
-			if name == "Memory":
-				return value
-	raise AssertionError("no Memory row in header_groups")
+def _know_rows(state):
+	"""The Knowledge group's rows, wherever that group sits."""
+	return next(rows for _, key, rows in ui.header_groups(state) if key == "K")
 
 
-def test_a_session_note_is_clipped_like_the_row_below_it(screen, monkeypatch, st):
-	"""The notes were appended UNCLIPPED to a header value whose sibling one row down is team.ERROR[:40].
+def test_every_session_note_is_reachable_and_none_lengthens_the_memory_row(screen, monkeypatch, st):
+	"""Notes used to be glued onto Memory's value, then clipped to 40 — and both were wrong.
 
-	Two consequences, both from the layout rather than the string: the degradation loop folds K to a
-	chip before it drops anything else, so having a note made the Knowledge group DISAPPEAR rather than
-	say anything; and popup() sizes itself on its longest line and clamps only x, not inner, so opening
-	K on a machine with a note drew wider than an 80-column terminal.
+	Glued on, two notes added ~80 characters to one value and the header degradation loop folds K to a
+	chip before it drops anything else, so having a note made the Knowledge group VANISH rather than say
+	anything. Clipped to 40, the first note renders at exactly 40 characters, so the SECOND was dropped
+	whole — and a note is precisely the thing that must not go missing quietly. As rows they cost the
+	header nothing once K is a chip, and group_menu lists them under it.
 	"""
 	from dashy.core import install
 	monkeypatch.setattr(install, "session_notes", lambda: [])
-	bare = _memory_value(st)
+	bare = _know_rows(st)
 	monkeypatch.setattr(install, "session_notes",
 	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
-	noted = _memory_value(st)
-	assert len(noted) - len(bare) <= 40, noted     # the clip, matching team.ERROR[:40]
-	assert "corpus never says" in noted            # and it still SAYS something; clipped, not dropped
+	noted = _know_rows(st)
+
+	memory_bare = next(v for _, n, v, _ in bare if n == "Memory")
+	memory_noted = next(v for _, n, v, _ in noted if n == "Memory")
+	assert memory_noted == memory_bare              # the Memory value is untouched by a note
+
+	values = [v for _, n, v, _ in noted if n == "Note"]
+	assert len(values) == 2, noted                  # BOTH, not just the one that fitted in 40 chars
+	assert "corpus never says" in values[0] and "imports @prs-team" in values[1]
+	assert all(k == "" for k, n, _, _ in noted if n == "Note")   # inert on Enter
 
 
-@pytest.mark.parametrize("w", [72, 80, 100])
-def test_the_k_popup_fits_the_terminal_with_a_note_set(screen, monkeypatch, st, w):
-	"""popup() clamps x but never inner, so its width is decided entirely by its longest line."""
+def _popup_inner(state):
+	"""The width group_menu's popup would ask for. Exactly popup()'s own arithmetic, at screen.py:923."""
+	rows = _know_rows(state)
+	name_w = max(len(name) for _, name, _, _ in rows)
+	lines = [f"{name.ljust(name_w)}   {value}" for _, name, value, _ in rows]
+	return max([len(l) for l in lines] + [len("Knowledge")]) + 6
+
+
+def test_a_session_note_does_not_widen_the_k_popup(screen, monkeypatch, st):
+	"""popup() clamps x but never inner, so its width is decided entirely by its longest line.
+
+	ponytail: asserted as a DELTA against the same popup with no notes, not against a fixed column
+	count. The absolute width is set by the Memory and Store rows, which carry filesystem paths — under
+	pytest those are long tmp_path strings, so an absolute bound would fail on the fixture rather than
+	on the thing under test, and pass or fail by how deep the temp directory happened to be.
+	ponytail: and asserted on INNER, the number popup() computes. The first version of this test
+	rendered into a FakeScr and asserted every row was <= w, which cannot fail: FakeScr's addnstr
+	silently drops anything past its right edge and line() slices to w, so it was true by construction
+	and passed with the clip removed entirely.
+	"""
 	from dashy.core import install
+	monkeypatch.setattr(install, "session_notes", lambda: [])
+	bare = _popup_inner(st)
 	monkeypatch.setattr(install, "session_notes",
 	                    lambda: ["corpus never says `gitdashy remember`", "CLAUDE.md imports @prs-team by hand"])
-	group = next(g for g in ui.header_groups(st) if any(r[1] == "Memory" for r in g[2]))
-	lines = [f"{name}  {value}" for _, name, value, _ in group[2]]
-	scr = FakeScr(h=30, w=w)
-	ui.popup(scr, 2, 4, group[0], lines, 0)        # FakeScr bounds it: an overrun raises out of addnstr
-	rows = [r for r in scr.text().splitlines() if r.strip()]
-	assert all(len(r) <= w for r in rows), max(rows, key=len)
+	noted = _popup_inner(st)
+	# ponytail: a note is its own ROW, so it can only widen the popup if it is longer than the widest
+	# row already there — the paths. Glued onto Memory's value it widened it by ~80 every time.
+	assert noted == bare, (bare, noted)

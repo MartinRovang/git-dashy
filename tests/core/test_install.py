@@ -1366,3 +1366,51 @@ def test_the_two_answers_come_from_one_walk_and_cannot_disagree():
 	# an unclosed one: nothing held, nothing stripped, and the two still agree
 	lone = f"# mine\n{install.BEGIN}\nheld\n"
 	assert install._split_blocks(lone, install.BEGIN, install.END) == ("", lone)
+
+
+def test_a_launch_survives_a_claude_md_it_cannot_read(monkeypatch, tmp_path):
+	"""The last round wrapped the two WRITES and left the read, which happens first.
+
+	`_read` caught FileNotFoundError, not OSError, so an existing-but-unreadable file raised — and
+	`text = _read(md)` sits above both try blocks. One `sudo claude` leaves a root-owned
+	~/.claude/CLAUDE.md and retire() then tracebacks out of main() before the first draw, which is the
+	exact case the docstring added last round claims is "a report line, not a traceback".
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	md = cfg / "CLAUDE.md"
+	md.write_text("# mine\n")
+	md.chmod(0o000)
+	try:
+		assert install.retire() == []          # returns, says nothing it cannot support, does not raise
+		assert install._read(str(md)) == ""    # unreadable and absent are one answer to every caller
+	finally:
+		md.chmod(0o644)
+
+
+def test_a_draw_survives_an_unreadable_agent_config(monkeypatch, tmp_path):
+	"""session_notes() is called from row() on EVERY draw, so this is not a launch-only crash.
+
+	corpus_remembers() reached both an unguarded os.listdir and a _read that only caught a missing
+	file; either one raising takes the dashboard down every tick until someone chowns the file back.
+	_notes_key() guarded its own OSError correctly, so the cache key computed and then the body raised.
+	"""
+	cfg = fresh(monkeypatch, tmp_path)
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	ident = cfg / "identity"
+	ident.mkdir()
+	(ident / "AGENT.md").write_text("no instruction here\n")
+	ident.chmod(0o000)
+	try:
+		assert install.corpus_remembers() is None   # unreadable is not "a corpus without the instruction"
+		assert install.session_notes() == []        # and nothing is claimed about it
+	finally:
+		ident.chmod(0o755)
+
+	ident.chmod(0o755)
+	(cfg / "CLAUDE.md").write_text("# mine\n")
+	(cfg / "CLAUDE.md").chmod(0o000)
+	monkeypatch.setattr(install, "_NOTES", (None, []))
+	try:
+		install.session_notes()                     # the other half: hand_wired_team_import's read
+	finally:
+		(cfg / "CLAUDE.md").chmod(0o644)
