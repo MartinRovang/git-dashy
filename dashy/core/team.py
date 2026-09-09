@@ -82,6 +82,50 @@ def has_remote(d):
 	return bool(_url(d)) if os.path.exists(g) else False
 
 
+def origin_url(d):
+	"""The origin URL at `d`, read from .git/config. "" when there is none. Spawns nothing.
+
+	ponytail: for the DRAW PATH. has_remote reads this same file for exactly this reason — "a subprocess
+	per tick to learn something that changes about once in a checkout's life is waste" — and `_url` does
+	not go through _remote, so its 60s timeout is unbounded from a panel loop that redraws several times
+	a second, once per joined team.
+	ponytail: a .git that is a FILE is a worktree or a submodule, and its config lives elsewhere; ask git
+	there rather than guess from a path that does not exist. Same fallback has_remote makes.
+	"""
+	g = os.path.join(d or "", ".git")
+	if not os.path.isdir(g):
+		return _url(d) if d and os.path.exists(g) else ""
+	try:
+		with open(os.path.join(g, "config")) as f:
+			text = f.read()
+	except OSError:
+		return ""
+	section = ""
+	for line in text.splitlines():
+		line = line.strip()
+		if line.startswith("["):
+			section = line
+		elif section == '[remote "origin"]' and line.replace(" ", "").startswith("url="):
+			return line.partition("=")[2].strip()
+	return ""
+
+
+def redacted(url):
+	"""`url` with any user:password taken out of the authority, whatever the scheme. For DISPLAY.
+
+	ponytail: bare_url answers only for http(s) and returns "" for anything else, because its callers
+	want the ssh FORM back and there is no form to suggest otherwise. This one is the other job: it
+	always returns something to show, and it covers every scheme — `ssh://u:pw@host/o/r` printed its
+	password verbatim through every caller that fell back to the raw URL.
+	ponytail: the scp-like form (git@host:o/r) has a user and no password slot, so it is returned as is.
+	"""
+	scheme, sep, rest = (url or "").strip().partition("://")
+	if not sep:
+		return url or ""
+	authority, slash, path = rest.partition("/")
+	return f"{scheme}://{authority.rpartition('@')[2]}{slash}{path}"
+
+
 def _ident(d):
 	"""The `-c` identity pair, and ONLY when the machine has none of its own.
 

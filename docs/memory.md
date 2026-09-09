@@ -331,7 +331,9 @@ was written first and another team's `acme/api` was then skipped as already reso
 contested repo came down to the alphabetical order of team names. A target two joined teams both claim is
 left alone rather than guessed at, exactly as a repo in two logs is.
 
-`T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
+`T` in the dashboard does the same: a list, a number opens a team's own screen with its verbs (`e` brief,
+`d` describe, `c` connect, `o` cover an owner, `x` leave), `n` starts one, `a` joins one. The TUI never asks
+where a team should live; that is `--at`, in a shell.
 
 A team needs **no remote to be useful** — memory works local-only the same way. `connect` pushes what
 is already committed, so the `team.json` you wrote before you had a repo is what the next person clones

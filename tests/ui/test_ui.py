@@ -1,4 +1,5 @@
 import os
+import subprocess
 import time
 
 import pytest
@@ -1277,14 +1278,14 @@ def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_pat
 	a_team(monkeypatch, tmp_path, "org-one")
 	(tmp_path / "teams" / "org-two" / ".git").mkdir(parents=True)
 	prompts, left = [], []
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), "org-two")[1])
 	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: prompts.append(prompt) or True)
 	monkeypatch.setattr(ui.knowledge, "leave", lambda slug: left.append(slug) or "")
-	screen.getch, screen.timeout = _keys(ord("x"), 27), lambda t: None
+	screen.getch, screen.timeout = _keys(ord("2"), ord("x"), 27), lambda t: None   # 2 = org-two, then leave
 	ui.team_setup(screen, st, 0)
 	assert left == ["org-two"]
-	assert "Leave which team?" in prompts[0] and "org-one, org-two" in prompts[0]
-	assert "team org-two" in prompts[1] and "are deleted" in prompts[1]   # and what leaving removes
+	# ponytail: the consequence, not the path — asking() clips the tail, so what leaving DOES has to be
+	# at the front. A long checkout path used to push it off the line entirely.
+	assert "org-two" in prompts[0] and "DELETES its files" in prompts[0]
 
 
 def test_no_function_has_code_after_it_returns():
@@ -1371,10 +1372,9 @@ def test_t_edits_the_team_brief_every_review_reads(screen, monkeypatch, st, tmp_
 	from dashy.core import memory, team
 	_two_teams(monkeypatch, tmp_path)
 	opened, pushed = [], []
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme-tools")
 	monkeypatch.setattr(ui, "shell_out", lambda scr, cmd: opened.append(cmd[-1]) or "")
 	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": pushed.append((d, m)))
-	screen.getch, screen.timeout = _keys(ord("e"), 27), lambda t: None
+	screen.getch, screen.timeout = _keys(ord("1"), ord("e"), 27, 27), lambda t: None   # 1 = acme-tools
 	ui.team_setup(screen, st, 0)
 	assert opened == [os.path.join(team.dir_of("acme-tools"), "memory", memory.PROJECT)]
 	assert os.path.exists(opened[0])                    # seeded with a template, not left missing
@@ -1384,10 +1384,9 @@ def test_t_edits_the_team_brief_every_review_reads(screen, monkeypatch, st, tmp_
 def test_t_changes_what_a_team_says_it_is(screen, monkeypatch, st, tmp_path):
 	from dashy.core import team
 	_two_teams(monkeypatch, tmp_path)
-	answers = iter(["acme-tools", "now for the platform work"])
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "now for the platform work")
 	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
-	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
+	screen.getch, screen.timeout = _keys(ord("1"), ord("d"), 27, 27), lambda t: None   # 1 = acme-tools
 	ui.team_setup(screen, st, 0)
 	it = team.info("acme-tools")
 	assert it["description"] == "now for the platform work"
@@ -1959,6 +1958,276 @@ def test_a_first_refresh_that_failed_still_draws(screen):
 	ui.draw(screen, st, 0)
 	assert "refresh failed: gh: not logged in" in screen.text()
 
+
+def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypatch, st, tmp_path):
+	"""Six letter keys on one panel, each starting a footer question that asked WHICH team by typed
+	name, was the surface that adopted ~/dev/neomedsys. Now: a list, a number, and the verbs live on
+	the team's own screen, which shows what the team has before offering anything."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	team.cover("acme-tools", "acme")
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(tmp_path / "acme-mem.git")], check=True)
+	assert team.connect("acme-tools", str(tmp_path / "acme-mem.git")) == ""
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert "1  Acme Tools" in seen[0] and "[1-8] open" in seen[0]     # the list
+	out = seen[1]                                                      # the team's own screen
+	assert "Acme Tools" in out and "acme-tools" in out
+	assert str(tmp_path / "acme-mem.git") in out                      # the WHOLE remote, not its host
+	assert ui.team.redacted("https://x:tok@github.com/o/r.git") == "https://github.com/o/r.git"
+	assert ui._remote_label("git@github.com:o/r.git") == "o/r"       # the list shows owner/name
+	assert "lives at" in out and "remote" in out and "declares" in out and "acme/*" in out
+	assert "[e] brief" in out and "[o] cover" in out and "[x] leave" in out
+	# ponytail: an empty row is a VALUE — the footer is where a key's meaning lives
+	assert "nothing yet" in out and "covers an owner" not in out and "connects one" not in out
+
+
+def test_t_start_asks_no_where_and_lands_on_the_new_team(screen, monkeypatch, st, tmp_path):
+	"""The 'Where?' question is gone from the TUI: the checkout always lands under ~/.prs_teams, and a
+	team kept elsewhere is `teams --new --at`, in a shell, on purpose."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	prompts, answers = [], iter(["NeoMedSys", "the NMS project"])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: (prompts.append(prompt), next(answers))[1])
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("n"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert team.joined() == ["neomedsys"]
+	assert not any("Where" in p for p in prompts)
+	assert os.path.realpath(team.dir_of("neomedsys")).startswith(str(tmp_path / "teams"))
+	assert "NeoMedSys" in seen[1] and "lives at" in seen[1]   # lands on the team's screen, not the list
+
+
+def test_t_start_from_a_row_offers_to_cover_its_owner(screen, monkeypatch, st, tmp_path):
+	"""A team started with T was inert until someone found the bind key. Started from a PR row, it
+	offers the one thing that makes it do something: cover that row's owner, here and for everyone."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	answers = iter(["NeoMedSys", ""])
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: next(answers))
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: asked.append(prompt) or True)
+	current = dict(PR, repository={"nameWithOwner": "NeoMedSys/neo-api", "name": "neo-api"})
+	screen.getch, screen.timeout = _keys(ord("n"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, current)
+	assert any("neomedsys/*" in p and "everyone who joins" in p for p in asked)
+	assert bind.owners() == {"neomedsys": "neomedsys"}        # bound here
+	assert team.covers("neomedsys") == ["neomedsys/*"]        # and declared in the team
+
+
+def test_t_o_covers_an_owner_from_the_teams_screen(screen, monkeypatch, st, tmp_path):
+	from dashy.core import team
+	pr = _two_teams(monkeypatch, tmp_path)
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: asked.append(prompt) or True)
+	# ponytail: o ASKS now, with the selected row's owner offered as the default; blank takes it.
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: asked.append(prompt) or "")
+	screen.getch, screen.timeout = _keys(ord("2"), ord("o"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, pr)                           # 2 = neomedsys-platform
+	assert any("[neomedsys]" in p for p in asked)              # the default is shown
+	assert any("neomedsys/*" in p for p in asked)
+	assert team.covers("neomedsys-platform") == ["neomedsys/*"] and bind.owners() == {"neomedsys": "neomedsys-platform"}
+	# with no row selected it asks for the owner instead
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme")
+	screen.getch = _keys(ord("1"), ord("o"), 27, 27)
+	ui.team_setup(screen, st, 0)
+	assert team.covers("acme-tools") == ["acme/*"]
+
+
+def test_t_letters_act_on_the_only_team_without_picking_it(screen, monkeypatch, st, tmp_path):
+	"""One team joined is the common case; making it press 1 first would be ceremony."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	team.start("Only One")
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "now described")
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert team.info("only-one")["description"] == "now described"
+
+
+def test_the_team_panels_spawn_no_process_per_redraw(screen, monkeypatch, st, tmp_path):
+	"""getch here inherits main's 50-500ms timeout, so both loops redraw several times a second, once
+	per joined team. `git remote get-url` on that path is the waste has_remote's own comment names, and
+	it does not go through _remote, so its 60s timeout is unbounded from a draw loop."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	spawned = []
+	monkeypatch.setattr(team, "_url", lambda p: spawned.append(p) or "")
+	screen.getch, screen.timeout = _keys(ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, None)
+	assert spawned == []
+	# and it still reads the URL that is actually there
+	remote = tmp_path / "r.git"
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+	assert team.connect("acme-tools", str(remote)) == ""
+	assert team.origin_url(team.dir_of("acme-tools")) == str(remote)
+	assert team.origin_url(str(tmp_path / "nothing")) == ""
+
+
+def test_a_password_in_a_remote_never_reaches_the_panel():
+	"""bare_url covers only http(s), and host_of needs a dot — so ssh://u:pw@host and a token against a
+	dotless host both printed verbatim, one on each branch."""
+	for url in ("https://x:tok@localhost/o/r.git", "ssh://u:pw@host/o/r", "https://x:tok@github.com/o/r.git"):
+		assert "tok" not in ui._remote_label(url) and "pw" not in ui._remote_label(url), url
+		assert "tok" not in ui.team.redacted(url) and "pw" not in ui.team.redacted(url), url
+	assert ui.team.redacted("ssh://u:pw@host/o/r") == "ssh://host/o/r"
+	assert ui._remote_label("git@github.com:o/r.git") == "o/r"          # nothing to strip, nothing lost
+
+
+def test_cover_binds_here_before_it_publishes(screen, monkeypatch, st, tmp_path):
+	"""team.cover writes AND pushes. If the local rule then fails, the team has published a claim over
+	owner/* for everyone who joins while nothing is bound on the machine that asked for it."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui.bind, "bind_owner", lambda o, k: "~/.prs_bindings is not writable")
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	st.wake.clear()
+	ui._cover(screen, st, 0, "acme-tools", "neomedsys")
+	assert any("not writable" in p for p in said)
+	assert team.covers("acme-tools") == []          # nothing published on a half-failure
+	assert not st.wake.is_set()
+
+
+def test_o_offers_the_rows_owner_as_a_default_and_takes_another(screen, monkeypatch, st, tmp_path):
+	from dashy.core import team
+	pr = _two_teams(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: True)
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "")      # blank takes the default
+	screen.getch, screen.timeout = _keys(ord("1"), ord("o"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, pr)
+	assert team.covers("acme-tools") == ["neomedsys/*"]
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "someone-else")
+	screen.getch = _keys(ord("1"), ord("o"), 27, 27)
+	ui.team_setup(screen, st, 0, pr)
+	assert team.covers("acme-tools") == ["neomedsys/*", "someone-else/*"]
+
+
+def test_joining_lands_on_the_team_it_just_joined(screen, monkeypatch, st, tmp_path):
+	"""Claimed in the body and untested, including the re-join case where nothing new appeared."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "somewhere/acme.git")
+	def fake_setup(repo, name=""):
+		(tmp_path / "teams" / "acme" / ".git").mkdir(parents=True, exist_ok=True)
+		(tmp_path / "teams" / "acme" / "memory").mkdir(parents=True, exist_ok=True)
+		return ""
+	monkeypatch.setattr(ui.team, "setup", fake_setup)
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, 27, 27), lambda t: None
+	ui._join_team(screen, st, 0)
+	assert "lives at" in seen[0] and "acme" in seen[0]      # the team's screen, not the list
+	# joining one you are already in adds nothing, so there is no screen to land on
+	seen.clear()
+	screen.getch = _keys_seen(screen, seen, 27)
+	ui._join_team(screen, st, 0)
+	assert not seen or "lives at" not in seen[0]
+
+
+def test_the_one_team_footer_survives_eighty_columns(monkeypatch, st, tmp_path):
+	"""panel() clamps inner to w-4 and draws the footer at inner-6, so on an 80-column terminal a
+	93-character footer is cut at 70 and its last two keys never appear — on the branch this whole
+	change is built around, the one team everybody has."""
+	from conftest import FakeScr
+	scr = FakeScr(h=30, w=80)
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	_two_teams(monkeypatch, tmp_path)
+	from dashy.core import team, knowledge
+	assert knowledge.leave("neomedsys-platform") == ""      # leave one, so the single-team branch draws
+	scr.getch, scr.timeout = _keys(27), lambda t: None
+	ui.team_setup(scr, st, 0, None)
+	out = scr.text()
+	for key in ("[e]", "[d]", "[c]", "[o]", "[x]", "[n]", "[a]", "[esc]"):
+		assert key in out, f"{key} fell off an 80-column footer"
+
+
+def test_o_says_so_when_the_answer_is_not_an_owner(screen, monkeypatch, st, tmp_path):
+	"""_pick_team had a ponytail for exactly this: a typo returning "" looks like a cancel, and the
+	screen just comes back with nothing said."""
+	from dashy.core import team
+	pr = _two_teams(monkeypatch, tmp_path)
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme/api")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("1"), ord("o"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, pr)
+	assert any("not an owner" in p for p in said)
+	assert team.covers("acme-tools") == []
+
+
+def test_connect_never_echoes_the_url_it_was_given(screen, monkeypatch, st, tmp_path):
+	"""Every drawn remote goes through redacted; the acknowledgement echoed what was typed."""
+	_two_teams(monkeypatch, tmp_path)
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "https://x:ghp_SECRET@host.example/o/r.git")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.team, "connect", lambda key, url: "")
+	ui._connect_team(screen, st, 0, "acme-tools")
+	assert said and "ghp_SECRET" not in said[0] and "host.example/o/r.git" in said[0]
+
+
+def test_origin_url_asks_git_only_when_dot_git_is_a_file(monkeypatch, tmp_path):
+	"""A .git that is a FILE is a worktree or a submodule and its config lives elsewhere. That fallback
+	is the one path here that may spawn a process, and it was untested."""
+	from dashy.core import team
+	linked = tmp_path / "linked"
+	linked.mkdir()
+	(linked / ".git").write_text("gitdir: /somewhere/else\n")
+	asked = []
+	monkeypatch.setattr(team, "_url", lambda p: asked.append(p) or "git@host:o/r.git")
+	assert team.origin_url(str(linked)) == "git@host:o/r.git"
+	assert asked == [str(linked)]
+	# and a plain directory with no .git at all asks nothing
+	asked.clear()
+	assert team.origin_url(str(tmp_path / "nothing")) == "" and asked == []
+
+
+def test_the_cover_question_keeps_its_answer_keys_at_eighty_columns(monkeypatch, st, tmp_path):
+	"""confirm() draws through draw(prompt=…), which clips at w-1, and the tail is what it loses — on a
+	question that is the answer keys. Clipping the team name alone was not enough: the fixed words plus
+	a name plus an owner pass 79 on their own, and a long owner passes it whatever the name is clipped
+	to. Measured against the real screen here, because counting characters by hand is what missed it."""
+	from conftest import FakeScr
+	from dashy.core import team
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	_two_teams(monkeypatch, tmp_path)
+	assert team.write_info("acme-tools", "NeoMedSys Platform", "") == ""
+	for owner in ("neomedsys", "a-very-long-github-organisation-name-xy"):
+		scr = FakeScr(h=30, w=80)
+		scr.getch, scr.timeout = _keys(ord("n")), lambda t: None
+		ui._cover(scr, st, 0, "acme-tools", owner)
+		assert "[y/n]" in scr.text(), f"the answer keys fell off the line for {owner!r}"
+		assert "covers" in scr.text() and owner[:12] in scr.text()
+
+
+def test_the_leave_prompt_keeps_its_warning_and_its_keys_at_eighty_columns(monkeypatch, st, tmp_path):
+	"""The one prompt here that destroys something. asking() clips the TAIL, so the path goes last and
+	the words that say files are deleted go first — with a long checkout path both must survive."""
+	from conftest import FakeScr
+	from dashy.core import team
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	deep = tmp_path / ("a" * 30) / ("b" * 30) / "teams"
+	monkeypatch.setattr(config, "TEAMS", str(deep))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.start("Acme Tools") == ""
+	assert len(team.dir_of("acme-tools")) > 70        # the path alone would fill the line
+	scr = FakeScr(h=30, w=80)
+	scr.getch, scr.timeout = _keys(ord("n")), lambda t: None
+	assert ui._leave_team(scr, st, 0, "acme-tools") is False
+	out = scr.text()
+	assert "DELETES its files" in out and "[y/n]" in out
+	assert "acme-tools" in out
 
 def _overlapping(monkeypatch, tmp_path):
 	from dashy.core import memory
