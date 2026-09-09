@@ -2007,3 +2007,32 @@ def test_the_scan_says_so_when_there_is_nothing_to_look_at(screen, monkeypatch, 
 	screen.getch, screen.timeout = _keys(ord("s"), 27), lambda t: None
 	ui.drafts_screen(screen, st, 0)
 	assert any("no two drafts" in p for p in said)
+
+
+def test_the_scan_skips_a_pair_an_earlier_fold_already_consumed(screen, monkeypatch, st, tmp_path):
+	"""overlaps() is computed once and paged through. Folding the first pair can remove a row the third
+	pair still names, and acting on that would write a fact from a draft that is no longer there."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	for line in ("- CI reports skipping for the format-check job",
+	             "- the format-check job in CI reports skipping every run",
+	             "- skipping is what the format-check job in CI reports"):
+		memory.append("a/b", line)
+	assert len(memory.overlaps()) == 3               # every pair of the three
+	screen.getch, screen.timeout = _keys(ord("s"), ord("y"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	# one fold promoted its survivor; the two pairs still naming a consumed row are skipped, not written
+	assert len(memory.known("a/b")) == 1
+	assert len(memory.drafts("a/b")) == 1
+
+
+def test_b_folds_the_pair_keeping_the_second_wording(screen, monkeypatch, st, tmp_path):
+	from dashy.core import memory
+	_overlapping(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	screen.getch, screen.timeout = _keys(ord("s"), ord("b"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert memory.known("a/b") == ["the format-check job in CI reports skipping every run"]

@@ -6,11 +6,9 @@ import pytest
 
 from dashy import config
 from dashy.core import github, log, memory, review as review_mod
-
-from conftest import _counts
 from dashy.core.review import review
 
-from conftest import PR, Result, a_team, claude_out
+from conftest import PR, Result, _counts, a_team, claude_out
 
 
 def test_review_posts_verdict_and_logs(monkeypatch, posted):

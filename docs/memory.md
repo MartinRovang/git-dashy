@@ -417,7 +417,7 @@ dropped), which is order-insensitive and finds them — measured over 165 real d
 had rejected, 2717 at zero overlap, 12 at or above 0.30. A person decides each pair; nothing folds on its own.
 
 **Folding earns a count only across different reviews.** Each observation records which review made it —
-`- (2) [7a2c,91cf] the fact` — because two drafts at `(1)` are either two reviews the matcher failed to
+`- (2) [r:7a2c,r:91cf] the fact` — because two drafts at `(1)` are either two reviews the matcher failed to
 fold, which is a promotion it lost, or *one* review that worded a thing twice, which is the
 self-confirmation `PROMOTE_AT` exists to refuse. Only the ids tell those apart:
 

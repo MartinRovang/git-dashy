@@ -684,3 +684,70 @@ def test_merging_keeps_the_wording_you_kept_and_drops_the_other(tmp_path, monkey
 	(_r, _ratio, a, b) = memory.overlaps()[0]
 	memory.merge("a/b", b, a)                      # keep the second wording explicitly
 	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+
+
+def test_a_draft_that_opens_with_a_bracket_keeps_its_text(tmp_path, monkeypatch):
+	"""Model-written prose that happens to open "[dead]" is four hex characters by coincidence. Without
+	a prefix on the id slot it parsed as review "dead" with its first word EATEN — and two such lines
+	from ONE review read as two different ids, which is exactly the input merge() sums. Prose forging
+	the evidence the gate trusts is the failure; every pre-upgrade file is prose in that slot."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	os.makedirs(os.path.join(tmp_path, "drafts"))
+	with open(memory.queue_path("a/b"), "w") as f:
+		f.write("- (1) [dead] paths are gone\n- (1) [beef] paths are stale\n")
+	assert memory.drafts("a/b") == [(1, (), "[dead] paths are gone"), (1, (), "[beef] paths are stale")]
+	# and a row we write ourselves survives its own round trip
+	memory._write_drafts("a/b", [(1, ("7a2c",), "[dead] paths are gone")])
+	assert memory.drafts("a/b") == [(1, ("7a2c",), "[dead] paths are gone")]
+	assert "[r:7a2c] [dead]" in open(memory.queue_path("a/b")).read()
+
+
+def test_folding_to_a_fact_pools_it_and_clears_the_pre_review_row(tmp_path, monkeypatch):
+	"""A fold can promote, and a promotion is a disclosure — it must land exactly as promote() does,
+	or a fold makes a fact that is not evidence and leaves a pre-review row for a settled fact in
+	waiting()."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	memory.append_self("a/b", "- CI reports skipping for the format-check job")
+	(_r, _ratio, x, y) = memory.overlaps("a/b")[0]
+	assert memory.merge("a/b", x, y) == 2
+	assert facts(memory.pool_path("tester", "a/b")) == ["- CI reports skipping for the format-check job"]
+	assert str(shared) in memory.pool_path("tester", "a/b")
+	assert memory.self_drafts("a/b") == []            # the settled fact is out of the pre-review queue
+	assert memory.waiting() == []
+
+
+def test_folding_the_general_drafts_lands_in_your_general_file(tmp_path, monkeypatch):
+	"""The general scope keys None, not "", and takes a different branch in _pool. Untested end to end."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append(None, "- PHI reaches the frontend and must not be logged")
+	memory.append(None, "- must not be logged: PHI reaches the frontend")
+	got = memory.overlaps()
+	assert len(got) == 1 and got[0][0] is None
+	assert memory.merge(None, got[0][2], got[0][3]) == 2
+	# ponytail: the FILE, not known(None) — which reads the general scope twice on main already, so
+	# asserting through it would bake a pre-existing quirk into a test about folding.
+	assert facts(memory.path(None)) == ["- PHI reaches the frontend and must not be logged"]
+	assert memory.drafts(None) == []
+
+
+def test_a_fold_is_arithmetic_over_the_file_not_the_callers_snapshot(tmp_path, monkeypatch):
+	"""overlaps() runs once and the screen pages through what it returned, so an earlier fold in the
+	same run can change a count the caller is still holding."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	stale = (0, (), "CI reports skipping for the format-check job")   # a count nobody ever had
+	other = next(r for r in memory.drafts("a/b") if "every run" in r[2])
+	assert memory.merge("a/b", stale, other) == 2       # the file says 1 + 1, not 0 + 1
+	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+
+
+def test_would_merge_is_the_one_owner_of_the_sum_rule():
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, ("91cf",), "y")) == (2, "2 reviews")
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, ("7a2c",), "y")) == (1, "one review, worded twice")
+	assert memory.would_merge((2, (), "x"), (1, (), "y")) == (2, "origin unknown")
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, (), "y")) == (1, "origin unknown")

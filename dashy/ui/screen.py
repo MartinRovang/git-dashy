@@ -1251,14 +1251,14 @@ def overlap_screen(scr, state, sel):
 		# ponytail: re-read, because a fold earlier in this run may have consumed one of these rows —
 		# the pair list was computed before any of them. A stale pair would write a fact from a draft
 		# that is no longer there.
-		live = [r[2] for r in memory.drafts(repo)]
-		if not (any(t == a[2] for t in live) and any(t == b[2] for t in live)):
+		live = {r[2] for r in memory.drafts(repo)}
+		if a[2] not in live or b[2] not in live:
 			i += 1
 			continue
-		apart = bool(a[1]) and bool(b[1]) and not (set(a[1]) & set(b[1]))
-		would = a[0] + b[0] if apart else max(a[0], b[0])
-		says = (f"{len(set(a[1]) | set(b[1]))} reviews" if apart else
-		        "one review, worded twice" if set(a[1]) & set(b[1]) else "origin unknown")
+		# ponytail: ASKED, not recomputed. These two lines were character-for-character memory.merge's
+		# own arithmetic, so a change to the rule would have left the panel promising one thing while
+		# the fold did another — on the one action here that can make a fact.
+		would, says = memory.would_merge(a, b)
 		mark = f"{says} · folds to {would}×" + (" · becomes a fact" if would >= memory.PROMOTE_AT else "")
 		body = [("A", ""), *[(l, "") for l in textwrap.wrap(a[2], 60)], ("", ""),
 		        ("B", ""), *[(l, "") for l in textwrap.wrap(b[2], 60)]]
