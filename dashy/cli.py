@@ -12,11 +12,11 @@ import threading
 from . import HERE, VERSION, config, demo
 from .core import (bind as bind_mod, friction as friction_mod, github, install as install_mod, knowledge,
                    memory, mirror, review as review_mod, team)
-from .ui import screen
+from .ui import screen, web
 
 USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
+Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
@@ -32,6 +32,10 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
+  --gui          open the dashboard in the desktop app (falls back to your browser if it is not built)
+  --browser      with --gui: use the browser even when the desktop app is available
+  --no-open      with --gui: serve only, no browser — what the desktop app runs behind its splash
+  --port N       with --gui --no-open: bind this port instead of a free one (the app picks it)
   --auto         Claude reviews every review-requested PR that appears from now on
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m picks at runtime
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default {config.EFFORT}, or $PRS_EFFORT); e picks
@@ -662,5 +666,25 @@ def run(argv=None):
 	# credentials" under curses is a worse way to learn that than a message with the fix in it.
 	if "--demo" not in argv and not github.token():
 		return print(NO_TOKEN)
-	curses.wrapper(screen.main, arg("--interval", config.INTERVAL, int, argv), "--auto" in argv,
-	               arg("--model", config.DEFAULT_MODEL, str, argv))
+	interval, auto = arg("--interval", config.INTERVAL, int, argv), "--auto" in argv
+	model = arg("--model", config.DEFAULT_MODEL, str, argv)
+	# ponytail: same State, same flags, one branch. The GUI is a second front end over the core, not a
+	# second app — everything above this line is shared, so a flag added there works in both.
+	if "--gui" in argv:
+		# ponytail: three ways in, one branch. --no-open means the desktop shell spawned us and wants the
+		# server only; otherwise --gui IS the app, and the browser is the fallback when it is not built.
+		# No recursion: the shell always adds --no-open to the command it runs.
+		if "--no-open" in argv:
+			# ponytail: the token arrives in the ENVIRONMENT, not argv — argv is world-readable in ps,
+			# and this token starts paid review runs. Popped so it does not ride along into the Claude
+			# subprocesses a review spawns.
+			return web.main(interval, auto, model, open_browser=False, orphan_exit=True,
+			                port=arg("--port", 0, int, argv),
+			                token=os.environ.pop("GITDASHY_GUI_TOKEN", ""))
+		if "--browser" not in argv:
+			if exe := web.desktop_binary():
+				return web.launch_desktop(exe, argv)
+			print("gitdashy: no desktop app built, opening in your browser instead\n"
+			      "  build it with: cd desktop/src-tauri && cargo build --release")
+		return web.main(interval, auto, model, open_browser=True)
+	curses.wrapper(screen.main, interval, auto, model)

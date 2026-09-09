@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>gitdashy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Archivo:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --accent: oklch(0.74 0.16 52);
+    --ink: oklch(0.96 0.012 80);
+    --bg: oklch(0.175 0.012 60);
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: Archivo, Helvetica, Arial, sans-serif;
+    --dim: color-mix(in oklab, var(--ink) 45%, transparent);
+    --line: color-mix(in oklab, var(--ink) 10%, transparent);
+    --ok: oklch(0.78 0.15 145);
+    --bad: oklch(0.68 0.19 25);
+    --wait: oklch(0.82 0.15 90);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
+           gap: 20px; padding: 18px 28px; background: color-mix(in oklab, var(--bg) 88%, black); border-bottom: 1px solid var(--line);
+           backdrop-filter: blur(8px); }
+  .brand { display: flex; align-items: center; gap: 13px; }
+  .logo { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); display: grid; place-items: center;
+          overflow: hidden; box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent), 0 10px 26px -12px var(--accent); }
+  .logo img { width: 23px; display: block; }
+  .name { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+  .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+          display: flex; align-items: center; gap: 14px; }
+  .spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid color-mix(in oklab, var(--ink) 20%, transparent);
+             border-top-color: var(--accent); animation: spin 0.7s linear infinite; }
+
+  main { max-width: 1040px; margin: 0 auto; padding: 30px 28px 60px; display: flex; flex-direction: column; gap: 34px; }
+  section { animation: rise 0.3s ease both; }
+  h2 { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+       color: var(--accent); margin: 0 0 12px; display: flex; align-items: baseline; gap: 10px; }
+  h2 em { font-style: normal; color: var(--dim); letter-spacing: 0.14em; }
+
+  .pr { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 14px; padding: 11px 14px;
+        border-radius: 10px; border: 1px solid transparent; cursor: pointer; }
+  .pr:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); border-color: var(--line); }
+  .num { font-family: var(--mono); font-size: 12.5px; color: color-mix(in oklab, var(--ink) 55%, transparent); }
+  .title { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .title b { font-weight: 500; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub { font-family: var(--mono); font-size: 11px; color: var(--dim); display: flex; gap: 10px; }
+  .right { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11.5px; }
+  .chip { padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .chip.ok { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 35%, transparent); }
+  .chip.bad { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+  .chip.wait { color: var(--wait); border-color: color-mix(in oklab, var(--wait) 35%, transparent); }
+  .chip.run { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, transparent); animation: pulse 1.1s ease-in-out infinite; }
+  .draft { color: var(--wait); }
+  .empty, .err { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 8px 14px; }
+  .err { color: var(--bad); }
+  .review { grid-column: 2 / -1; font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 14px 10px 0; }
+  footer { text-align: center; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
+           text-transform: uppercase; color: color-mix(in oklab, var(--ink) 25%, transparent); padding-bottom: 30px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo"><img src="{{LOGO}}" alt="" /></div><div class="name">gitdashy</div></div>
+  <div class="meta" id="meta"></div>
+</header>
+<main id="app"></main>
+<footer id="foot">click a row to open on github · shift-click to review</footer>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const api = (p, opt) => fetch(p, { ...opt, headers: { "X-Dashy-Token": TOKEN, ...(opt?.headers || {}) } });
+
+function age(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - new Date(iso)) / 1000;
+  for (const [u, d] of [["d", 86400], ["h", 3600], ["m", 60]]) if (s >= d) return Math.floor(s / d) + u;
+  return "now";
+}
+
+// ponytail: the TUI's status strings are already human — classify by their leading glyph, do not re-derive.
+function chipClass(s) {
+  if (!s) return "";
+  if (s.startsWith("✓")) return "ok";
+  if (s.startsWith("✗")) return "bad";
+  if (s.startsWith("·") || s.startsWith("↻") || s.startsWith("●")) return "wait";
+  return "";
+}
+
+function prRow(p) {
+  const el = document.createElement("div");
+  el.className = "pr";
+  const chips = [];
+  if (p.busy) chips.push(`<span class="chip run">reviewing…</span>`);
+  else if (p.review) chips.push(`<span class="chip">${esc(p.review).slice(0, 40)}</span>`);
+  if (p.checks) chips.push(`<span class="chip ${chipClass(p.checks)}">checks ${esc(p.checks)}</span>`);
+  if (p.status) chips.push(`<span class="chip ${chipClass(p.status)}">${esc(p.status)}</span>`);
+  el.innerHTML = `
+    <div class="num">#${p.number}</div>
+    <div class="title">
+      <b>${p.isDraft ? '<span class="draft">draft</span> ' : ""}${esc(p.title)}</b>
+      <div class="sub"><span>${esc(p.repo)}</span><span>${esc(p.author)}</span><span>${age(p.updatedAt)}</span></div>
+    </div>
+    <div class="right">${chips.join("")}</div>`;
+  el.onclick = (e) => {
+    if (e.shiftKey) return review(p);
+    window.open(p.url, "_blank", "noopener");
+  };
+  return el;
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function review(p) {
+  const r = await api("/api/review", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: p.url }),
+  });
+  if (!r.ok) foot(`could not start review: ${(await r.json()).error}`);
+  else { foot(`review started on #${p.number}`); tick(); }
+}
+
+let footTimer;
+function foot(msg) {
+  const f = document.getElementById("foot");
+  f.textContent = msg;
+  clearTimeout(footTimer);
+  footTimer = setTimeout(() => (f.textContent = "click a row to open on github · shift-click to review"), 4000);
+}
+
+function render(d) {
+  document.getElementById("meta").innerHTML =
+    (d.fetching ? '<span class="spinner"></span>' : "") +
+    `<span>${d.running ? d.running + " reviewing" : d.auto ? "auto" : "idle"}</span>` +
+    `<span>${esc(d.model)}</span><span>v${esc(d.version)}</span>`;
+  const app = document.getElementById("app");
+  app.replaceChildren();
+  for (const s of d.sections) {
+    const sec = document.createElement("section");
+    const h = document.createElement("h2");
+    h.innerHTML = `${esc(s.name)} <em>${s.prs.length || ""}</em>`;
+    sec.append(h);
+    if (s.error) sec.insertAdjacentHTML("beforeend", `<div class="err">${esc(s.error.split("\n")[0])}</div>`);
+    else if (!s.prs.length) sec.insertAdjacentHTML("beforeend", `<div class="empty">none</div>`);
+    else s.prs.forEach((p) => sec.append(prRow(p)));
+    app.append(sec);
+  }
+}
+
+async function tick() {
+  try {
+    const r = await api("/api/state");
+    if (r.ok) render(await r.json());
+  } catch (e) { /* server gone; the next tick retries */ }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

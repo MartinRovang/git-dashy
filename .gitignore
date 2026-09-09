@@ -1,1 +1,4 @@
 __pycache__/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/node_modules/
