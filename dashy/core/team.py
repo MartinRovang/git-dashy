@@ -171,6 +171,19 @@ def _pull(d, label):
 	return False
 
 
+def _pull_from(d, branch, label):
+	"""`pull --rebase origin BRANCH`, aborting any rebase it leaves. Caller holds _lock.
+
+	ponytail: an explicit refspec, because connect() runs before any upstream is set — `remote add`
+	does not set one, so a bare `pull --rebase` there fails on "no tracking information" rather than
+	on anything about the history.
+	"""
+	if _note(_git("pull", "--rebase", "-q", "origin", branch, cwd=d), label):
+		return True
+	_git("rebase", "--abort", cwd=d)
+	return False
+
+
 def pull_dir(d, label="sync"):
 	"""ponytail: git is the sync server for any checkout, not just the team's — the private one uses it too."""
 	if is_repo(d) and has_remote(d):  # ponytail: local-only history has nothing to pull and no error to show
@@ -532,19 +545,45 @@ def activate():
 	# ponytail: lazy, and install imports knowledge -> team, so a top-level import here is a cycle.
 	# ponytail: per team, and only for teams that can be seeded unambiguously. With several joined, a
 	# repo in one team's log is that team's; a repo in two is left alone rather than guessed at.
-	# ponytail: and what each team DECLARES it covers, from its own team.json — the one route that carries
-	# an owner rule from the machine it was typed on to a colleague's. Same rule as the log: a claim two
-	# joined teams both make is left alone rather than guessed at, and the listing shows both.
+	# ponytail: what a team DECLARES it covers is NOT seeded here. activate() runs on every command and
+	# every launch, so a `covers` line added to the team repo after you joined would bind owner-wide
+	# rules on your machine with no keypress and nothing that said it happened — and a binding decides
+	# which brief a review reads AND whether facts about those repos may be pooled and shared into that
+	# team. Anyone who can push to the team could then reach repos the team has never held a fact about.
+	# The log seeding beside it is disclosure-neutral by construction; a claim is not. So adoption
+	# happens once, in setup(), where a person chose to trust this team — and a claim that appears
+	# later is shown by `gitdashy teams` and taken with `bind --owner`, which is a keypress.
+	# "Require a keypress where it costs other people" is the rule this is the case for.
+	for slug in joined():
+		theirs = os.path.join(dir_of(slug), "memory")
+		known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
+		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known)
+
+
+def adopt_covers(only=None):
+	"""Bind what joined teams declare they cover. Returns [(key, target)] for what it wrote.
+
+	ponytail: called from setup() — joining IS the act of trusting a team, so what it already declares
+	comes with it, once, into a store you can read and take back. Not called from activate(): see the
+	note there for why a claim that appears later must not land on its own.
+	ponytail: repo claims are seeded for EVERY team before any owner rule, because the store resolves an
+	exact binding ahead of an owner rule and seeding has to deliver the same order. Doing it per team
+	meant one team's `acme/*` was written first and then `bind.seed` skipped another team's `acme/api`
+	— already resolved through the rule — so which team won a contested repo came down to the
+	alphabetical order of team names.
+	ponytail: a target two joined teams both claim is left alone rather than guessed at, exactly as a
+	repo in two teams' logs is. A claim is a disclosure decision; guessing publishes to the wrong team.
+	"""
+	from . import bind  # ponytail: bind imports this module; a top-level import is a cycle
 	claims = {}
 	for slug in joined():
 		for t in covers(slug):
 			claims.setdefault(t, set()).add(slug)
-	for slug in joined():
-		theirs = os.path.join(dir_of(slug), "memory")
-		known = [r for _, r, *_ in install.registered() if r and os.path.exists(memory.path(r, theirs))]
-		declared = [t for t, who in claims.items() if who == {slug}]
-		bind.seed(slug, sorted(memory.logged_repos(log_of(slug))) + known + [t for t in declared if not t.endswith("/*")])
-		bind.seed_owners(slug, [t[:-2] for t in declared if t.endswith("/*")])
+	mine = lambda slug: [t for t, who in claims.items() if who == {slug}]
+	todo = [s for s in joined() if only is None or s == only]
+	wrote = [(s, r) for s in todo for r in bind.seed(s, [t for t in mine(s) if not t.endswith("/*")])]
+	return wrote + [(s, o + "/*") for s in todo
+	                for o in bind.seed_owners(s, [t[:-2] for t in mine(s) if t.endswith("/*")])]
 
 
 def looks_local(repo):
@@ -799,9 +838,21 @@ def connect(key, url):
 		# showed the hint forever; a refusal leaves the team exactly as it was before the question.
 		_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
 		if foreign:
-			return f"already has history that is not this team's — `teams --join` it, or connect an empty repo: {url}"
+			# ponytail: through bare_url, like every other message that names a remote. A token in the
+			# URL is a legitimate remote and this was a NEW message that skipped the chokepoint.
+			return f"already has history that is not this team's — `teams --join` it, or connect an empty repo: {bare_url(url) or url}"
 		msg = ((f.stderr or f.stdout).strip().splitlines() or ["could not reach it"])[-1]
 		return _auth_hint(msg, url) or msg[:FOOTER]
+	# ponytail: take what is already there before pushing. Accepting a remote that holds this team's
+	# history and is AHEAD of us — a host a colleague has pushed to since — is only half a fix if the
+	# push that follows is then rejected as non-fast-forward: the caller gets "connected, but the push
+	# failed" and the team is left half-connected, which is the state this whole path exists to avoid.
+	branch = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=d).stdout.strip() or BRANCH
+	if _git("rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}", cwd=d).returncode == 0:
+		with _lock:
+			if not _pull_from(d, branch, "join"):
+				_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
+				return f"connected, but could not merge what is already there: {ERROR}" if ERROR else "could not merge what is already there"
 	if err := push_dir(d, "gitdashy: connect " + key, "join"):
 		return err
 	# ponytail: push EXPLICITLY. push_dir returns early when there is nothing new to commit, which is
@@ -815,9 +866,17 @@ def connect(key, url):
 
 
 def _foreign(d):
-	"""True when origin holds a commit that is not in this checkout's history."""
+	"""True when origin holds history that is not this team's — unrelated, not merely different.
+
+	ponytail: ancestry in EITHER direction is ours. A remote AHEAD of us is a host a colleague has
+	pushed to since, which is the normal state of a live team — testing only "is it an ancestor of
+	HEAD" called that foreign, refused the connect with a message that was false, and took the remote
+	back out. What makes a remote somebody else's is that its commits and ours share no line at all.
+	"""
 	r = _git("for-each-ref", "--format=%(objectname)", "refs/remotes/origin", cwd=d)
-	return any(_git("merge-base", "--is-ancestor", sha, "HEAD", cwd=d).returncode != 0 for sha in r.stdout.split())
+	return any(_git("merge-base", "--is-ancestor", sha, "HEAD", cwd=d).returncode != 0
+	           and _git("merge-base", "--is-ancestor", "HEAD", sha, cwd=d).returncode != 0
+	           for sha in r.stdout.split())
 
 
 def _cannot_push_into(repo):
@@ -856,7 +915,10 @@ def already_joined(repo):
 		if not (have := _url(d)):
 			continue
 		if local:
-			if "://" not in have and "@" not in have and os.path.realpath(os.path.join(d, os.path.expanduser(have))) == want:
+			# ponytail: looks_local, which is what the rest of this file trusts to answer "is that a
+			# path". Testing for the absence of "@" said no to /srv/team@shared.git, so the duplicate
+			# join this exists to stop went through for any path with an @ in it.
+			if looks_local(have) and os.path.realpath(os.path.join(d, os.path.expanduser(have))) == want:
 				return slug
 		elif same_remote(want, have):
 			return slug
@@ -915,6 +977,7 @@ def setup(repo, name=""):
 	# else you review. log.reviewed() merges every log on read, so you still see your own history;
 	# they see only what was reviewed for them.
 	activate()
+	adopt_covers(key)  # ponytail: what this team says it covers, once, because you chose to join it
 	# ponytail: the JOIN is done — cloned, renamed, activated. A push that fails after this is a sync
 	# problem, not a join problem: read-only access to the repo clones fine, and then union_attrs and
 	# seed_project give push_dir something to commit. Returning that error made the caller treat a

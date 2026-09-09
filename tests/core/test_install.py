@@ -872,6 +872,8 @@ def test_setup_writes_the_brief_of_the_team_the_repo_you_stand_in_is_bound_to(mo
 	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
 	note = next(l for l in out if l.startswith("note"))
 	assert "no git origin" in note                             # not in a repo: yours, and said so
+
+
 def test_install_retires_the_old_team_link_and_rewrites_its_block(monkeypatch, tmp_path):
 	"""The pre-2026-09-08 install pointed `prs-team` at ONE team's memory and imported it into every
 	session on the machine. With several teams it dangled; with one it told every repo how that team
@@ -1654,3 +1656,20 @@ def test_ownership_is_asked_with_the_project_and_lands_in_its_brief(monkeypatch,
 
 def _read_text(p):
 	return open(p).read() if os.path.exists(p) else ""
+
+
+def test_setup_writes_your_brief_when_the_repo_names_a_team_you_are_not_in(monkeypatch, tmp_path):
+	"""The branch that replaced brief_path's SKIP guard. A binding may name a team this machine does
+	not have — bind.of answers from the store, which is not a list of what is joined."""
+	from dashy.core import bind, memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	here = tmp_path / "work"
+	subprocess.run(["git", "init", "-q", str(here)], check=True)
+	subprocess.run(["git", "-C", str(here), "remote", "add", "origin", "git@github.com:acme/api.git"], check=True)
+	monkeypatch.chdir(here)
+	bind.bind("acme/api", "gone-team")
+	out = install.setup(lambda q: "a thing", corpus_home=str(tmp_path / "nocorpus"))
+	note = next(l for l in out if l.startswith("note"))
+	assert "gone-team" in note and "not joined" in note
+	assert os.path.exists(memory.brief_path())          # yours, and it says why

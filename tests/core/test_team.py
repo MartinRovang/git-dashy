@@ -796,9 +796,7 @@ def test_what_a_team_covers_travels_with_it(monkeypatch, tmp_path):
 	assert team.cover("platform", "NeoMedSys/*") == ""            # idempotent, however it is spelled
 	assert team.covers("platform") == ["acme/tool", "neomedsys/*"]
 	assert team.connect("platform", str(remote)) == ""
-	team.activate()
-	assert bind.owners() == {"neomedsys": "platform"} and bind.of("acme/tool") == "platform"
-	# the colleague
+	# the colleague: JOINING is what adopts what the team declares
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "two"))
 	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "two-bindings"))
 	assert team.setup(str(remote)) == ""
@@ -808,9 +806,13 @@ def test_what_a_team_covers_travels_with_it(monkeypatch, tmp_path):
 	assert bind.forget_owner("neomedsys") == ""
 	team.activate()
 	assert bind.owners() == {}
+	assert team.adopt_covers() == []                              # and a re-adopt does not undo it
 	# a team can stop covering something, and that is shared too
 	assert team.uncover("platform", "acme/tool") == ""
 	assert team.covers("platform") == ["neomedsys/*"]
+	# ponytail: back on the first machine, where the claims were only ever written to team.json
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "one"))
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "one-bindings"))
 	# team.json comes from a CLONED repo: anything that is not an owner or a repo is dropped on read
 	with open(os.path.join(team.dir_of("platform"), "team.json"), "w") as f:
 		f.write('{"name": "Platform", "covers": ["acme/tool", "  ", "*", "a/b/c", 7, "x\\ny/*"]}')
@@ -825,8 +827,137 @@ def test_an_owner_two_teams_both_cover_is_left_alone(monkeypatch, tmp_path):
 	for name in ("One", "Two"):
 		assert team.start(name) == ""
 		assert team.cover(team.key_of(name), "acme") == ""
-	team.activate()
+	assert team.adopt_covers() == []
 	assert bind.owners() == {}
 	assert team.cover("one", "acme/api") == ""
-	team.activate()
+	team.adopt_covers()
 	assert bind.of("acme/api") == "one"          # an unambiguous repo claim still seeds
+
+
+def test_a_claim_added_after_you_joined_never_binds_on_its_own(monkeypatch, tmp_path):
+	"""activate() runs on every command and every launch. Seeding declarations there meant a `covers`
+	line pushed to the team repo AFTER you joined bound owner-wide rules on your machine with no
+	keypress and nothing that said so — and a binding decides which brief a review reads and whether
+	facts about those repos may be pooled into that team. Anyone who can push to the team could reach
+	repos it has never held a fact about. Joining is the consent; a later claim needs its own."""
+	_ident(monkeypatch)
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "one"))
+	assert team.start("Platform") == "" and team.connect("platform", str(remote)) == ""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "two"))
+	monkeypatch.setattr(bind, "BINDINGS", str(tmp_path / "two-bindings"))
+	assert team.setup(str(remote)) == ""
+	assert bind.owners() == {}                       # nothing declared at join, so nothing bound
+	# someone with push access adds a claim over an org this team has never held a fact about
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "one"))
+	assert team.cover("platform", "victim-org") == ""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "two"))
+	team.pull()
+	assert team.covers("platform") == ["victim-org/*"]   # it is there, and visible
+	team.activate()
+	assert bind.owners() == {}                          # and it did NOT bind itself
+	assert bind.of("victim-org/anything") == ""
+	# taking it is a person's act, and then it holds
+	assert bind.bind_owner("victim-org", "platform") == ""
+	assert bind.of("victim-org/anything") == "platform"
+
+
+def test_a_repo_claim_beats_an_owner_claim_whatever_the_teams_are_called(monkeypatch, tmp_path):
+	"""The store resolves an exact binding ahead of an owner rule; seeding has to deliver the same
+	order. Per team, one team's acme/* was written first and the other's acme/api was then skipped as
+	already resolved — so which team won came down to the alphabetical order of team names."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("alpha") == "" and team.start("zulu") == ""
+	assert team.cover("alpha", "acme") == "" and team.cover("zulu", "acme/api") == ""
+	team.adopt_covers()
+	assert bind.owners() == {"acme": "alpha"}
+	assert bind.of("acme/api") == "zulu"          # the repo claim, not whoever sorted first
+	assert bind.of("acme/other") == "alpha"
+
+
+def test_connect_accepts_a_host_a_colleague_has_pushed_to_since(monkeypatch, tmp_path):
+	"""A remote AHEAD of us is the normal state of a live team. Testing only "is it an ancestor of
+	HEAD" called that foreign, refused with a message that was false, and took the remote back out."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "r.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.start("Mine") == "" and team.connect("mine", str(remote)) == ""
+	mate = tmp_path / "mate"
+	git("clone", "-q", str(remote), str(mate), cwd=tmp_path)
+	(mate / "x.md").write_text("a colleague pushed\n")
+	git("add", "-A", cwd=mate)
+	git("commit", "-qm", "theirs", cwd=mate)
+	git("push", "-q", cwd=mate)
+	assert team.connect("mine", str(remote)) == ""        # ours, just ahead
+	assert team.has_remote(team.dir_of("mine"))
+
+
+def test_a_refusal_never_echoes_a_credential(monkeypatch, tmp_path):
+	"""bare_url exists because `https://x-token:ghp_…@host/o/r.git` is a legitimate remote that reaches
+	every message here. The foreign-history refusal was a new message that skipped the chokepoint."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	theirs = tmp_path / "theirs.git"
+	git("init", "-q", "--bare", "-b", "main", str(theirs), cwd=tmp_path)
+	seed = tmp_path / "seed"
+	git("clone", "-q", str(theirs), str(seed), cwd=tmp_path)
+	(seed / "team.json").write_text('{"name": "Other"}\n')
+	git("add", "-A", cwd=seed)
+	git("commit", "-qm", "theirs", cwd=seed)
+	git("push", "-q", "origin", "HEAD:main", cwd=seed)
+	assert team.start("Mine") == ""
+	monkeypatch.setattr(team, "_url", lambda p: "")   # the checkout has no origin of its own yet
+	err = team.connect("mine", f"https://x-token:ghp_SECRET@example.invalid/o/r.git")
+	assert "ghp_SECRET" not in err and "x-token" not in err
+
+
+def test_a_path_with_an_at_sign_is_still_a_path(monkeypatch, tmp_path):
+	"""already_joined asked "is that a path" by the absence of @, so /srv/team@shared.git fell to the
+	URL branch, never matched, and the duplicate join it exists to stop went through."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "team@shared.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.setup(str(remote), "Acme") == ""
+	assert team.already_joined(str(remote)) == "acme"
+	assert "already" in team.setup(str(remote), "Acme Again")
+
+
+def test_connect_refuses_a_local_checkout_and_leaves_no_remote(monkeypatch, tmp_path):
+	"""_cannot_push_into was proven through setup only; the connect call site was unproven."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	other = tmp_path / "a-checkout"
+	git("init", "-q", "-b", "main", str(other), cwd=tmp_path)
+	assert team.start("Mine") == ""
+	err = team.connect("mine", str(other))
+	assert "--bare" in err and "checkout" in err
+	assert not team.has_remote(team.dir_of("mine"))
+
+
+def test_a_tick_pull_that_cannot_rebase_leaves_none_in_progress(monkeypatch, tmp_path):
+	"""_pull was proven through push_dir's retry only. pull_dir is the TICK path — a rebase left in
+	progress there wedges every later pull and push, and leave refuses the dirty tree."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	remote = tmp_path / "remote.git"
+	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+	assert team.setup(str(remote), "Acme") == ""
+	d = team.dir_of("acme")
+	mate = tmp_path / "mate"
+	git("clone", "-q", str(remote), str(mate), cwd=tmp_path)
+	(mate / "team.json").write_text('{"name": "Acme", "description": "theirs"}\n')
+	git("add", "-A", cwd=mate)
+	git("commit", "-qm", "mate", cwd=mate)
+	git("push", "-q", cwd=mate)
+	assert team.write_info("acme", "Acme", "mine") == ""
+	git("add", "-A", cwd=d)
+	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local", cwd=d)
+	team.pull_dir(d)
+	g = os.path.join(d, ".git")
+	assert not os.path.exists(os.path.join(g, "rebase-merge")) and not os.path.exists(os.path.join(g, "rebase-apply"))
+	assert team.ERROR and "sync" in team.ERROR          # and it still says the pull failed
+	assert git("status", "--porcelain", cwd=d) == ""

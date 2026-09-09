@@ -324,12 +324,15 @@ yesterday disappears — and after that it is yours to change; `--forget` sticks
 shows every binding, and the detail pane names the brief a review of the selected PR will get.
 
 **What a team covers travels with it.** `gitdashy teams --team KEY --cover neomedsys` (an owner, or
-`acme/api` for one repo) records the claim in the team's `team.json`. Everyone who joins gets it seeded
-into their own bindings once, exactly as the log is — it shows in `bind --list`, and a `--forget` still
-sticks. Bindings themselves stay per machine: the declaration seeds, it does not own. `--uncover` withdraws
-it, and rows it already seeded stay each person's to change. A claim two joined teams both make is left
-alone rather than guessed at, and `gitdashy teams` lists what each declares. `gitdashy setup` writes the
-brief of the team the repo you run it in is bound to, and says so — yours when it is bound to none.
+`acme/api` for one repo) records the claim in the team's `team.json` and binds it here. Someone **joining**
+the team gets what it declares seeded into their own bindings once, exactly as the log is — it shows in
+`bind --list`, and a `--forget` still sticks. A claim added *after* they joined is not bound on their
+machine on its own: it is listed by `gitdashy teams`, and taken with `bind --owner`. What a repo's reviews
+read, and where its facts may be pooled, is not something a push to the team repo gets to decide for
+someone else. `--uncover` withdraws a claim, and rows it already seeded stay each person's to change.
+A claim two joined teams both make is left alone rather than guessed at. `gitdashy teams` lists what each
+declares. `gitdashy setup` writes the brief of the team the repo you run it in is bound to, and says so —
+yours when it is bound to none.
 
 Selection is **declared**, deliberately. The alternative was to infer it from the shared review log, the
 way memory visibility is decided. That is wrong for a brief: a log entry is a side effect of reviewing
