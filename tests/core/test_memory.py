@@ -165,7 +165,7 @@ def test_a_draft_is_never_pooled(monkeypatch, tmp_path):
 	assert not os.path.exists(memory.pool_path(memory.whoami(), "a/b"))  # evidence means accepted, not proposed
 
 
-def test_backerscounts_people_not_reviews(monkeypatch, tmp_path):
+def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	logged(tmp_path, "a/b")
 	memory.append("a/b", "the API owns all validation")
@@ -765,3 +765,18 @@ def test_merging_a_row_an_earlier_fold_consumed_writes_nothing(tmp_path, monkeyp
 	assert memory.merge("a/b", gone, live) == 0
 	assert memory.drafts("a/b") == [live]        # untouched, and the consumed row stays gone
 	assert memory.known("a/b") == []
+
+
+def test_folding_onto_a_fact_that_is_already_settled_does_not_write_it_twice(tmp_path, monkeypatch):
+	"""merge promotes through promote(), which carries the already_known guard — but the guard had never
+	been driven from this path, and a fold is the one caller that can reach it with the fact already in
+	place: a person promotes one wording by hand, then folds its twin onto it."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	keep, drop = memory.overlaps("a/b")[0][2:]
+	memory.promote("a/b", keep[2])                    # accepted by hand, and out of the queue
+	assert memory.known("a/b") == [keep[2]] and len(memory.drafts("a/b")) == 1
+	assert memory.merge("a/b", keep, drop) == 0       # keep is no longer a draft, so nothing is folded
+	assert memory.known("a/b") == [keep[2]]           # and the fact is not written a second time
+	assert len(memory.drafts("a/b")) == 1             # the twin is left for a person to judge
