@@ -2208,3 +2208,23 @@ def test_the_cover_question_keeps_its_answer_keys_at_eighty_columns(monkeypatch,
 		ui._cover(scr, st, 0, "acme-tools", owner)
 		assert "[y/n]" in scr.text(), f"the answer keys fell off the line for {owner!r}"
 		assert "covers" in scr.text() and owner[:12] in scr.text()
+
+
+def test_the_leave_prompt_keeps_its_warning_and_its_keys_at_eighty_columns(monkeypatch, st, tmp_path):
+	"""The one prompt here that destroys something. asking() clips the TAIL, so the path goes last and
+	the words that say files are deleted go first — with a long checkout path both must survive."""
+	from conftest import FakeScr
+	from dashy.core import team
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	deep = tmp_path / ("a" * 30) / ("b" * 30) / "teams"
+	monkeypatch.setattr(config, "TEAMS", str(deep))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	assert team.start("Acme Tools") == ""
+	assert len(team.dir_of("acme-tools")) > 70        # the path alone would fill the line
+	scr = FakeScr(h=30, w=80)
+	scr.getch, scr.timeout = _keys(ord("n")), lambda t: None
+	assert ui._leave_team(scr, st, 0, "acme-tools") is False
+	out = scr.text()
+	assert "DELETES its files" in out and "[y/n]" in out
+	assert "acme-tools" in out
