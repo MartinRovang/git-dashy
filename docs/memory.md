@@ -407,8 +407,8 @@ automatically — a false match writes a fact nobody said — but it is order-se
 worded in another order is never folded:
 
 ```
-- (1) [7a2c] CI reports skipping for the format-check job
-- (1) [91cf] the format-check job in CI reports skipping every run     seq 0.375 — two rows, forever
+- (1) [r:7a2c] CI reports skipping for the format-check job
+- (1) [r:91cf] the format-check job in CI reports skipping every run     seq 0.375 — two rows, forever
 ```
 
 Both sit one review short of the gate, and no later review joins them: it matches one wording or the

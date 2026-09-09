@@ -6,7 +6,7 @@ import pytest
 from dashy import config
 from dashy.core import bind, memory, team
 
-from conftest import _counts, a_team, claude_out
+from conftest import a_team, claude_out, counts
 
 
 def facts(p):
@@ -32,7 +32,7 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 def test_a_fact_takes_two_independent_reviews(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.append("a/b", "CI skips the DB tests") == []
-	assert _counts(memory.drafts("a/b")) == [(1, "CI skips the DB tests")]
+	assert counts(memory.drafts("a/b")) == [(1, "CI skips the DB tests")]
 	assert not os.path.exists(memory.path("a/b"))  # one review does not make a fact
 	assert memory.read("a/b") == ""  # and a draft is never read back, or it would confirm itself
 	assert memory.append("a/b", "ci skips the db tests") == ["CI skips the DB tests"]
@@ -47,7 +47,7 @@ def test_near_wordings_are_one_fact_and_distinct_ones_are_not(monkeypatch, tmp_p
 	memory.append("a/b", "The frontend is a thin display layer.")
 	assert facts(memory.path("a/b")) == ["- the frontend is a thin display layer"]
 	memory.append("a/b", "migrations run before deploy")
-	assert _counts(memory.drafts("a/b")) == [(1, "migrations run before deploy")]
+	assert counts(memory.drafts("a/b")) == [(1, "migrations run before deploy")]
 
 
 def test_an_already_settled_fact_is_dropped_on_arrival(monkeypatch, tmp_path):
@@ -165,7 +165,7 @@ def test_a_draft_is_never_pooled(monkeypatch, tmp_path):
 	assert not os.path.exists(memory.pool_path(memory.whoami(), "a/b"))  # evidence means accepted, not proposed
 
 
-def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
+def test_backerscounts_people_not_reviews(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	logged(tmp_path, "a/b")
 	memory.append("a/b", "the API owns all validation")
@@ -237,7 +237,7 @@ def test_one_review_cannot_confirm_its_own_fact(monkeypatch, tmp_path):
 	"""Two wordings of one thing in a single call must count once, or the gate gates nothing."""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.append("a/b", "- the API owns all validation\n- The API owns all validation.") == []
-	assert _counts(memory.drafts("a/b")) == [(1, "the API owns all validation")]
+	assert counts(memory.drafts("a/b")) == [(1, "the API owns all validation")]
 	assert not os.path.exists(memory.path("a/b"))
 	assert memory.append("a/b", "the API owns all validation") == ["the API owns all validation"]
 
@@ -751,3 +751,17 @@ def test_would_merge_is_the_one_owner_of_the_sum_rule():
 	assert memory.would_merge((1, ("7a2c",), "x"), (1, ("7a2c",), "y")) == (1, "one review, worded twice")
 	assert memory.would_merge((2, (), "x"), (1, (), "y")) == (2, "origin unknown")
 	assert memory.would_merge((1, ("7a2c",), "x"), (1, (), "y")) == (1, "origin unknown")
+
+
+def test_merging_a_row_an_earlier_fold_consumed_writes_nothing(tmp_path, monkeypatch):
+	"""overlaps() runs once and its pairs are acted on one by one, so a row can be gone by the time its
+	pair comes up. Falling back to the caller's copy would write a draft the store has finished with."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	gone = memory.drafts("a/b")[0]
+	assert memory.drop("a/b", gone[2]) is True
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	live = memory.drafts("a/b")[0]
+	assert memory.merge("a/b", gone, live) == 0
+	assert memory.drafts("a/b") == [live]        # untouched, and the consumed row stays gone
+	assert memory.known("a/b") == []

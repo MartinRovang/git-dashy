@@ -587,10 +587,9 @@ def merge(repo, keep, drop):
 
 	`keep` and `drop` are (count, ids, fact) rows as overlaps() returned them; `keep`'s wording survives.
 
-	ponytail: the rows are looked up in the file rather than trusted from the caller. overlaps() runs
-	once and the screen pages through what it returned, so by the time a pair is acted on an earlier
-	fold in the same run may have changed one of these counts. Reading them here means the arithmetic
-	is over what is on disk, not over a snapshot the caller has been holding.
+	ponytail: the rows are looked up in the file rather than trusted from the caller, and a row that is
+	NOT there is a row an earlier fold already consumed — folding it back would resurrect a draft the
+	store has finished with. Returns 0 and writes nothing, rather than falling back to the caller's copy.
 	ponytail: promotion goes through promote(), so a fact that crosses the gate here lands exactly as
 	one promoted by hand does — the already_known guard, the pool write, and the self-review queue
 	cleared. Appending directly left a pre-review row for a now-settled fact sitting in waiting().
@@ -599,13 +598,18 @@ def merge(repo, keep, drop):
 	just as it would have carried either row before the fold.
 	"""
 	items = drafts(repo)
-	keep = next((r for r in items if _is(r[2], keep[2])), keep)
-	drop = next((r for r in items if _is(r[2], drop[2])), drop)
+	keep = next((r for r in items if _is(r[2], keep[2])), None)
+	drop = next((r for r in items if _is(r[2], drop[2])), None)
+	if keep is None or drop is None or keep[2] == drop[2]:
+		return 0
 	rest = [r for r in items if not (_is(r[2], keep[2]) or _is(r[2], drop[2]))]
 	n, _why = would_merge(keep, drop)
 	if n >= PROMOTE_AT:
-		_write_drafts(repo, rest)  # ponytail: before promote(), whose drop() reads this same file
+		# ponytail: the FACT first, the queue after — the order append() states one screen up. The other
+		# way round, a crash between the two writes loses both observations outright; this way it costs a
+		# duplicate draft beside a fact, which already_known absorbs on the next pass.
 		promote(repo, keep[2])
+		_write_drafts(repo, [r for r in drafts(repo) if not (_is(r[2], keep[2]) or _is(r[2], drop[2]))])
 	else:
 		_write_drafts(repo, rest + [(n, tuple(dict.fromkeys(keep[1] + drop[1])), keep[2])])
 	return n

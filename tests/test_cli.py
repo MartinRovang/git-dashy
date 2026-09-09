@@ -9,7 +9,7 @@ import pytest
 from dashy import cli, config
 from dashy.core import install as install_mod, memory, state, team
 
-from conftest import _counts
+from conftest import counts
 
 
 def facts(p):
@@ -21,7 +21,7 @@ def test_remember_drafts_then_confirms_on_a_second_observation(monkeypatch, tmp_
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
 	cli.run(["gitdashy", "remember", "the", "viewer", "owns", "mask", "state"])
 	assert "drafted" in capsys.readouterr().out
-	assert _counts(memory.drafts("acme/web")) == [(1, "the viewer owns mask state")]
+	assert counts(memory.drafts("acme/web")) == [(1, "the viewer owns mask state")]
 	cli.run(["gitdashy", "remember", "The viewer owns mask state."])  # reworded, same fact
 	assert "confirmed" in capsys.readouterr().out
 	assert facts(memory.path("acme/web")) == ["- the viewer owns mask state"]
@@ -34,9 +34,9 @@ def test_remember_general_and_explicit_repo(monkeypatch, tmp_path, capsys):
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
 	cli.run(["gitdashy", "remember", "--general", "PHI reaches the frontend"])
 	assert "general" in capsys.readouterr().out
-	assert _counts(memory.drafts(None)) == [(1, "PHI reaches the frontend")]
+	assert counts(memory.drafts(None)) == [(1, "PHI reaches the frontend")]
 	cli.run(["gitdashy", "remember", "--repo", "other/thing", "migrations run first"])
-	assert _counts(memory.drafts("other/thing")) == [(1, "migrations run first")]
+	assert counts(memory.drafts("other/thing")) == [(1, "migrations run first")]
 	assert memory.drafts("acme/web") == []  # the flag won, not the cwd
 
 
@@ -443,3 +443,14 @@ def test_logger_silent_without_debug(monkeypatch, capsys):
 	monkeypatch.setattr(logging.root, "handlers", [])
 	state.LOG.error("tick failed")
 	assert capsys.readouterr().err == ""
+
+
+def test_drafts_prints_the_fact_without_its_provenance(monkeypatch, capsys, tmp_path):
+	"""The ids are how the store reasons about a count; they are not part of the sentence a person reads."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(team, "activate", lambda: None)
+	memory.append("acme/web", "- the viewer owns mask state")
+	cli.drafts(["gitdashy", "drafts"])
+	out = capsys.readouterr().out
+	assert "the viewer owns mask state" in out
+	assert "[r:" not in out and "r:" not in out.split("waiting")[0]   # no provenance in the sentence

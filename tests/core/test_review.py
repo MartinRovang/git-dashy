@@ -8,7 +8,7 @@ from dashy import config
 from dashy.core import github, log, memory, review as review_mod
 from dashy.core.review import review
 
-from conftest import PR, Result, _counts, a_team, claude_out
+from conftest import PR, Result, counts, a_team, claude_out
 
 
 def test_review_posts_verdict_and_logs(monkeypatch, posted):
@@ -168,7 +168,7 @@ def test_review_reads_memory_and_only_drafts_what_it_proposes(monkeypatch, tmp_p
 	review(dict(PR), "opus")
 	assert "## General\n### mine\n- always run make lint" in prompts[0]
 	assert "## a/b\n### mine\n- uses tabs\n- db layer is generated" in prompts[0]
-	assert _counts(memory.drafts("a/b")) == [(1, "ci is slow, do not flag timeouts")]  # one review only drafts
+	assert counts(memory.drafts("a/b")) == [(1, "ci is slow, do not flag timeouts")]  # one review only drafts
 	assert "ci is slow" not in memory.read("a/b")  # so the next review cannot be shown its own guess
 	assert memory.read("x/y") == "## General\n### mine\n- always run make lint"
 	e = log.reviewed()[0]
@@ -181,7 +181,7 @@ def test_a_second_independent_review_turns_a_draft_into_a_fact(monkeypatch, tmp_
 	monkeypatch.setattr(subprocess, "run",
 	                    lambda cmd, **kw: claude_out(verdict="approve", body="b", memory="ci is slow, do not flag timeouts"))
 	review(dict(PR), "opus")
-	assert _counts(memory.drafts("a/b")) == [(1, "ci is slow, do not flag timeouts")]
+	assert counts(memory.drafts("a/b")) == [(1, "ci is slow, do not flag timeouts")]
 	review(dict(PR), "opus")
 	assert memory.drafts("a/b") == []
 	assert open(memory.path("a/b")).read() == "- ci is slow, do not flag timeouts\n"

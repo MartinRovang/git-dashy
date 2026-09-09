@@ -2036,3 +2036,25 @@ def test_b_folds_the_pair_keeping_the_second_wording(screen, monkeypatch, st, tm
 	screen.getch, screen.timeout = _keys(ord("s"), ord("b"), 27), lambda t: None
 	ui.drafts_screen(screen, st, 0)
 	assert memory.known("a/b") == ["the format-check job in CI reports skipping every run"]
+
+
+def test_the_panel_describes_the_fold_that_will_actually_happen(screen, monkeypatch, st, tmp_path):
+	"""A fold earlier in the run changes the survivor's ids, so the snapshot overlaps() returned said
+	"origin unknown · folds to 1×" for a pair the file had already made two independent reviews — and
+	the keypress then promoted and pushed to the pool. The panel must describe the keypress."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	os.makedirs(os.path.join(tmp_path, "mem", "drafts"))
+	# a legacy row with no provenance, then two rows that each carry their own review id
+	open(memory.queue_path("a/b"), "w").write("- (1) CI reports skipping for the format-check job\n")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	memory.append("a/b", "- skipping is what the format-check job in CI reports")
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("s"), ord("y"), ord("y"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	first, second = seen[1], seen[2]
+	assert "origin unknown" in first and "folds to 1" in first    # legacy row: nothing is promoted
+	assert "2 reviews" in second and "becomes a fact" in second    # and the panel says so BEFORE the key
+	assert len(memory.known("a/b")) == 1

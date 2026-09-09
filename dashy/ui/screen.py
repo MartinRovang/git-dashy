@@ -1251,10 +1251,15 @@ def overlap_screen(scr, state, sel):
 		# ponytail: re-read, because a fold earlier in this run may have consumed one of these rows —
 		# the pair list was computed before any of them. A stale pair would write a fact from a draft
 		# that is no longer there.
-		live = {r[2] for r in memory.drafts(repo)}
+		# ponytail: the LIVE rows, not the ones overlaps() returned. A fold earlier in this run changes
+		# the survivor's ids, so the snapshot said "origin unknown · folds to 1×" for a pair the file
+		# had already made two independent reviews — and the fold then promoted and pushed to the pool.
+		# A panel that describes a keypress has to describe the keypress that will happen.
+		live = {r[2]: r for r in memory.drafts(repo)}
 		if a[2] not in live or b[2] not in live:
 			i += 1
 			continue
+		a, b = live[a[2]], live[b[2]]
 		# ponytail: ASKED, not recomputed. These two lines were character-for-character memory.merge's
 		# own arithmetic, so a change to the rule would have left the panel promising one thing while
 		# the fold did another — on the one action here that can make a fact.

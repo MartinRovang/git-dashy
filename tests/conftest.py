@@ -132,7 +132,7 @@ def fake_http(handler):
 	return go
 
 
-def _counts(rows):
+def counts(rows):
 	"""(count, fact) for drafts rows, dropping the review ids.
 
 	ponytail: the ids are provenance — which runs observed a thing — and no test here is about them.
