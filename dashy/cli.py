@@ -305,28 +305,28 @@ def remember(argv):
 
 
 def _team_of(argv):
-	"""The team a `bind` writes to: --team as typed, folded to its key, or the one joined team.
+	"""The team a command acts on: --team as typed, folded to its key, or the one joined team.
 
 	ponytail: refused when it is not a team this machine has joined. `--team NeoMedSys_team` was accepted
 	verbatim, reported success and resolved to nothing — a typo bound an org to a team that did not
 	exist, and the only sign was the pane saying "not in team" on every row of it.
+	ponytail: ONE resolver for every verb that takes --team. There were two, and the second skipped the
+	membership check — so `teams --team nope --cover acme` appended {"owner": "acme", "team": "nope"} to
+	the bindings store and only then failed with "not in nope". That is the same silently-wrong-team bug
+	this function exists to kill, reintroduced one verb over, and a write before a check is worse than
+	the original because it leaves the store dirty.
+	ponytail: none joined and several joined are different problems, so they get different sentences —
+	folding them into "not in a team" told someone with two teams to go and join one.
 	"""
 	if typed := arg("--team", "", str, argv):
 		key = team.key_of(typed)
 		if not team.dir_of(key):
 			raise SystemExit(f"gitdashy: not in team {typed!r} — joined: {', '.join(team.joined()) or 'none'}")
 		return key
-	if not (key := bind_mod.team_key()):
-		raise SystemExit("gitdashy: not in a team — join one with T in the dashboard, or pass --team SLUG")
-	return key
-
-
-def _which_team(argv):
-	"""The team a `teams` verb acts on: --team, or the only one joined."""
-	key = arg("--team", "", str, argv) or (team.joined()[0] if len(team.joined()) == 1 else "")
-	if not key:
-		raise SystemExit(f"gitdashy: say which team: --team {' | --team '.join(team.joined()) or 'NAME'}")
-	return team.key_of(key)
+	if len(joined := team.joined()) == 1:
+		return joined[0]
+	raise SystemExit("gitdashy: " + (f"say which team: --team {' | --team '.join(joined)}" if joined else
+	                                 "not in a team — join one with T in the dashboard, or pass --team SLUG"))
 
 
 def bind(argv):
@@ -497,12 +497,12 @@ def teams(argv):
 		print(f"  bind repos to it: gitdashy bind --owner OWNER --team {key}")
 		print(f"  give it a remote when you have one: gitdashy teams --team {key} --connect URL")
 	elif url := arg("--connect", "", str, argv):
-		key = _which_team(argv)
+		key = _team_of(argv)
 		if err := team.connect(key, url):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {key} now pushes to {url}")
 	elif target := arg("--cover", "", str, argv):
-		key = _which_team(argv)
+		key = _team_of(argv)
 		# ponytail: declared in the team AND bound here. The local rule is the cheap, reversible half and
 		# goes first: a declaration that published while the binding failed is a rule that works only on
 		# other people's machines, which is the one outcome this pair must not produce.
@@ -513,7 +513,7 @@ def teams(argv):
 		print(f"gitdashy: {key} now covers {bind_mod.cover_key(target)}  (bound here, and everyone who joins gets it once)"
 		      + (f"  ({team.ERROR})" if team.ERROR else ""))
 	elif target := arg("--uncover", "", str, argv):
-		key = _which_team(argv)
+		key = _team_of(argv)
 		if err := team.uncover(key, target):
 			raise SystemExit("gitdashy: " + err)
 		print(f"gitdashy: {key} no longer covers {bind_mod.cover_key(target)}  (rows it seeded stay until `gitdashy bind ... --forget`)"

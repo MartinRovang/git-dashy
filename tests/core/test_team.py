@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import subprocess
@@ -961,3 +962,34 @@ def test_a_tick_pull_that_cannot_rebase_leaves_none_in_progress(monkeypatch, tmp
 	assert not os.path.exists(os.path.join(g, "rebase-merge")) and not os.path.exists(os.path.join(g, "rebase-apply"))
 	assert team.ERROR and "sync" in team.ERROR          # and it still says the pull failed
 	assert git("status", "--porcelain", cwd=d) == ""
+
+
+def test_renaming_a_team_keeps_what_it_covers_and_launders_it(monkeypatch, tmp_path):
+	"""write_info rewrites team.json whole, so describing a team must not drop its claims — and must not
+	copy an unvalidated one back out either: the file arrives in a clone, and the one write that reads
+	it and rewrites it entirely is the write that must not launder somebody else's junk into place."""
+	_ident(monkeypatch)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Platform") == ""
+	assert team.cover("platform", "neomedsys") == ""
+	assert team.write_info("platform", "Platform", "now described") == ""
+	assert team.covers("platform") == ["neomedsys/*"]
+	assert team.info("platform")["description"] == "now described"
+	# a claim the resolver could never match does not survive the next rewrite
+	d = team.dir_of("platform")
+	with open(os.path.join(d, "team.json"), "w") as f:
+		f.write('{"name": "Platform", "covers": ["neomedsys/*", "*", "a/b/c"]}')
+	assert team.write_info("platform", "Platform", "again") == ""
+	assert json.loads(open(os.path.join(d, "team.json")).read())["covers"] == ["neomedsys/*"]
+
+
+def test_a_team_we_are_not_in_reads_no_team_json_from_the_working_directory(monkeypatch, tmp_path):
+	"""os.path.join("", "team.json") is a RELATIVE path, so a key this machine has not joined read
+	whatever team.json happened to be beside it."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	here = tmp_path / "cwd"
+	here.mkdir()
+	(here / "team.json").write_text('{"name": "Not Ours", "covers": ["victim-org/*"]}')
+	monkeypatch.chdir(here)
+	assert team.info("gone") == {"name": "gone", "description": ""}
+	assert team.covers("gone") == []
