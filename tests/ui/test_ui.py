@@ -1963,12 +1963,18 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	from dashy.core import team
 	_two_teams(monkeypatch, tmp_path)
 	team.cover("acme-tools", "acme")
+	import subprocess
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(tmp_path / "acme-mem.git")], check=True)
+	assert team.connect("acme-tools", str(tmp_path / "acme-mem.git")) == ""
 	seen = []
 	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("1"), 27, 27), lambda t: None
 	ui.team_setup(screen, st, 0)
 	assert "1  Acme Tools" in seen[0] and "[1-8] open" in seen[0]     # the list
 	out = seen[1]                                                      # the team's own screen
 	assert "Acme Tools" in out and "acme-tools" in out
+	assert str(tmp_path / "acme-mem.git") in out                      # the WHOLE remote, not its host
+	assert ui._remote_label("https://x:tok@github.com/o/r.git", full=True) == "https://github.com/o/r.git"
+	assert ui._remote_label("git@github.com:o/r.git") == "o/r"       # the list shows owner/name
 	assert "lives at" in out and "remote" in out and "declares" in out and "acme/*" in out
 	assert "[e]" in out and "[o]" in out and "[x]" in out
 

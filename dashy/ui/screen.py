@@ -1333,6 +1333,17 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
+def _remote_label(url, full=False):
+	"""What to show for a team's remote: the whole thing on its screen, owner/name on the list.
+
+	ponytail: the host alone read as "github" and answered nothing — which repo is the question. A
+	credential in an https URL is stripped before it is drawn, as every message in team.py strips it.
+	"""
+	if full:
+		return team.bare_url(url) or url
+	return team.slug_of(url) if team.host_of(url) else knowledge.tilde(url)
+
+
 def _owner_of(current):
 	"""The owner of the selected row's repo, "" when no row is selected."""
 	return bind.key((current or {}).get("repository", {}).get("nameWithOwner", "")).split("/")[0]
@@ -1509,7 +1520,7 @@ def _team_screen(scr, state, sel, key, current=None):
 		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x) or "nothing bound here yet"
 		lines = [("what", it["description"] or "nothing yet — d describes it"),
 		         ("lives at", knowledge.tilde(os.path.realpath(d))),
-		         ("remote", (team.host_of(url) or url) if url else "none — c connects one"),
+		         ("remote", _remote_label(url, full=True) if url else "none — c connects one"),
 		         ("declares", ", ".join(team.covers(key)) or "nothing — o covers an owner"),
 		         ("here", here)]
 		draw(scr, state, sel, prompt=" ")
@@ -1543,7 +1554,7 @@ def team_setup(scr, state, sel, current=None):
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
-		rows = [(f"{i + 1}  {team.info(s)['name']}", (team.host_of(u) or "remote") if (u := team._url(team.dir_of(s))) else "no remote yet")
+		rows = [(f"{i + 1}  {team.info(s)['name']}", _remote_label(u) if (u := team._url(team.dir_of(s))) else "no remote yet")
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
