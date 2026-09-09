@@ -442,3 +442,44 @@ def test_search_stays_on_the_repo_under_review_even_when_reads_are_wider(monkeyp
 ])
 def test_repo_of_reads_the_addressed_repo(path, want):
 	assert github.repo_of(path) == want
+
+
+@pytest.mark.parametrize("path", [
+	"/repos/acme/api/../../user",
+	"/repos/acme/api/%2e%2e/%2e%2e/user",
+	"/repos/acme/api/%2E%2E/user",
+	"/repos/acme/api/contents/src/../../../../repos/other/x",
+])
+def test_a_dot_segment_is_refused_whatever_its_spelling(path):
+	"""ponytail: api.github.com 404s these today, so the prefix check is not bypassable there. But that
+	is the SERVER refusing rather than us, and GitHub Enterprise can sit behind a proxy that normalises
+	before forwarding — a boundary that holds only because the far end is strict is one deployment away
+	from not holding. Unquoted for the test and never for the request."""
+	with pytest.raises(ValueError, match=r"\.\."):
+		github.scoped(path, "acme/api", "acme-platform")
+
+
+def test_a_name_that_is_not_its_own_key_is_refused(monkeypatch, tmp_path):
+	"""ponytail: bind.key strips a `.git` suffix, so /repos/acme/shared-lib.git/... resolved to a bound
+	sibling and was then sent verbatim — the check normalising one string while the request carried
+	another. GitHub 404s that form today, which is the same "the server saves us" argument as the dots."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme-platform"},
+	                                  {"repo": "acme/api", "team": "acme-platform"}])
+	assert github.scoped("/repos/acme/shared-lib/contents/x", "acme/api", "acme-platform")
+	for spelled in ("/repos/acme/shared-lib.git/contents/x", "/repos/acme/api.git/contents/x"):
+		with pytest.raises(ValueError, match="outside it"):
+			github.scoped(spelled, "acme/api", "acme-platform")
+
+
+def test_a_search_keeps_the_params_that_page_it():
+	"""ponytail: per_page and page are how a code search paginates; dropping them would silently cap a
+	reviewer at the first page of results, which reads as the symbol not being used."""
+	got = github.scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api")
+	assert "per_page=5" in got and "page=2" in got and "repo%3Aacme%2Fapi" in got
+
+
+def test_another_search_endpoint_says_which_search_there_is():
+	"""ponytail: "outside it" describes a repo path; a model reading that about /search/repositories
+	learns nothing it can act on."""
+	with pytest.raises(ValueError, match="not /search/code"):
+		github.scoped("/search/repositories?q=acme", "acme/api")

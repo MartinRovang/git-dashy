@@ -75,6 +75,13 @@ def scoped(path, repo, team=""):
 		return path
 	p = path if path.startswith("/") else "/" + path
 	head, _, query = p.partition("?")
+	# ponytail: no dot segments, in any spelling. api.github.com 404s /repos/<scope>/../../user today, so
+	# the prefix check is not bypassable there — but that is the SERVER refusing, not us, and GitHub
+	# Enterprise can sit behind a proxy that normalises before it forwards. A boundary that holds only
+	# because the far end happens to be strict is one deployment away from not holding. Unquoted for the
+	# test and never for the request, so what is sent is still exactly what was asked for.
+	if any(urllib.parse.unquote(seg) == ".." for seg in head.split("/")):
+		raise ValueError(f"a review may not use .. in a path, and {head} does")
 	want, low = f"/repos/{repo}".lower(), head.lower()
 	# ponytail: the separator matters. Bare startswith let /repos/acme/api-secrets through on a scope of
 	# acme/api — a neighbouring repo, which is exactly the kind an attacker would guess at.
@@ -86,13 +93,21 @@ def scoped(path, repo, team=""):
 	# second copy of that ordering is how the two would come to disagree about one repo.
 	if team and (other := repo_of(head)) and other.lower() != repo.lower():
 		from . import bind  # ponytail: lazy — bind reaches team, which reaches log, which reaches here
-		if bind.of(other) == team:
+		# ponytail: the name has to BE its own key before the key is looked up. bind.key strips a `.git`
+		# suffix and slug_of folds `:`, so /repos/acme/shared-lib.git/... resolved to a bound sibling and
+		# was then sent verbatim — the check normalising one string and the request carrying another.
+		# GitHub 404s that form today, which is the same "the server saves us" argument as the dots above.
+		if bind.key(other) == other.lower() and bind.of(other) == team:
 			return p
 	# ponytail: search stays on the repo under review even when reads are wider. Several repo: qualifiers
 	# would have to OR for that to be safe, and leaning a boundary on GitHub's query semantics is what
 	# the refusal loop below already declines to do. A sibling is read by path, not searched.
 	if low.rstrip("/") == "/search/code":
 		return "/search/code?" + scoped_query(query, repo)
+	if low.startswith("/search/"):
+		# ponytail: "outside it" describes a repo path, and a model reading it about /search/repositories
+		# learns nothing it can act on. Say which search there is.
+		raise ValueError(f"a review may only search code, in {repo} — {head} is not /search/code")
 	raise ValueError(f"a review may only read {repo}" + (f" and the repos bound to {team}" if team else "")
 	                 + f", and {head} is outside it")
 
@@ -106,14 +121,16 @@ def scoped_query(query, repo):
 	qualifier in "q=SECRET+user:victim" becomes visible as a term rather than hiding inside one.
 	"""
 	parts = urllib.parse.parse_qsl(query)
-	terms = " ".join(v for k, v in parts if k == "q").split()
-	# ponytail: refused, not silently narrowed. The forced repo: ANDs, so a foreign user: would return
-	# nothing anyway — but that is GitHub's query semantics holding the line, not us, and a model that
-	# gets an empty result cannot tell "nobody uses this symbol" from "you asked the wrong question".
-	for t in terms:
-		if t.lower().startswith(QUALIFIERS) and t.lower() != f"repo:{repo}".lower():
+	# ponytail: one pass. A foreign qualifier is refused rather than silently narrowed — the forced
+	# repo: ANDs, so it would return nothing anyway, but that is GitHub's query semantics holding the
+	# line rather than us, and a model handed an empty result cannot tell "nobody uses this symbol"
+	# from "you asked the wrong question".
+	terms = []
+	for t in " ".join(v for k, v in parts if k == "q").split():
+		if not t.lower().startswith(QUALIFIERS):
+			terms.append(t)
+		elif t.lower() != f"repo:{repo}".lower():
 			raise ValueError(f"a review may only search {repo}, so {t} cannot be asked for")
-	terms = [t for t in terms if not t.lower().startswith("repo:")]
 	if not terms:
 		# ponytail: a qualifier on its own is a 422 from GitHub, which reads as the scoping being broken.
 		raise ValueError("a code search needs something to search for, not just a repo")

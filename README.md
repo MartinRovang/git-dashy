@@ -467,7 +467,13 @@ A review of a PR opened by the repo's owner, an org member or a collaborator may
 repos bound to the same team, so a change that depends on a shared library can be checked against it.
 Both halves have to hold: `gitdashy bind` is where a person declares which repos belong together, and
 GitHub's `author_association` is what says the diff was not written by a stranger. A fork PR from an
-outsider gets the repo under review and nothing else. Code search stays on that repo either way. `--effort` carries over to OpenRouter as the
+outsider gets the repo under review and nothing else. Code search stays on that repo either way.
+
+That association means the author has standing in the repo being reviewed — not that they could read
+the siblings themselves. A read-only collaborator, or an org member with no access to a private
+sibling, still counts as trusted here, and the review body is published on their PR. So the set you
+bind to a team is the set you are willing to have summarised there; keep the ones that are not out of
+it, which is what `gitdashy bind --forget` is for. `--effort` carries over to OpenRouter as the
 model's reasoning budget (`xhigh` and `max` collapse onto `high`, since OpenRouter stops there): leave
 it at `low` unless a reasoning model is worth the wait. `gitdashy self-check` on another backend only
 proves the endpoint answers.
