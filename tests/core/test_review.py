@@ -421,3 +421,19 @@ def test_a_review_hands_its_agent_the_scope(monkeypatch, posted):
 	assert seen[github.SCOPE] == "a/b"          # the repo of the PR under review, not a default
 	assert seen["tools"].endswith(" api:*)")    # and the one command it may run is still the wrapper
 	assert "PATH" in seen                       # ponytail: an overlay, not a replacement — see llm.ask
+
+
+def test_the_prompt_reaches_a_fork_pr_by_sha_not_by_branch(monkeypatch):
+	"""ponytail: scoping reads to the base repo made this load-bearing. A fork's head branch lives in the
+	fork, so `?ref=<branch>` 404s against the base — and the reviewer, now refused the fork path and told
+	not to widen the boundary, had no documented way to read the code it was reviewing. Verified against
+	the live API: the branch name 404s, the head SHA resolves. A fork PR is the common case, not a corner.
+	"""
+	calls = []
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: calls.append(cmd[2]) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	prompt = calls[0]
+	assert "?ref=<head sha>" in prompt and "git/trees/<head sha>" in prompt
+	assert "<head branch>" not in prompt
+	assert "never the head BRANCH name" in prompt

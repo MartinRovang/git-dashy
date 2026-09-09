@@ -69,12 +69,17 @@ a unified diff instead of json. It is the only command available to you. Start w
 
   {cmd} api /repos/{repo}/pulls/{number}            the description, author, base and head
   {cmd} api /repos/{repo}/pulls/{number} --diff     the diff
-  {cmd} api /repos/{repo}/contents/<file>?ref=<head branch>   read a file (no ref = base branch)
-  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1  every path in the repo, to find one
+  {cmd} api /repos/{repo}/contents/<file>?ref=<head sha>      read a file (no ref = base branch)
+  {cmd} api /repos/{repo}/git/trees/<head sha>?recursive=1    every path at that commit, to find one
   {cmd} api "/search/code?q=<symbol>"               where a symbol is used, within this repo
 
-Reads are confined to {repo}: a path outside it is refused, and a code search is answered for this
-repo whatever it asks for. That is a boundary, not a hint — do not spend turns trying to widen it.
+Use the head SHA — `head.sha` from the first call — and never the head BRANCH name. A PR from a fork has
+its branch in the fork, not here, so a branch name 404s; the commit itself resolves against {repo}
+whichever repo it was pushed from.
+
+Reads are confined to {repo}: a path outside it is refused, and a code search is narrowed to this repo
+(a search naming another repo, user or org is refused outright rather than narrowed). That is a
+boundary, not a hint — do not spend turns trying to widen it.
 
 Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
 survive review.

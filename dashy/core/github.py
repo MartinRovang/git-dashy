@@ -50,7 +50,7 @@ def token():
 
 
 SCOPE = "PRS_API_REPO"  # set on a review's own subprocess: the one repo its `api` command may read
-QUALIFIERS = ("repo:", "user:", "org:")  # search terms that choose WHERE to look, rather than what for
+QUALIFIERS = ("repo:", "user:", "org:", "owner:")  # search terms that choose WHERE to look, not what for
 
 
 def scoped(path, repo):
@@ -86,12 +86,19 @@ def scoped_query(query, repo):
 	model reaches for first — wide open. parse_qsl also turns `+` back into a space, which is how the
 	qualifier in "q=SECRET+user:victim" becomes visible as a term rather than hiding inside one.
 	"""
-	parts = urllib.parse.parse_qsl(query, keep_blank_values=True)
+	parts = urllib.parse.parse_qsl(query)
 	terms = " ".join(v for k, v in parts if k == "q").split()
+	# ponytail: refused, not silently narrowed. The forced repo: ANDs, so a foreign user: would return
+	# nothing anyway — but that is GitHub's query semantics holding the line, not us, and a model that
+	# gets an empty result cannot tell "nobody uses this symbol" from "you asked the wrong question".
 	for t in terms:
 		if t.lower().startswith(QUALIFIERS) and t.lower() != f"repo:{repo}".lower():
 			raise ValueError(f"a review may only search {repo}, so {t} cannot be asked for")
-	terms = [t for t in terms if not t.lower().startswith("repo:")] + [f"repo:{repo}"]
+	terms = [t for t in terms if not t.lower().startswith("repo:")]
+	if not terms:
+		# ponytail: a qualifier on its own is a 422 from GitHub, which reads as the scoping being broken.
+		raise ValueError("a code search needs something to search for, not just a repo")
+	terms += [f"repo:{repo}"]
 	return urllib.parse.urlencode([("q", " ".join(terms))] + [(k, v) for k, v in parts if k != "q"])
 
 

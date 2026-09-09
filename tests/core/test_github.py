@@ -370,3 +370,19 @@ def test_scoped_forces_the_repo_into_a_code_search():
 def test_an_unscoped_call_is_a_person_at_a_terminal():
 	"""`gitdashy api /user/repos` typed by hand is not the threat, and refusing it teaches a workaround."""
 	assert github.scoped("/user/repos", "") == "/user/repos"
+
+
+def test_a_search_needs_something_to_search_for():
+	"""ponytail: stripping the caller's repo: could leave the query empty, and a qualifier on its own is
+	a 422 from GitHub — which reads as the scoping being broken rather than as a malformed question."""
+	for empty in ("/search/code?q=", "/search/code", "/search/code?q=repo:acme/api"):
+		with pytest.raises(ValueError, match="something to search for"):
+			github.scoped(empty, "acme/api")
+
+
+def test_owner_is_a_placing_qualifier_too():
+	"""ponytail: no leak today — the forced repo: ANDs, so this returns nothing rather than someone
+	else's code. It is one string in a list that exists for exactly this, and the next syntax GitHub
+	adds is the one nobody re-derives the AND argument for."""
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped("/search/code?q=x+owner:victim", "acme/api")

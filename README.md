@@ -458,7 +458,8 @@ and its diff pasted into the prompt (a diff over 200k characters is cut) — the
 with any more. Claude alone can read further: it is allowed exactly one command, `gitdashy api <path>`, a
 read-only GET against the GitHub API that returns files decoded, which is how a deep review reaches the
 code around the diff. That command is confined to the repo being reviewed — a path outside it is
-refused, and a code search is answered for that repo whatever it asks for. The confinement is set on the
+refused, and a code search is narrowed to that repo (one naming another repo, user or org is refused
+outright rather than narrowed). The confinement is set on the
 review's own subprocess rather than written into its prompt, because the prompt is the part an untrusted
 diff gets to influence. `--effort` carries over to OpenRouter as the
 model's reasoning budget (`xhigh` and `max` collapse onto `high`, since OpenRouter stops there): leave
