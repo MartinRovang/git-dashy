@@ -1395,7 +1395,9 @@ def _new_team(scr, state, sel):
 	if not name:
 		return
 	desc = ask(scr, state, sel, " One line: what is this team for? (shared with everyone who joins)")
-	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or a path to keep it somewhere else)")
+	# ponytail: EMPTY, said in the prompt. "a path to keep it somewhere else" read as "where is the project",
+	# and the answer was the parent of every checkout on the machine — which start() then adopted wholesale.
+	at = ask(scr, state, sel, f" Where? (blank = {knowledge.tilde(config.TEAMS)}, or an EMPTY directory to keep the checkout in)")
 	if err := team.start(name, desc, at):
 		return confirm(scr, state, sel, f" {err}  [any key]") and None
 	state.wake.set()

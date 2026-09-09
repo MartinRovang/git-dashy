@@ -249,7 +249,10 @@ gitdashy teams --join git@somewhere:us/mem.git
 Checkouts live in `~/.prs_teams/<key>/` (`PRS_TEAMS` overrides), one per team. **The key is the name you
 gave it, fixed at creation; the location is separate and changeable** — an origin-derived key does not exist
 until a team is hosted, so bindings would have gone dead at exactly the moment a team got a URL. Its name and
-description live in `team.json` inside it, so everyone who clones it sees the same ones.
+description live in `team.json` inside it, so everyone who clones it sees the same ones. `--at DIR` (or the
+*Where?* prompt) links the key to an **empty** directory, or one that does not exist yet. A directory that
+already holds something is refused: a team's checkout is a place for the team's files, and the alternative was
+adopting whatever was there — once, the parent of every project on the machine, committed as thirty gitlinks.
 
 **You can be in several at once.** Which team applies to a repo is `gitdashy bind` (or `b` on any row), and
 that decides everything: the brief its reviews read, the facts they see, and whether a fact about it may be
@@ -285,12 +288,17 @@ If your own memory directory is itself a git repo, gitdashy pushes it too — so
 you between machines without ever passing through the team. The header's `Knowledge` group shows
 `team org/review-team`, or the last git error in red.
 
-The `T` prompt takes `owner/name` (cloned over https with your token, and offered for creation if it
-does not exist), a
-**local path**, or a **git URL** — `https://…` and `git@…` both clone with plain `git`. Remote prompts are
-disabled and the clone is bounded, so a repo your credentials cannot reach fails with an error on the header
-instead of hanging the dashboard on an invisible password prompt. Pressing `T` while already in a team offers
-to leave it, which refuses while the checkout still holds reviews it has not pushed.
+`a` (or `--join`) takes `owner/name` (cloned over https with your token), a **git URL** — `https://…` and
+`git@…` both clone with plain `git` — or a **local path**, which must be a *bare* repo, because git refuses
+pushes into a checkout. So a team on a shared drive is `git init --bare /srv/shared/mem.git`, then `--connect`
+from the machine that started it and `--join` from everyone else. Joining a repo that is already one of your
+teams is refused whatever you call it, and a repo with no `team.json` gets one on the first join, so the next
+person lands on the same key. `--connect` refuses a remote that already holds history that is not the team's
+— that is a team to join — and accepts one that holds the team's own, so moving hosts still works. Remote
+prompts are disabled and every clone, fetch and pull is bounded, so a repo your credentials cannot reach fails
+with an error on the header instead of hanging the dashboard on an invisible password prompt; a pull that
+cannot rebase is aborted rather than left in progress. `x` leaves a team, and refuses while the checkout
+still holds work it has not pushed.
 
 The whole model — every store, promotion rule and discard rule — is written up in
 [`docs/memory.md`](docs/memory.md).
@@ -312,6 +320,17 @@ separates them under a header for each.
 Joining a team binds the repos already named in its shared review log — once, so nothing you had
 yesterday disappears — and after that it is yours to change; `--forget` sticks. `gitdashy bind --list`
 shows every binding, and the detail pane names the brief a review of the selected PR will get.
+
+**What a team covers travels with it.** `gitdashy teams --team KEY --cover neomedsys` (an owner, or
+`acme/api` for one repo) records the claim in the team's `team.json` and binds it here. Someone **joining**
+the team gets what it declares seeded into their own bindings once, exactly as the log is — it shows in
+`bind --list`, and a `--forget` still sticks. A claim added *after* they joined is not bound on their
+machine on its own: it is listed by `gitdashy teams`, and taken with `bind --owner`. What a repo's reviews
+read, and where its facts may be pooled, is not something a push to the team repo gets to decide for
+someone else. `--uncover` withdraws a claim, and rows it already seeded stay each person's to change.
+A claim two joined teams both make is left alone rather than guessed at. `gitdashy teams` lists what each
+declares. `gitdashy setup` writes the brief of the team the repo you run it in is bound to, and says so —
+yours when it is bound to none.
 
 Selection is **declared**, deliberately. The alternative was to infer it from the shared review log, the
 way memory visibility is decided. That is wrong for a brief: a log entry is a side effect of reviewing

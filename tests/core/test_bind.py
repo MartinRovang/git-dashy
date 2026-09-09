@@ -121,7 +121,7 @@ def test_the_cli_never_reads_a_flags_value_as_the_repo(monkeypatch, tmp_path):
 	from dashy.core import team
 	monkeypatch.setattr(team, "activate", lambda: None)
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/api")  # the repo we are standing in
-	monkeypatch.setattr(bind, "team_key", lambda: "org-mem")
+	a_team(monkeypatch, tmp_path, "org-mem")  # ponytail: a real joined team — the CLI refuses a --team it is not in
 	cli.bind(["gitdashy", "bind", "--team", "org-mem"])
 	assert bind.bindings() == {"acme/api": "org-mem"}  # the cwd repo, not the flag's value
 	# and an explicit positional still wins over the directory we happen to be in
@@ -221,11 +221,12 @@ def test_a_repo_bound_to_a_team_we_are_not_in_discloses_nothing(monkeypatch, tmp
 
 
 def test_a_team_slug_is_matched_however_it_is_typed(monkeypatch, tmp_path):
-	"""Repo keys fold because they are typed. A --team slug is typed too."""
+	"""Repo keys fold because they are typed. A --team slug is typed too — and stored as the KEY it
+	names, so every label downstream shows the one spelling the directory has."""
 	_estate(monkeypatch, tmp_path)                    # team.NAME == "org-mem"
 	bind.bind("acme/api", "Org-Mem")
 	assert bind.team_dir("Org-Mem")                   # not "not in team Org-Mem" about the team we are in
-	assert [l for l, _ in memory.sources("acme/api")] == ["mine", "team Org-Mem"]
+	assert [l for l, _ in memory.sources("acme/api")] == ["mine", "team org-mem"]
 	assert memory.team_visible("acme/api")
 
 
@@ -266,3 +267,31 @@ def test_a_caller_that_already_resolved_a_repo_is_believed(monkeypatch, tmp_path
 	assert memory.brief("acme/api", "") == ("Mine.", "yours · acme/api is bound to no team")
 	bind.forget("acme/api")
 	assert memory.brief("acme/api", "org-mem") == ("The team's.", "team org-mem")  # the argument wins
+
+
+def test_a_binding_stores_the_key_however_the_team_was_typed(tmp_path):
+	"""`bind --owner neomedsys --team NeoMedSys_team` was accepted, reported success and resolved to
+	nothing: only case was folded, and "neomedsys_team" is not the key "neomedsys-team"."""
+	assert bind.bind_owner("neomedsys", "NeoMedSys_team") == ""
+	assert bind.owners() == {"neomedsys": "neomedsys-team"}
+	assert bind.bind("acme/api", "Acme Mem") == ""
+	assert bind.of("acme/api") == "acme-mem"
+	assert "needs a team" in bind.bind("acme/api", "///")
+
+
+def test_a_coverage_target_is_an_owner_or_a_repo_and_nothing_else():
+	assert bind.target("acme") == ("owner", "acme")
+	assert bind.target("Acme/*") == ("owner", "acme")
+	assert bind.target("acme/api") == ("repo", "acme/api")
+	assert bind.target("acme/api/pull/1") == ("", "")
+	assert bind.target("*") == ("", "")
+	assert bind.target("") == ("", "")
+
+
+def test_seeding_owners_skips_what_was_ever_named(tmp_path):
+	assert bind.seed_owners("org-t", ["acme", "beta"]) == ["acme", "beta"]
+	assert bind.owners() == {"acme": "org-t", "beta": "org-t"}
+	assert bind.forget_owner("acme") == ""
+	assert bind.seed_owners("org-t", ["acme", "beta", "gamma/*"]) == ["gamma"]   # a tombstone sticks
+	assert bind.owners() == {"beta": "org-t", "gamma": "org-t"}
+	assert bind.seed_owners("org-other", ["beta"]) == []                           # never re-pointed

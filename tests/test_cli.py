@@ -416,6 +416,49 @@ def test_drafts_count_says_nothing_for_a_repo_it_cannot_name(monkeypatch, capsys
 	assert capsys.readouterr().out == ""
 
 
+def test_bind_refuses_a_team_this_machine_has_not_joined(monkeypatch, tmp_path):
+	"""A typo in --team bound the org to nothing and said it had worked."""
+	from dashy.core import bind
+	monkeypatch.setattr(team, "activate", lambda: None)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	(tmp_path / "teams" / "neomedsys-team" / ".git").mkdir(parents=True)
+	with pytest.raises(SystemExit) as e:
+		cli.bind(["gitdashy", "bind", "--owner", "neomedsys", "--team", "neomedsys-tean"])
+	assert "not in team" in str(e.value) and "neomedsys-team" in str(e.value)
+	assert bind.owners() == {}
+	cli.bind(["gitdashy", "bind", "--owner", "neomedsys", "--team", "NeoMedSys_Team"])  # a spelling of one we ARE in
+	assert bind.owners() == {"neomedsys": "neomedsys-team"}
+
+
+def bind_owners_now():
+	from dashy.core import bind
+	return dict(bind.owners())
+
+
+def test_teams_cover_declares_in_the_team_and_the_listing_says_so(monkeypatch, capsys, tmp_path):
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Platform") == ""
+	cli.teams(["gitdashy", "teams", "--team", "platform", "--cover", "neomedsys"])
+	out = capsys.readouterr().out
+	assert "platform now covers neomedsys/*" in out
+	assert team.covers("platform") == ["neomedsys/*"]
+	assert "declares: neomedsys/*" in out          # the listing after it
+	before = bind_owners_now()
+	with pytest.raises(SystemExit) as e:
+		cli.teams(["gitdashy", "teams", "--team", "nope", "--cover", "acme"])
+	assert "not in team" in str(e.value) and "nope" in str(e.value)
+	# ponytail: and the STORE is untouched. The check used to run after bind_owner had already appended
+	# {"owner": "acme", "team": "nope"}, so a typo left a live rule pointing at a team nobody holds —
+	# the silently-wrong-team bug the bind resolver exists to kill, one verb over, plus a dirty store.
+	from dashy.core import bind
+	assert before == bind.owners() and "acme" not in bind.owners()
+	cli.teams(["gitdashy", "teams", "--team", "platform", "--uncover", "neomedsys/*"])
+	assert "no longer covers neomedsys/*" in capsys.readouterr().out
+	assert team.covers("platform") == []
+
+
 def test_debug_writes_log_file(monkeypatch, tmp_path, capsys):
 	"""--debug: a swallowed exception lands in the file with its traceback; a crash lands there AND on stderr."""
 	path = tmp_path / "dbg.log"

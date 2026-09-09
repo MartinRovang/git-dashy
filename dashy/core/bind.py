@@ -62,8 +62,9 @@ def owner_key(s):
 
 
 def _entries():
-	"""(repos, owners, touched) — live repo→team, live owner→team, and every repo any line has named."""
-	repos, owners, touched = {}, {}, set()
+	"""(repos, owners, touched, named) — live repo→team, live owner→team, every repo any line has named,
+	and every owner any line has named."""
+	repos, owners, touched, named = {}, {}, set(), set()
 	for line in _read().splitlines():
 		if not line.strip():
 			continue
@@ -75,6 +76,7 @@ def _entries():
 			o = e.get("owner") if "owner" in e else e.get("forget_owner")
 			if not isinstance(o, str) or not (o := owner_key(o)):
 				continue
+			named.add(o)
 			if "forget_owner" in e:
 				owners.pop(o, None)
 			elif isinstance(e.get("team"), str) and e["team"]:
@@ -88,7 +90,7 @@ def _entries():
 			repos.pop(repo, None)
 		elif isinstance(e.get("team"), str) and e["team"]:
 			repos[repo] = e["team"]
-	return repos, owners, touched
+	return repos, owners, touched, named
 
 
 def bindings():
@@ -109,7 +111,7 @@ def _pick(entry, repo):
 	binding first, then an explicit unbind (which beats a pattern — the one repo in an org that is not
 	the project has to be excludable), then the owner rule.
 	"""
-	repos, owners_, touched = entry
+	repos, owners_, touched, _ = entry
 	if not (r := key(repo)):
 		return "", ""
 	if r in repos:
@@ -163,10 +165,16 @@ def _append(entry):
 
 
 def bind(repo, to):
-	"""Bind `repo` to team `to`. Returns "" or why it did not."""
+	"""Bind `repo` to team `to`. Returns "" or why it did not.
+
+	ponytail: `to` is folded to its KEY, here and in bind_owner — the same way `repo` is folded to its
+	key above, and for the same reason: this is the store a person types into. `--team NeoMedSys_team`
+	was stored verbatim, reported success and resolved to nothing, because the resolver folds case and
+	"neomedsys_team" is not the key "neomedsys-team".
+	"""
 	if not (r := key(repo)):
 		return f"{repo!r} is not an owner/name"
-	if not to:
+	if not (to := team.key_of(to)):
 		return "a binding needs a team"
 	if bindings().get(r) == to:
 		return ""  # already what was asked for; appending it again buys nothing
@@ -196,7 +204,7 @@ def excluded():
 	facts" would have no answer on any surface. A tombstone that nothing displays is the same silent
 	selection this whole store exists to remove.
 	"""
-	repos, owners_, touched = _entries()
+	repos, owners_, touched, _ = _entries()
 	return sorted(r for r in touched if r not in repos and r.split("/")[0] in owners_)
 
 
@@ -204,7 +212,7 @@ def bind_owner(owner, to):
 	"""Bind every repo under `owner` to team `to`. Returns "" or why it did not."""
 	if not (o := owner_key(owner)):
 		return f"{owner!r} is not an owner"
-	if not to:
+	if not (to := team.key_of(to)):
 		return "a binding needs a team"
 	if owners().get(o) == to:
 		return ""
@@ -216,6 +224,39 @@ def forget_owner(owner):
 	if not (o := owner_key(owner)):
 		return f"{owner!r} is not an owner"
 	return _append({"forget_owner": o})
+
+
+def target(s):
+	"""What a coverage target names: ("owner", "acme") for "acme" or "acme/*", ("repo", "acme/api"), or ("", "")."""
+	if o := owner_key(s):
+		return "owner", o
+	if r := key(s):
+		return "repo", r
+	return "", ""
+
+
+def cover_key(s):
+	"""`s` as a team writes it in `covers`: "acme/*" for an owner, "acme/api" for a repo, "" for anything else."""
+	kind, t = target(s)
+	return (t + "/*" if kind == "owner" else t) if kind else ""
+
+
+def seed_owners(to, owners_):
+	"""Bind every owner in `owners_` that has never been bound or unbound, to `to`. Returns what it wrote.
+
+	ponytail: the owner-rule half of seed(), fed by what a team declares it covers. Same contract: a
+	tombstone, or a rule already there — to ANY team — is never re-pointed, so what a joiner changed by
+	hand stays changed. "acme" and "acme/*" are both accepted, as bind_owner accepts them.
+	"""
+	if not to:
+		return []
+	named = _entries()[3]
+	wrote = []
+	for o in owners_:
+		if (o := owner_key(o)) and o not in named and not _append({"owner": o, "team": to}):
+			named.add(o)
+			wrote.append(o)
+	return wrote
 
 
 def seed(to, repos):

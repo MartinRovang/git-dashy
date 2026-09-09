@@ -257,7 +257,8 @@ The diff is cached on the PR's head sha, so a push invalidates it and nothing el
 ## 4a. Several teams
 
 ```
-~/.prs_teams/<owner>__<name>/     one checkout per team; the directory name IS the slug
+~/.prs_teams/<key>/               one checkout per team; the directory name IS the key
+    team.json                      name, description, and what it declares it covers
     memory/{general,<repo>,project}.md
     memory/pool/<user>/*.md
     reviewed.jsonl                 that team's shared review log
@@ -301,7 +302,34 @@ gitdashy teams --new "Acme" --at /srv/shared/acme-mem     # kept elsewhere, link
 gitdashy bind --owner neomedsys --team neomedsys-platform # add repos to it
 gitdashy teams --team neomedsys-platform --connect git@somewhere:us/mem.git   # when you have a repo
 gitdashy teams --join git@somewhere:us/mem.git            # a colleague, from any host
+gitdashy teams --team neomedsys-platform --cover neomedsys   # declared in the team: joiners get it bound
 ```
+
+`--at` takes an **empty** directory, or one that does not exist yet; one that already holds something is
+refused rather than adopted. A path given to `--join` must be a **bare** repo — git refuses pushes into a
+checkout — so a team on a shared drive is `git init --bare` there, `--connect` from one machine and `--join`
+from the rest. `--join` refuses a repo that is already one of your teams, and writes a `team.json` into a
+repo that has none, so everyone keys it the same way. `--connect` refuses a remote holding history that is
+not this team's (that is a team to join) and accepts one holding the team's own, so a host can be moved.
+
+**What a team covers is declared in it.** `covers` in `team.json` lists owners (`acme/*`) and repos
+(`acme/api`). Bindings stay per machine: the declaration seeds, it does not own, so a `--forget` sticks
+and `--uncover` leaves what it seeded in place.
+
+**Adoption happens at `setup()` — joining — and nowhere else.** Not in `activate()`, which runs on every
+command and every launch. Seeding there meant a `covers` line pushed to the team repo *after* you joined
+bound owner-wide rules on your machine with no keypress and nothing that said so. A binding decides which
+brief a review reads **and** whether facts about those repos may be pooled and shared into that team, so
+anyone who could push to the team could reach repos it has never held a fact about. The log seeding beside
+it is disclosure-neutral by construction; a claim is not. Joining is the consent; a claim that appears
+later is listed by `gitdashy teams` and taken with `bind --owner`, which is a keypress. *Automate promotion
+where being wrong costs only you. Require a keypress where it costs other people.*
+
+Repo claims are seeded for **every** team before any owner rule, because the store resolves an exact
+binding ahead of an owner rule and seeding has to deliver the same order — per team, one team's `acme/*`
+was written first and another team's `acme/api` was then skipped as already resolved, so which team won a
+contested repo came down to the alphabetical order of team names. A target two joined teams both claim is
+left alone rather than guessed at, exactly as a repo in two logs is.
 
 `T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
 
