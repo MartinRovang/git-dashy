@@ -189,3 +189,17 @@ def test_local_backend_is_sent_no_reasoning_field(monkeypatch):
 	monkeypatch.setattr(config, "EFFORT", "low")
 	llm.ask("p", "local:qwen3")
 	assert "reasoning" not in json.loads(seen[0].data)
+
+
+def test_ask_without_an_env_leaves_the_child_environment_alone(monkeypatch):
+	"""ponytail: only ever exercised incidentally. `env=None` must pass None, not an empty dict — a dict
+	would be a REPLACEMENT environment, and the child would lose PATH and the token with it."""
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen["env"] = kw.get("env", "absent")
+		return Result(json.dumps({"result": "ok"}))
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	llm.ask("hi", "sonnet")
+	assert seen["env"] is None
+	llm.ask("hi", "sonnet", env={"PRS_API_REPO": "a/b"})
+	assert seen["env"]["PRS_API_REPO"] == "a/b" and "PATH" in seen["env"]
