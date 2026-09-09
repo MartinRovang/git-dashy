@@ -1283,7 +1283,9 @@ def test_t_names_the_team_it_is_about_to_delete(screen, monkeypatch, st, tmp_pat
 	screen.getch, screen.timeout = _keys(ord("2"), ord("x"), 27), lambda t: None   # 2 = org-two, then leave
 	ui.team_setup(screen, st, 0)
 	assert left == ["org-two"]
-	assert "team org-two" in prompts[0] and "are deleted" in prompts[0]   # and what leaving removes
+	# ponytail: the consequence, not the path — asking() clips the tail, so what leaving DOES has to be
+	# at the front. A long checkout path used to push it off the line entirely.
+	assert "org-two" in prompts[0] and "DELETES its files" in prompts[0]
 
 
 def test_no_function_has_code_after_it_returns():
@@ -2188,3 +2190,21 @@ def test_origin_url_asks_git_only_when_dot_git_is_a_file(monkeypatch, tmp_path):
 	# and a plain directory with no .git at all asks nothing
 	asked.clear()
 	assert team.origin_url(str(tmp_path / "nothing")) == "" and asked == []
+
+
+def test_the_cover_question_keeps_its_answer_keys_at_eighty_columns(monkeypatch, st, tmp_path):
+	"""confirm() draws through draw(prompt=…), which clips at w-1, and the tail is what it loses — on a
+	question that is the answer keys. Clipping the team name alone was not enough: the fixed words plus
+	a name plus an owner pass 79 on their own, and a long owner passes it whatever the name is clipped
+	to. Measured against the real screen here, because counting characters by hand is what missed it."""
+	from conftest import FakeScr
+	from dashy.core import team
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	_two_teams(monkeypatch, tmp_path)
+	assert team.write_info("acme-tools", "NeoMedSys Platform", "") == ""
+	for owner in ("neomedsys", "a-very-long-github-organisation-name-xy"):
+		scr = FakeScr(h=30, w=80)
+		scr.getch, scr.timeout = _keys(ord("n")), lambda t: None
+		ui._cover(scr, st, 0, "acme-tools", owner)
+		assert "[y/n]" in scr.text(), f"the answer keys fell off the line for {owner!r}"
+		assert "covers" in scr.text() and owner[:12] in scr.text()

@@ -1096,6 +1096,22 @@ def add_reviewer(scr, state, sel, pr):
 		state.wake.set()  # refetch so the new reviewer shows on the row
 
 
+def asking(scr, text, keep=" [y/n]"):
+	"""`text` + `keep`, clipped so the END survives the prompt line. For any question built from data.
+
+	ponytail: draw() clips a prompt at w - 1, and what it drops is the TAIL — which on a question is the
+	answer keys. A prompt carrying a team name and an owner, or a path, passes 79 columns on its own, so
+	the reader gets a question with no visible way to answer it. Clipping one interpolated value was not
+	enough: a long GitHub org blows any fixed budget whatever the name is cut to, and no wording of the
+	sentence survives the worst case — measured, all five candidates were over.
+	ponytail: measured against THIS screen rather than a constant. team.FOOTER is 66 because the footer
+	is wrapped and clipped differently; a second hand-counted number would be the same defect again, and
+	hand-counting is exactly what let this through twice.
+	"""
+	room = max(len(keep) + 12, scr.getmaxyx()[1] - 1)
+	return text + keep if len(text) + len(keep) <= room else text[:room - len(keep) - 1] + "…" + keep
+
+
 def confirm(scr, state, sel, question):
 	"""Draw the question in the footer and block for y/n."""
 	draw(scr, state, sel, prompt=question)
@@ -1384,11 +1400,12 @@ def _cover(scr, state, sel, key, owner):
 	and the direction to fail in. The other order publishes a claim over owner/* to everyone who joins
 	while nothing is bound on the machine that asked for it.
 	"""
-	# ponytail: CLIPPED, like every other drawn team name. _clean allows 120 characters and this line
-	# has to end in [y/n] inside team.FOOTER — a long name pushed the answer keys off the end, which is
-	# a question with no visible way to answer it.
-	name = team.info(key)["name"][:28]
-	if not confirm(scr, state, sel, f" {name} covers {owner}/* — here, and for everyone who joins? [y/n]"):
+	# ponytail: through asking(), which bounds the whole line against the real screen. Clipping the NAME
+	# alone left this at 80 columns for an 18-character name and lost the closing bracket; the shortest
+	# wording still ran to 105 for a long org. The name is cut first so the question survives intact,
+	# and asking() is the backstop that makes the answer keys unloseable.
+	name = team.info(key)["name"][:24]
+	if not confirm(scr, state, sel, asking(scr, f" {name} covers {owner}/*, for everyone who joins?")):
 		return
 	# ponytail: the LOCAL rule first. It is the cheap, reversible half; team.cover writes and pushes. In
 	# the other order a failure to write ~/.prs_bindings left the team having published a claim over
@@ -1459,10 +1476,13 @@ def _join_team(scr, state, sel, current=None):
 def _leave_team(scr, state, sel, key):
 	"""Drop one team's checkout, having said which one and what that removes. True when it left."""
 	d = team.dir_of(key)
-	where = (f"the checkout at {knowledge.tilde(os.path.realpath(d))} is kept"
-	         if os.path.islink(d) else f"files in {d} are deleted")
 	# ponytail: names WHICH team and what goes. This prompt is the last thing anyone reads before files go.
-	if not confirm(scr, state, sel, f" team {key} · {where} · leave it? [y/n]"):
+	# ponytail: the CONSEQUENCE first, the path last. asking() bounds this line the same way — `where`
+	# carried a full path and could push the answer keys off — but a bound clips the TAIL, and with the
+	# path first the clip ate the words that say files are deleted. On the one prompt in this program
+	# that destroys something, what must survive is what it destroys; the path can be cut.
+	what = ("removes only the link, your checkout is kept" if os.path.islink(d) else "DELETES its files")
+	if not confirm(scr, state, sel, asking(scr, f" leave {key}? it {what} — {knowledge.tilde(os.path.realpath(d))}")):
 		return False
 	if err := knowledge.leave(key):
 		confirm(scr, state, sel, f" {err}  [any key]")
