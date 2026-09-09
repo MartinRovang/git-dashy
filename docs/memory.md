@@ -313,11 +313,23 @@ repo that has none, so everyone keys it the same way. `--connect` refuses a remo
 not this team's (that is a team to join) and accepts one holding the team's own, so a host can be moved.
 
 **What a team covers is declared in it.** `covers` in `team.json` lists owners (`acme/*`) and repos
-(`acme/api`). `activate()` seeds them into the local bindings the same way it seeds from the log — once,
-skipping anything ever bound or unbound here, and skipping a claim two joined teams both make. Bindings stay
-per machine: the declaration seeds, it does not own, so a `--forget` sticks and `--uncover` leaves what it
-seeded in place. A claim is a disclosure decision for everyone who joins, which is why it is its own verb
-with its own keypress rather than a side effect of binding locally.
+(`acme/api`). Bindings stay per machine: the declaration seeds, it does not own, so a `--forget` sticks
+and `--uncover` leaves what it seeded in place.
+
+**Adoption happens at `setup()` — joining — and nowhere else.** Not in `activate()`, which runs on every
+command and every launch. Seeding there meant a `covers` line pushed to the team repo *after* you joined
+bound owner-wide rules on your machine with no keypress and nothing that said so. A binding decides which
+brief a review reads **and** whether facts about those repos may be pooled and shared into that team, so
+anyone who could push to the team could reach repos it has never held a fact about. The log seeding beside
+it is disclosure-neutral by construction; a claim is not. Joining is the consent; a claim that appears
+later is listed by `gitdashy teams` and taken with `bind --owner`, which is a keypress. *Automate promotion
+where being wrong costs only you. Require a keypress where it costs other people.*
+
+Repo claims are seeded for **every** team before any owner rule, because the store resolves an exact
+binding ahead of an owner rule and seeding has to deliver the same order — per team, one team's `acme/*`
+was written first and another team's `acme/api` was then skipped as already resolved, so which team won a
+contested repo came down to the alphabetical order of team names. A target two joined teams both claim is
+left alone rather than guessed at, exactly as a repo in two logs is.
 
 `T` in the dashboard does the same: `n` start one, `a` join one, `c` connect a remote, `x` leave one.
 

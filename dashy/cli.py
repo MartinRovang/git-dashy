@@ -109,9 +109,12 @@ teams lists the teams this machine has joined, what each calls itself, and what 
   as a convenience, nothing more). It takes its key from the team's own name, and writes one in when
   the repo has none, so the next person lands on the same key. A path must be a BARE repo — git
   refuses pushes into a checkout — so a team on a shared drive is `git init --bare` there, then --connect.
-  --cover TARGET declares, in the team, that it covers an owner ("acme", "acme/*") or an owner/name.
-  Everyone who joins gets that seeded into their own bindings once, exactly as the review log is —
-  visible in `bind --list`, and a --forget still sticks. --uncover withdraws the declaration; rows it
+  --cover TARGET declares, in the team, that it covers an owner ("acme", "acme/*") or an owner/name,
+  and binds it here. Someone JOINING the team gets what it declares seeded into their own bindings
+  once, the way the review log is — visible in `bind --list`, and a --forget still sticks. A claim
+  added after they joined is NOT bound on their machine on its own: it is listed here, and taken with
+  `bind --owner`, because what a repo's reviews read and where its facts may be pooled is not something
+  a push to the team repo gets to decide for someone else. --uncover withdraws the declaration; rows it
   already seeded stay each person's to change. --leave drops one checkout, refusing while it holds
   unpushed work. Several teams at once; which one applies to a repo is `gitdashy bind`.
 
@@ -500,9 +503,14 @@ def teams(argv):
 		print(f"gitdashy: {key} now pushes to {url}")
 	elif target := arg("--cover", "", str, argv):
 		key = _which_team(argv)
-		if err := team.cover(key, target):
+		# ponytail: declared in the team AND bound here. The local rule is the cheap, reversible half and
+		# goes first: a declaration that published while the binding failed is a rule that works only on
+		# other people's machines, which is the one outcome this pair must not produce.
+		kind, t = bind_mod.target(target)
+		if err := (bind_mod.bind_owner(t, key) if kind == "owner" else bind_mod.bind(t, key) if kind else
+		           f"{target!r} is not an owner or an owner/name") or team.cover(key, target):
 			raise SystemExit("gitdashy: " + err)
-		print(f"gitdashy: {key} now covers {bind_mod.cover_key(target)}  (everyone who joins gets it bound once)"
+		print(f"gitdashy: {key} now covers {bind_mod.cover_key(target)}  (bound here, and everyone who joins gets it once)"
 		      + (f"  ({team.ERROR})" if team.ERROR else ""))
 	elif target := arg("--uncover", "", str, argv):
 		key = _which_team(argv)
