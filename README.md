@@ -130,7 +130,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one — `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave — `n` start one, `a` join one (see Team) |
+| `T` | teams: `1-8` open one — `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave — `n` start one, `a` join one. With one team joined the verbs work from the list (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
 

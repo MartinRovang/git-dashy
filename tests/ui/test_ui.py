@@ -1,4 +1,5 @@
 import os
+import subprocess
 import time
 
 import pytest
@@ -2023,9 +2024,12 @@ def test_t_o_covers_an_owner_from_the_teams_screen(screen, monkeypatch, st, tmp_
 	pr = _two_teams(monkeypatch, tmp_path)
 	asked = []
 	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: asked.append(prompt) or True)
+	# ponytail: o ASKS now, with the selected row's owner offered as the default; blank takes it.
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: asked.append(prompt) or "")
 	screen.getch, screen.timeout = _keys(ord("2"), ord("o"), 27, 27), lambda t: None
 	ui.team_setup(screen, st, 0, pr)                           # 2 = neomedsys-platform
-	assert "neomedsys/*" in asked[0]
+	assert any("[neomedsys]" in p for p in asked)              # the default is shown
+	assert any("neomedsys/*" in p for p in asked)
 	assert team.covers("neomedsys-platform") == ["neomedsys/*"] and bind.owners() == {"neomedsys": "neomedsys-platform"}
 	# with no row selected it asks for the owner instead
 	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme")
@@ -2046,3 +2050,84 @@ def test_t_letters_act_on_the_only_team_without_picking_it(screen, monkeypatch, 
 	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
 	ui.team_setup(screen, st, 0)
 	assert team.info("only-one")["description"] == "now described"
+
+
+def test_the_team_panels_spawn_no_process_per_redraw(screen, monkeypatch, st, tmp_path):
+	"""getch here inherits main's 50-500ms timeout, so both loops redraw several times a second, once
+	per joined team. `git remote get-url` on that path is the waste has_remote's own comment names, and
+	it does not go through _remote, so its 60s timeout is unbounded from a draw loop."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	spawned = []
+	monkeypatch.setattr(team, "_url", lambda p: spawned.append(p) or "")
+	screen.getch, screen.timeout = _keys(ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, None)
+	assert spawned == []
+	# and it still reads the URL that is actually there
+	remote = tmp_path / "r.git"
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+	assert team.connect("acme-tools", str(remote)) == ""
+	assert team.origin_url(team.dir_of("acme-tools")) == str(remote)
+	assert team.origin_url(str(tmp_path / "nothing")) == ""
+
+
+def test_a_password_in_a_remote_never_reaches_the_panel():
+	"""bare_url covers only http(s), and host_of needs a dot — so ssh://u:pw@host and a token against a
+	dotless host both printed verbatim, one on each branch."""
+	for url in ("https://x:tok@localhost/o/r.git", "ssh://u:pw@host/o/r", "https://x:tok@github.com/o/r.git"):
+		assert "tok" not in ui._remote_label(url) and "pw" not in ui._remote_label(url), url
+		assert "tok" not in ui._remote_label(url, full=True) and "pw" not in ui._remote_label(url, full=True), url
+	assert ui._remote_label("ssh://u:pw@host/o/r", full=True) == "ssh://host/o/r"
+	assert ui._remote_label("git@github.com:o/r.git") == "o/r"          # nothing to strip, nothing lost
+
+
+def test_cover_binds_here_before_it_publishes(screen, monkeypatch, st, tmp_path):
+	"""team.cover writes AND pushes. If the local rule then fails, the team has published a claim over
+	owner/* for everyone who joins while nothing is bound on the machine that asked for it."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui.bind, "bind_owner", lambda o, k: "~/.prs_bindings is not writable")
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	st.wake.clear()
+	ui._cover(screen, st, 0, "acme-tools", "neomedsys")
+	assert any("not writable" in p for p in said)
+	assert team.covers("acme-tools") == []          # nothing published on a half-failure
+	assert not st.wake.is_set()
+
+
+def test_o_offers_the_rows_owner_as_a_default_and_takes_another(screen, monkeypatch, st, tmp_path):
+	from dashy.core import team
+	pr = _two_teams(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: True)
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "")      # blank takes the default
+	screen.getch, screen.timeout = _keys(ord("1"), ord("o"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, pr)
+	assert team.covers("acme-tools") == ["neomedsys/*"]
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "someone-else")
+	screen.getch = _keys(ord("1"), ord("o"), 27, 27)
+	ui.team_setup(screen, st, 0, pr)
+	assert team.covers("acme-tools") == ["neomedsys/*", "someone-else/*"]
+
+
+def test_joining_lands_on_the_team_it_just_joined(screen, monkeypatch, st, tmp_path):
+	"""Claimed in the body and untested, including the re-join case where nothing new appeared."""
+	from dashy.core import team
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "somewhere/acme.git")
+	def fake_setup(repo, name=""):
+		(tmp_path / "teams" / "acme" / ".git").mkdir(parents=True, exist_ok=True)
+		(tmp_path / "teams" / "acme" / "memory").mkdir(parents=True, exist_ok=True)
+		return ""
+	monkeypatch.setattr(ui.team, "setup", fake_setup)
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, 27, 27), lambda t: None
+	ui._join_team(screen, st, 0)
+	assert "lives at" in seen[0] and "acme" in seen[0]      # the team's screen, not the list
+	# joining one you are already in adds nothing, so there is no screen to land on
+	seen.clear()
+	screen.getch = _keys_seen(screen, seen, 27)
+	ui._join_team(screen, st, 0)
+	assert not seen or "lives at" not in seen[0]

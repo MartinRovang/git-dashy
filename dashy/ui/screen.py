@@ -1339,8 +1339,13 @@ def _remote_label(url, full=False):
 	ponytail: the host alone read as "github" and answered nothing — which repo is the question. A
 	credential in an https URL is stripped before it is drawn, as every message in team.py strips it.
 	"""
+	# ponytail: redacted BEFORE either branch. bare_url covers only http(s), so `ssh://u:pw@host/o/r`
+	# printed its password on both; and `https://x:tok@localhost/o/r` has no dot in the host, so host_of
+	# answered "" and the token went to the list through tilde(). A credential is not an error detail
+	# and it is not a display detail either.
+	url = team.redacted(url)
 	if full:
-		return team.bare_url(url) or url
+		return url
 	return team.slug_of(url) if team.host_of(url) else knowledge.tilde(url)
 
 
@@ -1383,7 +1388,11 @@ def _cover(scr, state, sel, key, owner):
 	# ponytail: under team.FOOTER, or the [y/n] falls off an 80-column footer.
 	if not confirm(scr, state, sel, f" {name} covers {owner}/* — here, and for everyone who joins? [y/n]"):
 		return
-	if err := team.cover(key, owner) or bind.bind_owner(owner, key):
+	# ponytail: the LOCAL rule first. It is the cheap, reversible half; team.cover writes and pushes. In
+	# the other order a failure to write ~/.prs_bindings left the team having published a claim over
+	# owner/* for everyone who joins while nothing was bound on the machine that asked for it — the
+	# "rule that works only elsewhere" this pair exists to prevent.
+	if err := bind.bind_owner(owner, key) or team.cover(key, owner):
 		return confirm(scr, state, sel, f" {err}  [any key]") and None
 	state.wake.set()
 
@@ -1502,6 +1511,35 @@ def bind_screen(scr, state, sel, pr):
 			state.wake.set()
 
 
+def _team_verb(scr, state, sel, key, k, current):
+	"""One team verb by keypress. True when the team is gone and its screen must close.
+
+	ponytail: ONE dispatch, called from a team's own screen and from the list when only one team is
+	joined. Written twice, the two drift, and the list's copy is the one nobody looks at.
+	"""
+	if k == ord("e"):
+		_edit_brief(scr, state, sel, key)
+	elif k == ord("d"):
+		_describe_team(scr, state, sel, key)
+	elif k == ord("c"):
+		_connect_team(scr, state, sel, key)
+	elif k == ord("o"):
+		# ponytail: the selected row's owner is the DEFAULT, not the only answer. Taking it outright made
+		# the fast path the whole path — there was then no way to cover a second owner from a team's own
+		# screen without going to a shell.
+		if owner := _ask_owner(scr, state, sel, _owner_of(current)):
+			_cover(scr, state, sel, key, owner)
+	elif k == ord("x"):
+		return _leave_team(scr, state, sel, key)
+	return False
+
+
+def _ask_owner(scr, state, sel, default=""):
+	"""Which owner to cover. Blank takes `default` — the selected row's owner — when there is one."""
+	said = ask(scr, state, sel, f" Cover which owner?" + (f" [{default}]" if default else " (e.g. neomedsys):"))
+	return bind.owner_key(said) or (default if not said else "")
+
+
 def _team_screen(scr, state, sel, key, current=None):
 	"""One team: what it has, then the verbs for it. Every write here is about THIS team, named in the title.
 
@@ -1513,9 +1551,12 @@ def _team_screen(scr, state, sel, key, current=None):
 		if not (d := team.dir_of(key)):
 			return
 		it = team.info(key)
-		url = team._url(d)
-		mine = sorted(o + "/*" for o, t in bind.owners().items() if t == key)
-		repos = [r for r, t in bind.bindings().items() if t == key]
+		url = team.origin_url(d)  # ponytail: reads .git/config; this loop redraws several times a second
+		# ponytail: both sides folded. A binding's team is stored through key_of and a directory name is
+		# not, so comparing them raw made a team's own rules invisible on its screen for any key whose
+		# spelling differed. Everywhere else in this codebase folds both sides.
+		mine = sorted(o + "/*" for o, t in bind.owners().items() if t.lower() == key.lower())
+		repos = [r for r, t in bind.bindings().items() if t.lower() == key.lower()]
 		here = ", ".join(mine[:3]) + (f" +{len(mine) - 3}" if len(mine) > 3 else "")
 		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x)
 		# ponytail: a VALUE, never a value with an instruction stapled to it. "nothing — o covers an
@@ -1533,21 +1574,10 @@ def _team_screen(scr, state, sel, key, current=None):
 		panel(scr, f"{it['name']}  ({key})", lines,
 		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")
 		k = scr.getch()
-		if k == ord("e"):
-			_edit_brief(scr, state, sel, key)
-		elif k == ord("d"):
-			_describe_team(scr, state, sel, key)
-		elif k == ord("c"):
-			_connect_team(scr, state, sel, key)
-		elif k == ord("o"):
-			owner = _owner_of(current) or bind.owner_key(ask(scr, state, sel, " Cover which owner? (e.g. neomedsys):"))
-			if owner:
-				_cover(scr, state, sel, key, owner)
-		elif k == ord("x"):
-			if _leave_team(scr, state, sel, key):
-				return
-		elif k in (27, ord("q")):
+		if k in (27, ord("q")):
 			return
+		if _team_verb(scr, state, sel, key, k, current):
+			return  # ponytail: it left; there is no team screen to come back to
 
 
 def team_setup(scr, state, sel, current=None):
@@ -1560,11 +1590,14 @@ def team_setup(scr, state, sel, current=None):
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
-		rows = [(f"{i + 1}  {team.info(s)['name']}", _remote_label(u) if (u := team._url(team.dir_of(s))) else "no remote yet")
+		rows = [(f"{i + 1}  {team.info(s)['name']}", _remote_label(u) if (u := team.origin_url(team.dir_of(s))) else "no remote yet")
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
-		      ("[1-8] open   " if len(joined) > 1 else "[1] open   " if joined else "") + "[n] start   [a] join   [esc] close")
+		      # ponytail: the footer is where a key's meaning lives, so with one team joined it names the
+		      # verbs that work from here rather than hiding five keys that are live.
+		      ("[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  " if len(joined) == 1 else
+		       "[1-8] open   " if joined else "") + "[n] start   [a] join   [esc] close")
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel, current)
@@ -1572,20 +1605,12 @@ def team_setup(scr, state, sel, current=None):
 			_join_team(scr, state, sel, current)
 		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
 			_team_screen(scr, state, sel, joined[k - ord("1")], current)
-		elif len(joined) == 1 and k in (ord("e"), ord("d"), ord("c"), ord("o"), ord("x")):
-			only = joined[0]
-			if k == ord("e"):
-				_edit_brief(scr, state, sel, only)
-			elif k == ord("d"):
-				_describe_team(scr, state, sel, only)
-			elif k == ord("c"):
-				_connect_team(scr, state, sel, only)
-			elif k == ord("o"):
-				owner = _owner_of(current) or bind.owner_key(ask(scr, state, sel, " Cover which owner? (e.g. neomedsys):"))
-				if owner:
-					_cover(scr, state, sel, only, owner)
-			elif k == ord("x"):
-				_leave_team(scr, state, sel, only)
+		elif len(joined) == 1:
+			# ponytail: one team is the common case, and making it press 1 first would be ceremony. The
+			# same dispatch the team screen uses, so the two cannot drift apart.
+			_team_verb(scr, state, sel, joined[0], k, current)
+			if k in (27, ord("q")):
+				return
 		elif k in (27, ord("q")):
 			return
 
