@@ -428,6 +428,11 @@ def test_bind_refuses_a_team_this_machine_has_not_joined(monkeypatch, tmp_path):
 	assert bind.owners() == {"neomedsys": "neomedsys-team"}
 
 
+def bind_owners_now():
+	from dashy.core import bind
+	return dict(bind.owners())
+
+
 def test_teams_cover_declares_in_the_team_and_the_listing_says_so(monkeypatch, capsys, tmp_path):
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
@@ -438,9 +443,15 @@ def test_teams_cover_declares_in_the_team_and_the_listing_says_so(monkeypatch, c
 	assert "platform now covers neomedsys/*" in out
 	assert team.covers("platform") == ["neomedsys/*"]
 	assert "declares: neomedsys/*" in out          # the listing after it
+	before = bind_owners_now()
 	with pytest.raises(SystemExit) as e:
 		cli.teams(["gitdashy", "teams", "--team", "nope", "--cover", "acme"])
-	assert "not in nope" in str(e.value)
+	assert "not in team" in str(e.value) and "nope" in str(e.value)
+	# ponytail: and the STORE is untouched. The check used to run after bind_owner had already appended
+	# {"owner": "acme", "team": "nope"}, so a typo left a live rule pointing at a team nobody holds —
+	# the silently-wrong-team bug the bind resolver exists to kill, one verb over, plus a dirty store.
+	from dashy.core import bind
+	assert before == bind.owners() and "acme" not in bind.owners()
 	cli.teams(["gitdashy", "teams", "--team", "platform", "--uncover", "neomedsys/*"])
 	assert "no longer covers neomedsys/*" in capsys.readouterr().out
 	assert team.covers("platform") == []

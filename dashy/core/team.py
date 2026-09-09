@@ -156,8 +156,12 @@ def init_history(d):
 	return is_repo(d)
 
 
-def _pull(d, label):
+def _pull(d, label, *ref):
 	"""`pull --rebase`, and never leave a rebase behind. True when it merged. Caller holds _lock.
+
+	ponytail: `ref` is an explicit refspec for connect(), which runs before any upstream is set —
+	`remote add` does not set one, so a bare `pull --rebase` there fails on "no tracking information"
+	rather than on anything about the history. Same function either way: the abort is the point.
 
 	ponytail: team.json is JSON, not append-only, so it is not union-merged — two people describing the
 	team at once conflict. A pull that stopped mid-rebase STAYED that way: every later pull and push
@@ -165,22 +169,9 @@ def _pull(d, label):
 	`git rebase --abort` by hand. Aborting puts HEAD back on the local commit with a clean tree, so
 	nothing is lost and the next tick starts from a state git can work with.
 	"""
-	if _note(_git("pull", "--rebase", "-q", cwd=d), label):
+	if _note(_git("pull", "--rebase", "-q", *ref, cwd=d), label):
 		return True
 	_git("rebase", "--abort", cwd=d)  # ponytail: a no-op when none is in progress; ERROR keeps the pull's reason
-	return False
-
-
-def _pull_from(d, branch, label):
-	"""`pull --rebase origin BRANCH`, aborting any rebase it leaves. Caller holds _lock.
-
-	ponytail: an explicit refspec, because connect() runs before any upstream is set — `remote add`
-	does not set one, so a bare `pull --rebase` there fails on "no tracking information" rather than
-	on anything about the history.
-	"""
-	if _note(_git("pull", "--rebase", "-q", "origin", branch, cwd=d), label):
-		return True
-	_git("rebase", "--abort", cwd=d)
 	return False
 
 
@@ -302,9 +293,17 @@ def key_of(name):
 
 
 def _info_raw(key):
-	"""team.json as a dict, {} when it is missing, unreadable, or not an object."""
+	"""team.json as a dict, {} when it is missing, unreadable, or not an object.
+
+	ponytail: no checkout, no file. os.path.join("", "team.json") is "team.json" — a RELATIVE path — so
+	a key this machine has not joined read whatever team.json happened to be in the working directory.
+	Harmless while info() was the only caller; covers() and write_info() come through here now, and one
+	of them decides what gets bound on this machine.
+	"""
+	if not (d := dir_of(key)):
+		return {}
 	try:
-		with open(os.path.join(dir_of(key), INFO)) as f:
+		with open(os.path.join(d, INFO)) as f:
 			got = json.load(f)
 		return got if isinstance(got, dict) else {}
 	except (OSError, ValueError):
@@ -366,7 +365,10 @@ def write_info(key, name, description, covers_=None):
 	if not (d := dir_of(key)):
 		return f"not in {key}"
 	body = {"name": name or key, "description": description or ""}
-	kept = _info_raw(key).get("covers") if covers_ is None else covers_
+	# ponytail: through covers(), not the raw list. team.json arrives in a clone, and copying the raw
+	# value back out meant a junk entry someone else pushed survived a rename untouched — the one write
+	# that reads the file and rewrites it whole is the write that must not launder it.
+	kept = covers(key) if covers_ is None else covers_
 	if kept:
 		body["covers"] = kept
 	try:
@@ -386,6 +388,10 @@ def _declare(key, target, add):
 	if not (d := dir_of(key)):
 		return f"not in {key}"
 	now = covers(key)
+	# ponytail: `now` is the VALIDATED list, so a claim someone else pushed that is not an owner or an
+	# owner/name is dropped by any --cover from here. That is deliberate — an entry the resolver could
+	# never match is not a claim, it is noise — but it does mean the list can shrink from a machine that
+	# only asked to add one thing, which is worth knowing before you go looking for what removed it.
 	if (t in now) == add:
 		return ""  # already what was asked for
 	it = info(key)
@@ -834,9 +840,7 @@ def connect(key, url):
 		f = _git("fetch", "-q", "--prune", "origin", cwd=d)
 		foreign = f.returncode == 0 and _foreign(d)
 	if f.returncode != 0 or foreign:
-		# ponytail: taken back out. Half-connected — origin set, nothing pushed — was the state that
-		# showed the hint forever; a refusal leaves the team exactly as it was before the question.
-		_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
+		_unset(d, had)
 		if foreign:
 			# ponytail: through bare_url, like every other message that names a remote. A token in the
 			# URL is a legitimate remote and this was a NEW message that skipped the chokepoint.
@@ -850,8 +854,8 @@ def connect(key, url):
 	branch = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=d).stdout.strip() or BRANCH
 	if _git("rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}", cwd=d).returncode == 0:
 		with _lock:
-			if not _pull_from(d, branch, "join"):
-				_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
+			if not _pull(d, "join", "origin", branch):
+				_unset(d, had)
 				return f"connected, but could not merge what is already there: {ERROR}" if ERROR else "could not merge what is already there"
 	if err := push_dir(d, "gitdashy: connect " + key, "join"):
 		return err
@@ -863,6 +867,13 @@ def connect(key, url):
 		if not _note(_git("push", "-q", "-u", "origin", "HEAD", cwd=d), "join"):
 			return f"connected, but the push failed: {ERROR}" if ERROR else "connected, but the push failed"
 	return ""
+
+
+def _unset(d, had):
+	"""Put origin back to `had`, or remove it. ponytail: taken back out on every refusal in connect() —
+	half-connected, origin set and nothing pushed, is the state that showed a git hint on the row
+	forever, and it is not what the team looked like before the question was asked."""
+	_git("remote", "set-url", "origin", had, cwd=d) if had else _git("remote", "remove", "origin", cwd=d)
 
 
 def _foreign(d):
