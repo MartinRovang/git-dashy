@@ -1210,7 +1210,7 @@ def drafts_screen(scr, state, sel):
 		draw(scr, state, sel, prompt=" ")
 		panel(scr, f"waiting  ·  {i + 1}/{len(items)}",
 		      [(repo or "general", mark), *([(f"team: {team_of}", "")] if team_of else []), ("", ""), *body],
-		      "[t] make it a fact   [x] drop it   [j/k] move   [esc] close")
+		      "[t] fact  [x] drop  [s] scan for repeats  [j/k] move  [esc] close")
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN):
 			i += 1
@@ -1223,6 +1223,62 @@ def drafts_screen(scr, state, sel):
 		elif k == ord("x"):
 			memory.drop(repo, fact)
 			team.push_dir(config.MEMORY_DIR, f"memory: dropped a draft for {repo or 'general'}", "mine")
+		elif k == ord("s"):
+			overlap_screen(scr, state, sel)
+			i = 0  # ponytail: the list is shorter now, and the old index pointed into the old one
+		elif k in (27, ord("q")):
+			return
+
+
+def overlap_screen(scr, state, sel):
+	"""Drafts that may be one fact worded twice: y folds them, n says they are different.
+
+	ponytail: the gate compares token SEQUENCES, so the same fact in another word order is never folded
+	and both rows sit one review short of promotion forever — no later review joins them, because it
+	matches one wording or the other. The scan compares content words as a SET, which finds them, and a
+	person decides, because a set overlap is evidence and not a judgement.
+	ponytail: whether folding EARNS a count is memory.merge's to answer, not this screen's — it sums only
+	when the two rows name different reviews. The panel says which case it is, so a keypress is never a
+	promotion you did not know you were making.
+	"""
+	pairs = memory.overlaps()
+	if not pairs:
+		confirm(scr, state, sel, " no two drafts look like one fact — nothing to fold  [any key]")
+		return
+	i = 0
+	while i < len(pairs):
+		repo, ratio, a, b = pairs[i]
+		# ponytail: re-read, because a fold earlier in this run may have consumed one of these rows —
+		# the pair list was computed before any of them. A stale pair would write a fact from a draft
+		# that is no longer there.
+		# ponytail: the LIVE rows, not the ones overlaps() returned. A fold earlier in this run changes
+		# the survivor's ids, so the snapshot said "origin unknown · folds to 1×" for a pair the file
+		# had already made two independent reviews — and the fold then promoted and pushed to the pool.
+		# A panel that describes a keypress has to describe the keypress that will happen.
+		live = {r[2]: r for r in memory.drafts(repo)}
+		if a[2] not in live or b[2] not in live:
+			i += 1
+			continue
+		a, b = live[a[2]], live[b[2]]
+		# ponytail: ASKED, not recomputed. These two lines were character-for-character memory.merge's
+		# own arithmetic, so a change to the rule would have left the panel promising one thing while
+		# the fold did another — on the one action here that can make a fact.
+		would, says = memory.would_merge(a, b)
+		mark = f"{says} · folds to {would}×" + (" · becomes a fact" if would >= memory.PROMOTE_AT else "")
+		body = [("A", ""), *[(l, "") for l in textwrap.wrap(a[2], 60)], ("", ""),
+		        ("B", ""), *[(l, "") for l in textwrap.wrap(b[2], 60)]]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"same fact?  ·  {i + 1}/{len(pairs)}",
+		      [(repo or "general", mark), ("", ""), *body],
+		      "[y] one fact, keep A   [b] keep B   [n] different   [esc] stop")
+		k = scr.getch()
+		if k in (ord("y"), ord("b")):
+			memory.merge(repo, a if k == ord("y") else b, b if k == ord("y") else a)
+			team.push_dir(config.MEMORY_DIR, f"memory: folded two drafts for {repo or 'general'}", "mine")
+			team.push(f"memory: evidence for {repo or 'general'}")  # ponytail: a fold can promote, which pools
+			i += 1
+		elif k == ord("n"):
+			i += 1
 		elif k in (27, ord("q")):
 			return
 
