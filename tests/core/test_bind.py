@@ -295,3 +295,17 @@ def test_seeding_owners_skips_what_was_ever_named(tmp_path):
 	assert bind.seed_owners("org-t", ["acme", "beta", "gamma/*"]) == ["gamma"]   # a tombstone sticks
 	assert bind.owners() == {"beta": "org-t", "gamma": "org-t"}
 	assert bind.seed_owners("org-other", ["beta"]) == []                           # never re-pointed
+
+
+def test_undecided_is_what_a_team_claims_and_this_machine_has_not_answered(tmp_path):
+	"""A claim arriving after you joined is neither bound nor refused here. That set is the only thing
+	worth putting to a person; everything else has already been decided once."""
+	assert bind.undecided(["acme", "beta/tool"]) == ["acme", "beta/tool"]
+	assert bind.bind_owner("acme", "org-t") == ""
+	assert bind.undecided(["acme", "beta/tool"]) == ["beta/tool"]      # bound: decided
+	assert bind.forget("beta/tool") == ""
+	assert bind.undecided(["acme", "beta/tool"]) == []                  # refused: also decided, and it sticks
+	# a claim bound to ANOTHER team is decided too — it is not this team's to ask about again
+	assert bind.bind("gamma/x", "org-other") == ""
+	assert bind.undecided(["gamma/x"]) == []
+	assert bind.undecided(["not-an-owner/a/b", ""]) == []               # nothing the resolver could match

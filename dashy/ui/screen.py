@@ -1627,6 +1627,41 @@ def _ask_owner(scr, state, sel, default=""):
 	return ""
 
 
+def _used_for(key):
+	"""What reviews use team `key` for, from this machine's bindings. "" when nothing is bound to it."""
+	# ponytail: both sides folded. A binding's team is stored through key_of and a directory name is not,
+	# so comparing them raw made a team's own rules invisible on its own screen.
+	owners_ = sorted(o + "/*" for o, t in bind.owners().items() if t.lower() == key.lower())
+	repos = [r for r, t in bind.bindings().items() if t.lower() == key.lower()]
+	head = ", ".join(owners_[:3]) + (f" +{len(owners_) - 3}" if len(owners_) > 3 else "")
+	tail = f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else ""
+	return " · ".join(x for x in (head, tail) if x)
+
+
+def _ask_new_claims(scr, state, sel, key):
+	"""Offer each claim the team has added since this machine last answered. One y/n, then it is settled.
+
+	ponytail: this replaces a row. A claim pushed to the team after you joined does not bind itself —
+	someone else's push must not reroute your reviews — so it used to sit on the panel as a second list
+	to compare against the first. Nobody could read that. Asked at the moment you open the team, it is a
+	sentence with two answers and no vocabulary.
+	ponytail: NO writes a tombstone, the same one an unbind writes. A decline that left no trace would
+	ask again on the next open, and a prompt that repeats is a prompt people learn to dismiss.
+	"""
+	for t in bind.undecided(team.covers(key)):
+		name = team.info(key)["name"][:24]
+		if confirm(scr, state, sel, asking(scr, f" {name} now covers {t} — use it here too?")):
+			kind, v = bind.target(t)
+			err = bind.bind_owner(v, key) if kind == "owner" else bind.bind(v, key)
+		else:
+			kind, v = bind.target(t)
+			err = bind.forget_owner(v) if kind == "owner" else bind.forget(v)
+		if err:
+			confirm(scr, state, sel, f" {err}  [any key]")
+			return
+		state.wake.set()
+
+
 def _team_screen(scr, state, sel, key, current=None):
 	"""One team: what it has, then the verbs for it. Every write here is about THIS team, named in the title.
 
@@ -1634,6 +1669,7 @@ def _team_screen(scr, state, sel, key, current=None):
 	key. Showing the team first — where it lives, whether it has a remote, what it declares and what is
 	bound here — is what makes the verbs safe to offer: you see what you are about to change.
 	"""
+	_ask_new_claims(scr, state, sel, key)
 	while True:
 		if not (d := team.dir_of(key)):
 			return
@@ -1642,24 +1678,22 @@ def _team_screen(scr, state, sel, key, current=None):
 		# ponytail: both sides folded. A binding's team is stored through key_of and a directory name is
 		# not, so comparing them raw made a team's own rules invisible on its screen for any key whose
 		# spelling differed. Everywhere else in this codebase folds both sides.
-		mine = sorted(o + "/*" for o, t in bind.owners().items() if t.lower() == key.lower())
-		repos = [r for r, t in bind.bindings().items() if t.lower() == key.lower()]
-		here = ", ".join(mine[:3]) + (f" +{len(mine) - 3}" if len(mine) > 3 else "")
-		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x)
+		used = _used_for(key)
 		# ponytail: a VALUE, never a value with an instruction stapled to it. "nothing — o covers an
 		# owner" read as though "o covers an owner" were part of the answer, and the reader has to parse
 		# a sentence to learn the row is empty. The footer already says what every key does; an empty
 		# row says "nothing yet" and nothing more.
-		# ponytail: the labels SAY THE SCOPE, because that is the whole difference between the last two
-		# rows and nothing on screen carried it. "declares" and "here" were words I invented: one is the
-		# team's own claim, which travels to everyone who joins, and the other is what is bound on this
-		# machine — and a reader had no way to tell which was which, or that they could differ. A label
-		# that needs explaining twice is the wrong label, not a reader who did not read carefully.
+		# ponytail: ONE row for coverage. There were two — what the team declares, and what is bound
+		# here — because that is how the feature is BUILT: the team keeps a copy so joiners inherit it,
+		# this machine keeps the one that actually routes reviews. They are the same list in every
+		# normal case, and putting both on screen made a reader compare two identical lines and ask what
+		# the difference was. It took five explanations and still did not land, which is a design
+		# answer, not a wording one. The copy is plumbing; `o` writes both, so they stay in step, and
+		# the one case that needs a person is asked as a question instead of shown as a state.
 		lines = [("what it is for", it["description"] or "nothing yet"),
 		         ("checkout", knowledge.tilde(os.path.realpath(d))),
 		         ("git remote", team.redacted(url) if url else "none yet"),
-		         ("everyone who joins gets", ", ".join(team.covers(key)) or "nothing yet"),
-		         ("bound on this machine", here or "nothing yet")]
+		         ("used for", used or "nothing yet")]
 		draw(scr, state, sel, prompt=" ")
 		# ponytail: each key says what it DOES, and the whole line stays under the 70 columns an
 		# 80-column terminal leaves once panel() has taken its border and padding.

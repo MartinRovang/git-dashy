@@ -243,17 +243,25 @@ one. Opening a team shows what it has before offering anything:
 │  what it is for                                        The NMS project  │
 │  checkout                                       ~/.prs_teams/neomedsys  │
 │  git remote                                                   none yet  │
-│  everyone who joins gets                                   neomedsys/*  │
-│  bound on this machine                          neomedsys/* · 12 repos  │
+│  used for                                       neomedsys/* · 12 repos  │
 │                                                                         │
 │  [e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back  │
 ╰─────────────────────────────────────────────────────────────────────────╯
 ```
 
-The last two rows are the ones worth reading twice. **everyone who joins gets** is what the team declares
-about itself, in its own `team.json` — it travels, so a colleague who joins is given those bindings once.
-**bound on this machine** is your own `~/.prs_bindings`. They can differ, deliberately: seeding happens
-once and never re-points what you have changed, so an unbind of yours sticks.
+**used for** is the whole of it: the repos whose reviews read this team's brief and facts. `o` adds an
+owner or a repo to it, here and in the team, so everyone who joins later starts with the same list.
+
+You are never asked to compare that list against anything. When a colleague adds coverage after you
+joined, gitdashy asks once, when you open the team:
+
+```
+ NeoMedSys now covers acme/* — use it here too? [y/n]
+```
+
+Either answer settles it and it is not asked again — *no* writes the same tombstone an unbind does. The
+question exists because someone else's push must not silently reroute your reviews; it is a question
+rather than a second list on screen because a list you have to diff against another is not readable.
 
 `n` starts a team with a name and a line about it, **no remote and nothing hosted anywhere**, under
 `~/.prs_teams`; started from a PR row it offers to cover that row's owner straight away. `a` joins one that
