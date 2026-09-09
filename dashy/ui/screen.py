@@ -1333,19 +1333,17 @@ def pre_review(scr, state, sel, pr):
 		state.start_self_review(pr)
 
 
-def _remote_label(url, full=False):
-	"""What to show for a team's remote: the whole thing on its screen, owner/name on the list.
+def _remote_label(url):
+	"""owner/name for a team's remote on the LIST, or the path when it is one. Never a credential.
 
-	ponytail: the host alone read as "github" and answered nothing — which repo is the question. A
-	credential in an https URL is stripped before it is drawn, as every message in team.py strips it.
+	ponytail: the host alone read as "github" and answered nothing — which repo is the question.
+	ponytail: redacted first. bare_url covers only http(s), so `ssh://u:pw@host/o/r` printed its
+	password; and `https://x:tok@localhost/o/r` has no dot in the host, so host_of answered "" and the
+	token went to the list through tilde(). A credential is not an error detail and not a display one.
+	ponytail: the team SCREEN calls team.redacted directly — the whole remote is the answer there, and
+	a flag on this function to return its own argument was a function pretending to have two jobs.
 	"""
-	# ponytail: redacted BEFORE either branch. bare_url covers only http(s), so `ssh://u:pw@host/o/r`
-	# printed its password on both; and `https://x:tok@localhost/o/r` has no dot in the host, so host_of
-	# answered "" and the token went to the list through tilde(). A credential is not an error detail
-	# and it is not a display detail either.
 	url = team.redacted(url)
-	if full:
-		return url
 	return team.slug_of(url) if team.host_of(url) else knowledge.tilde(url)
 
 
@@ -1380,12 +1378,16 @@ def _cover(scr, state, sel, key, owner):
 	"""Cover `owner`/* with team `key`: bound here, and declared in the team for everyone who joins.
 
 	ponytail: one y/n that says what it discloses — every repo under the owner, on every member's
-	machine, reads this team's brief and facts, and facts about them may be shared here. Both writes
-	happen or neither: the local rule is what the person asked for, the declaration is what makes it
-	reach a colleague, and a team.json nobody bound to locally would be a rule that works only elsewhere.
+	machine, reads this team's brief and facts, and facts about them may be shared here.
+	ponytail: the LOCAL rule first, because it is the cheap reversible half. If the declaration then
+	fails the binding stands, which is a rule that works here and has not been announced — recoverable,
+	and the direction to fail in. The other order publishes a claim over owner/* to everyone who joins
+	while nothing is bound on the machine that asked for it.
 	"""
-	name = team.info(key)["name"]
-	# ponytail: under team.FOOTER, or the [y/n] falls off an 80-column footer.
+	# ponytail: CLIPPED, like every other drawn team name. _clean allows 120 characters and this line
+	# has to end in [y/n] inside team.FOOTER — a long name pushed the answer keys off the end, which is
+	# a question with no visible way to answer it.
+	name = team.info(key)["name"][:28]
 	if not confirm(scr, state, sel, f" {name} covers {owner}/* — here, and for everyone who joins? [y/n]"):
 		return
 	# ponytail: the LOCAL rule first. It is the cheap, reversible half; team.cover writes and pushes. In
@@ -1405,7 +1407,10 @@ def _connect_team(scr, state, sel, key):
 	if err := team.connect(key, url):
 		confirm(scr, state, sel, f" {err}  [any key]")
 	else:
-		confirm(scr, state, sel, f" {key} now pushes to {url}  [any key]")
+		# ponytail: redacted, like every remote this program draws. The acknowledgement echoed the URL
+		# exactly as typed, credential and all, which is the one place a person is most likely to have
+		# just pasted one.
+		confirm(scr, state, sel, f" {key} now pushes to {team.redacted(url)}  [any key]")
 
 
 def _edit_brief(scr, state, sel, key):
@@ -1535,9 +1540,19 @@ def _team_verb(scr, state, sel, key, k, current):
 
 
 def _ask_owner(scr, state, sel, default=""):
-	"""Which owner to cover. Blank takes `default` — the selected row's owner — when there is one."""
-	said = ask(scr, state, sel, f" Cover which owner?" + (f" [{default}]" if default else " (e.g. neomedsys):"))
-	return bind.owner_key(said) or (default if not said else "")
+	"""Which owner to cover. Blank takes `default` — the selected row's owner — when there is one.
+
+	ponytail: an answer we cannot read is a TYPO, not a cancel. "acme/api" is a repo, not an owner, and
+	returning "" for it sent the caller back to the screen with nothing said — the same
+	a-mistake-looks-like-changing-your-mind failure the old team picker carried a note about.
+	"""
+	said = ask(scr, state, sel, " Cover which owner?" + (f" [{default}]" if default else " (e.g. neomedsys):"))
+	if not said:
+		return default
+	if owner := bind.owner_key(said):
+		return owner
+	confirm(scr, state, sel, f" {said!r} is not an owner — an owner is one name, like neomedsys  [any key]")
+	return ""
 
 
 def _team_screen(scr, state, sel, key, current=None):
@@ -1565,7 +1580,7 @@ def _team_screen(scr, state, sel, key, current=None):
 		# row says "nothing yet" and nothing more.
 		lines = [("what", it["description"] or "nothing yet"),
 		         ("lives at", knowledge.tilde(os.path.realpath(d))),
-		         ("remote", _remote_label(url, full=True) if url else "none yet"),
+		         ("remote", team.redacted(url) if url else "none yet"),
 		         ("declares", ", ".join(team.covers(key)) or "nothing yet"),
 		         ("here", here or "nothing yet")]
 		draw(scr, state, sel, prompt=" ")
@@ -1596,8 +1611,13 @@ def team_setup(scr, state, sel, current=None):
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
 		      # ponytail: the footer is where a key's meaning lives, so with one team joined it names the
 		      # verbs that work from here rather than hiding five keys that are live.
-		      ("[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  " if len(joined) == 1 else
-		       "[1-8] open   " if joined else "") + "[n] start   [a] join   [esc] close")
+		      # ponytail: and it FITS. panel() clamps inner to w - 4 and draws the footer at inner - 6, so
+		      # 70 columns is all an 80-column terminal shows: the spaced-out form was 93 and lost [a]
+		      # join and [esc] entirely, on the branch this change is built around. A test draws it at
+		      # w=80 and asserts every key is on screen, because counting characters by hand is how this
+		      # came back. The two-team form is short, so it keeps the roomier spelling.
+		      ("[e]brief [d]desc [c]remote [o]cover [x]leave [n]new [a]join [esc]" if len(joined) == 1 else
+		       ("[1-8] open   " if joined else "") + "[n] start   [a] join   [esc] close"))
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel, current)

@@ -1964,7 +1964,6 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	from dashy.core import team
 	_two_teams(monkeypatch, tmp_path)
 	team.cover("acme-tools", "acme")
-	import subprocess
 	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(tmp_path / "acme-mem.git")], check=True)
 	assert team.connect("acme-tools", str(tmp_path / "acme-mem.git")) == ""
 	seen = []
@@ -1974,7 +1973,7 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	out = seen[1]                                                      # the team's own screen
 	assert "Acme Tools" in out and "acme-tools" in out
 	assert str(tmp_path / "acme-mem.git") in out                      # the WHOLE remote, not its host
-	assert ui._remote_label("https://x:tok@github.com/o/r.git", full=True) == "https://github.com/o/r.git"
+	assert ui.team.redacted("https://x:tok@github.com/o/r.git") == "https://github.com/o/r.git"
 	assert ui._remote_label("git@github.com:o/r.git") == "o/r"       # the list shows owner/name
 	assert "lives at" in out and "remote" in out and "declares" in out and "acme/*" in out
 	assert "[e] brief" in out and "[o] cover" in out and "[x] leave" in out
@@ -2076,8 +2075,8 @@ def test_a_password_in_a_remote_never_reaches_the_panel():
 	dotless host both printed verbatim, one on each branch."""
 	for url in ("https://x:tok@localhost/o/r.git", "ssh://u:pw@host/o/r", "https://x:tok@github.com/o/r.git"):
 		assert "tok" not in ui._remote_label(url) and "pw" not in ui._remote_label(url), url
-		assert "tok" not in ui._remote_label(url, full=True) and "pw" not in ui._remote_label(url, full=True), url
-	assert ui._remote_label("ssh://u:pw@host/o/r", full=True) == "ssh://host/o/r"
+		assert "tok" not in ui.team.redacted(url) and "pw" not in ui.team.redacted(url), url
+	assert ui.team.redacted("ssh://u:pw@host/o/r") == "ssh://host/o/r"
 	assert ui._remote_label("git@github.com:o/r.git") == "o/r"          # nothing to strip, nothing lost
 
 
@@ -2131,3 +2130,61 @@ def test_joining_lands_on_the_team_it_just_joined(screen, monkeypatch, st, tmp_p
 	screen.getch = _keys_seen(screen, seen, 27)
 	ui._join_team(screen, st, 0)
 	assert not seen or "lives at" not in seen[0]
+
+
+def test_the_one_team_footer_survives_eighty_columns(monkeypatch, st, tmp_path):
+	"""panel() clamps inner to w-4 and draws the footer at inner-6, so on an 80-column terminal a
+	93-character footer is cut at 70 and its last two keys never appear — on the branch this whole
+	change is built around, the one team everybody has."""
+	from conftest import FakeScr
+	scr = FakeScr(h=30, w=80)
+	monkeypatch.setattr(ui, "C", lambda n: 0)
+	_two_teams(monkeypatch, tmp_path)
+	from dashy.core import team, knowledge
+	assert knowledge.leave("neomedsys-platform") == ""      # leave one, so the single-team branch draws
+	scr.getch, scr.timeout = _keys(27), lambda t: None
+	ui.team_setup(scr, st, 0, None)
+	out = scr.text()
+	for key in ("[e]", "[d]", "[c]", "[o]", "[x]", "[n]", "[a]", "[esc]"):
+		assert key in out, f"{key} fell off an 80-column footer"
+
+
+def test_o_says_so_when_the_answer_is_not_an_owner(screen, monkeypatch, st, tmp_path):
+	"""_pick_team had a ponytail for exactly this: a typo returning "" looks like a cancel, and the
+	screen just comes back with nothing said."""
+	from dashy.core import team
+	pr = _two_teams(monkeypatch, tmp_path)
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "acme/api")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("1"), ord("o"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0, pr)
+	assert any("not an owner" in p for p in said)
+	assert team.covers("acme-tools") == []
+
+
+def test_connect_never_echoes_the_url_it_was_given(screen, monkeypatch, st, tmp_path):
+	"""Every drawn remote goes through redacted; the acknowledgement echoed what was typed."""
+	_two_teams(monkeypatch, tmp_path)
+	said = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "https://x:ghp_SECRET@host.example/o/r.git")
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	monkeypatch.setattr(ui.team, "connect", lambda key, url: "")
+	ui._connect_team(screen, st, 0, "acme-tools")
+	assert said and "ghp_SECRET" not in said[0] and "host.example/o/r.git" in said[0]
+
+
+def test_origin_url_asks_git_only_when_dot_git_is_a_file(monkeypatch, tmp_path):
+	"""A .git that is a FILE is a worktree or a submodule and its config lives elsewhere. That fallback
+	is the one path here that may spawn a process, and it was untested."""
+	from dashy.core import team
+	linked = tmp_path / "linked"
+	linked.mkdir()
+	(linked / ".git").write_text("gitdir: /somewhere/else\n")
+	asked = []
+	monkeypatch.setattr(team, "_url", lambda p: asked.append(p) or "git@host:o/r.git")
+	assert team.origin_url(str(linked)) == "git@host:o/r.git"
+	assert asked == [str(linked)]
+	# and a plain directory with no .git at all asks nothing
+	asked.clear()
+	assert team.origin_url(str(tmp_path / "nothing")) == "" and asked == []
