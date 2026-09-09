@@ -122,7 +122,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
 | `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
-| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it |
+| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |

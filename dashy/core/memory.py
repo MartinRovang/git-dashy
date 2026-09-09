@@ -23,6 +23,18 @@ SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-revie
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
+# ponytail: what overlaps() offers a person, and a DIFFERENT measure from the gate above on purpose.
+# NEAR is difflib over token SEQUENCES, which is order-sensitive — that is right for folding automatically,
+# where a false match writes a fact nobody said, and it is why "CI reports skipping for the format-check
+# job" and "the format-check job in CI reports skipping" score 0.375 and sit as two rows forever. The scan
+# is the opposite job: recall, with a person as the filter, so it compares CONTENT WORDS AS A SET and word
+# order stops mattering. Measured over 165 real drafts: 2991 pairs the gate had rejected, 2717 of them at
+# zero overlap, and 12 at or above this number — a readable list where most pairs really were one fact.
+# Nothing here promotes on its own; this only decides what is shown.
+OVERLAP = 0.30
+STOP = frozenset("a an the is are was were be been being of to in on for with and or but at by from as it "
+                 "its this that these those there here their our your my we you they them us not no if then "
+                 "than so such can may might will would should must do does did have has had".split())
 
 
 def slug(repo):
@@ -44,7 +56,7 @@ def self_path(repo):
 
 def self_drafts(repo):
 	"""[(count, fact)] a pre-review of your own PR proposed and no real review has confirmed."""
-	return [_parse(l) for l in _read(self_path(repo)).splitlines() if l.strip()]
+	return [_parse(l) for l in _read(self_path(repo)).splitlines() if l.strip()]  # (n, ids, fact)
 
 
 def append_self(repo, text):
@@ -63,10 +75,10 @@ def append_self(repo, text):
 			fresh.append(fact)
 	if not fresh:
 		return []
-	items = self_drafts(repo)
+	items, rid = self_drafts(repo), _rid()
 	for fact in fresh:
-		if not any(_same(t, fact) for _n, t in items):
-			items.append((1, fact))  # ponytail: no count here. One pre-review, or ten, is still one opinion.
+		if not any(_same(t, fact) for _n, _ids, t in items):
+			items.append((1, (rid,), fact))  # ponytail: no count here. One pre-review, or ten, is still one opinion.
 	_history()
 	_rewrite_counted(self_path(repo), items)
 	return fresh
@@ -78,7 +90,7 @@ def _consume_self(repo, fact):
 	ponytail: removed once spent, so a single pre-review cannot keep contributing to fact after fact.
 	"""
 	items = self_drafts(repo)
-	kept = [(n, t) for n, t in items if not _same(t, fact)]
+	kept = [r for r in items if not _same(r[2], fact)]
 	if len(kept) == len(items):
 		return False
 	_rewrite_counted(self_path(repo), kept)
@@ -342,13 +354,40 @@ def _plain(line):
 
 
 def _parse(line):
-	""""- (2) a fact" -> (2, "a fact"). A line with no counter has been seen once.
+	""""- (2) [r:a1b2,r:c3d4] a fact" -> (2, ("a1b2", "c3d4"), "a fact"). Three values, always.
 
 	ponytail: for drafts only. A confirmed fact may legitimately begin "(2) ..." — "- (2) space indexes
 	are 1-based" would otherwise read back without its first two characters, quietly changing what it says.
+	ponytail: the ids say WHICH reviews observed this, and they are the whole reason merge() can be
+	sound. A count with no provenance cannot answer "were these two runs or one run twice", and that is
+	the difference between recovering a promotion the matcher lost and manufacturing one out of one
+	opinion. Every machine's drafts predate this, so a line without them reads as () — unknown origin,
+	which merge() treats as "not proven different" and refuses to sum.
+	ponytail: every id carries an "r:" prefix, so a fact whose own text opens with a bracket cannot be
+	read as provenance. Without it "- (1) [dead] paths are gone" — model-written prose, and four hex
+	characters by coincidence — parsed as review "dead" with its first word EATEN, and two such lines
+	from one review read as two different ids, which is exactly the input `merge` sums. Prose forging
+	the evidence the promotion gate trusts is not a parsing nicety. Every pre-upgrade file is prose in
+	this slot, so this is the common case, not the exotic one.
 	"""
-	m = re.match(r"^-\s*\((\d+)\)\s*(.*)$", line.strip())
-	return (int(m.group(1)), m.group(2).strip()) if m else (1, _plain(line))
+	m = re.match(r"^-\s*\((\d+)\)\s*(?:\[(r:[0-9a-f]{4}(?:,r:[0-9a-f]{4})*)\]\s*)?(.*)$", line.strip())
+	if not m:
+		return 1, (), _plain(line)
+	ids = tuple(i[2:] for i in m.group(2).split(",")) if m.group(2) else ()
+	return int(m.group(1)), ids, m.group(3).strip()
+
+
+def _rid():
+	"""A short id for ONE run of one review. Never stored anywhere but the drafts line it stamps.
+
+	ponytail: generated inside append(), because one call to append IS one review — the id needs to be
+	the same for every observation that review contributed and different from every other review's, and
+	the call boundary already carries exactly that meaning. Passing one in from review.py would put the
+	invariant in the caller, where a second call site can get it wrong.
+	ponytail: a collision reads as "same review", so two runs would refuse to sum rather than sum
+	wrongly. The failure direction is the safe one, which is why four hex digits is enough.
+	"""
+	return os.urandom(2).hex()
 
 
 def _facts(p):
@@ -464,17 +503,116 @@ def already_known(repo, fact):
 
 def drafts(repo):
 	"""[(count, fact)] for one repo's unconfirmed facts."""
-	return [_parse(l) for l in _read(queue_path(repo)).splitlines() if l.strip()]
+	return [_parse(l) for l in _read(queue_path(repo)).splitlines() if l.strip()]  # (n, ids, fact)
 
 
 def _rewrite_counted(p, items):
 	"""Replace a counted file — drafts or pre-review findings.
 
-	ponytail: the "- (n) fact" line format was written out at four call sites. One of them drifting
+	ponytail: the "- (n) [r:id] fact" line format was written out at four call sites. One of them drifting
 	produces a file the other three cannot read back, and _parse would silently read the whole line as
 	the fact with a count of 1.
 	"""
-	_rewrite(p, "".join(f"- ({n}) {t}\n" for n, t in items))
+	_rewrite(p, "".join(f"- ({n}) " + (f"[{','.join('r:' + i for i in ids)}] " if ids else "") + f"{t}\n"
+	                    for n, ids, t in items))
+
+
+def overlaps(repo=None):
+	"""[(repo, ratio, a, b)] — pairs of drafts that may be one fact, worst-matched last. Never writes.
+
+	These are the pairs the promotion matcher looked at and rejected: below NEAR it does not fold them,
+	so each sits as its own row, each one review short of the gate, and no later review will ever join
+	them because it matches one wording or the other. Nothing here decides anything — the pair is put to
+	a person, and merge() is what acts.
+
+	ponytail: within one repo only. Two repos saying a similar thing are two facts about two codebases,
+	and folding them would move a fact to a repo no review of it ever made. `repo` None means EVERY
+	repo, the general drafts included, which are keyed None the way every other reader here keys them.
+	ponytail: pairs, not clusters. Three near-identical drafts are two decisions a person can actually
+	read; one three-way group is a decision about a thing nobody stated. The next scan sees what is left.
+	"""
+	out = []
+	for r in ([repo] if repo is not None else [r for r, _p in _counted_files(QUEUE)]):
+		items = drafts(r)
+		for i, a in enumerate(items):
+			for b in items[i + 1:]:
+				# ponytail: pairs the GATE already folds are not offered — they never coexist as two rows,
+				# so a hit here would be a bug in one of the two measures rather than something to decide.
+				if _same(a[2], b[2]):
+					continue
+				if (ratio := _overlap(a[2], b[2])) >= OVERLAP:
+					out.append((r, ratio, a, b))
+	return sorted(out, key=lambda x: -x[1])
+
+
+def _overlap(a, b):
+	"""How much of two lines' content is the same words, ignoring order and grammar. 0.0 to 1.0."""
+	x, y = {t for t in _toks(a) if t not in STOP}, {t for t in _toks(b) if t not in STOP}
+	return len(x & y) / len(x | y) if x | y else 0.0
+
+
+def _counted_files(sub):
+	"""[(repo, path)] for every counted file under `sub`. `repo` is None for the general one.
+
+	ponytail: one lister. waiting() and overlaps() walked the same directory with the same .md filter,
+	and the filter is not decoration — drafts/ holds the self/ DIRECTORY too, and listdir returns it.
+	"""
+	base = os.path.join(config.MEMORY_DIR, sub)
+	names = sorted(os.listdir(base)) if os.path.isdir(base) else []
+	return [(_repo_of(n), os.path.join(base, n)) for n in names if n.endswith(".md")]
+
+
+def would_merge(keep, drop):
+	"""(count, why) if these two rows were folded. The ONE place the sum-or-max rule lives.
+
+	ponytail: asked by merge() and by the screen that offers the fold, because a panel that recomputes
+	the rule is a panel that can tell you a keypress does one thing while the fold does another — on the
+	one action here that can promote a fact. The UI holds no rules in this codebase; this is how it
+	renders one without owning it.
+	ponytail: SUMMED ONLY when the two rows name different reviews. A count is the whole gate — a fact
+	is yours because two runs found it, not because one run said it twice — and two drafts at (1) are
+	either two reviews the matcher failed to fold, which is a promotion it lost, or one review that
+	worded a thing twice, which is the self-confirmation PROMOTE_AT exists to refuse. Only the ids tell
+	those apart. Unknown origin (a file written before ids existed, or an id collision) is not proven
+	different, so it takes the max: the store gets tidier and nothing is promoted on a guess.
+	"""
+	a, b = set(keep[1]), set(drop[1])
+	if a and b and not (a & b):
+		return keep[0] + drop[0], f"{len(a | b)} reviews"
+	return max(keep[0], drop[0]), "one review, worded twice" if a & b else "origin unknown"
+
+
+def merge(repo, keep, drop):
+	"""Fold draft `drop` into `keep` as one fact. Returns the count the survivor now carries.
+
+	`keep` and `drop` are (count, ids, fact) rows as overlaps() returned them; `keep`'s wording survives.
+
+	ponytail: the rows are looked up in the file rather than trusted from the caller, and a row that is
+	NOT there is a row an earlier fold already consumed — folding it back would resurrect a draft the
+	store has finished with. Returns 0 and writes nothing, rather than falling back to the caller's copy.
+	ponytail: promotion goes through promote(), so a fact that crosses the gate here lands exactly as
+	one promoted by hand does — the already_known guard, the pool write, and the self-review queue
+	cleared. Appending directly left a pre-review row for a now-settled fact sitting in waiting().
+	ponytail: two rows with no ids fold to one row at the max, so two observations become one. That is
+	deliberate and costs nothing: a later real review lands on the survivor and carries it over the gate
+	just as it would have carried either row before the fold.
+	"""
+	items = drafts(repo)
+	keep = next((r for r in items if _is(r[2], keep[2])), None)
+	drop = next((r for r in items if _is(r[2], drop[2])), None)
+	if keep is None or drop is None or keep[2] == drop[2]:
+		return 0
+	rest = [r for r in items if not (_is(r[2], keep[2]) or _is(r[2], drop[2]))]
+	n, _why = would_merge(keep, drop)
+	if n >= PROMOTE_AT:
+		# ponytail: the FACT first, the queue after — the order append() states one screen up. The other
+		# way round, a crash between the two writes loses both observations outright; this way it costs a
+		# duplicate draft beside a fact, which already_known absorbs on the next pass.
+		promote(repo, keep[2])
+		_write_drafts(repo, [r for r in drafts(repo) if not (_is(r[2], keep[2]) or _is(r[2], drop[2]))])
+	else:
+		_write_drafts(repo, rest + [(n, tuple(dict.fromkeys(keep[1] + drop[1])), keep[2])])
+	return n
 
 
 def _write_drafts(repo, items):
@@ -497,26 +635,28 @@ def append(repo, text):
 	for fact in proposed:
 		if not any(_same(fact, t) for t in fresh):
 			fresh.append(fact)
-	items, settled = drafts(repo), known(repo)
+	items, settled, rid = drafts(repo), known(repo), _rid()
 	for fact in fresh:
 		if any(_same(fact, t) for t in settled):
 			continue  # already approved somewhere: proposing it again says nothing new
 		# ponytail: a pre-review of your own PR that found this counts as the other observation — two runs,
 		# one of which did not know the other existed. Consumed, so one pre-review cannot keep paying out.
 		bonus = 1 if _consume_self(repo, fact) else 0
-		for i, (n, t) in enumerate(items):
+		for i, (n, ids, t) in enumerate(items):
 			if _same(t, fact):
-				items[i] = (n + 1 + bonus, t)  # the first wording wins; the count is what carries meaning
+				# ponytail: the first wording wins and the count is what carries meaning; the ids record
+				# WHICH runs are behind that count, so a later merge can tell two runs from one run twice.
+				items[i] = (n + 1 + bonus, tuple(dict.fromkeys(ids + (rid,))), t)
 				break
 		else:
-			items.append((1 + bonus, fact))
-	promoted = [t for n, t in items if n >= PROMOTE_AT]
+			items.append((1 + bonus, (rid,), fact))
+	promoted = [t for n, _ids, t in items if n >= PROMOTE_AT]
 	# ponytail: facts first, drafts after. The other order loses the observation outright if the second
 	# write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
 	for t in promoted:
 		_append_line(path(repo), t)
 		_pool(repo, t)
-	_write_drafts(repo, [(n, t) for n, t in items if n < PROMOTE_AT])
+	_write_drafts(repo, [r for r in items if r[0] < PROMOTE_AT])
 	return promoted
 
 
@@ -562,7 +702,7 @@ def forget(repo, fact):
 	"""Drop one fact from your own memory, and withdraw it as evidence."""
 	_unpool(repo, fact)
 	p = path(repo)
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[1], fact)]
+	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[2], fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
@@ -583,12 +723,8 @@ def waiting():
 	"""
 	out = []
 	for sub, kind in ((QUEUE, "draft"), (SELF, "self")):
-		base = os.path.join(config.MEMORY_DIR, sub)
-		for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-			if not name.endswith(".md"):
-				continue  # ponytail: drafts/ holds the self/ DIRECTORY too, and listdir returns it
-			repo = _repo_of(name)
-			for n, fact in (_parse(l) for l in _read(os.path.join(base, name)).splitlines() if l.strip()):
+		for repo, p in _counted_files(sub):
+			for n, _ids, fact in (_parse(l) for l in _read(p).splitlines() if l.strip()):
 				out.append((repo, n, fact, kind))
 	# ponytail: one fact, one row. append_self only checks known(repo) — the settled facts — not the
 	# drafts queue, so a review and then a pre-review proposing the same line leaves an entry in BOTH.
@@ -611,7 +747,7 @@ def drop(repo, fact):
 	gone = False
 	for p in (queue_path(repo), self_path(repo)):
 		items = [_parse(l) for l in _read(p).splitlines() if l.strip()]
-		kept = [(n, t) for n, t in items if not _is(t, fact)]
+		kept = [r for r in items if not _is(r[2], fact)]
 		if len(kept) != len(items):
 			gone = True
 			_rewrite_counted(p, kept)

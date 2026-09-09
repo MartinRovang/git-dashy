@@ -430,6 +430,37 @@ bootstrap still happens, into a store you can read and take back: `gitdashy bind
 `--list`. A `--forget` leaves a tombstone, so the next startup's seeding does not undo it, and seeding
 skips repos an owner rule already covers rather than pinning them to a team nobody chose repo by repo.
 
+## 4b-2. Two spellings of one fact
+
+The promotion gate compares token **sequences** (`NEAR`, difflib over `_toks`). That is right for folding
+automatically — a false match writes a fact nobody said — but it is order-sensitive, so the same claim
+worded in another order is never folded:
+
+```
+- (1) [r:7a2c] CI reports skipping for the format-check job
+- (1) [r:91cf] the format-check job in CI reports skipping every run     seq 0.375 — two rows, forever
+```
+
+Both sit one review short of the gate, and no later review joins them: it matches one wording or the
+other. `W` then `s` scans for these. The scan compares **content words as a set** (`OVERLAP`, stopwords
+dropped), which is order-insensitive and finds them — measured over 165 real drafts, 2991 pairs the gate
+had rejected, 2717 at zero overlap, 12 at or above 0.30. A person decides each pair; nothing folds on its own.
+
+**Folding earns a count only across different reviews.** Each observation records which review made it —
+`- (2) [r:7a2c,r:91cf] the fact` — because two drafts at `(1)` are either two reviews the matcher failed to
+fold, which is a promotion it lost, or *one* review that worded a thing twice, which is the
+self-confirmation `PROMOTE_AT` exists to refuse. Only the ids tell those apart:
+
+| the two rows | folding gives |
+|---|---|
+| different review ids | the sum — the count was earned, and it may promote |
+| the same review id | the max — one opinion stays one opinion |
+| no ids (written before this, or an id collision) | the max — unknown origin is not proven different |
+
+The id is generated inside `append()`, because one call to `append` **is** one review. A collision reads
+as "same review", so the failure direction refuses to sum rather than summing wrongly. Files written
+before ids existed still parse, with `()` for provenance.
+
 ## 4c. Looking at what is not a fact yet
 
 `gitdashy drafts` lists them; **`W`** in the dashboard shows one at a time, `t` accepts it as a fact,

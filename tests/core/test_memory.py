@@ -6,7 +6,7 @@ import pytest
 from dashy import config
 from dashy.core import bind, memory, team
 
-from conftest import a_team, claude_out
+from conftest import a_team, claude_out, counts
 
 
 def facts(p):
@@ -32,7 +32,7 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 def test_a_fact_takes_two_independent_reviews(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.append("a/b", "CI skips the DB tests") == []
-	assert memory.drafts("a/b") == [(1, "CI skips the DB tests")]
+	assert counts(memory.drafts("a/b")) == [(1, "CI skips the DB tests")]
 	assert not os.path.exists(memory.path("a/b"))  # one review does not make a fact
 	assert memory.read("a/b") == ""  # and a draft is never read back, or it would confirm itself
 	assert memory.append("a/b", "ci skips the db tests") == ["CI skips the DB tests"]
@@ -47,7 +47,7 @@ def test_near_wordings_are_one_fact_and_distinct_ones_are_not(monkeypatch, tmp_p
 	memory.append("a/b", "The frontend is a thin display layer.")
 	assert facts(memory.path("a/b")) == ["- the frontend is a thin display layer"]
 	memory.append("a/b", "migrations run before deploy")
-	assert memory.drafts("a/b") == [(1, "migrations run before deploy")]
+	assert counts(memory.drafts("a/b")) == [(1, "migrations run before deploy")]
 
 
 def test_an_already_settled_fact_is_dropped_on_arrival(monkeypatch, tmp_path):
@@ -237,7 +237,7 @@ def test_one_review_cannot_confirm_its_own_fact(monkeypatch, tmp_path):
 	"""Two wordings of one thing in a single call must count once, or the gate gates nothing."""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.append("a/b", "- the API owns all validation\n- The API owns all validation.") == []
-	assert memory.drafts("a/b") == [(1, "the API owns all validation")]
+	assert counts(memory.drafts("a/b")) == [(1, "the API owns all validation")]
 	assert not os.path.exists(memory.path("a/b"))
 	assert memory.append("a/b", "the API owns all validation") == ["the API owns all validation"]
 
@@ -254,7 +254,7 @@ def test_one_wrong_word_is_a_different_fact(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	memory.append("a/b", "CI reports skipping for format-check")
 	memory.append("a/b", "CI reports skipping for type-check")
-	assert sorted(t for _, t in memory.drafts("a/b")) == [
+	assert sorted(t for _n, _i, t in memory.drafts("a/b")) == [
 		"CI reports skipping for format-check", "CI reports skipping for type-check"]
 	assert not os.path.exists(memory.path("a/b"))  # neither confirmed the other
 	memory.append("a/b", "Tests live in tests/core")
@@ -411,7 +411,7 @@ def test_a_pre_review_alone_never_becomes_a_fact(monkeypatch, tmp_path):
 	memory.append_self("acme/api", "the api owns no DDL")   # again, and again
 	memory.append_self("acme/api", "the api owns no DDL")
 	assert memory.known("acme/api") == []                    # never a fact
-	assert [t for _n, t in memory.self_drafts("acme/api")] == ["the api owns no DDL"]
+	assert [t for _n, _i, t in memory.self_drafts("acme/api")] == ["the api owns no DDL"]
 	assert memory.drafts("acme/api") == []                   # and not in the real queue either
 
 
@@ -432,7 +432,7 @@ def test_a_spent_pre_review_finding_cannot_pay_out_twice(monkeypatch, tmp_path):
 	memory.append("acme/api", "the api owns no DDL")          # consumes it
 	memory.forget("acme/api", "the api owns no DDL")          # start over
 	assert memory.append("acme/api", "the api owns no DDL") == []   # one observation again, not two
-	assert [n for n, _t in memory.drafts("acme/api")] == [1]
+	assert [n for n, _i, _t in memory.drafts("acme/api")] == [1]
 
 
 def test_self_drafts_never_reach_a_prompt_or_the_dream(monkeypatch, tmp_path):
@@ -603,3 +603,180 @@ def test_one_fact_is_one_row_even_when_both_queues_hold_it(monkeypatch, tmp_path
 	assert len(memory.waiting()) == 2
 	memory.append_self("a/b", "the API owns all validation, always")   # a real rewording
 	assert len([r for r in memory.waiting() if "all validation" in r[2]]) == 1
+
+
+def test_a_draft_records_which_review_observed_it(tmp_path, monkeypatch):
+	"""The count is the whole gate, and nothing on disk said WHERE a count came from. Two drafts at (1)
+	could be two reviews that worded a fact differently, or one review that said it twice — opposite
+	answers to "may these be merged", and the file could not tell them apart."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- tabs for indent\n- CI skips format-check")
+	items = memory.drafts("a/b")
+	assert [n for n, _ids, _t in items] == [1, 1]
+	first = {i for _n, ids, _t in items for i in ids}
+	assert len(first) == 1                       # one review, one id, on both of its observations
+	memory.append("a/b", "- releases are tagged from main")
+	ids = {i for _n, ids_, _t in memory.drafts("a/b") for i in ids_}
+	assert len(ids) == 2                         # a second review is a second id
+	# a second review landing on the SAME fact carries it over the gate, exactly as before ids existed
+	assert memory.append("a/b", "- tabs for indent") == ["tabs for indent"]
+	assert "tabs for indent" in memory.known("a/b")
+	assert not [r for r in memory.drafts("a/b") if "tabs" in r[2]]
+
+
+def test_a_file_written_before_provenance_still_reads(tmp_path, monkeypatch):
+	"""Every machine's drafts predate this. A line with no [ids] is one observation of unknown origin,
+	which is exactly the case merge() must refuse to sum."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	os.makedirs(os.path.join(tmp_path, "drafts"))
+	with open(memory.queue_path("a/b"), "w") as f:
+		f.write("- (2) an old fact with a count\n- a bare one\n")
+	assert memory.drafts("a/b") == [(2, (), "an old fact with a count"), (1, (), "a bare one")]
+
+
+def test_overlaps_finds_what_the_promotion_matcher_missed(tmp_path, monkeypatch):
+	"""The gate compares token SEQUENCES, so a fact reworded in another order scores 0.375 and is never
+	folded — two spellings of one fact sit as two rows forever, each one review short. The scan compares
+	content words as a SET, which is what makes those visible, with a person as the filter."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	memory.append("a/b", "- releases are tagged from dashy/__init__.py on main")
+	assert len(memory.drafts("a/b")) == 3          # the matcher did NOT fold them
+	got = memory.overlaps()
+	assert len(got) == 1
+	repo, ratio, a, b = got[0]
+	assert repo == "a/b" and ratio >= memory.OVERLAP
+	assert "format-check" in a[2] and "format-check" in b[2]
+	assert not memory.overlaps("other/repo")       # scopes to one repo when asked
+
+
+def test_merging_sums_only_across_different_reviews(tmp_path, monkeypatch):
+	"""The whole point of the gate: a fact is a fact because two runs found it, not because one run
+	said it twice. A merge that always summed would manufacture a promotion out of one opinion."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	(_r, _ratio, a, b) = memory.overlaps()[0]
+	assert memory.merge("a/b", a, b) == 2          # two reviews: the count is earned, and it promotes
+	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+	assert memory.drafts("a/b") == []              # promoted out of the queue
+
+	# one review that worded the same thing twice: folded, never summed
+	memory.append("c/d", "- tabs are used for indentation here\n- indentation in this repo is tabs")
+	(_r, _ratio, a, b) = memory.overlaps("c/d")[0]
+	assert memory.merge("c/d", a, b) == 1
+	assert memory.known("c/d") == [] and len(memory.drafts("c/d")) == 1
+	assert memory.drafts("c/d")[0][0] == 1
+
+	# and a file with no provenance is unknown origin, which is not "different"
+	with open(memory.queue_path("e/f"), "w") as f:
+		f.write("- (1) CI reports skipping for the format-check job\n- (1) the format-check job in CI reports skipping every run\n")
+	(_r, _ratio, a, b) = memory.overlaps("e/f")[0]
+	assert memory.merge("e/f", a, b) == 1
+	assert memory.known("e/f") == []
+
+
+def test_merging_keeps_the_wording_you_kept_and_drops_the_other(tmp_path, monkeypatch):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	(_r, _ratio, a, b) = memory.overlaps()[0]
+	memory.merge("a/b", b, a)                      # keep the second wording explicitly
+	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+
+
+def test_a_draft_that_opens_with_a_bracket_keeps_its_text(tmp_path, monkeypatch):
+	"""Model-written prose that happens to open "[dead]" is four hex characters by coincidence. Without
+	a prefix on the id slot it parsed as review "dead" with its first word EATEN — and two such lines
+	from ONE review read as two different ids, which is exactly the input merge() sums. Prose forging
+	the evidence the gate trusts is the failure; every pre-upgrade file is prose in that slot."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	os.makedirs(os.path.join(tmp_path, "drafts"))
+	with open(memory.queue_path("a/b"), "w") as f:
+		f.write("- (1) [dead] paths are gone\n- (1) [beef] paths are stale\n")
+	assert memory.drafts("a/b") == [(1, (), "[dead] paths are gone"), (1, (), "[beef] paths are stale")]
+	# and a row we write ourselves survives its own round trip
+	memory._write_drafts("a/b", [(1, ("7a2c",), "[dead] paths are gone")])
+	assert memory.drafts("a/b") == [(1, ("7a2c",), "[dead] paths are gone")]
+	assert "[r:7a2c] [dead]" in open(memory.queue_path("a/b")).read()
+
+
+def test_folding_to_a_fact_pools_it_and_clears_the_pre_review_row(tmp_path, monkeypatch):
+	"""A fold can promote, and a promotion is a disclosure — it must land exactly as promote() does,
+	or a fold makes a fact that is not evidence and leaves a pre-review row for a settled fact in
+	waiting()."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	memory.append_self("a/b", "- CI reports skipping for the format-check job")
+	(_r, _ratio, x, y) = memory.overlaps("a/b")[0]
+	assert memory.merge("a/b", x, y) == 2
+	assert facts(memory.pool_path("tester", "a/b")) == ["- CI reports skipping for the format-check job"]
+	assert str(shared) in memory.pool_path("tester", "a/b")
+	assert memory.self_drafts("a/b") == []            # the settled fact is out of the pre-review queue
+	assert memory.waiting() == []
+
+
+def test_folding_the_general_drafts_lands_in_your_general_file(tmp_path, monkeypatch):
+	"""The general scope keys None, not "", and takes a different branch in _pool. Untested end to end."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append(None, "- PHI reaches the frontend and must not be logged")
+	memory.append(None, "- must not be logged: PHI reaches the frontend")
+	got = memory.overlaps()
+	assert len(got) == 1 and got[0][0] is None
+	assert memory.merge(None, got[0][2], got[0][3]) == 2
+	# ponytail: the FILE, not known(None) — which reads the general scope twice on main already, so
+	# asserting through it would bake a pre-existing quirk into a test about folding.
+	assert facts(memory.path(None)) == ["- PHI reaches the frontend and must not be logged"]
+	assert memory.drafts(None) == []
+
+
+def test_a_fold_is_arithmetic_over_the_file_not_the_callers_snapshot(tmp_path, monkeypatch):
+	"""overlaps() runs once and the screen pages through what it returned, so an earlier fold in the
+	same run can change a count the caller is still holding."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	stale = (0, (), "CI reports skipping for the format-check job")   # a count nobody ever had
+	other = next(r for r in memory.drafts("a/b") if "every run" in r[2])
+	assert memory.merge("a/b", stale, other) == 2       # the file says 1 + 1, not 0 + 1
+	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+
+
+def test_would_merge_is_the_one_owner_of_the_sum_rule():
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, ("91cf",), "y")) == (2, "2 reviews")
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, ("7a2c",), "y")) == (1, "one review, worded twice")
+	assert memory.would_merge((2, (), "x"), (1, (), "y")) == (2, "origin unknown")
+	assert memory.would_merge((1, ("7a2c",), "x"), (1, (), "y")) == (1, "origin unknown")
+
+
+def test_merging_a_row_an_earlier_fold_consumed_writes_nothing(tmp_path, monkeypatch):
+	"""overlaps() runs once and its pairs are acted on one by one, so a row can be gone by the time its
+	pair comes up. Falling back to the caller's copy would write a draft the store has finished with."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	gone = memory.drafts("a/b")[0]
+	assert memory.drop("a/b", gone[2]) is True
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	live = memory.drafts("a/b")[0]
+	assert memory.merge("a/b", gone, live) == 0
+	assert memory.drafts("a/b") == [live]        # untouched, and the consumed row stays gone
+	assert memory.known("a/b") == []
+
+
+def test_folding_onto_a_fact_that_is_already_settled_does_not_write_it_twice(tmp_path, monkeypatch):
+	"""merge promotes through promote(), which carries the already_known guard — but the guard had never
+	been driven from this path, and a fold is the one caller that can reach it with the fact already in
+	place: a person promotes one wording by hand, then folds its twin onto it."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+	keep, drop = memory.overlaps("a/b")[0][2:]
+	memory.promote("a/b", keep[2])                    # accepted by hand, and out of the queue
+	assert memory.known("a/b") == [keep[2]] and len(memory.drafts("a/b")) == 1
+	assert memory.merge("a/b", keep, drop) == 0       # keep is no longer a draft, so nothing is folded
+	assert memory.known("a/b") == [keep[2]]           # and the fact is not written a second time
+	assert len(memory.drafts("a/b")) == 1             # the twin is left for a person to judge
