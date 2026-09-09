@@ -9,6 +9,8 @@ import pytest
 from dashy import cli, config
 from dashy.core import install as install_mod, memory, state, team
 
+from conftest import _counts
+
 
 def facts(p):
 	return [l.strip() for l in open(p).read().splitlines() if l.strip()]
@@ -19,7 +21,7 @@ def test_remember_drafts_then_confirms_on_a_second_observation(monkeypatch, tmp_
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
 	cli.run(["gitdashy", "remember", "the", "viewer", "owns", "mask", "state"])
 	assert "drafted" in capsys.readouterr().out
-	assert memory.drafts("acme/web") == [(1, "the viewer owns mask state")]
+	assert _counts(memory.drafts("acme/web")) == [(1, "the viewer owns mask state")]
 	cli.run(["gitdashy", "remember", "The viewer owns mask state."])  # reworded, same fact
 	assert "confirmed" in capsys.readouterr().out
 	assert facts(memory.path("acme/web")) == ["- the viewer owns mask state"]
@@ -32,9 +34,9 @@ def test_remember_general_and_explicit_repo(monkeypatch, tmp_path, capsys):
 	monkeypatch.setattr(team, "origin_slug", lambda p: "acme/web")
 	cli.run(["gitdashy", "remember", "--general", "PHI reaches the frontend"])
 	assert "general" in capsys.readouterr().out
-	assert memory.drafts(None) == [(1, "PHI reaches the frontend")]
+	assert _counts(memory.drafts(None)) == [(1, "PHI reaches the frontend")]
 	cli.run(["gitdashy", "remember", "--repo", "other/thing", "migrations run first"])
-	assert memory.drafts("other/thing") == [(1, "migrations run first")]
+	assert _counts(memory.drafts("other/thing")) == [(1, "migrations run first")]
 	assert memory.drafts("acme/web") == []  # the flag won, not the cwd
 
 

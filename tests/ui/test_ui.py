@@ -118,6 +118,19 @@ def _keys(*ks):
 	return lambda: next(it)
 
 
+def _keys_seen(screen, seen, *ks):
+	"""Like _keys, but records what the screen showed at the moment each key was asked for.
+
+	ponytail: screen.text() after a modal returns is the LAST frame — the list a panel went back to
+	before esc closed it — so asserting on the panel itself needs the frame it was waiting on.
+	"""
+	it = iter(ks)
+	def go():
+		seen.append(screen.text())
+		return next(it)
+	return go
+
+
 def test_update_screen_declined(screen, monkeypatch, st):
 	st.update = "9.9.9"
 	screen.getch, screen.timeout = _keys(ord("n")), lambda t: None
@@ -1945,3 +1958,52 @@ def test_a_first_refresh_that_failed_still_draws(screen):
 	st.error = "gh: not logged in"
 	ui.draw(screen, st, 0)
 	assert "refresh failed: gh: not logged in" in screen.text()
+
+
+def _overlapping(monkeypatch, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	memory.append("a/b", "- CI reports skipping for the format-check job")
+	memory.append("a/b", "- the format-check job in CI reports skipping every run")
+
+
+def test_w_scans_for_drafts_that_are_one_fact_and_asks_before_merging(screen, monkeypatch, st, tmp_path):
+	"""Two spellings of one fact sit below the promotion threshold as two rows, each one review short,
+	and nothing ever looks at them again. The scan is the look; the person is the judge."""
+	from dashy.core import memory
+	_overlapping(monkeypatch, tmp_path)
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("s"), ord("y"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert "[s] scan" in seen[0]                      # offered from the waiting screen
+	out = seen[1]
+	assert "same fact?" in out and "1/1" in out
+	assert "format-check" in out and "2 reviews" in out    # both wordings, and that the count is earned
+	assert "[y] one fact" in out and "[n] different" in out
+	assert memory.known("a/b") == ["CI reports skipping for the format-check job"]
+
+
+def test_declining_a_pair_leaves_both_and_does_not_ask_again(screen, monkeypatch, st, tmp_path):
+	from dashy.core import memory
+	_overlapping(monkeypatch, tmp_path)
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("s"), ord("n"), 27, 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	# ponytail: assert the pair was actually PUT to you. Without this the test passes on a build that
+	# has no scan at all — nothing merged, because nothing ran.
+	assert "same fact?" in seen[1]
+	assert len(memory.drafts("a/b")) == 2 and memory.known("a/b") == []
+	assert "0/0" not in seen[2] and "same fact?" not in seen[2]   # declined, so it moves on rather than re-asking
+
+
+def test_the_scan_says_so_when_there_is_nothing_to_look_at(screen, monkeypatch, st, tmp_path):
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	memory.append("a/b", "- tabs for indent\n- releases are tagged from main")
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("s"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert any("no two drafts" in p for p in said)

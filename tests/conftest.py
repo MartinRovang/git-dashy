@@ -132,6 +132,16 @@ def fake_http(handler):
 	return go
 
 
+def _counts(rows):
+	"""(count, fact) for drafts rows, dropping the review ids.
+
+	ponytail: the ids are provenance — which runs observed a thing — and no test here is about them.
+	Comparing (count, fact) exactly is the assertion these tests always made; this keeps it that way
+	rather than loosening them to a length or a substring because the row grew a third field.
+	"""
+	return [(n, t) for n, _ids, t in rows]
+
+
 def gql_nodes(*sections):
 	"""{"data": {"s0": {"nodes": [...]}, ...}} — one section per argument."""
 	return {"data": {f"s{i}": {"nodes": list(ns)} for i, ns in enumerate(sections)}}
