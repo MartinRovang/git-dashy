@@ -241,6 +241,24 @@ def cover_key(s):
 	return (t + "/*" if kind == "owner" else t) if kind else ""
 
 
+def undecided(targets):
+	"""Which of `targets` this machine has neither bound nor unbound. Order preserved.
+
+	ponytail: the ONLY set worth putting to a person. Everything else a team claims has already been
+	answered here once — bound at join, bound by hand, or refused with a tombstone — and re-asking a
+	settled question is how a prompt becomes noise people dismiss without reading.
+	ponytail: bound to ANOTHER team counts as decided. It is not this team's to ask about again, and
+	asking would be offering to reroute a repo away from the team it is on.
+	"""
+	repos, owners_, touched, named = _entries()
+	out = []
+	for t in targets:
+		kind, v = target(t)
+		if (kind == "owner" and v not in named) or (kind == "repo" and v not in touched):
+			out.append(t)
+	return out
+
+
 def seed_owners(to, owners_):
 	"""Bind every owner in `owners_` that has never been bound or unbound, to `to`. Returns what it wrote.
 

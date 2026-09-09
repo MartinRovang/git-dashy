@@ -1593,11 +1593,7 @@ def bind_screen(scr, state, sel, pr):
 
 
 def _team_verb(scr, state, sel, key, k, current):
-	"""One team verb by keypress. True when the team is gone and its screen must close.
-
-	ponytail: ONE dispatch, called from a team's own screen and from the list when only one team is
-	joined. Written twice, the two drift, and the list's copy is the one nobody looks at.
-	"""
+	"""One team verb by keypress. True when the team is gone and its screen must close."""
 	if k == ord("e"):
 		_edit_brief(scr, state, sel, key)
 	elif k == ord("d"):
@@ -1631,6 +1627,41 @@ def _ask_owner(scr, state, sel, default=""):
 	return ""
 
 
+def _used_for(key):
+	"""What reviews use team `key` for, from this machine's bindings. "" when nothing is bound to it."""
+	# ponytail: both sides folded. A binding's team is stored through key_of and a directory name is not,
+	# so comparing them raw made a team's own rules invisible on its own screen.
+	owners_ = sorted(o + "/*" for o, t in bind.owners().items() if t.lower() == key.lower())
+	repos = [r for r, t in bind.bindings().items() if t.lower() == key.lower()]
+	head = ", ".join(owners_[:3]) + (f" +{len(owners_) - 3}" if len(owners_) > 3 else "")
+	tail = f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else ""
+	return " · ".join(x for x in (head, tail) if x)
+
+
+def _ask_new_claims(scr, state, sel, key):
+	"""Offer each claim the team has added since this machine last answered. One y/n, then it is settled.
+
+	ponytail: this replaces a row. A claim pushed to the team after you joined does not bind itself —
+	someone else's push must not reroute your reviews — so it used to sit on the panel as a second list
+	to compare against the first. Nobody could read that. Asked at the moment you open the team, it is a
+	sentence with two answers and no vocabulary.
+	ponytail: NO writes a tombstone, the same one an unbind writes. A decline that left no trace would
+	ask again on the next open, and a prompt that repeats is a prompt people learn to dismiss.
+	"""
+	for t in bind.undecided(team.covers(key)):
+		name = team.info(key)["name"][:24]
+		if confirm(scr, state, sel, asking(scr, f" {name} now covers {t} — use it here too?")):
+			kind, v = bind.target(t)
+			err = bind.bind_owner(v, key) if kind == "owner" else bind.bind(v, key)
+		else:
+			kind, v = bind.target(t)
+			err = bind.forget_owner(v) if kind == "owner" else bind.forget(v)
+		if err:
+			confirm(scr, state, sel, f" {err}  [any key]")
+			return
+		state.wake.set()
+
+
 def _team_screen(scr, state, sel, key, current=None):
 	"""One team: what it has, then the verbs for it. Every write here is about THIS team, named in the title.
 
@@ -1638,6 +1669,7 @@ def _team_screen(scr, state, sel, key, current=None):
 	key. Showing the team first — where it lives, whether it has a remote, what it declares and what is
 	bound here — is what makes the verbs safe to offer: you see what you are about to change.
 	"""
+	_ask_new_claims(scr, state, sel, key)
 	while True:
 		if not (d := team.dir_of(key)):
 			return
@@ -1646,24 +1678,27 @@ def _team_screen(scr, state, sel, key, current=None):
 		# ponytail: both sides folded. A binding's team is stored through key_of and a directory name is
 		# not, so comparing them raw made a team's own rules invisible on its screen for any key whose
 		# spelling differed. Everywhere else in this codebase folds both sides.
-		mine = sorted(o + "/*" for o, t in bind.owners().items() if t.lower() == key.lower())
-		repos = [r for r, t in bind.bindings().items() if t.lower() == key.lower()]
-		here = ", ".join(mine[:3]) + (f" +{len(mine) - 3}" if len(mine) > 3 else "")
-		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x)
+		used = _used_for(key)
 		# ponytail: a VALUE, never a value with an instruction stapled to it. "nothing — o covers an
 		# owner" read as though "o covers an owner" were part of the answer, and the reader has to parse
 		# a sentence to learn the row is empty. The footer already says what every key does; an empty
 		# row says "nothing yet" and nothing more.
-		lines = [("what", it["description"] or "nothing yet"),
-		         ("lives at", knowledge.tilde(os.path.realpath(d))),
-		         ("remote", team.redacted(url) if url else "none yet"),
-		         ("declares", ", ".join(team.covers(key)) or "nothing yet"),
-		         ("here", here or "nothing yet")]
+		# ponytail: ONE row for coverage. There were two — what the team declares, and what is bound
+		# here — because that is how the feature is BUILT: the team keeps a copy so joiners inherit it,
+		# this machine keeps the one that actually routes reviews. They are the same list in every
+		# normal case, and putting both on screen made a reader compare two identical lines and ask what
+		# the difference was. It took five explanations and still did not land, which is a design
+		# answer, not a wording one. The copy is plumbing; `o` writes both, so they stay in step, and
+		# the one case that needs a person is asked as a question instead of shown as a state.
+		lines = [("what it is for", it["description"] or "nothing yet"),
+		         ("checkout", knowledge.tilde(os.path.realpath(d))),
+		         ("git remote", team.redacted(url) if url else "none yet"),
+		         ("used for", used or "nothing yet")]
 		draw(scr, state, sel, prompt=" ")
 		# ponytail: each key says what it DOES, and the whole line stays under the 70 columns an
 		# 80-column terminal leaves once panel() has taken its border and padding.
 		panel(scr, f"{it['name']}  ({key})", lines,
-		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")
+		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")  # 69 cols
 		k = scr.getch()
 		if k in (27, ord("q")):
 			return
@@ -1685,15 +1720,17 @@ def team_setup(scr, state, sel, current=None):
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
-		      # ponytail: the footer is where a key's meaning lives, so with one team joined it names the
-		      # verbs that work from here rather than hiding five keys that are live.
-		      # ponytail: and it FITS. panel() clamps inner to w - 4 and draws the footer at inner - 6, so
-		      # 70 columns is all an 80-column terminal shows: the spaced-out form was 93 and lost [a]
-		      # join and [esc] entirely, on the branch this change is built around. A test draws it at
-		      # w=80 and asserts every key is on screen, because counting characters by hand is how this
-		      # came back. The two-team form is short, so it keeps the roomier spelling.
-		      ("[e]brief [d]desc [c]remote [o]cover [x]leave [n]new [a]join [esc]" if len(joined) == 1 else
-		       ("[1-8] open   " if joined else "") + "[n] start   [a] join   [esc] close"))
+		      # ponytail: the footer is where a key's meaning lives, and it is written in WORDS. With one
+		      # team joined its five verbs used to work from this list too, which meant advertising them
+		      # here — and the only spelling that fit 70 columns was "[e]brief [d]desc [c]remote", which
+		      # is a key list nobody can read. The verbs live on the team's own screen now and this list
+		      # has one job: open one, start one, join one. One model, no hidden keys, one extra keypress.
+		      # ponytail: it FITS. panel() clamps inner to w - 4 and draws the footer at inner - 6, so 70
+		      # columns is all an 80-column terminal shows; a test draws it at w=80 and asserts each key,
+		      # because counting characters by hand is exactly how a 93-character footer shipped.
+		      ("[1] open this team   [n] start another   [a] join one   [esc] close" if len(joined) == 1
+		       else "[1-8] open a team   [n] start one   [a] join one   [esc] close" if joined
+		       else "[n] start a team   [a] join one that exists   [esc] close"))
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel, current)
@@ -1701,12 +1738,6 @@ def team_setup(scr, state, sel, current=None):
 			_join_team(scr, state, sel, current)
 		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
 			_team_screen(scr, state, sel, joined[k - ord("1")], current)
-		elif len(joined) == 1:
-			# ponytail: one team is the common case, and making it press 1 first would be ceremony. The
-			# same dispatch the team screen uses, so the two cannot drift apart.
-			_team_verb(scr, state, sel, joined[0], k, current)
-			if k in (27, ord("q")):
-				return
 		elif k in (27, ord("q")):
 			return
 

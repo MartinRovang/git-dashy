@@ -130,7 +130,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one — `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave — `n` start one, `a` join one. With one team joined the verbs work from the list (see Team) |
+| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team) |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
 
@@ -235,12 +235,37 @@ written until you press `y`.
 the team. There is no service and no account, and nothing here assumes GitHub: `git clone` takes any URL, and
 a bare `owner/name` is expanded to a GitHub URL as a convenience and nothing more.
 
-Press `T`. It lists your teams; a number opens one and shows what it has — what it is for, where it lives,
-its remote, what it declares it covers, and what is bound to it here — before offering the verbs for it: `e`
-edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave. `n` starts one with a
-name and a line about it, **no remote and nothing hosted anywhere**, and lands under `~/.prs_teams`; started
-from a PR row it offers to cover that row's owner straight away. `a` joins one that exists from any git URL,
-`owner/name`, or a bare repo on disk. With one team joined its verbs work from the list. The same from a shell:
+Press `T`. It lists your teams, and that list does three things: `1-8` opens one, `n` starts one, `a` joins
+one. Opening a team shows what it has before offering anything:
+
+```
+╭── NeoMedSys  (neomedsys) ───────────────────────────────────────────────╮
+│  what it is for                                        The NMS project  │
+│  checkout                                       ~/.prs_teams/neomedsys  │
+│  git remote                                                   none yet  │
+│  used for                                       neomedsys/* · 12 repos  │
+│                                                                         │
+│  [e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back  │
+╰─────────────────────────────────────────────────────────────────────────╯
+```
+
+**used for** is the whole of it: the repos whose reviews read this team's brief and facts. `o` adds an
+owner or a repo to it, here and in the team, so everyone who joins later starts with the same list.
+
+You are never asked to compare that list against anything. When a colleague adds coverage after you
+joined, gitdashy asks once, when you open the team:
+
+```
+ NeoMedSys now covers acme/* — use it here too? [y/n]
+```
+
+Either answer settles it and it is not asked again — *no* writes the same tombstone an unbind does. The
+question exists because someone else's push must not silently reroute your reviews; it is a question
+rather than a second list on screen because a list you have to diff against another is not readable.
+
+`n` starts a team with a name and a line about it, **no remote and nothing hosted anywhere**, under
+`~/.prs_teams`; started from a PR row it offers to cover that row's owner straight away. `a` joins one that
+exists from any git URL, `owner/name`, or a bare repo on disk. The same from a shell:
 
 ```sh
 gitdashy teams --new "NeoMedSys Platform" --desc "Precision-medicine platform."

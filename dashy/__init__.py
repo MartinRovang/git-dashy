@@ -2,6 +2,6 @@
 import logging
 import os
 
-VERSION = "1.41.1"
+VERSION = "1.42.0"
 logging.getLogger(__name__).addHandler(logging.NullHandler())  # silent unless cli.debug() turns the file on
 HERE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # repo root; realpath: installed as a symlink

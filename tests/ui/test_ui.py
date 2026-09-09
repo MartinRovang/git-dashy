@@ -1966,6 +1966,7 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	from dashy.core import team
 	_two_teams(monkeypatch, tmp_path)
 	team.cover("acme-tools", "acme")
+	bind.bind_owner("acme", "acme-tools")   # answered already, so opening the team asks nothing
 	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(tmp_path / "acme-mem.git")], check=True)
 	assert team.connect("acme-tools", str(tmp_path / "acme-mem.git")) == ""
 	seen = []
@@ -1977,10 +1978,14 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	assert str(tmp_path / "acme-mem.git") in out                      # the WHOLE remote, not its host
 	assert ui.team.redacted("https://x:tok@github.com/o/r.git") == "https://github.com/o/r.git"
 	assert ui._remote_label("git@github.com:o/r.git") == "o/r"       # the list shows owner/name
-	assert "lives at" in out and "remote" in out and "declares" in out and "acme/*" in out
+	# ponytail: one coverage row, in words. "declares"/"here" were invented labels for what is really
+	# one list plus its plumbing, and no wording of two rows read clearly.
+	assert "checkout" in out and "git remote" in out and "used for" in out and "acme/*" in out
 	assert "[e] brief" in out and "[o] cover" in out and "[x] leave" in out
-	# ponytail: an empty row is a VALUE — the footer is where a key's meaning lives
-	assert "nothing yet" in out and "covers an owner" not in out and "connects one" not in out
+	# ponytail: a row is a VALUE — the footer is where a key's meaning lives. Every row here is filled,
+	# so what this asserts is that no instruction is stapled to one; the empty-state wording is pinned
+	# by test_the_team_screen_shows_one_line_for_what_it_is_used_for.
+	assert "covers an owner" not in out and "connects one" not in out and "o covers" not in out
 
 
 def test_t_start_asks_no_where_and_lands_on_the_new_team(screen, monkeypatch, st, tmp_path):
@@ -1998,7 +2003,7 @@ def test_t_start_asks_no_where_and_lands_on_the_new_team(screen, monkeypatch, st
 	assert team.joined() == ["neomedsys"]
 	assert not any("Where" in p for p in prompts)
 	assert os.path.realpath(team.dir_of("neomedsys")).startswith(str(tmp_path / "teams"))
-	assert "NeoMedSys" in seen[1] and "lives at" in seen[1]   # lands on the team's screen, not the list
+	assert "NeoMedSys" in seen[1] and "checkout" in seen[1]   # lands on the team's screen, not the list
 
 
 def test_t_start_from_a_row_offers_to_cover_its_owner(screen, monkeypatch, st, tmp_path):
@@ -2039,16 +2044,26 @@ def test_t_o_covers_an_owner_from_the_teams_screen(screen, monkeypatch, st, tmp_
 	assert team.covers("acme-tools") == ["acme/*"]
 
 
-def test_t_letters_act_on_the_only_team_without_picking_it(screen, monkeypatch, st, tmp_path):
-	"""One team joined is the common case; making it press 1 first would be ceremony."""
+def test_t_offers_only_open_start_and_join_whatever_is_joined(screen, monkeypatch, st, tmp_path):
+	"""The verbs live on a team's own screen. They used to work from this list too when exactly one team
+	was joined, which meant advertising five more keys here — and the only spelling that fit 70 columns
+	was "[e]brief [d]desc [c]remote", a key list nobody can read. One model: open it, then act on it."""
 	from dashy.core import team
 	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
 	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
 		monkeypatch.setenv(k, v)
 	team.start("Only One")
-	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: "now described")
+	described = []
+	monkeypatch.setattr(ui, "ask", lambda scr, s, sel, prompt: described.append(prompt) or "now described")
 	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
 	screen.getch, screen.timeout = _keys(ord("d"), 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert described == [] and team.info("only-one")["description"] == ""   # d does nothing on the list
+	out = screen.text()
+	assert "[1] open this team" in out and "[n] start another" in out and "[a] join one" in out
+	assert "[e]" not in out and "brief" not in out            # no verb is advertised here
+	# and the same key works once the team is open
+	screen.getch = _keys(ord("1"), ord("d"), 27, 27)
 	ui.team_setup(screen, st, 0)
 	assert team.info("only-one")["description"] == "now described"
 
@@ -2126,12 +2141,12 @@ def test_joining_lands_on_the_team_it_just_joined(screen, monkeypatch, st, tmp_p
 	seen = []
 	screen.getch, screen.timeout = _keys_seen(screen, seen, 27, 27), lambda t: None
 	ui._join_team(screen, st, 0)
-	assert "lives at" in seen[0] and "acme" in seen[0]      # the team's screen, not the list
+	assert "checkout" in seen[0] and "acme" in seen[0]      # the team's screen, not the list
 	# joining one you are already in adds nothing, so there is no screen to land on
 	seen.clear()
 	screen.getch = _keys_seen(screen, seen, 27)
 	ui._join_team(screen, st, 0)
-	assert not seen or "lives at" not in seen[0]
+	assert not seen or "checkout" not in seen[0]
 
 
 def test_the_one_team_footer_survives_eighty_columns(monkeypatch, st, tmp_path):
@@ -2147,8 +2162,10 @@ def test_the_one_team_footer_survives_eighty_columns(monkeypatch, st, tmp_path):
 	scr.getch, scr.timeout = _keys(27), lambda t: None
 	ui.team_setup(scr, st, 0, None)
 	out = scr.text()
-	for key in ("[e]", "[d]", "[c]", "[o]", "[x]", "[n]", "[a]", "[esc]"):
-		assert key in out, f"{key} fell off an 80-column footer"
+	# ponytail: the words too, not only the brackets. A footer that fits but reads "[d]desc" is the
+	# defect this test was widened for — the operator could not tell what a key did.
+	for phrase in ("[1] open this team", "[n] start another", "[a] join one", "[esc] close"):
+		assert phrase in out, f"{phrase!r} fell off an 80-column footer"
 
 
 def test_o_says_so_when_the_answer_is_not_an_owner(screen, monkeypatch, st, tmp_path):
@@ -2327,3 +2344,57 @@ def test_the_panel_describes_the_fold_that_will_actually_happen(screen, monkeypa
 	assert "origin unknown" in first and "folds to 1" in first    # legacy row: nothing is promoted
 	assert "2 reviews" in second and "becomes a fact" in second    # and the panel says so BEFORE the key
 	assert len(memory.known("a/b")) == 1
+
+
+def test_the_team_screen_shows_one_line_for_what_it_is_used_for(screen, monkeypatch, st, tmp_path):
+	"""Two rows — the team's own claim and this machine's bindings — put implementation on screen and
+	took five explanations to read. They are the same list in the normal case. One row now."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	assert team.cover("acme-tools", "acme") == ""
+	assert bind.bind_owner("acme", "acme-tools") == ""
+	assert bind.bind("other/thing", "acme-tools") == ""
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	out = seen[1]
+	assert "used for" in out and "acme/*" in out and "1 repo" in out
+	for gone in ("everyone who joins gets", "bound on this machine", "declares", "shared"):
+		assert gone not in out, f"{gone!r} is still on the panel"
+
+
+def test_a_claim_a_colleague_added_is_one_question_not_a_row(screen, monkeypatch, st, tmp_path):
+	"""Joining adopts what a team already claims. A claim pushed AFTER that deliberately does not bind
+	itself — and it used to sit on the panel as a second list to decode. It is a y/n now, asked when you
+	open the team, answered once, gone either way."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	assert team.cover("acme-tools", "acme") == ""          # arrived after this machine joined
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: asked.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert len(asked) == 1 and "acme/*" in asked[0] and "Acme Tools" in asked[0]
+	assert bind.owners() == {"acme": "acme-tools"}          # yes binds it
+	# and it is not asked again
+	asked.clear()
+	screen.getch = _keys(ord("1"), 27, 27)
+	ui.team_setup(screen, st, 0)
+	assert asked == []
+
+
+def test_declining_a_claim_sticks_and_is_never_asked_again(screen, monkeypatch, st, tmp_path):
+	"""No is an answer, not a postponement — it writes the same tombstone an unbind does, which is what
+	stops the next seed and the next question."""
+	from dashy.core import team
+	_two_teams(monkeypatch, tmp_path)
+	assert team.cover("acme-tools", "acme") == ""
+	asked = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: asked.append(prompt) or False)
+	screen.getch, screen.timeout = _keys(ord("1"), 27, 27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert len(asked) == 1 and bind.owners() == {}
+	asked.clear()
+	screen.getch = _keys(ord("1"), 27, 27)
+	ui.team_setup(screen, st, 0)
+	assert asked == [] and bind.owners() == {}
