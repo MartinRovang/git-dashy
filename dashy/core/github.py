@@ -49,11 +49,18 @@ def token():
 	return next((os.environ[v].strip() for v in ("GH_TOKEN", "GITHUB_TOKEN") if os.environ.get(v)), "")
 
 
-SCOPE = "PRS_API_REPO"  # set on a review's own subprocess: the one repo its `api` command may read
+SCOPE = "PRS_API_REPO"  # set on a review's own subprocess: the repo it is reviewing
+SCOPE_TEAM = "PRS_API_TEAM"  # and the team whose other repos it may read too, "" for none. See scoped().
 QUALIFIERS = ("repo:", "user:", "org:", "owner:")  # search terms that choose WHERE to look, not what for
 
 
-def scoped(path, repo):
+def repo_of(path):
+	"""The owner/name a `/repos/...` path addresses, "" when it addresses something else."""
+	part = path.lstrip("/").split("/")
+	return f"{part[1]}/{part[2]}" if len(part) >= 3 and part[0].lower() == "repos" and part[1] and part[2] else ""
+
+
+def scoped(path, repo, team=""):
 	"""`path`, rewritten so it can only read `repo`. Raises ValueError when it cannot be. "" = unscoped.
 
 	ponytail: the reviewer's input is an untrusted diff and its output is published on that diff's PR, so
@@ -73,9 +80,21 @@ def scoped(path, repo):
 	# acme/api — a neighbouring repo, which is exactly the kind an attacker would guess at.
 	if low == want or low.startswith(want + "/"):
 		return p
+	# ponytail: and a repo DECLARED to belong with this one. Resolved through bind.of rather than against
+	# a list built here, so the precedence — an exact binding, then a deliberate unbind, then the owner
+	# rule — is the one bind already publishes, and a repo excluded from an owner rule stays excluded. A
+	# second copy of that ordering is how the two would come to disagree about one repo.
+	if team and (other := repo_of(head)) and other.lower() != repo.lower():
+		from . import bind  # ponytail: lazy — bind reaches team, which reaches log, which reaches here
+		if bind.of(other) == team:
+			return p
+	# ponytail: search stays on the repo under review even when reads are wider. Several repo: qualifiers
+	# would have to OR for that to be safe, and leaning a boundary on GitHub's query semantics is what
+	# the refusal loop below already declines to do. A sibling is read by path, not searched.
 	if low.rstrip("/") == "/search/code":
 		return "/search/code?" + scoped_query(query, repo)
-	raise ValueError(f"a review may only read {repo}, and {head} is outside it")
+	raise ValueError(f"a review may only read {repo}" + (f" and the repos bound to {team}" if team else "")
+	                 + f", and {head} is outside it")
 
 
 def scoped_query(query, repo):

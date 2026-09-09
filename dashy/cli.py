@@ -432,7 +432,7 @@ def api(argv):
 	# ponytail: and the repo, when a review set one. GET-only and host-pinned kept the token in and the
 	# writes out; nothing kept the READS to the PR being reviewed, and a review body is posted publicly.
 	try:
-		path = github.scoped(path, os.environ.get(github.SCOPE, ""))
+		path = github.scoped(path, os.environ.get(github.SCOPE, ""), os.environ.get(github.SCOPE_TEAM, ""))
 	except ValueError as e:
 		raise SystemExit(f"gitdashy: {e}")
 	try:

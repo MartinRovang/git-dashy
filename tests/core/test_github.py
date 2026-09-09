@@ -386,3 +386,59 @@ def test_owner_is_a_placing_qualifier_too():
 	adds is the one nobody re-derives the AND argument for."""
 	with pytest.raises(ValueError, match="acme/api"):
 		github.scoped("/search/code?q=x+owner:victim", "acme/api")
+
+
+def a_binding(monkeypatch, tmp_path, rows):
+	"""Write a bindings store. ponytail: the real file and the real reader — scoped() leans on bind's
+	precedence rather than copying it, so a fake resolver here would test the copy that does not exist."""
+	from dashy.core import bind
+	p = tmp_path / "bindings"
+	p.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+	monkeypatch.setattr(bind, "BINDINGS", str(p))
+
+
+def test_a_sibling_bound_to_the_same_team_is_readable(monkeypatch, tmp_path):
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/api", "team": "acme/platform"},
+	                                  {"repo": "acme/shared-lib", "team": "acme/platform"},
+	                                  {"repo": "acme/payroll", "team": "acme/finance"}])
+	assert github.scoped("/repos/acme/shared-lib/contents/x.py", "acme/api", "acme/platform") \
+		== "/repos/acme/shared-lib/contents/x.py"
+	for outside in ("/repos/acme/payroll/contents/.env",      # bound, but to another team
+	                "/repos/acme/unbound/contents/x",         # bound to nothing
+	                "/repos/other-org/x/contents/y"):
+		with pytest.raises(ValueError, match="acme/platform"):
+			github.scoped(outside, "acme/api", "acme/platform")
+
+
+def test_without_a_team_a_sibling_is_still_refused(monkeypatch, tmp_path):
+	"""An untrusted author gets the repo under review and nothing else, exactly as before."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme/platform"}])
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped("/repos/acme/shared-lib/contents/x.py", "acme/api", "")
+
+
+def test_an_owner_rule_widens_it_and_a_tombstone_still_bites(monkeypatch, tmp_path):
+	"""ponytail: THE reason scoped() resolves through bind.of instead of a list built here. An unbind is
+	a tombstone that beats the owner rule, and a list of patterns assembled separately would have to
+	re-implement that ordering — which is how the two would come to disagree about one repo."""
+	a_binding(monkeypatch, tmp_path, [{"owner": "acme", "team": "acme/platform"},
+	                                  {"forget": "acme/payroll"}])
+	assert github.scoped("/repos/acme/anything/contents/x", "acme/api", "acme/platform")
+	with pytest.raises(ValueError, match="acme/platform"):
+		github.scoped("/repos/acme/payroll/contents/.env", "acme/api", "acme/platform")
+
+
+def test_search_stays_on_the_repo_under_review_even_when_reads_are_wider(monkeypatch, tmp_path):
+	"""ponytail: several repo: qualifiers would have to OR for a wider search to be safe, and leaning a
+	boundary on GitHub's query semantics is what the refusal loop already declines to do."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme/platform"}])
+	got = github.scoped("/search/code?q=parseToken", "acme/api", "acme/platform")
+	assert "repo%3Aacme%2Fapi" in got and "shared-lib" not in got
+
+
+@pytest.mark.parametrize("path, want", [
+	("/repos/acme/api/pulls/7", "acme/api"), ("repos/acme/api", "acme/api"),
+	("/search/code", ""), ("/user/repos", ""), ("/repos/acme", ""), ("/repos", ""),
+])
+def test_repo_of_reads_the_addressed_repo(path, want):
+	assert github.repo_of(path) == want

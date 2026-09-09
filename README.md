@@ -461,7 +461,13 @@ code around the diff. That command is confined to the repo being reviewed — a 
 refused, and a code search is narrowed to that repo (one naming another repo, user or org is refused
 outright rather than narrowed). The confinement is set on the
 review's own subprocess rather than written into its prompt, because the prompt is the part an untrusted
-diff gets to influence. `--effort` carries over to OpenRouter as the
+diff gets to influence.
+
+A review of a PR opened by the repo's owner, an org member or a collaborator may also read the other
+repos bound to the same team, so a change that depends on a shared library can be checked against it.
+Both halves have to hold: `gitdashy bind` is where a person declares which repos belong together, and
+GitHub's `author_association` is what says the diff was not written by a stranger. A fork PR from an
+outsider gets the repo under review and nothing else. Code search stays on that repo either way. `--effort` carries over to OpenRouter as the
 model's reasoning budget (`xhigh` and `max` collapse onto `high`, since OpenRouter stops there): leave
 it at `low` unless a reasoning model is worth the wait. `gitdashy self-check` on another backend only
 proves the endpoint answers.

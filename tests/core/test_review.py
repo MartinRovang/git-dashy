@@ -437,3 +437,42 @@ def test_the_prompt_reaches_a_fork_pr_by_sha_not_by_branch(monkeypatch):
 	assert "?ref=<head sha>" in prompt and "git/trees/<head sha>" in prompt
 	assert "<head branch>" not in prompt
 	assert "never the head BRANCH name" in prompt
+
+
+def _trust(monkeypatch, association):
+	from dashy.core import github
+	monkeypatch.setattr(github, "api", lambda path, **kw: {"author_association": association})
+
+
+@pytest.mark.parametrize("association, wide", [
+	("OWNER", True), ("MEMBER", True), ("COLLABORATOR", True),
+	("CONTRIBUTOR", False), ("FIRST_TIME_CONTRIBUTOR", False), ("NONE", False), ("", False),
+])
+def test_the_wider_read_is_offered_only_to_an_author_with_standing(monkeypatch, posted, association, wide):
+	"""ponytail: the boundary's premise is that the diff is written by someone untrusted. An owner, org
+	member or collaborator can read the repo without writing a diff to ask, so the premise does not hold
+	for them. An outsider's fork PR is the case it does, and that one still gets the repo alone."""
+	from dashy.core import github, bind
+	_trust(monkeypatch, association)
+	monkeypatch.setattr(bind, "of", lambda repo: "acme/platform")
+	seen = {}
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: seen.update(kw.get("env") or {}) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	assert seen[github.SCOPE] == "a/b"                                  # always the repo under review
+	assert seen[github.SCOPE_TEAM] == ("acme/platform" if wide else "")
+
+
+def test_an_author_check_that_cannot_answer_stays_narrow(monkeypatch, posted):
+	"""ponytail: fails CLOSED. The wider read is a privilege, so a call that did not answer must not
+	grant it — and this is the branch a rate limit or an outage lands on."""
+	from dashy.core import github, bind
+	monkeypatch.setattr(github, "api", lambda path, **kw: (_ for _ in ()).throw(github.Error("502")))
+	# ponytail: bind.of is asked anyway by memory.read and memory.brief, so the assertion is on what the
+	# subprocess is HANDED, not on whether the store was read. A test of the gate has to name the gate.
+	monkeypatch.setattr(bind, "of", lambda repo: "acme/platform")
+	seen = {}
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: seen.update(kw.get("env") or {}) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	assert seen[github.SCOPE_TEAM] == ""
