@@ -1593,11 +1593,7 @@ def bind_screen(scr, state, sel, pr):
 
 
 def _team_verb(scr, state, sel, key, k, current):
-	"""One team verb by keypress. True when the team is gone and its screen must close.
-
-	ponytail: ONE dispatch, called from a team's own screen and from the list when only one team is
-	joined. Written twice, the two drift, and the list's copy is the one nobody looks at.
-	"""
+	"""One team verb by keypress. True when the team is gone and its screen must close."""
 	if k == ord("e"):
 		_edit_brief(scr, state, sel, key)
 	elif k == ord("d"):
@@ -1654,16 +1650,21 @@ def _team_screen(scr, state, sel, key, current=None):
 		# owner" read as though "o covers an owner" were part of the answer, and the reader has to parse
 		# a sentence to learn the row is empty. The footer already says what every key does; an empty
 		# row says "nothing yet" and nothing more.
-		lines = [("what", it["description"] or "nothing yet"),
-		         ("lives at", knowledge.tilde(os.path.realpath(d))),
-		         ("remote", team.redacted(url) if url else "none yet"),
-		         ("declares", ", ".join(team.covers(key)) or "nothing yet"),
-		         ("here", here or "nothing yet")]
+		# ponytail: the labels SAY THE SCOPE, because that is the whole difference between the last two
+		# rows and nothing on screen carried it. "declares" and "here" were words I invented: one is the
+		# team's own claim, which travels to everyone who joins, and the other is what is bound on this
+		# machine — and a reader had no way to tell which was which, or that they could differ. A label
+		# that needs explaining twice is the wrong label, not a reader who did not read carefully.
+		lines = [("what it is for", it["description"] or "nothing yet"),
+		         ("checkout", knowledge.tilde(os.path.realpath(d))),
+		         ("git remote", team.redacted(url) if url else "none yet"),
+		         ("everyone who joins gets", ", ".join(team.covers(key)) or "nothing yet"),
+		         ("bound on this machine", here or "nothing yet")]
 		draw(scr, state, sel, prompt=" ")
 		# ponytail: each key says what it DOES, and the whole line stays under the 70 columns an
 		# 80-column terminal leaves once panel() has taken its border and padding.
 		panel(scr, f"{it['name']}  ({key})", lines,
-		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")
+		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")  # 69 cols
 		k = scr.getch()
 		if k in (27, ord("q")):
 			return
@@ -1685,15 +1686,17 @@ def team_setup(scr, state, sel, current=None):
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
-		      # ponytail: the footer is where a key's meaning lives, so with one team joined it names the
-		      # verbs that work from here rather than hiding five keys that are live.
-		      # ponytail: and it FITS. panel() clamps inner to w - 4 and draws the footer at inner - 6, so
-		      # 70 columns is all an 80-column terminal shows: the spaced-out form was 93 and lost [a]
-		      # join and [esc] entirely, on the branch this change is built around. A test draws it at
-		      # w=80 and asserts every key is on screen, because counting characters by hand is how this
-		      # came back. The two-team form is short, so it keeps the roomier spelling.
-		      ("[e]brief [d]desc [c]remote [o]cover [x]leave [n]new [a]join [esc]" if len(joined) == 1 else
-		       ("[1-8] open   " if joined else "") + "[n] start   [a] join   [esc] close"))
+		      # ponytail: the footer is where a key's meaning lives, and it is written in WORDS. With one
+		      # team joined its five verbs used to work from this list too, which meant advertising them
+		      # here — and the only spelling that fit 70 columns was "[e]brief [d]desc [c]remote", which
+		      # is a key list nobody can read. The verbs live on the team's own screen now and this list
+		      # has one job: open one, start one, join one. One model, no hidden keys, one extra keypress.
+		      # ponytail: it FITS. panel() clamps inner to w - 4 and draws the footer at inner - 6, so 70
+		      # columns is all an 80-column terminal shows; a test draws it at w=80 and asserts each key,
+		      # because counting characters by hand is exactly how a 93-character footer shipped.
+		      ("[1] open this team   [n] start another   [a] join one   [esc] close" if len(joined) == 1
+		       else "[1-8] open a team   [n] start one   [a] join one   [esc] close" if joined
+		       else "[n] start a team   [a] join one that exists   [esc] close"))
 		k = scr.getch()
 		if k == ord("n"):
 			_new_team(scr, state, sel, current)
@@ -1701,12 +1704,6 @@ def team_setup(scr, state, sel, current=None):
 			_join_team(scr, state, sel, current)
 		elif ord("1") <= k <= ord("8") and (k - ord("1")) < len(joined):
 			_team_screen(scr, state, sel, joined[k - ord("1")], current)
-		elif len(joined) == 1:
-			# ponytail: one team is the common case, and making it press 1 first would be ceremony. The
-			# same dispatch the team screen uses, so the two cannot drift apart.
-			_team_verb(scr, state, sel, joined[0], k, current)
-			if k in (27, ord("q")):
-				return
 		elif k in (27, ord("q")):
 			return
 
