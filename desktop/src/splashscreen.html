@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>gitdashy</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Archivo:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --accent: oklch(0.74 0.16 52); --ink: oklch(0.96 0.012 80); --bg: oklch(0.175 0.012 60); --mono: 'JetBrains Mono', ui-monospace, monospace; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: Archivo, Helvetica, Arial, sans-serif; user-select: none; }
+  @keyframes sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+  @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes grain { 0%, 100% { transform: translate(0,0); } 50% { transform: translate(-1.5%, 1.5%); } }
+  .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 24px; box-sizing: border-box; position: relative; overflow: hidden; }
+  .glow { position: absolute; inset: -20%; background: radial-gradient(closest-side, color-mix(in oklab, var(--accent) 22%, transparent), transparent 70%); filter: blur(40px); animation: grain 14s ease-in-out infinite; pointer-events: none; }
+  .card { position: relative; width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 40px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .logo { width: 38px; height: 38px; border-radius: 11px; background: var(--accent); display: grid; place-items: center; overflow: hidden; box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent), 0 10px 30px -10px var(--accent); }
+  .logo img { width: 27px; display: block; image-rendering: auto; }
+  .name { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+  .build { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.45; }
+  .track { position: relative; height: 10px; border-radius: 99px; background: color-mix(in oklab, var(--ink) 9%, transparent); overflow: hidden; }
+  .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 99px; background: linear-gradient(90deg, color-mix(in oklab, var(--accent) 70%, var(--ink)), var(--accent)); box-shadow: 0 0 24px -2px var(--accent); transition: width 0.4s ease; overflow: hidden; }
+  .fill div { position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, color-mix(in oklab, white 55%, transparent), transparent); animation: sweep 1.5s ease-in-out infinite; }
+  .steps { display: flex; flex-direction: column; gap: 10px; }
+  .step { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 12.5px; color: color-mix(in oklab, var(--ink) 28%, transparent); }
+  .step i { width: 11px; height: 11px; border-radius: 50%; flex: none; box-sizing: border-box;
+            border: 2px solid color-mix(in oklab, var(--ink) 18%, transparent); }
+  .step b { flex: 1; font-weight: 400; }
+  .step s { text-decoration: none; opacity: 0.5; }
+  /* running: the ring spins */
+  .step.run { color: var(--ink); }
+  .step.run i { border-color: color-mix(in oklab, var(--ink) 22%, transparent); border-top-color: var(--accent);
+                animation: spin 0.7s linear infinite; }
+  /* done: the ring fills in */
+  .step.ok { color: color-mix(in oklab, var(--ink) 55%, transparent); }
+  .step.ok i { background: var(--accent); border-color: var(--accent); }
+  .err { display: none; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: oklch(0.7 0.19 25); white-space: pre-wrap; }
+  body.failed .err { display: block; }
+  body.failed .track, body.failed .steps { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="glow"></div>
+  <div class="card">
+    <div class="row">
+      <div class="brand"><div class="logo"><img src="head.png" alt="" /></div><div class="name">gitdashy</div></div>
+      <div class="build" id="build">starting</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:18px">
+      <div class="track"><div class="fill" id="fill"><div></div></div></div>
+      <div class="err" id="err"></div>
+    </div>
+    <div class="steps" id="steps"></div>
+  </div>
+</div>
+<script>
+// ponytail: the shell reports two real events — server up (it closes this window) and server failed.
+// The steps below are the phases it does go through, advanced on a clock because none of them report
+// progress. The bar is asymptotic to 90%: always moving, never claiming done before the handover.
+const STEPS = [
+  { name: "spawn_server", at: 0 },
+  { name: "await_socket", at: 900 },
+  { name: "fetch_pull_requests", at: 2200 },
+];
+const stepsEl = document.getElementById("steps");
+stepsEl.innerHTML = STEPS.map(s => `<div class="step"><i></i><b>${s.name}</b><s>queued</s></div>`).join("");
+const rows = [...stepsEl.children];
+const t0 = Date.now();
+
+const timer = setInterval(() => {
+  const dt = Date.now() - t0;
+  const active = STEPS.filter(s => dt >= s.at).length;
+  document.getElementById("fill").style.width = (90 * (1 - Math.exp(-dt / 2600))).toFixed(1) + "%";
+  rows.forEach((r, i) => {
+    const st = i < active - 1 ? "ok" : i === active - 1 ? "run" : "";
+    r.className = "step " + st;
+    r.lastChild.textContent = st === "ok" ? "done" : st === "run" ? "running" : "queued";
+  });
+}, 80);
+
+function fail(msg) {
+  clearInterval(timer);
+  document.body.className = "failed";
+  document.getElementById("build").textContent = "could not start";
+  document.getElementById("err").textContent = msg;
+}
+
+window.__TAURI__?.event?.listen("gitdashy-error", (e) => fail(String(e.payload)));
+</script>
+</body>
+</html>
