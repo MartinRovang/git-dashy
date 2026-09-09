@@ -497,3 +497,46 @@ def test_drafts_prints_the_fact_without_its_provenance(monkeypatch, capsys, tmp_
 	out = capsys.readouterr().out
 	assert "the viewer owns mask state" in out
 	assert "[r:" not in out and "r:" not in out.split("waiting")[0]   # no provenance in the sentence
+
+
+def test_api_is_confined_to_the_repo_under_review(monkeypatch):
+	"""The scope arrives in the ENVIRONMENT, so there is nothing in the argv a prompt can rewrite."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.setenv(github.SCOPE, "acme/api")
+	monkeypatch.setattr(github, "call", lambda path, **kw: pytest.fail(f"called out to {path}"))
+	for path in ("/repos/some-other-org/private-repo/contents/.env",
+	             "/search/code?q=AWS_SECRET+user:victim",
+	             "/user/repos?per_page=100"):
+		with pytest.raises(SystemExit, match="acme/api"):
+			cli.api(["gitdashy", "api", path])
+
+
+def test_api_unscoped_still_reads_anything(monkeypatch, capsys):
+	"""ponytail: no scope means a person typed it. Refusing there protects nobody and teaches a workaround."""
+	from dashy import cli
+	from dashy.core import github
+	monkeypatch.delenv(github.SCOPE, raising=False)
+	monkeypatch.setattr(github, "call", lambda path, **kw: json.dumps({"path": path}))
+	cli.api(["gitdashy", "api", "/user/repos"])
+	assert json.loads(capsys.readouterr().out) == {"path": "/user/repos"}
+
+
+def test_api_reaches_a_sibling_when_the_team_env_is_set(monkeypatch, tmp_path):
+	"""ponytail: that SCOPE_TEAM travels from the environment into github.scoped was unproven — dropping
+	the third argument in cli.api failed no test, while the PR claimed every layer was mutation-checked.
+	The parent setting it and the policy honouring it were both covered; the wire between them was not."""
+	from dashy import cli
+	from dashy.core import bind, github
+	b = tmp_path / "bindings"
+	b.write_text(json.dumps({"repo": "acme/shared-lib", "team": "acme-platform"}) + "\n")
+	monkeypatch.setattr(bind, "BINDINGS", str(b))
+	monkeypatch.setenv(github.SCOPE, "acme/api")
+	monkeypatch.setenv(github.SCOPE_TEAM, "acme-platform")
+	got = []
+	monkeypatch.setattr(github, "call", lambda path, **kw: got.append(path) or json.dumps({"ok": 1}))
+	cli.api(["gitdashy", "api", "/repos/acme/shared-lib/contents/x.py"])
+	assert got == ["/repos/acme/shared-lib/contents/x.py"]
+	monkeypatch.delenv(github.SCOPE_TEAM)          # the same read, without the team
+	with pytest.raises(SystemExit, match="acme/api"):
+		cli.api(["gitdashy", "api", "/repos/acme/shared-lib/contents/x.py"])

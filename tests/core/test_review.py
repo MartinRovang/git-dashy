@@ -405,3 +405,74 @@ def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatc
 	monkeypatch.setattr(config, "VOICE", ["review"])
 	review(dict(PR), "opus")
 	assert "Append a section" not in calls[0][2] and "Do NOT" not in calls[0][2]
+
+
+def test_a_review_hands_its_agent_the_scope(monkeypatch, posted):
+	"""ponytail: the whole of github.scoped is inert unless this is set, and it is set in exactly one
+	place. A test of the policy that never checks it is reached is a test that cannot fail."""
+	from dashy.core import github
+	seen = {}
+	def fake_run(cmd, **kw):
+		seen.update(kw.get("env") or {})
+		seen["tools"] = cmd[cmd.index("--allowedTools") + 1] if "--allowedTools" in cmd else ""
+		return claude_out(verdict="approve", summary="s", body="b")
+	monkeypatch.setattr(subprocess, "run", fake_run)
+	assert review(dict(PR), "sonnet") == "✓ approved"
+	assert seen[github.SCOPE] == "a/b"          # the repo of the PR under review, not a default
+	assert seen["tools"].endswith(" api:*)")    # and the one command it may run is still the wrapper
+	assert "PATH" in seen                       # ponytail: an overlay, not a replacement — see llm.ask
+
+
+def test_the_prompt_reaches_a_fork_pr_by_sha_not_by_branch(monkeypatch):
+	"""ponytail: scoping reads to the base repo made this load-bearing. A fork's head branch lives in the
+	fork, so `?ref=<branch>` 404s against the base — and the reviewer, now refused the fork path and told
+	not to widen the boundary, had no documented way to read the code it was reviewing. Verified against
+	the live API: the branch name 404s, the head SHA resolves. A fork PR is the common case, not a corner.
+	"""
+	calls = []
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: calls.append(cmd[2]) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	prompt = calls[0]
+	assert "?ref=<head sha>" in prompt and "git/trees/<head sha>" in prompt
+	assert "<head branch>" not in prompt
+	assert "never the head BRANCH name" in prompt
+
+
+def _trust(monkeypatch, association):
+	from dashy.core import github
+	monkeypatch.setattr(github, "api", lambda path, **kw: {"author_association": association})
+
+
+@pytest.mark.parametrize("association, wide", [
+	("OWNER", True), ("MEMBER", True), ("COLLABORATOR", True),
+	("CONTRIBUTOR", False), ("FIRST_TIME_CONTRIBUTOR", False), ("NONE", False), ("", False),
+])
+def test_the_wider_read_is_offered_only_to_an_author_with_standing(monkeypatch, posted, association, wide):
+	"""ponytail: the boundary's premise is that the diff is written by someone untrusted. An owner, org
+	member or collaborator can read the repo without writing a diff to ask, so the premise does not hold
+	for them. An outsider's fork PR is the case it does, and that one still gets the repo alone."""
+	from dashy.core import github, bind
+	_trust(monkeypatch, association)
+	monkeypatch.setattr(bind, "of", lambda repo: "acme/platform")
+	seen = {}
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: seen.update(kw.get("env") or {}) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	assert seen[github.SCOPE] == "a/b"                                  # always the repo under review
+	assert seen[github.SCOPE_TEAM] == ("acme/platform" if wide else "")
+
+
+def test_an_author_check_that_cannot_answer_stays_narrow(monkeypatch, posted):
+	"""ponytail: fails CLOSED. The wider read is a privilege, so a call that did not answer must not
+	grant it — and this is the branch a rate limit or an outage lands on."""
+	from dashy.core import github, bind
+	monkeypatch.setattr(github, "api", lambda path, **kw: (_ for _ in ()).throw(github.Error("502")))
+	# ponytail: bind.of is asked anyway by memory.read and memory.brief, so the assertion is on what the
+	# subprocess is HANDED, not on whether the store was read. A test of the gate has to name the gate.
+	monkeypatch.setattr(bind, "of", lambda repo: "acme/platform")
+	seen = {}
+	monkeypatch.setattr(subprocess, "run",
+	                    lambda cmd, **kw: seen.update(kw.get("env") or {}) or claude_out(verdict="approve", summary="s", body="b"))
+	review(dict(PR), "sonnet")
+	assert seen[github.SCOPE_TEAM] == ""

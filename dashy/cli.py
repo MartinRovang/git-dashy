@@ -429,6 +429,12 @@ def api(argv):
 		raise SystemExit("gitdashy: api needs a path, e.g. /repos/owner/name/contents/src/app.py")
 	if path.startswith(("http://", "https://", "//")):
 		raise SystemExit("gitdashy: api takes an API path, not a URL")
+	# ponytail: and the repo, when a review set one. GET-only and host-pinned kept the token in and the
+	# writes out; nothing kept the READS to the PR being reviewed, and a review body is posted publicly.
+	try:
+		path = github.scoped(path, os.environ.get(github.SCOPE, ""), os.environ.get(github.SCOPE_TEAM, ""))
+	except ValueError as e:
+		raise SystemExit(f"gitdashy: {e}")
 	try:
 		accept = "application/vnd.github.v3.diff" if "--diff" in argv else "application/vnd.github+json"
 		raw = github.call(path if path.startswith("/") else "/" + path, accept=accept, timeout=60)

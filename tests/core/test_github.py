@@ -323,3 +323,163 @@ def test_context_truncates_a_huge_diff(monkeypatch):
 	                    if kw.get("accept", "").endswith("diff") else json.dumps({"title": "t"}))
 	text = github.context("a/b", 7)
 	assert text.endswith("[diff truncated]") and len(text) < 200
+
+
+@pytest.mark.parametrize("path, want", [
+	("/repos/acme/api/pulls/7", "/repos/acme/api/pulls/7"),
+	("repos/acme/api/pulls/7", "/repos/acme/api/pulls/7"),          # no leading slash
+	("/repos/ACME/API/pulls/7", "/repos/ACME/API/pulls/7"),         # github is case-insensitive here
+	("/repos/acme/api", "/repos/acme/api"),                         # the repo itself
+	("/repos/acme/api/contents/x.py?ref=feat", "/repos/acme/api/contents/x.py?ref=feat"),
+])
+def test_scoped_lets_the_repo_under_review_through(path, want):
+	assert github.scoped(path, "acme/api") == want
+
+
+@pytest.mark.parametrize("path", [
+	"/repos/some-other-org/private-repo/contents/.env",
+	"/user/repos?per_page=100",
+	"/repos/acme/api-secrets/contents/.env",   # ponytail: the separator. A bare startswith let a
+	"/repos/acme/apifoo",                      # neighbouring repo through, which is the one to guess at
+	"/orgs/acme/members",
+	"/search/repositories?q=acme",             # only /search/code is rewritable; the rest are not
+	"/gists",
+])
+def test_scoped_refuses_everything_outside_it(path):
+	"""ponytail: the reviewer reads an untrusted diff and its body is posted on that diff's PR, so an
+	unscoped read closes a loop — steer it, and the answer is published for you."""
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped(path, "acme/api")
+
+
+def test_scoped_forces_the_repo_into_a_code_search():
+	"""ponytail: REWRITTEN, not merely checked. A q with no qualifier searches every repo the token can
+	see, so refusing only the ones naming someone else leaves the default — what a model writes first."""
+	import urllib.parse
+	def q(path):
+		return urllib.parse.parse_qs(github.scoped(path, "acme/api").partition("?")[2])["q"][0]
+	assert q("/search/code?q=parseToken") == "parseToken repo:acme/api"
+	assert q("/search/code?q=parseToken+repo:acme/api") == "parseToken repo:acme/api"  # not doubled
+	assert q("/search/code/?q=x") == "x repo:acme/api"                                 # trailing slash
+	for hostile in ("/search/code?q=AWS_SECRET+user:victim", "/search/code?q=x+repo:other/repo",
+	                "/search/code?q=x+org:victim"):
+		with pytest.raises(ValueError, match="acme/api"):
+			github.scoped(hostile, "acme/api")
+
+
+def test_an_unscoped_call_is_a_person_at_a_terminal():
+	"""`gitdashy api /user/repos` typed by hand is not the threat, and refusing it teaches a workaround."""
+	assert github.scoped("/user/repos", "") == "/user/repos"
+
+
+def test_a_search_needs_something_to_search_for():
+	"""ponytail: stripping the caller's repo: could leave the query empty, and a qualifier on its own is
+	a 422 from GitHub — which reads as the scoping being broken rather than as a malformed question."""
+	for empty in ("/search/code?q=", "/search/code", "/search/code?q=repo:acme/api"):
+		with pytest.raises(ValueError, match="something to search for"):
+			github.scoped(empty, "acme/api")
+
+
+def test_owner_is_a_placing_qualifier_too():
+	"""ponytail: no leak today — the forced repo: ANDs, so this returns nothing rather than someone
+	else's code. It is one string in a list that exists for exactly this, and the next syntax GitHub
+	adds is the one nobody re-derives the AND argument for."""
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped("/search/code?q=x+owner:victim", "acme/api")
+
+
+def a_binding(monkeypatch, tmp_path, rows):
+	"""Write a bindings store. ponytail: the real file and the real reader — scoped() leans on bind's
+	precedence rather than copying it, so a fake resolver here would test the copy that does not exist."""
+	from dashy.core import bind
+	p = tmp_path / "bindings"
+	p.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+	monkeypatch.setattr(bind, "BINDINGS", str(p))
+
+
+def test_a_sibling_bound_to_the_same_team_is_readable(monkeypatch, tmp_path):
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/api", "team": "acme/platform"},
+	                                  {"repo": "acme/shared-lib", "team": "acme/platform"},
+	                                  {"repo": "acme/payroll", "team": "acme/finance"}])
+	assert github.scoped("/repos/acme/shared-lib/contents/x.py", "acme/api", "acme/platform") \
+		== "/repos/acme/shared-lib/contents/x.py"
+	for outside in ("/repos/acme/payroll/contents/.env",      # bound, but to another team
+	                "/repos/acme/unbound/contents/x",         # bound to nothing
+	                "/repos/other-org/x/contents/y"):
+		with pytest.raises(ValueError, match="acme/platform"):
+			github.scoped(outside, "acme/api", "acme/platform")
+
+
+def test_without_a_team_a_sibling_is_still_refused(monkeypatch, tmp_path):
+	"""An untrusted author gets the repo under review and nothing else, exactly as before."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme/platform"}])
+	with pytest.raises(ValueError, match="acme/api"):
+		github.scoped("/repos/acme/shared-lib/contents/x.py", "acme/api", "")
+
+
+def test_an_owner_rule_widens_it_and_a_tombstone_still_bites(monkeypatch, tmp_path):
+	"""ponytail: THE reason scoped() resolves through bind.of instead of a list built here. An unbind is
+	a tombstone that beats the owner rule, and a list of patterns assembled separately would have to
+	re-implement that ordering — which is how the two would come to disagree about one repo."""
+	a_binding(monkeypatch, tmp_path, [{"owner": "acme", "team": "acme/platform"},
+	                                  {"forget": "acme/payroll"}])
+	assert github.scoped("/repos/acme/anything/contents/x", "acme/api", "acme/platform")
+	with pytest.raises(ValueError, match="acme/platform"):
+		github.scoped("/repos/acme/payroll/contents/.env", "acme/api", "acme/platform")
+
+
+def test_search_stays_on_the_repo_under_review_even_when_reads_are_wider(monkeypatch, tmp_path):
+	"""ponytail: several repo: qualifiers would have to OR for a wider search to be safe, and leaning a
+	boundary on GitHub's query semantics is what the refusal loop already declines to do."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme/platform"}])
+	got = github.scoped("/search/code?q=parseToken", "acme/api", "acme/platform")
+	assert "repo%3Aacme%2Fapi" in got and "shared-lib" not in got
+
+
+@pytest.mark.parametrize("path, want", [
+	("/repos/acme/api/pulls/7", "acme/api"), ("repos/acme/api", "acme/api"),
+	("/search/code", ""), ("/user/repos", ""), ("/repos/acme", ""), ("/repos", ""),
+])
+def test_repo_of_reads_the_addressed_repo(path, want):
+	assert github.repo_of(path) == want
+
+
+@pytest.mark.parametrize("path", [
+	"/repos/acme/api/../../user",
+	"/repos/acme/api/%2e%2e/%2e%2e/user",
+	"/repos/acme/api/%2E%2E/user",
+	"/repos/acme/api/contents/src/../../../../repos/other/x",
+])
+def test_a_dot_segment_is_refused_whatever_its_spelling(path):
+	"""ponytail: api.github.com 404s these today, so the prefix check is not bypassable there. But that
+	is the SERVER refusing rather than us, and GitHub Enterprise can sit behind a proxy that normalises
+	before forwarding — a boundary that holds only because the far end is strict is one deployment away
+	from not holding. Unquoted for the test and never for the request."""
+	with pytest.raises(ValueError, match=r"\.\."):
+		github.scoped(path, "acme/api", "acme-platform")
+
+
+def test_a_name_that_is_not_its_own_key_is_refused(monkeypatch, tmp_path):
+	"""ponytail: bind.key strips a `.git` suffix, so /repos/acme/shared-lib.git/... resolved to a bound
+	sibling and was then sent verbatim — the check normalising one string while the request carried
+	another. GitHub 404s that form today, which is the same "the server saves us" argument as the dots."""
+	a_binding(monkeypatch, tmp_path, [{"repo": "acme/shared-lib", "team": "acme-platform"},
+	                                  {"repo": "acme/api", "team": "acme-platform"}])
+	assert github.scoped("/repos/acme/shared-lib/contents/x", "acme/api", "acme-platform")
+	for spelled in ("/repos/acme/shared-lib.git/contents/x", "/repos/acme/api.git/contents/x"):
+		with pytest.raises(ValueError, match="outside it"):
+			github.scoped(spelled, "acme/api", "acme-platform")
+
+
+def test_a_search_keeps_the_params_that_page_it():
+	"""ponytail: per_page and page are how a code search paginates; dropping them would silently cap a
+	reviewer at the first page of results, which reads as the symbol not being used."""
+	got = github.scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api")
+	assert "per_page=5" in got and "page=2" in got and "repo%3Aacme%2Fapi" in got
+
+
+def test_another_search_endpoint_says_which_search_there_is():
+	"""ponytail: "outside it" describes a repo path; a model reading that about /search/repositories
+	learns nothing it can act on."""
+	with pytest.raises(ValueError, match="not /search/code"):
+		github.scoped("/search/repositories?q=acme", "acme/api")

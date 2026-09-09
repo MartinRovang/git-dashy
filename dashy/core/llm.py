@@ -28,8 +28,11 @@ def provider(model):
 	return (name, rest) if rest and name in config.ENDPOINTS else ("claude", model)
 
 
-def ask(prompt, model, system="", tools="", timeout=900):
-	"""Run the prompt. Returns (text, cost_usd_or_None, ms). Raises like subprocess does."""
+def ask(prompt, model, system="", tools="", timeout=900, env=None):
+	"""Run the prompt. Returns (text, cost_usd_or_None, ms). Raises like subprocess does.
+
+	ponytail: `env` reaches the claude subprocess only. It is how a review scopes the one command it
+	hands out, and it goes here rather than into the prompt because the prompt is what an attacker writes."""
 	who, name = provider(model)
 	started = time.time()
 	logging.getLogger(__name__).debug("ask %s:%s tools=%s prompt=%d chars", who, name, tools, len(prompt))
@@ -42,7 +45,10 @@ def ask(prompt, model, system="", tools="", timeout=900):
 		if config.EFFORT:
 			cmd += ["--effort", config.EFFORT]
 		with tempfile.TemporaryDirectory() as here:  # ponytail: same reason as a review — see review.review
-			out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout, cwd=here).stdout
+			# ponytail: `env` overlays this process's own, so a caller adds one variable rather than
+			# handing the child a environment built from scratch — PATH and the token still arrive.
+			out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout, cwd=here,
+			                     env=dict(os.environ, **env) if env else None).stdout
 		result = json.loads(out)
 		return result["result"].strip(), result.get("total_cost_usd"), result.get("duration_ms")
 	base, key_env = config.ENDPOINTS[who]

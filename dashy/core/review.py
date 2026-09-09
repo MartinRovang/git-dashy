@@ -8,7 +8,7 @@ import tempfile
 import subprocess
 
 from .. import HERE, config
-from . import github, llm, log, memory, team
+from . import bind, github, llm, log, memory, team
 
 PROMPT = """Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
 {depth}{project}{memory}{prev}"""
@@ -69,13 +69,23 @@ a unified diff instead of json. It is the only command available to you. Start w
 
   {cmd} api /repos/{repo}/pulls/{number}            the description, author, base and head
   {cmd} api /repos/{repo}/pulls/{number} --diff     the diff
-  {cmd} api /repos/{repo}/contents/<file>?ref=<head branch>   read a file (no ref = base branch)
-  {cmd} api /repos/{repo}/git/trees/<head branch>?recursive=1  every path in the repo, to find one
-  {cmd} api "/search/code?q=<symbol>+repo:{repo}"   where a symbol is used
+  {cmd} api /repos/{repo}/contents/<file>?ref=<head sha>      read a file (no ref = base branch)
+  {cmd} api /repos/{repo}/git/trees/<head sha>?recursive=1    every path at that commit, to find one
+  {cmd} api "/search/code?q=<symbol>"               where a symbol is used, within this repo
+
+Use the head SHA — `head.sha` from the first call — and never the head BRANCH name. A PR from a fork has
+its branch in the fork, not here, so a branch name 404s; the commit itself resolves against {repo}
+whichever repo it was pushed from.
+
+Reads are confined to {repo}{also}: a path outside that is refused, and a code search is narrowed to
+{repo} itself (a search naming another repo, user or org is refused outright rather than narrowed).
+That is a boundary, not a hint — do not spend turns trying to widen it.
 
 Look things up rather than assuming: a type or a contract inferred from a call site is how real defects
 survive review.
 """
+ALSO = """ and the other repos bound to the team {team} — read a sibling by path when this change
+depends on one; `/repos/<owner>/<name>/contents/...` and `git/trees` work there the same way"""
 NO_TOOLS = """
 
 You cannot run any commands. Judge the PR from what follows and say what you could not check.
@@ -213,6 +223,27 @@ def sections():
 	        + ", ".join(names) + " — none of them may be left out")
 
 
+TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")  # GitHub's author_association: standing in the base repo
+
+
+def trusted_author(repo, n):
+	"""True when this PR was opened by someone who already has standing in `repo`.
+
+	ponytail: the premise of the whole boundary is that the diff is written by someone untrusted. When
+	GitHub says the author is the owner, an org member or a collaborator, that premise does not hold —
+	they can read the repo without writing a diff to ask. An outsider's fork PR is the case it does.
+	ponytail: fails CLOSED. The wider read is a privilege, so a call that did not answer must not grant
+	it. One GET beside a model call is not the cost worth optimising away.
+	ponytail: it describes standing in the BASE repo only. An org member need not have access to every
+	private repo the org owns, so this narrows the exposure rather than removing it — which is why it
+	is a gate on a DECLARED set and not a licence to read anything.
+	"""
+	try:
+		return github.api(f"/repos/{repo}/pulls/{n}").get("author_association", "") in TRUSTED
+	except (github.Error, OSError, ValueError, KeyError, TypeError, IndexError):
+		return False
+
+
 def _verdict(repo, n, model, prev=None):
 	"""Build the prompt, run the reviewer, return its parsed verdict. Raises on failure.
 
@@ -236,12 +267,20 @@ def _verdict(repo, n, model, prev=None):
 	# A backend with no tool loop still gets it pasted; that goes over HTTP, where size is not a limit.
 	claude = llm.provider(model)[0] == "claude"
 	tools = f"Bash({api_cmd()} api:*)" if claude else ""
+	# ponytail: two locks, and both have to open. The DECLARED set says which repos may ever be read
+	# together — a diff cannot name one, it can only pick from what a person bound. Author standing says
+	# when that is offered at all: an outsider's fork PR is the case the boundary exists for, and it
+	# gets the repo under review and nothing else, exactly as before.
+	team = bind.of(repo) if claude and trusted_author(repo, n) else ""
 	if claude:
-		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n)
+		prompt += EXPLORE.format(cmd=api_cmd(), repo=repo, number=n,
+		                         also=ALSO.format(team=team) if team else "")
 	else:
 		prompt += NO_TOOLS + PR_FOLLOWS + github.context(repo, n)
 	prompt += tail() + CONTRACT.format(sections=sections())  # how to write the body, then its shape — last, both
-	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT)
+	# ponytail: the scope rides the environment, not the prompt or the argv — see github.scoped.
+	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT,
+	                         env={github.SCOPE: repo, github.SCOPE_TEAM: team} if claude else None)
 	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):

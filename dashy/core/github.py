@@ -49,6 +49,95 @@ def token():
 	return next((os.environ[v].strip() for v in ("GH_TOKEN", "GITHUB_TOKEN") if os.environ.get(v)), "")
 
 
+SCOPE = "PRS_API_REPO"  # set on a review's own subprocess: the repo it is reviewing
+SCOPE_TEAM = "PRS_API_TEAM"  # and the team whose other repos it may read too, "" for none. See scoped().
+QUALIFIERS = ("repo:", "user:", "org:", "owner:")  # search terms that choose WHERE to look, not what for
+
+
+def repo_of(path):
+	"""The owner/name a `/repos/...` path addresses, "" when it addresses something else."""
+	part = path.lstrip("/").split("/")
+	return f"{part[1]}/{part[2]}" if len(part) >= 3 and part[0].lower() == "repos" and part[1] and part[2] else ""
+
+
+def scoped(path, repo, team=""):
+	"""`path`, rewritten so it can only read `repo`. Raises ValueError when it cannot be. "" = unscoped.
+
+	ponytail: the reviewer's input is an untrusted diff and its output is published on that diff's PR, so
+	"read anything the token can" closes a loop — steer the read, and the answer is posted for you. The
+	read is GET-only and host-pinned already; this is the third side, and the one that was open.
+	ponytail: the scope arrives in the ENVIRONMENT, not in the argv the model writes. There is nothing a
+	prompt can say that widens it, and nothing to keep in step with the --allowedTools pattern.
+	ponytail: "" means unscoped, which is a person at a terminal. Their own `gitdashy api /user/repos`
+	is not the threat and refusing it would only teach them to work around this.
+	"""
+	if not repo:
+		return path
+	p = path if path.startswith("/") else "/" + path
+	head, _, query = p.partition("?")
+	# ponytail: no dot segments, in any spelling. api.github.com 404s /repos/<scope>/../../user today, so
+	# the prefix check is not bypassable there — but that is the SERVER refusing, not us, and GitHub
+	# Enterprise can sit behind a proxy that normalises before it forwards. A boundary that holds only
+	# because the far end happens to be strict is one deployment away from not holding. Unquoted for the
+	# test and never for the request, so what is sent is still exactly what was asked for.
+	if any(urllib.parse.unquote(seg) == ".." for seg in head.split("/")):
+		raise ValueError(f"a review may not use .. in a path, and {head} does")
+	want, low = f"/repos/{repo}".lower(), head.lower()
+	# ponytail: the separator matters. Bare startswith let /repos/acme/api-secrets through on a scope of
+	# acme/api — a neighbouring repo, which is exactly the kind an attacker would guess at.
+	if low == want or low.startswith(want + "/"):
+		return p
+	# ponytail: and a repo DECLARED to belong with this one. Resolved through bind.of rather than against
+	# a list built here, so the precedence — an exact binding, then a deliberate unbind, then the owner
+	# rule — is the one bind already publishes, and a repo excluded from an owner rule stays excluded. A
+	# second copy of that ordering is how the two would come to disagree about one repo.
+	if team and (other := repo_of(head)) and other.lower() != repo.lower():
+		from . import bind  # ponytail: lazy — bind reaches team, which reaches log, which reaches here
+		# ponytail: the name has to BE its own key before the key is looked up. bind.key strips a `.git`
+		# suffix and slug_of folds `:`, so /repos/acme/shared-lib.git/... resolved to a bound sibling and
+		# was then sent verbatim — the check normalising one string and the request carrying another.
+		# GitHub 404s that form today, which is the same "the server saves us" argument as the dots above.
+		if bind.key(other) == other.lower() and bind.of(other) == team:
+			return p
+	# ponytail: search stays on the repo under review even when reads are wider. Several repo: qualifiers
+	# would have to OR for that to be safe, and leaning a boundary on GitHub's query semantics is what
+	# the refusal loop below already declines to do. A sibling is read by path, not searched.
+	if low.rstrip("/") == "/search/code":
+		return "/search/code?" + scoped_query(query, repo)
+	if low.startswith("/search/"):
+		# ponytail: "outside it" describes a repo path, and a model reading it about /search/repositories
+		# learns nothing it can act on. Say which search there is.
+		raise ValueError(f"a review may only search code, in {repo} — {head} is not /search/code")
+	raise ValueError(f"a review may only read {repo}" + (f" and the repos bound to {team}" if team else "")
+	                 + f", and {head} is outside it")
+
+
+def scoped_query(query, repo):
+	"""A /search/code query string forced to `repo`. Raises ValueError when it names anywhere else.
+
+	ponytail: REWRITTEN, not merely checked. A `q` carrying no qualifier at all searches every repo the
+	token can see, so refusing only the ones that name someone else would leave the default — the form a
+	model reaches for first — wide open. parse_qsl also turns `+` back into a space, which is how the
+	qualifier in "q=SECRET+user:victim" becomes visible as a term rather than hiding inside one.
+	"""
+	parts = urllib.parse.parse_qsl(query)
+	# ponytail: one pass. A foreign qualifier is refused rather than silently narrowed — the forced
+	# repo: ANDs, so it would return nothing anyway, but that is GitHub's query semantics holding the
+	# line rather than us, and a model handed an empty result cannot tell "nobody uses this symbol"
+	# from "you asked the wrong question".
+	terms = []
+	for t in " ".join(v for k, v in parts if k == "q").split():
+		if not t.lower().startswith(QUALIFIERS):
+			terms.append(t)
+		elif t.lower() != f"repo:{repo}".lower():
+			raise ValueError(f"a review may only search {repo}, so {t} cannot be asked for")
+	if not terms:
+		# ponytail: a qualifier on its own is a 422 from GitHub, which reads as the scoping being broken.
+		raise ValueError("a code search needs something to search for, not just a repo")
+	terms += [f"repo:{repo}"]
+	return urllib.parse.urlencode([("q", " ".join(terms))] + [(k, v) for k, v in parts if k != "q"])
+
+
 def call(path, method="GET", body=None, accept="application/vnd.github+json", timeout=30):
 	"""One API call, returning the response text. Raises Error on anything that is not a 2xx."""
 	url = path if path.startswith("http") else API + path
