@@ -1517,15 +1517,21 @@ def _team_screen(scr, state, sel, key, current=None):
 		mine = sorted(o + "/*" for o, t in bind.owners().items() if t == key)
 		repos = [r for r, t in bind.bindings().items() if t == key]
 		here = ", ".join(mine[:3]) + (f" +{len(mine) - 3}" if len(mine) > 3 else "")
-		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x) or "nothing bound here yet"
-		lines = [("what", it["description"] or "nothing yet — d describes it"),
+		here = " · ".join(x for x in (here, f"{len(repos)} repo{'' if len(repos) == 1 else 's'}" if repos else "") if x)
+		# ponytail: a VALUE, never a value with an instruction stapled to it. "nothing — o covers an
+		# owner" read as though "o covers an owner" were part of the answer, and the reader has to parse
+		# a sentence to learn the row is empty. The footer already says what every key does; an empty
+		# row says "nothing yet" and nothing more.
+		lines = [("what", it["description"] or "nothing yet"),
 		         ("lives at", knowledge.tilde(os.path.realpath(d))),
-		         ("remote", _remote_label(url, full=True) if url else "none — c connects one"),
-		         ("declares", ", ".join(team.covers(key)) or "nothing — o covers an owner"),
-		         ("here", here)]
+		         ("remote", _remote_label(url, full=True) if url else "none yet"),
+		         ("declares", ", ".join(team.covers(key)) or "nothing yet"),
+		         ("here", here or "nothing yet")]
 		draw(scr, state, sel, prompt=" ")
+		# ponytail: each key says what it DOES, and the whole line stays under the 70 columns an
+		# 80-column terminal leaves once panel() has taken its border and padding.
 		panel(scr, f"{it['name']}  ({key})", lines,
-		      "[e] brief  [d] describe  [c] connect  [o] cover  [x] leave  [esc] back")
+		      "[e] brief  [d] describe  [c] remote  [o] cover  [x] leave  [esc] back")
 		k = scr.getch()
 		if k == ord("e"):
 			_edit_brief(scr, state, sel, key)

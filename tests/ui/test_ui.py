@@ -1976,7 +1976,9 @@ def test_t_lists_teams_and_a_number_opens_that_teams_own_screen(screen, monkeypa
 	assert ui._remote_label("https://x:tok@github.com/o/r.git", full=True) == "https://github.com/o/r.git"
 	assert ui._remote_label("git@github.com:o/r.git") == "o/r"       # the list shows owner/name
 	assert "lives at" in out and "remote" in out and "declares" in out and "acme/*" in out
-	assert "[e]" in out and "[o]" in out and "[x]" in out
+	assert "[e] brief" in out and "[o] cover" in out and "[x] leave" in out
+	# ponytail: an empty row is a VALUE — the footer is where a key's meaning lives
+	assert "nothing yet" in out and "covers an owner" not in out and "connects one" not in out
 
 
 def test_t_start_asks_no_where_and_lands_on_the_new_team(screen, monkeypatch, st, tmp_path):
