@@ -5,77 +5,211 @@
 <title>gitdashy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Archivo:wght@400;500;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --accent: oklch(0.74 0.16 52);
-    --ink: oklch(0.96 0.012 80);
-    --bg: oklch(0.175 0.012 60);
-    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-    --sans: Archivo, Helvetica, Arial, sans-serif;
-    --dim: color-mix(in oklab, var(--ink) 45%, transparent);
-    --line: color-mix(in oklab, var(--ink) 10%, transparent);
-    --ok: oklch(0.78 0.15 145);
-    --bad: oklch(0.68 0.19 25);
-    --wait: oklch(0.82 0.15 90);
+    --bg: #141017; --bg2: #17121c; --bg3: #1b1520; --bg4: #221a28;
+    --line: #2e2436; --line2: #241c2b; --edge: #372c41;
+    --ink: #ece7f1; --ink2: #cfc6d8; --ink3: #b7adc2; --dim: #9c92a8; --dim2: #6f6579; --dim3: #5d5468;
+    --pink: #f56bb0; --green: #4fd48c; --red: #f0655c; --amber: #dfb03c; --cyan: #5fc4d9;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  a { color: var(--pink); text-decoration: none; }
+  ::selection { background: rgba(245,107,176,0.3); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .scroll::-webkit-scrollbar { width: 10px; }
+  .scroll::-webkit-scrollbar-thumb { background: #362a3f; border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+  .scroll::-webkit-scrollbar-track { background: transparent; }
 
-  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
-           gap: 20px; padding: 18px 28px; background: color-mix(in oklab, var(--bg) 88%, black); border-bottom: 1px solid var(--line);
-           backdrop-filter: blur(8px); }
-  .brand { display: flex; align-items: center; gap: 13px; }
-  .logo { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); display: grid; place-items: center;
-          overflow: hidden; box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent), 0 10px 26px -12px var(--accent); }
-  .logo img { width: 23px; display: block; }
-  .name { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
-  .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
-          display: flex; align-items: center; gap: 14px; }
-  .spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid color-mix(in oklab, var(--ink) 20%, transparent);
-             border-top-color: var(--accent); animation: spin 0.7s linear infinite; }
+  #app { height: 100%; display: flex; flex-direction: column; }
+  .mono { font-family: var(--mono); }
 
-  main { max-width: 1040px; margin: 0 auto; padding: 30px 28px 60px; display: flex; flex-direction: column; gap: 34px; }
-  section { animation: rise 0.3s ease both; }
-  h2 { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
-       color: var(--accent); margin: 0 0 12px; display: flex; align-items: baseline; gap: 10px; }
-  h2 em { font-style: normal; color: var(--dim); letter-spacing: 0.14em; }
+  /* top bar */
+  .top { height: 44px; flex-shrink: 0; background: var(--bg3); border-bottom: 1px solid var(--line);
+         display: flex; align-items: center; gap: 14px; padding: 0 14px; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--pink); display: grid; place-items: center; overflow: hidden; }
+  .logo img { width: 17px; display: block; }
+  .brand { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+  .vbar { width: 1px; height: 18px; background: var(--line); }
+  .pill { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 6px;
+          background: rgba(79,212,140,0.09); border: 1px solid rgba(79,212,140,0.25); font-size: 11px; font-weight: 600; color: var(--green); }
+  .pill.busy { background: rgba(95,196,217,0.10); border-color: rgba(95,196,217,0.28); color: var(--cyan); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
+  .toggle { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0 10px 0 8px; border-radius: 6px;
+            border: 1px solid var(--edge); background: var(--bg4); cursor: pointer; }
+  .toggle:hover { border-color: #4a3b57; }
+  .track { width: 22px; height: 12px; border-radius: 7px; padding: 2px; background: var(--edge); transition: background .15s; }
+  .track i { display: block; width: 8px; height: 8px; border-radius: 50%; background: #fff; transition: margin-left .15s; }
+  .toggle.on .track { background: var(--green); }
+  .toggle.on .track i { margin-left: 10px; }
+  .toggle span { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--dim2); }
+  .toggle.on span { color: var(--green); }
 
-  .pr { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 14px; padding: 11px 14px;
-        border-radius: 10px; border: 1px solid transparent; cursor: pointer; }
-  .pr:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); border-color: var(--line); }
-  .num { font-family: var(--mono); font-size: 12.5px; color: color-mix(in oklab, var(--ink) 55%, transparent); }
-  .title { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-  .title b { font-weight: 500; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sub { font-family: var(--mono); font-size: 11px; color: var(--dim); display: flex; gap: 10px; }
-  .right { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11.5px; }
-  .chip { padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
-  .chip.ok { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 35%, transparent); }
-  .chip.bad { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
-  .chip.wait { color: var(--wait); border-color: color-mix(in oklab, var(--wait) 35%, transparent); }
-  .chip.run { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, transparent); animation: pulse 1.1s ease-in-out infinite; }
-  .draft { color: var(--wait); }
-  .empty, .err { font-family: var(--mono); font-size: 12px; color: var(--dim); padding: 8px 14px; }
-  .err { color: var(--bad); }
-  .review { grid-column: 2 / -1; font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 14px 10px 0; }
-  footer { text-align: center; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
-           text-transform: uppercase; color: color-mix(in oklab, var(--ink) 25%, transparent); padding-bottom: 30px; }
+  .body { flex: 1; min-height: 0; display: flex; }
+
+  /* sidebar */
+  .side { width: 216px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; padding: 14px 10px; }
+  .cap { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--dim3); padding: 0 8px 8px; }
+  .nav { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 7px; cursor: pointer; }
+  .nav:hover { background: var(--bg4); }
+  .nav i { width: 6px; height: 6px; border-radius: 2px; background: #4a4053; }
+  .nav b { font-size: 13px; font-weight: 500; color: var(--ink3); flex: 1; min-width: 0; overflow: hidden;
+           text-overflow: ellipsis; white-space: nowrap; }
+  .nav em { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--dim2); }
+  .rule { height: 1px; background: var(--line); margin: 16px 8px; }
+  .stat { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+  .stat span { font-size: 12px; color: var(--dim); }
+  .stat b { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; background: var(--bg3); }
+  .card .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .card .row span { font-size: 11px; color: var(--dim2); }
+  .card .row b { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink); }
+  /* ponytail: a <select>. The design draws a row of pill options per setting, which is a popover, a
+     focus trap and an escape key once it has to work — the platform ships all three. */
+  .card .row select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
+                      border: 1px solid var(--edge); border-radius: 5px; padding: 1px 4px; cursor: pointer; }
+  .card .row select:hover { border-color: #4a3b57; }
+
+  /* queue */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .queue { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .bar { height: 56px; flex-shrink: 0; border-bottom: 1px solid var(--line); display: flex; align-items: center;
+         gap: 10px; padding: 0 18px; }
+  .search { display: flex; align-items: center; gap: 8px; height: 32px; width: 300px; padding: 0 11px;
+            border-radius: 7px; background: var(--bg3); border: 1px solid var(--line); }
+  .search input { flex: 1; background: transparent; border: none; outline: none; color: var(--ink);
+                  font-family: var(--sans); font-size: 12.5px; min-width: 0; }
+  .chip { height: 30px; padding: 0 11px; border-radius: 7px; display: flex; align-items: center; gap: 7px;
+          cursor: pointer; font-size: 12px; font-weight: 500; border: 1px solid var(--line); background: var(--bg3); color: var(--ink3); }
+  .chip em { font-family: var(--mono); font-style: normal; font-size: 11px; opacity: 0.6; }
+  .chip.on { background: rgba(245,107,176,0.12); border-color: rgba(245,107,176,0.4); color: var(--pink); }
+
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0 20px; }
+  .head { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 18px; cursor: pointer;
+          position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  .head .caret { font-family: var(--mono); font-size: 10px; color: var(--dim2); width: 9px; }
+  .head .label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; }
+  .head .count { font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .head .fill { flex: 1; height: 1px; background: var(--line2); }
+  .head .hint { font-size: 11px; color: var(--dim3); }
+
+  .pr { display: flex; align-items: center; gap: 12px; padding: 9px 18px 9px 16px; cursor: pointer;
+        border-left: 2px solid transparent; }
+  .pr:hover { background: var(--bg3); }
+  .twist { width: 24px; flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-family: var(--mono);
+           font-size: 10px; color: var(--dim2); }
+  .twist[data-expand] { cursor: pointer; }
+  .twist[data-expand]:hover { color: var(--pink); }
+  .twist em { font-style: normal; font-size: 10px; }
+  .pr.child { padding-left: 40px; background: rgba(0,0,0,0.18); }
+  .pr.child .txt b { font-weight: 400; color: var(--ink3); }
+  .pr.child:hover { background: var(--bg3); }
+  .pr.child.sel { background: #231a2b; }
+  .pr.sel { background: #231a2b; border-left-color: var(--pink); }
+  .pr .age { font-family: var(--mono); font-size: 11px; color: var(--dim2); width: 34px; flex-shrink: 0; }
+  .pr .repo { font-family: var(--mono); font-size: 11px; color: var(--dim); width: 74px; flex-shrink: 0;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pr .num { font-family: var(--mono); font-size: 12px; color: var(--pink); width: 50px; flex-shrink: 0; }
+  .pr .txt { flex: 1; min-width: 0; }
+  .pr .txt b { display: block; font-size: 13px; font-weight: 500; color: var(--ink);
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pr.sel .txt b { color: #fff; }
+  .pr .note { font-size: 11.5px; color: var(--dim2); white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; margin-top: 2px; }
+  .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
+  .who span { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .av { width: 20px; height: 20px; border-radius: 50%; color: var(--bg); font-size: 10px; font-weight: 700;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .revs { display: flex; gap: 4px; width: 92px; flex-shrink: 0; overflow: hidden; }
+  .rev { height: 20px; padding: 0 7px; border-radius: 10px; display: flex; align-items: center;
+         font-family: var(--mono); font-size: 10px; font-weight: 600; }
+  .end { width: 150px; flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+  .state { height: 22px; padding: 0 9px; border-radius: 6px; display: flex; align-items: center;
+           font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .bar-run { width: 54px; height: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar-run i { display: block; height: 4px; border-radius: 3px; background: var(--cyan); animation: pulse 1.2s ease-in-out infinite; }
+  .ci { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .none { font-family: var(--mono); font-size: 12px; color: var(--dim3); padding: 4px 18px 10px 46px; }
+  .none.err { color: var(--red); }
+
+  /* side pane */
+  .pane { width: 396px; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--bg2);
+          display: flex; flex-direction: column; }
+  .pane .bar { padding: 0 14px; gap: 6px; }
+  .btn { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--edge); display: flex;
+         align-items: center; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--ink2); background: transparent; }
+  .btn:hover { background: var(--bg4); border-color: #4a3b57; }
+  .pane .in { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 16px 22px; }
+  .crumbs { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .ptitle { font-size: 20px; font-weight: 600; color: var(--ink); line-height: 1.25; margin-top: 9px; text-wrap: pretty; }
+  .sep { height: 1px; background: var(--line); margin: 18px 0; }
+  .lab { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--dim3); }
+  .prose { font-size: 13px; line-height: 1.55; color: var(--ink3); margin-top: 8px; text-wrap: pretty; }
+  .check { display: flex; align-items: center; gap: 9px; }
+  .check span { font-size: 12.5px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check em { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--dim2); margin-left: auto; }
+  .find { display: flex; gap: 11px; }
+  .find i { width: 3px; border-radius: 2px; flex-shrink: 0; }
+  .find .tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.1em; }
+  .find .loc { font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .find p { font-size: 13px; line-height: 1.55; color: var(--ink2); margin: 4px 0 0; text-wrap: pretty; }
+  .act { height: 38px; border-radius: 8px; border: 1px solid var(--edge); background: var(--bg3); display: flex;
+         align-items: center; gap: 10px; padding: 0 12px; cursor: pointer; }
+  .act:hover { background: var(--bg4); border-color: #4a3b57; }
+  .act kbd { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--dim); width: 16px; height: 16px;
+             border-radius: 4px; background: var(--line); display: flex; align-items: center; justify-content: center; }
+  .act b { font-size: 13px; font-weight: 500; color: var(--ink2); }
+  .act em { font-style: normal; font-size: 11.5px; color: var(--dim3); margin-left: auto; }
+  .act.go { background: var(--pink); border-color: var(--pink); }
+  .act.go:hover { background: #ff85c1; border-color: #ff85c1; }
+  .act.go kbd { color: rgba(20,16,23,0.6); background: rgba(20,16,23,0.18); }
+  .act.go b { color: #241021; font-weight: 600; }
+  .act.go em { font-family: var(--mono); color: rgba(36,16,33,0.6); }
+  .act.off { opacity: 0.45; pointer-events: none; }
+
+  /* hints */
+  .hints { height: 34px; flex-shrink: 0; border-top: 1px solid var(--line); background: var(--bg2);
+           display: flex; align-items: center; gap: 18px; padding: 0 18px; }
+  .hints .g { display: flex; align-items: center; gap: 8px; }
+  .hints .g b { font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--pink); }
+  .hints .g span, .hints .status { font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .hints .status { margin-left: auto; color: var(--dim3); }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand"><div class="logo"><img src="{{LOGO}}" alt="" /></div><div class="name">gitdashy</div></div>
-  <div class="meta" id="meta"></div>
-</header>
-<main id="app"></main>
-<footer id="foot">click a row to open on github · shift-click to review</footer>
+<div id="app"></div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
-const api = (p, opt) => fetch(p, { ...opt, headers: { "X-Dashy-Token": TOKEN, ...(opt?.headers || {}) } });
+const api = (p, o) => fetch(p, { ...o, headers: { "X-Dashy-Token": TOKEN, ...(o?.headers || {}) } });
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const $ = (sel) => document.querySelector(sel);
+
+// The design's six row tones. Every colour the page paints comes from here or the CSS vars above.
+const PALETTE = {
+  approved: { fg: "#4fd48c", bg: "rgba(79,212,140,0.10)", border: "rgba(79,212,140,0.28)" },
+  changes:  { fg: "#f0655c", bg: "rgba(240,101,92,0.10)", border: "rgba(240,101,92,0.28)" },
+  commented:{ fg: "#dfb03c", bg: "rgba(223,176,60,0.10)", border: "rgba(223,176,60,0.28)" },
+  awaiting: { fg: "#5fc4d9", bg: "rgba(95,196,217,0.10)", border: "rgba(95,196,217,0.28)" },
+  error:    { fg: "#f0655c", bg: "rgba(240,101,92,0.08)", border: "rgba(240,101,92,0.22)" },
+  idle:     { fg: "#9c92a8", bg: "rgba(156,146,168,0.08)", border: "#372c41" },
+};
+const AVATARS = ["#f56bb0", "#5fc4d9", "#4fd48c", "#dfb03c", "#c58cf0", "#f09a5c"];
+const SECTION_TONE = { "MINE": "#f56bb0", "REVIEW REQUESTED": "#5fc4d9", "ASSIGNED": "#dfb03c", "REVIEWED": "#9c92a8" };
+const SECTION_HINT = { "MINE": "your open PRs", "REVIEW REQUESTED": "waiting on you", "ASSIGNED": "owned by you", "REVIEWED": "recently done" };
+const FINDING_TONE = { blocking: "#f0655c", note: "#dfb03c", nit: "#5fc4d9" };
+const CHECK_TONE = { ok: "#4fd48c", err: "#f0655c", run: "#dfb03c", dim: "#9c92a8" };
+
+function avatar(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 997;
+  return AVATARS[h % AVATARS.length];
+}
 
 function age(iso) {
   if (!iso) return "";
@@ -84,81 +218,417 @@ function age(iso) {
   return "now";
 }
 
-// ponytail: the TUI's status strings are already human — classify by their leading glyph, do not re-derive.
-function chipClass(s) {
+// ponytail: the TUI's status strings are already human — classify by their leading glyph, do not
+// re-derive. ✓ approved, ✗ changes requested, ~ commented, · awaiting, ↻ re-review, ● running.
+function tone(s) {
   if (!s) return "";
-  if (s.startsWith("✓")) return "ok";
-  if (s.startsWith("✗")) return "bad";
-  if (s.startsWith("·") || s.startsWith("↻") || s.startsWith("●")) return "wait";
+  if (s.startsWith("✓")) return "approved";
+  if (s.startsWith("✗")) return "changes";
+  if (s.startsWith("~")) return "commented";
+  if (s.startsWith("·") || s.startsWith("↻") || s.startsWith("●")) return "awaiting";
+  if (/^(error|no )/i.test(s)) return "error";
   return "";
 }
 
-function prRow(p) {
-  const el = document.createElement("div");
-  el.className = "pr";
-  const chips = [];
-  if (p.busy) chips.push(`<span class="chip run">reviewing…</span>`);
-  else if (p.review) chips.push(`<span class="chip">${esc(p.review).slice(0, 40)}</span>`);
-  if (p.checks) chips.push(`<span class="chip ${chipClass(p.checks)}">checks ${esc(p.checks)}</span>`);
-  if (p.status) chips.push(`<span class="chip ${chipClass(p.status)}">${esc(p.status)}</span>`);
-  el.innerHTML = `
-    <div class="num">#${p.number}</div>
-    <div class="title">
-      <b>${p.isDraft ? '<span class="draft">draft</span> ' : ""}${esc(p.title)}</b>
-      <div class="sub"><span>${esc(p.repo)}</span><span>${esc(p.author)}</span><span>${age(p.updatedAt)}</span></div>
-    </div>
-    <div class="right">${chips.join("")}</div>`;
-  el.onclick = (e) => {
-    if (e.shiftKey) return review(p);
-    window.open(p.url, "_blank", "noopener");
-  };
-  return el;
+/** What the row's right-hand chip says: what gitdashy knows about this PR, newest fact first. */
+function rowState(p) {
+  if (p.busy) return { key: "running", label: p.review || "reviewing…" };
+  for (const s of [p.review, p.status]) {
+    const t = tone(s);
+    if (t) return { key: t, label: s.replace(/^[✓✗~·↻●]\s*/, "") };
+  }
+  return { key: "idle", label: "no review" };
 }
 
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const state = { data: null, detail: null, sel: "", query: "", failing: false, drafts: false,
+                folded: {}, expanded: {}, flash: "" };
 
-async function review(p) {
+/** Every PR the filters leave, in list order. The one list selection, keys and counts all read. */
+function visible() {
+  const q = state.query.trim().toLowerCase();
+  const out = [];
+  for (const s of state.data?.sections || []) {
+    const rows = (s.prs || []).map((p, i) => ({ ...p, uid: `${s.name}/${i}/${p.url}` })).filter((p) => {
+      if (state.failing && tone(p.checks) !== "changes") return false;
+      if (state.drafts && !p.isDraft) return false;
+      if (!q) return true;
+      return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q);
+    });
+    out.push({ ...s, prs: group(rows) });
+  }
+  return out;
+}
+
+/** One row per PR, its older entries hanging off it as `older`.
+ *
+ * ponytail: REVIEWED lists one entry per REVIEW, so a PR reviewed three times was three rows of the
+ * same title — the section read as a backlog when it is one PR. The newest entry keeps the row; the
+ * rest fold under it, which is what the curses screen does with space.
+ */
+function group(rows) {
+  const by = new Map();
+  for (const p of rows) {
+    const head = by.get(p.url);
+    if (head) head.older.push(p);
+    else by.set(p.url, { ...p, older: [] });
+  }
+  return [...by.values()];
+}
+
+const flat = () => visible().filter((s) => !state.folded[s.name])
+  .flatMap((s) => s.prs).flatMap((p) => [p, ...(state.expanded[p.url] ? p.older : [])]);
+// ponytail: rows are picked by uid, not url. REVIEWED lists one PR once per review of it, so selecting
+// by url lit up two rows at once and moved the cursor two places on one j.
+const selected = () => flat().find((p) => p.uid === state.sel) || flat()[0] || null;
+
+/* ---------------------------------------------------------------- render */
+
+function rowHTML(p, child) {
+  const st = rowState(p);
+  const pal = PALETTE[st.key] || PALETTE.idle;
+  const ci = tone(p.checks);
+  const revs = (p.reviewers || "").split(/\s+/).filter(Boolean).slice(0, 3).map((r) => {
+    const pal = PALETTE[tone(r[0])] || PALETTE.idle;
+    return `<div class="rev" style="background:${pal.bg};color:${pal.fg}">${esc(r.slice(1))}</div>`;
+  }).join("");
+  const end = p.busy
+    ? `<div class="bar-run"><i style="width:100%"></i></div><span class="mono" style="font-size:11px;color:var(--cyan)">reviewing</span>`
+    : `${ci ? `<div class="ci" style="background:${PALETTE[ci].fg}" title="checks ${esc(p.checks)}"></div>` : ""}
+       <div class="state" style="background:${pal.bg};border:1px solid ${pal.border};color:${pal.fg}">${esc(st.label).slice(0, 22)}</div>`;
+  const n = p.older?.length || 0;
+  const twist = n
+    ? `<div class="twist" data-expand="${esc(p.url)}">${state.expanded[p.url] ? "▾" : "▸"}<em>${n + 1}</em></div>`
+    : `<div class="twist"></div>`;
+  return `<div class="pr${p.uid === state.sel ? " sel" : ""}${child ? " child" : ""}" data-uid="${esc(p.uid)}" data-url="${esc(p.url)}">
+    ${child ? `<div class="twist"></div>` : twist}
+    <div class="age">${age(p.updatedAt)}</div>
+    <div class="repo">${esc((p.repo || "").split("/").pop())}</div>
+    <div class="num">#${p.number}</div>
+    <div class="txt">
+      <b>${p.isDraft ? `<span style="color:var(--amber)">draft</span> ` : ""}${esc(p.title)}</b>
+      <div class="note">${esc(p.review || p.repo)}</div>
+    </div>
+    <div class="who"><div class="av" style="background:${avatar(p.author || "?")}">${esc((p.author || "?")[0].toUpperCase())}</div><span>${esc(p.author)}</span></div>
+    <div class="revs">${revs}</div>
+    <div class="end">${end}</div>
+  </div>`;
+}
+
+function listHTML() {
+  let html = "";
+  for (const s of visible()) {
+    const open = !state.folded[s.name];
+    const colour = SECTION_TONE[s.name] || "var(--dim)";
+    html += `<div>
+      <div class="head" data-fold="${esc(s.name)}">
+        <span class="caret">${open ? "▾" : "▸"}</span>
+        <span class="label" style="color:${colour}">${esc(s.name)}</span>
+        <span class="count">${s.prs.length}</span>
+        <div class="fill"></div>
+        <span class="hint">${esc(SECTION_HINT[s.name] || "")}</span>
+      </div>`;
+    if (open) {
+      if (s.error) html += `<div class="none err">${esc(s.error.split("\n")[0])}</div>`;
+      else if (!s.prs.length) html += `<div class="none">none</div>`;
+      else html += s.prs.map((p) => rowHTML(p)
+        + (state.expanded[p.url] ? p.older.map((o) => rowHTML(o, true)).join("") : "")).join("");
+    }
+    html += `</div>`;
+  }
+  return html || `<div class="none">nothing fetched yet</div>`;
+}
+
+function paneHTML(p) {
+  if (!p) return `<div class="in"><div class="prose">No PR selected.</div></div>`;
+  const st = rowState(p);
+  const pal = PALETTE[st.key] || PALETTE.idle;
+  const d = state.detail && state.detail.url === p.url ? state.detail : null;  // one PR behind is worse than blank
+  const rev = d && d.review;
+  const size = d && d.add != null ? `<span class="mono" style="color:var(--green)">+${d.add}</span>
+      <span class="mono" style="color:var(--red)">−${d.del}</span>
+      <span class="mono" style="color:var(--dim2)">${d.files} files</span>` : "";
+  const checks = (d?.checks || []).map((c) => `<div class="check">
+      <div class="ci" style="background:${CHECK_TONE[c.state] || CHECK_TONE.dim}"></div>
+      <span>${esc(c.name)}</span><em>${esc(c.state)}</em></div>`).join("");
+  const findings = (rev?.findings || []).map((f) => `<div class="find">
+      <i style="background:${FINDING_TONE[f.kind] || CHECK_TONE.dim}"></i>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="tag" style="color:${FINDING_TONE[f.kind] || CHECK_TONE.dim}">${esc(f.kind.toUpperCase())}</span>
+          <span class="loc">${esc(f.loc)}</span>
+        </div>
+        <p>${esc(f.text)}</p>
+      </div></div>`).join("");
+  return `
+  <div class="bar">
+    <div class="mono" style="font-size:11px;color:var(--dim2)">${d && d.branch ? esc(d.branch) : d && d.pending ? "loading…" : ""}</div>
+    <div style="flex:1"></div>
+    <div class="btn" data-open="1">Open on GitHub</div>
+  </div>
+  <div class="in scroll">
+    <div class="crumbs">
+      <span style="color:var(--pink)">#${p.number}</span>
+      <span>${esc(p.repo)}</span><span style="color:#4a4053">·</span>
+      <span>updated ${age(p.updatedAt)} ago</span>
+    </div>
+    <div class="ptitle">${esc(p.title)}</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+      <div class="av" style="width:24px;height:24px;font-size:11px;background:${avatar(p.author || "?")}">${esc((p.author || "?")[0].toUpperCase())}</div>
+      <span style="font-size:13px;color:var(--ink2)">${esc(p.author)}</span>
+      <div style="flex:1"></div>
+      <div class="state" style="height:24px;background:${pal.bg};border:1px solid ${pal.border};color:${pal.fg}">${esc(st.label)}</div>
+    </div>
+    ${size ? `<div style="display:flex;gap:10px;margin-top:10px;font-size:11px">${size}</div>` : ""}
+
+    ${rev ? `<div class="sep"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="lab">REVIEW</span>
+        <span class="mono" style="font-size:11px;color:var(--dim2)">${esc(rev.model)} ${esc(rev.tag)}</span>
+        <span class="mono" style="font-size:11px;color:var(--dim3);margin-left:auto">${age(rev.at)} ago</span>
+      </div>
+      ${rev.summary ? `<div class="prose">${esc(rev.summary)}</div>` : ""}
+      ${findings ? `<div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">${findings}</div>` : ""}` : ""}
+
+    ${checks ? `<div class="sep"></div><div class="lab">CHECKS</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${checks}</div>` : ""}
+
+    <div class="sep"></div>
+    <div class="lab">ACTIONS</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+      <div class="act go${p.busy ? " off" : ""}" data-act="review"><kbd>r</kbd><b>${p.busy ? "Reviewing…" : "Review this PR"}</b><em>${esc(state.data?.model || "")}</em></div>
+      <div class="act${p.busy ? " off" : ""}" data-act="self"><kbd>p</kbd><b>Pre-review</b><em>nothing posted</em></div>
+      <div class="act" data-open="1"><kbd>o</kbd><b>Open in browser</b><em>github</em></div>
+    </div>
+  </div>`;
+}
+
+const every = (v) => (v < 60 || v % 60 ? `${v}s` : `${v / 60}m`);
+
+/** A <select> over the options the server offers, with the current value kept even if it is not one. */
+function pick(name, value, options, show) {
+  const all = options.includes(value) ? options : [value, ...options];
+  return `<select data-set="${name}">${all.map((o) =>
+    `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(show(o))}</option>`).join("")}</select>`;
+}
+
+function counts() {
+  // ponytail: counted off rowState, the same fact the row's own chip paints — so the sidebar can never
+  // disagree with the list under it. Reading state.reviews alone missed every verdict from the log.
+  const all = (state.data?.sections || []).flatMap((s) => s.prs || []).map(rowState);
+  const by = (t) => all.filter((r) => r.key === t).length;
+  return [
+    ["approved", by("approved"), "var(--green)"],
+    ["changes", by("changes"), "var(--red)"],
+    ["commented", by("commented"), "var(--amber)"],
+    ["errors", by("error"), "var(--red)"],
+  ];
+}
+
+function render() {
+  const d = state.data;
+  const vis = visible();
+  const total = vis.reduce((n, s) => n + s.prs.length, 0);
+  const sel = selected();
+  if (sel) state.sel = sel.uid;
+  const running = d?.running || 0;
+  const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (Date.now() / 1000 - d.fetchedAt))) : 0;
+  const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((p) => tone(p.checks) === "changes").length;
+  const drafts = (d?.sections || []).flatMap((s) => s.prs || []).filter((p) => p.isDraft).length;
+
+  const app = $("#app");
+  const scroll = app.querySelector(".list")?.scrollTop || 0;
+  // ponytail: a poll lands every 2s and rewrites the page. Without this the filter box loses focus and
+  // the caret jumps home mid-word, which makes the box unusable rather than merely twitchy.
+  const caret = document.activeElement?.id === "q" ? document.activeElement.selectionStart : null;
+  app.innerHTML = `
+  <div class="top">
+    <div class="logo"><img src="{{LOGO}}" alt="" /></div>
+    <div style="display:flex;align-items:baseline;gap:8px">
+      <span class="brand">gitdashy</span>
+      <span class="mono" style="font-size:11px;color:var(--dim2)">v${esc(d?.version || "")}</span>
+    </div>
+    <div class="vbar"></div>
+    <div class="mono" style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim)">
+      <span style="color:var(--ink);font-weight:500">${total} PRs</span>
+      <span style="color:#4a4053">·</span><span>${esc(d?.model || "")}</span>
+    </div>
+    <div style="flex:1"></div>
+    <div class="pill${running ? " busy" : ""}"><div class="dot"></div><span>${running ? `${running} agent${running > 1 ? "s" : ""} running` : "agents idle"}</span></div>
+    <div class="mono" style="font-size:11px;color:var(--dim2)">${d?.fetching ? "refreshing…" : `refresh in ${left}s`}</div>
+    <div class="toggle${d?.auto ? " on" : ""}" data-auto="1"><div class="track"><i></i></div><span>AUTO</span></div>
+  </div>
+
+  <div class="body">
+    <div class="side">
+      <div class="cap">WORKSPACE</div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        ${vis.map((s) => `<div class="nav" data-jump="${esc(s.name)}">
+            <i style="background:${SECTION_TONE[s.name] || "#4a4053"}"></i>
+            <b>${esc(s.name.toLowerCase())}</b><em>${s.prs.length}</em></div>`).join("")}
+      </div>
+      <div class="rule"></div>
+      <div class="cap">SESSION</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${counts().map(([l, n, c]) => `<div class="stat"><span>${l}</span><b style="color:${c}">${n}</b></div>`).join("")}
+      </div>
+      <div style="flex:1"></div>
+      <div class="card">
+        <div class="cap" style="padding:0 0 7px">AGENT</div>
+        <div class="row"><span>model</span>${pick("model", d?.model, d?.models || [], String)}</div>
+        <div class="row"><span>auto</span><b style="color:${d?.auto ? "var(--green)" : "var(--dim2)"}">${d?.auto ? "on" : "off"}</b></div>
+        <div class="row"><span>every</span>${pick("interval", d?.interval, d?.intervals || [], every)}</div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="body">
+        <div class="queue">
+          <div class="bar">
+            <div class="search"><span class="mono" style="font-size:12px;color:var(--dim3)">/</span>
+              <input id="q" value="${esc(state.query)}" placeholder="filter by title, repo, author" /></div>
+            <div class="chip${state.failing ? " on" : ""}" data-filter="failing">CI failing <em>${failing}</em></div>
+            <div class="chip${state.drafts ? " on" : ""}" data-filter="drafts">Drafts <em>${drafts}</em></div>
+            <div style="flex:1"></div>
+            <div class="mono" style="font-size:11px;color:var(--dim2)">updated ${d?.fetchedAt ? ((a) => (a === "now" ? "just now" : a + " ago"))(age(new Date(d.fetchedAt * 1000).toISOString())) : "never"}</div>
+          </div>
+          <div class="list scroll">${listHTML()}</div>
+        </div>
+        <div class="pane">${paneHTML(sel)}</div>
+      </div>
+      <div class="hints">
+        <div class="g"><b>NAV</b><span>j/k move · / filter · o open</span></div>
+        <div class="g"><b>RUN</b><span>r review · p pre-review · a auto</span></div>
+        <div class="status">${esc(state.flash || (running ? `${running} running` : `${total} PRs in view`))}</div>
+      </div>
+    </div>
+  </div>`;
+  const list = app.querySelector(".list");
+  if (list) list.scrollTop = scroll;
+  if (caret !== null) { const q = $("#q"); q.focus(); q.setSelectionRange(caret, caret); }
+}
+
+/* ---------------------------------------------------------------- actions */
+
+let flashTimer;
+function flash(msg) {
+  state.flash = msg;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { state.flash = ""; render(); }, 4000);
+  render();
+}
+
+async function start(pr, self) {
+  if (!pr || pr.busy) return;
   const r = await api("/api/review", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: p.url }),
+    body: JSON.stringify({ url: pr.url, self: !!self }),
   });
-  if (!r.ok) foot(`could not start review: ${(await r.json()).error}`);
-  else { foot(`review started on #${p.number}`); tick(); }
+  if (!r.ok) flash(`could not start: ${(await r.json()).error}`);
+  else { flash(`${self ? "pre-review" : "review"} started on #${pr.number}`); tick(); }
 }
 
-let footTimer;
-function foot(msg) {
-  const f = document.getElementById("foot");
-  f.textContent = msg;
-  clearTimeout(footTimer);
-  footTimer = setTimeout(() => (f.textContent = "click a row to open on github · shift-click to review"), 4000);
+async function setting(name, value) {
+  document.activeElement?.blur();
+  const r = await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ [name]: value }),
+  });
+  flash(r.ok ? `${name} is now ${name === "interval" ? every(+value) : value}` : `could not set ${name}: ${(await r.json()).error}`);
+  tick();
 }
 
-function render(d) {
-  document.getElementById("meta").innerHTML =
-    (d.fetching ? '<span class="spinner"></span>' : "") +
-    `<span>${d.running ? d.running + " reviewing" : d.auto ? "auto" : "idle"}</span>` +
-    `<span>${esc(d.model)}</span><span>v${esc(d.version)}</span>`;
-  const app = document.getElementById("app");
-  app.replaceChildren();
-  for (const s of d.sections) {
-    const sec = document.createElement("section");
-    const h = document.createElement("h2");
-    h.innerHTML = `${esc(s.name)} <em>${s.prs.length || ""}</em>`;
-    sec.append(h);
-    if (s.error) sec.insertAdjacentHTML("beforeend", `<div class="err">${esc(s.error.split("\n")[0])}</div>`);
-    else if (!s.prs.length) sec.insertAdjacentHTML("beforeend", `<div class="empty">none</div>`);
-    else s.prs.forEach((p) => sec.append(prRow(p)));
-    app.append(sec);
+async function toggleAuto() {
+  const r = await api("/api/auto", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ on: !state.data?.auto }),
+  });
+  if (r.ok) tick();
+}
+
+function move(step) {
+  const list = flat();
+  const i = list.findIndex((p) => p.uid === state.sel);
+  const next = list[Math.min(list.length - 1, Math.max(0, i + step))];
+  if (next) { state.sel = next.uid; state.detail = null; render(); pull(); scrollSel(); }
+}
+
+function scrollSel() {
+  $(".pr.sel")?.scrollIntoView({ block: "nearest" });
+}
+
+document.addEventListener("click", (e) => {
+  const row = e.target.closest("[data-uid]");
+  const fold = e.target.closest("[data-fold]");
+  const jump = e.target.closest("[data-jump]");
+  const filter = e.target.closest("[data-filter]");
+  const act = e.target.closest("[data-act]");
+  const expand = e.target.closest("[data-expand]");
+  if (expand) { state.expanded[expand.dataset.expand] = !state.expanded[expand.dataset.expand]; return render(); }
+  if (e.target.closest("[data-auto]")) return toggleAuto();
+  if (e.target.closest("[data-open]")) { const p = selected(); if (p) window.open(p.url, "_blank", "noopener"); return; }
+  if (act) return start(selected(), act.dataset.act === "self");
+  if (filter) { state[filter.dataset.filter] = !state[filter.dataset.filter]; return render(); }
+  if (jump) { const el = [...document.querySelectorAll("[data-fold]")].find((h) => h.dataset.fold === jump.dataset.jump);
+              el?.scrollIntoView({ block: "start", behavior: "smooth" }); return; }
+  if (fold) { state.folded[fold.dataset.fold] = !state.folded[fold.dataset.fold]; return render(); }
+  if (row) { state.sel = row.dataset.uid; state.detail = null; render(); pull(); }
+});
+
+document.addEventListener("change", (e) => {
+  const set = e.target.closest("[data-set]");
+  if (set) setting(set.dataset.set, set.value);
+});
+
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "q") return;
+  state.query = e.target.value;
+  render();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (/input|textarea/i.test(e.target.tagName)) {
+    if (e.key === "Escape") { state.query = ""; e.target.blur(); render(); }
+    return;
   }
+  const k = e.key;
+  if (k === "j" || k === "ArrowDown") { e.preventDefault(); move(1); }
+  else if (k === "k" || k === "ArrowUp") { e.preventDefault(); move(-1); }
+  else if (k === "r") start(selected(), false);
+  else if (k === "p") start(selected(), true);
+  else if (k === "a") toggleAuto();
+  else if (k === "o" || k === "Enter") { const p = selected(); if (p) window.open(p.url, "_blank", "noopener"); }
+  else if (k === "/") { e.preventDefault(); $("#q")?.focus(); }
+});
+
+/* ---------------------------------------------------------------- polling */
+
+// ponytail: the pane's detail is a SECOND request, not part of /api/state. It costs a GitHub query per
+// PR revision, so it is asked for only for the row you are looking at — and it keeps being asked while
+// the server reports pending, because want_detail answers null until its background fetch lands.
+async function pull() {
+  const p = selected();
+  if (!p) return;
+  try {
+    const r = await api(`/api/pr?url=${encodeURIComponent(p.url)}`);
+    if (!r.ok) return;
+    state.detail = await r.json();
+    render();
+  } catch { /* server gone; the next tick retries */ }
 }
 
 async function tick() {
   try {
     const r = await api("/api/state");
-    if (r.ok) render(await r.json());
-  } catch (e) { /* server gone; the next tick retries */ }
+    if (!r.ok) return;
+    state.data = await r.json();
+    // ponytail: a poll lands every 2s and rewrites the page. Rewriting it under an OPEN dropdown closes
+    // it mid-choice, so the repaint waits for the select to give up focus — setting() blurs it.
+    if (!document.activeElement?.dataset?.set) render();
+    if (!state.detail || state.detail.pending || state.detail.url !== selected()?.url) pull();
+  } catch { /* server gone; the next tick retries */ }
 }
+
+render();
 tick();
 setInterval(tick, 2000);
 </script>

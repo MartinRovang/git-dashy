@@ -119,6 +119,16 @@ def install():
 			        "- no test covers the empty-result path\n")
 		return "✗ changes requested (not posted) · 1 waiting", dest
 
+	# ponytail: the pane's second request. Without a swap it reaches for the real github api on a fake
+	# repo, and both UIs' detail panes sit empty on a demo whose whole point is looking around.
+	def fake_detail(repo, number):
+		return {"branch": f"{'alice' if repo.endswith('api') else 'bob'}/pr-{number}",
+		        "add": 62 + number % 40, "del": 14 + number % 9, "files": 3 + number % 4,
+		        "checks": [{"name": "unit tests", "state": "err" if number == 212 else "ok"},
+		                   {"name": "typecheck", "state": "ok"},
+		                   {"name": "lint", "state": "run" if number == 207 else "ok"},
+		                   {"name": "preview deploy", "state": "ok"}]}
+
 	def fake_dream(model):
 		time.sleep(4)
 		return ("merged 2 duplicate lines about tabs in acme/api\nmoved 'run make lint' to general\ndropped a stale note about the old CI",
@@ -140,5 +150,5 @@ def install():
 	                      (update, "update_available", lambda: ""),
 	                      (github, "collaborators", lambda repo: ["alice", "bob", "carol", "dave", "erin"]),
 	                      (github, "request_review", fake_request_review),
-	                      (github, "copy", lambda t: "demo")):
+	                      (github, "copy", lambda t: "demo"), (github, "detail", fake_detail)):
 		_swap(mod, name, fn)

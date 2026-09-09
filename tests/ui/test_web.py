@@ -244,3 +244,75 @@ def test_url_line_reaches_a_pipe_promptly():
 	finally:
 		if p.poll() is None:
 			p.kill()
+
+
+def test_self_review_routes_to_the_other_starter(served, monkeypatch):
+	"""Pre-review posts nothing, so it must not fall through to the one that does."""
+	base, token, state = served
+	both = []
+	monkeypatch.setattr(state, "start_review", lambda pr: both.append("review"))
+	monkeypatch.setattr(state, "start_self_review", lambda pr: both.append("self"))
+	post(f"{base}/api/review", {"url": "u", "self": True}, token)
+	post(f"{base}/api/review", {"url": "u"}, token)
+	assert both == ["self", "review"]
+
+
+def test_auto_toggles_without_reviewing_the_backlog(served, monkeypatch):
+	base, token, state = served
+	seen = []
+	monkeypatch.setattr(state, "set_auto", lambda on, **kw: seen.append((on, kw)))
+	assert json.load(post(f"{base}/api/auto", {"on": True}, token))["ok"]
+	post(f"{base}/api/auto", {"on": False}, token)
+	# include_existing is never passed, so it keeps its False default — a toggle cannot start a bill
+	assert seen == [(True, {}), (False, {})]
+
+
+def test_detail_carries_checks_and_the_last_review(served, monkeypatch):
+	base, token, state = served
+	monkeypatch.setattr(state, "want_detail", lambda pr: {"branch": "b", "add": 1, "del": 2, "files": 3,
+	                                                      "checks": [{"name": "lint", "state": "ok"}]})
+	monkeypatch.setattr(web.log, "last", lambda url: {"verdict": "approve", "summary": "s", "model": "m",
+	                                                  "at": "2020-01-01T00:00:00Z", "findings": []})
+	d = json.load(get(f"{base}/api/pr?url=u", token))
+	assert (d["pending"], d["branch"], d["files"]) == (False, "b", 3)
+	assert d["checks"] == [{"name": "lint", "state": "ok"}]
+	assert d["review"]["verdict"].endswith("approved") and d["review"]["summary"] == "s"
+	with pytest.raises(urllib.error.HTTPError) as e:
+		get(f"{base}/api/pr?url=nope", token)
+	assert e.value.code == 404
+
+
+def test_detail_is_pending_while_the_fetch_is_in_flight(served, monkeypatch):
+	"""want_detail answers None until its thread lands; the page polls, so the pane must say so."""
+	base, token, state = served
+	monkeypatch.setattr(state, "want_detail", lambda pr: None)
+	monkeypatch.setattr(web.log, "last", lambda url: None)
+	d = json.load(get(f"{base}/api/pr?url=u", token))
+	assert d["pending"] and d["checks"] == [] and d["review"] is None
+
+
+def test_settings_apply_and_persist(served, monkeypatch):
+	base, token, state = served
+	saved = []
+	monkeypatch.setattr(web.config, "save", saved.append)
+	assert json.load(post(f"{base}/api/settings", {"interval": 60, "model": "sonnet"}, token))["ok"]
+	assert (state.interval, state.model) == (60, "sonnet")
+	assert state.wake.is_set()  # a shorter interval must not wait out the longer one it replaced
+	assert saved[-1]["interval"] == 60 and saved[-1]["model"] == "sonnet"
+
+
+@pytest.mark.parametrize("body", [{"interval": 0}, {"interval": "soon"}, {"interval": 999999}, {"model": ""}])
+def test_settings_refuse_junk(served, monkeypatch, body):
+	"""The interval drives a loop against the GitHub API; nothing off the wire reaches it unchecked."""
+	base, token, state = served
+	monkeypatch.setattr(web.config, "save", lambda v: None)
+	before = (state.interval, state.model)
+	with pytest.raises(urllib.error.HTTPError) as e:
+		post(f"{base}/api/settings", body, token)
+	assert e.value.code == 400
+	assert (state.interval, state.model) == before
+
+
+def test_payload_offers_the_pickers_their_options():
+	d = web.payload(State(interval=999, model="m"))
+	assert d["intervals"] == web.config.INTERVALS and d["models"] == web.config.MODELS

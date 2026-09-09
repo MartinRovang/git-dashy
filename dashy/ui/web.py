@@ -17,7 +17,7 @@ import webbrowser
 from urllib.parse import parse_qs, urlparse
 
 from .. import HERE, VERSION, config
-from ..core import team
+from ..core import log, team
 from ..core.state import State, in_flight
 
 LOG = logging.getLogger(__name__)
@@ -57,10 +57,41 @@ def payload(state):
 		"version": VERSION,
 		"sections": out,
 		"fetchedAt": state.fetched_at,
+		"interval": state.interval,  # so the page can count down to the next refresh instead of guessing
+		"intervals": config.INTERVALS,  # what the picker offers — the same list i cycles in the curses screen
+		"models": config.MODELS,
 		"fetching": bool(state.fetching),
 		"auto": bool(state.auto),
 		"model": state.model,
 		"running": len(state.running),
+	}
+
+
+def detail(state, pr):
+	"""The side pane's frame for one PR: its size, its CI checks and the last review of it.
+
+	ponytail: the same want_detail the curses pane uses, so a row costs one GitHub query per revision
+	whichever UI is open. It answers None while that query is in flight; the page keeps polling and the
+	pane fills in, rather than the request blocking on the network.
+	"""
+	d = state.want_detail(pr)
+	rev = log.last(pr["url"]) or {}
+	return {
+		"url": pr["url"],
+		"pending": d is None,
+		"branch": (d or {}).get("branch", ""),
+		"add": (d or {}).get("add"),
+		"del": (d or {}).get("del"),
+		"files": (d or {}).get("files"),
+		"checks": (d or {}).get("checks") or [],
+		"review": {
+			"verdict": config.STATUS.get(rev.get("verdict"), ""),
+			"summary": rev.get("summary", ""),
+			"model": rev.get("model", ""),
+			"tag": log.tag(rev),
+			"at": rev.get("at", ""),
+			"findings": log.findings(rev),
+		} if rev else None,
 	}
 
 
@@ -118,6 +149,11 @@ def handler(state, token, page):
 				return self.send(200, page, "text/html; charset=utf-8")
 			if u.path == "/api/state":
 				return self.send(200, json.dumps(payload(state)))
+			if u.path == "/api/pr":
+				pr = find_pr(state, (parts.get("url") or [""])[0])
+				if pr is None:
+					return self.send(404, '{"error":"no such pr"}')
+				return self.send(200, json.dumps(detail(state, pr)))
 			self.send(404, '{"error":"not found"}')
 
 		def do_POST(self):
@@ -125,22 +161,57 @@ def handler(state, token, page):
 			parts = parse_qs(u.query)
 			if not self.guard(parts):
 				return
-			if u.path != "/api/review":
+			if u.path not in ("/api/review", "/api/auto", "/api/settings"):
 				return self.send(404, '{"error":"not found"}')
 			try:
 				n = int(self.headers.get("Content-Length") or 0)
 				body = json.loads(self.rfile.read(n) or b"{}")
 			except (ValueError, json.JSONDecodeError):
 				return self.send(400, '{"error":"bad body"}')
+			if u.path == "/api/settings":
+				return self.send(*settings(state, body))
+			if u.path == "/api/auto":
+				# ponytail: include_existing=False, always. Saying yes to the other one starts a review of
+				# every PR already waiting on you at once, which is a bill; the curses screen asks first,
+				# and a toggle in a web page has nowhere to ask.
+				state.set_auto(bool(body.get("on")))
+				return self.send(200, '{"ok":true}')
 			pr = find_pr(state, body.get("url", ""))
 			if pr is None:
 				return self.send(404, '{"error":"no such pr"}')
 			if in_flight(state, pr["url"]):
 				return self.send(409, '{"error":"already running"}')
-			state.start_review(pr)
+			# pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
+			(state.start_self_review if body.get("self") else state.start_review)(pr)
 			self.send(200, '{"ok":true}')
 
 	return H
+
+
+def settings(state, body):
+	"""Apply the settings the page can change, and persist them the way the curses screen does.
+
+	ponytail: values off the wire, so both are checked here. The interval drives a loop that hits the
+	GitHub API — 0 would spin it flat out against your rate limit, and a string would raise inside the
+	refresh thread, where nothing is watching. Returns what send() takes.
+	"""
+	from . import screen  # ponytail: local — importing curses is not the GUI's business until this runs
+	if "interval" in body:
+		try:
+			n = int(body["interval"])
+		except (TypeError, ValueError):
+			return 400, '{"error":"interval must be a number"}'
+		if not 30 <= n <= 86400:
+			return 400, '{"error":"interval must be 30s to a day"}'
+		state.interval = n
+		state.wake.set()  # a shorter interval should not wait out the longer one it replaced
+	if "model" in body:
+		name = str(body["model"]).strip()
+		if not name or len(name) > 60:
+			return 400, '{"error":"bad model"}'
+		state.model = name
+	config.save(screen.snapshot(state))
+	return 200, '{"ok":true}'
 
 
 def desktop_binary():
