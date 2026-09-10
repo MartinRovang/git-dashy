@@ -506,4 +506,7 @@ def test_a_cross_check_that_fails_never_fails_the_review(monkeypatch, tmp_path):
 	monkeypatch.setattr(review_mod.team, "push", lambda m: "")
 	monkeypatch.setattr(review_mod.team, "push_dir", lambda d, m, l="sync": "")
 	got = review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus")
-	assert "error" not in got.lower()
+	# ponytail: the actual status, not "error" being absent — that passes on "" too, which is exactly
+	# what a review that died halfway would return.
+	assert got == log.log_review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus",
+	                             {"verdict": "approve", "body": "b", "memory": "- x"})

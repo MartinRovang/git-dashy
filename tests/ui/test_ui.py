@@ -1327,6 +1327,10 @@ def _two_teams(monkeypatch, tmp_path):
 		monkeypatch.setenv(k, v)
 	team.start("NeoMedSys Platform", "precision medicine")
 	team.start("Acme Tools", "internal")
+	# ponytail: a fixture that joins a team is a fixture whose operator said yes to publishing.
+	# Granted through the real call, so the consent gate stays in the path every test walks.
+	ui.memory.allow_publishing("neomedsys-platform")
+	ui.memory.allow_publishing("acme-tools")
 	return dict(PR, repository={"nameWithOwner": "NeoMedSys/neo-api", "name": "neo-api"})
 
 
@@ -2458,3 +2462,30 @@ def test_p_can_share_a_general_fact_using_the_row_you_are_on(screen, monkeypatch
 	shared = tmp_path / "teams" / "nms" / "memory" / "general.md"
 	assert shared.exists() and "PHI reaches the frontend" in shared.read_text()
 	assert not (tmp_path / "teams" / "dashy" / "memory" / "general.md").exists()
+
+
+def test_launch_asks_once_per_team_before_anything_publishes(screen, monkeypatch, st, tmp_path):
+	"""The one keypress left, and it is about the contract rather than about a fact. A binding made
+	before this version authorised READING the team's context here; it is now also read as permission
+	to publish, and that must not apply retroactively without anyone being told."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	os.makedirs(tmp_path / "mem" / "drafts")
+	open(memory.queue_path("neomedsys/neo-api"), "w").write("- (1) one\n- (1) two\n")
+	seen = []
+	# ponytail: team.joined() is sorted, so "dashy" is asked about before "nms" — the answers go in that
+	# order, and a test that assumed otherwise was reading the wrong frame and answering the wrong team.
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("n"), ord("y")), lambda t: None
+	ui.ask_publishing(screen, st, 0)
+	assert "nothing waiting yet" in seen[0]           # dashy, which has no drafts bound to it
+	assert "2 drafts waiting to go" in seen[1]        # nms, which does, and the count is real
+	assert "unconfirmed" in seen[1] and "[y] yes" in seen[1]
+	assert memory.publishing("nms") is True and memory.publishing("dashy") is False
+	# answered, so a later launch asks nothing at all
+	screen.getch = _keys()
+	ui.ask_publishing(screen, st, 0)

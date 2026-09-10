@@ -1612,6 +1612,33 @@ def _leave_team(scr, state, sel, key):
 	return True
 
 
+def ask_publishing(scr, state, sel):
+	"""Ask once per team whether it may receive facts and drafts without anyone sending them.
+
+	ponytail: the ONE keypress in this, and it is not in the pipeline — it is about the contract. A
+	binding made before v1.48 meant "reviews of this repo read that team's context"; it did not mean
+	"publish my facts and my reviewers' unconfirmed guesses there". Reading it that way silently, on the
+	first tick after an upgrade, applies consent given for something narrower to somebody's colleagues.
+	ponytail: at LAUNCH, like the migration and the link retirement above it, and answered once either
+	way — a no is recorded too, or it is asked again every time the dashboard starts.
+	ponytail: the COUNTS are shown. "42 drafts and 1 fact are waiting to go" is the difference between
+	agreeing to a policy and agreeing to what is about to happen.
+	"""
+	for key, drafts, facts_ in memory.unasked():
+		it = team.info(key)["name"][:28]
+		waiting = " · ".join(x for x in (f"{drafts} draft{'' if drafts == 1 else 's'}" if drafts else "",
+		                                 f"{facts_} fact{'' if facts_ == 1 else 's'}" if facts_ else "") if x)
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"{it}  ({key})",
+		      [("from now on this team receives, for the repos bound to it:", ""), ("", ""),
+		       ("· facts of yours, as they are confirmed", ""),
+		       ("· what your reviews proposed, unconfirmed", ""), ("", ""),
+		       (f"{waiting} waiting to go" if waiting else "nothing waiting yet", "")],
+		      "[y] yes   [n] not this team", accent=6)
+		memory.allow_publishing(key, scr.getch() == ord("y"))
+		state.wake.set()
+
+
 def bind_screen(scr, state, sel, pr):
 	"""Bind the selected PR's repo to a team, its whole owner, or nothing. `b` on any row.
 
@@ -1931,6 +1958,7 @@ def main(scr, interval, auto, model):
 	if done := next((l for l in install.retire() if not l.startswith("NOTE")), ""):
 		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
+	ask_publishing(scr, state, 0)
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()

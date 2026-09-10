@@ -1,12 +1,12 @@
 """Run Claude headless on a PR and post its verdict."""
-import logging
 import datetime
 import json
+import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
-import subprocess
 
 from .. import HERE, config
 from . import bind, github, llm, log, memory, team

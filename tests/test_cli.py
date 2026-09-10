@@ -554,6 +554,9 @@ def test_remember_general_keeps_the_project_it_was_observed_in(monkeypatch, caps
 		(tmp_path / "teams" / key / "memory").mkdir()
 	bind.bind_owner("neomedsys", "nms")
 	bind.bind("martin/git-dashy", "dashy")
+	# ponytail: a fixture that joins a team is one whose operator said yes to publishing
+	memory.allow_publishing("nms")
+	memory.allow_publishing("dashy")
 	monkeypatch.setattr(team, "origin_slug", lambda p: "neomedsys/neo-api")
 	monkeypatch.setattr(team, "push_dir", lambda d, m, l="sync": "")
 	monkeypatch.setattr(team, "push", lambda m: "")

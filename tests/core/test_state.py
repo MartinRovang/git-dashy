@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -612,31 +613,78 @@ def test_a_failed_tick_waits_a_full_interval_before_retrying(monkeypatch):
 	assert len(tries) == 1 and st.error == "gh exploded"
 
 
-def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
-	"""The pull is what brings a teammate's pooled drafts down, so the sweep belongs right after it —
-	that is the moment new corroboration exists, and the tick is already a background thread."""
-	from dashy.core import memory
-	order = []
-	monkeypatch.setattr(state.team, "pull", lambda: order.append("pull"))
-	monkeypatch.setattr(memory, "sweep", lambda model: order.append(f"sweep:{model}") or [])
+def _quiet_tick(monkeypatch):
 	monkeypatch.setattr(state.github, "fetch", lambda: [])
 	monkeypatch.setattr(state.log, "mark_rereviews", lambda data: [])
 	monkeypatch.setattr(state.update, "update_available", lambda: "")
 	monkeypatch.setattr(state, "refresh_mirrors", lambda: None)
+
+
+def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
+	"""The pull is what brings a teammate's pooled drafts down, so the sweep is started right after it."""
+	from dashy.core import memory
+	order, done = [], threading.Event()
+	monkeypatch.setattr(state.team, "pull", lambda: order.append("pull"))
+	monkeypatch.setattr(memory, "sweep", lambda model: (order.append(f"sweep:{model}"), done.set()) and [])
+	_quiet_tick(monkeypatch)
 	st = state.State(60, "opus")
 	st.tick(time.time())
-	assert order == ["pull", "sweep:opus"]
+	assert done.wait(5) and order == ["pull", "sweep:opus"]
+
+
+def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
+	"""It ran on the refresh thread, after the pull and BEFORE github.fetch, with a 300s model timeout —
+	so the first sweep after an upgrade held the whole list for as long as the model took. Catching the
+	exception was never the risk; the wait was."""
+	from dashy.core import memory
+	started, release = threading.Event(), threading.Event()
+	def slow(model):
+		started.set()
+		release.wait(5)
+		return []
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	monkeypatch.setattr(memory, "sweep", slow)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert started.wait(5)                    # it is running
+	assert st.fetched_at is not None          # and the list landed anyway
+	assert st.fetching is False
+	release.set()
+
+
+def test_only_one_sweep_runs_at_a_time(monkeypatch):
+	"""A slow sweep must not have a second started on top of it: both write the same pool files and
+	both push the same checkout."""
+	from dashy.core import memory
+	calls, release = [], threading.Event()
+	def slow(model):
+		calls.append(model)
+		release.wait(5)
+		return []
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	monkeypatch.setattr(memory, "sweep", slow)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	st.tick(time.time())
+	st.tick(time.time())
+	assert len(calls) == 1
+	release.set()
 
 
 def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 	"""It calls a model. A refresh that dies because of it would take the PR list down with it."""
 	from dashy.core import memory
+	rang = threading.Event()
 	monkeypatch.setattr(state.team, "pull", lambda: None)
-	monkeypatch.setattr(memory, "sweep", lambda model: 1 / 0)
-	monkeypatch.setattr(state.github, "fetch", lambda: [])
-	monkeypatch.setattr(state.log, "mark_rereviews", lambda data: [])
-	monkeypatch.setattr(state.update, "update_available", lambda: "")
-	monkeypatch.setattr(state, "refresh_mirrors", lambda: None)
+	def boom(model):
+		rang.set()
+		raise ZeroDivisionError("boom")
+	monkeypatch.setattr(memory, "sweep", boom)
+	_quiet_tick(monkeypatch)
 	st = state.State(60, "opus")
 	st.tick(time.time())
+	assert rang.wait(5)
 	assert st.fetched_at is not None and st.error == ""
+	assert st.sweeping.wait(0) is False or not st.sweeping.is_set()   # and the guard is released

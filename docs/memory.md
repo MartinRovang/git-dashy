@@ -512,9 +512,17 @@ ever saw.
 What guards it is unchanged and is the whole of the safety: `team_visible`. A repo bound to nothing
 publishes nothing. Binding is the decision, made once, visibly, and undoable.
 
+**One keypress remains, and it is about the contract rather than about a fact.** A binding made before
+this meant "reviews of this repo read that team's context"; it did not mean "publish my facts, and my
+reviewers' unconfirmed guesses, there". So each joined team is asked once, at launch, with the counts
+of what is waiting — `~/.prs_memory/.publishing` records the answer, a no included, and nothing pools or
+publishes to a team that has not said yes. `_team_for()` mirrors `_project()` step for step so the
+permission is looked up for the same team the write goes to.
+
 **So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
 to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
-team has; `x` removes one from your memory, from theirs, and from the evidence pool. The team's copy is
+team has; `x` removes one from your memory, from theirs, and from the evidence pool — but it leaves the team's
+copy alone while another contributor is still behind it, since nothing would put it back for them. The team's copy is
 matched exactly rather than by similarity — it is the one file where a wrong removal costs everyone.
 
 **A general fact belongs to a project, not to you.** `general.md` used to mean "true for me everywhere",
