@@ -2430,3 +2430,26 @@ def test_the_scan_says_so_when_the_model_rejects_them_all(screen, monkeypatch, s
 	ui.drafts_screen(screen, st, 0)
 	assert any("none were the same fact" in p for p in said)
 	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 2
+
+
+def test_p_can_share_a_general_fact_using_the_row_you_are_on(screen, monkeypatch, st, tmp_path):
+	"""A general fact means "true across this project", and the row you are looking at says which one.
+	Without that context P skipped the general file entirely once two teams were joined — eight facts
+	unshareable on the operator's machine, with nothing saying why."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	bind.bind("martin/git-dashy", "dashy")
+	memory.promote(None, "PHI reaches the frontend and must not be logged")
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": "")
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	pr = dict(PR, repository={"nameWithOwner": "neomedsys/neo-api", "name": "neo-api"})
+	screen.getch, screen.timeout = _keys(ord("t"), 27), lambda t: None
+	ui.share_screen(screen, st, 0, pr)
+	shared = tmp_path / "teams" / "nms" / "memory" / "general.md"
+	assert shared.exists() and "PHI reaches the frontend" in shared.read_text()
+	assert not (tmp_path / "teams" / "dashy" / "memory" / "general.md").exists()

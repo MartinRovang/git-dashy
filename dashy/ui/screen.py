@@ -1152,15 +1152,20 @@ def ask(scr, state, sel, question):
 		scr.timeout(500)
 
 
-def share_screen(scr, state, sel):
+def share_screen(scr, state, sel, current=None):
 	"""Facts of yours the team does not have yet: t shares one, x forgets it.
+
+	ponytail: `current` is the row you are on, and it is what gives a GENERAL fact a project. Without it
+	the general file is skipped once you are in more than one team — `_the_one_team()` refuses to guess
+	— so facts true of the whole project were unshareable with nothing on screen saying why.
 
 	ponytail: one at a time, not a list. A fact is a sentence you have to actually read to judge, and a
 	column of clipped sentences is exactly how something wrong gets waved through into everyone's context.
 	"""
 	i = 0
 	while True:
-		items = memory.shareable()
+		about = (current or {}).get("repository", {}).get("nameWithOwner", "")
+		items = memory.shareable(about)
 		if not items:
 			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
 			return
@@ -1185,10 +1190,10 @@ def share_screen(scr, state, sel):
 		elif k in (ord("k"), curses.KEY_UP):
 			i -= 1
 		elif k == ord("t"):
-			memory.share(repo, fact)
+			memory.share(repo, fact, about)
 			team.push(f"memory: share {repo or 'general'}")
 		elif k == ord("x"):
-			memory.forget(repo, fact)
+			memory.forget(repo, fact, about)
 			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
 			team.push(f"memory: withdraw {repo or 'general'}")  # forget also withdraws it from the pool
 		elif k in (27, ord("q")):
@@ -1997,7 +2002,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("Z"):
 			dream_screen(scr, state, sel)
 		elif k == ord("P"):
-			share_screen(scr, state, sel)
+			share_screen(scr, state, sel, current)
 		elif k == ord("W"):
 			drafts_screen(scr, state, sel)
 		elif k == ord("b"):

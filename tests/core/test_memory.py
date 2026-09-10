@@ -966,3 +966,50 @@ def test_a_model_that_cannot_be_reached_promotes_nothing(monkeypatch, tmp_path):
 	monkeypatch.setattr(memory, "judged", lambda pairs, model: None)   # unreachable
 	assert memory.cross_check("a/b", "opus") == []
 	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 1
+
+
+def _two_teams_bound(monkeypatch, tmp_path):
+	"""Two joined teams, one repo bound to each — the state where a general fact has no home today."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	bind.bind("martin/git-dashy", "dashy")
+	return str(tmp_path / "teams" / "nms" / "memory"), str(tmp_path / "teams" / "dashy" / "memory")
+
+
+def test_a_general_fact_belongs_to_the_project_it_was_observed_in(monkeypatch, tmp_path):
+	"""general.md meant "true for me everywhere", which is why it had nowhere to go once you were in two
+	teams: _the_one_team() refuses to guess and the fact is stuck. It means "true across this project"
+	now, and the project is the team of the repo you were in when you saw it."""
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	assert memory._dest(None) == ""                                   # no context, two teams: still refuses
+	assert memory._dest(None, about="neomedsys/neo-api") == nms
+	assert memory._dest(None, about="martin/git-dashy") == dashy
+	assert memory._dest(None, about="someone/unbound") == ""           # an unbound repo names no project
+	assert memory._dest("neomedsys/neo-api") == nms                    # a repo fact is unaffected
+
+
+def test_a_general_fact_can_be_shared_once_it_has_a_project(monkeypatch, tmp_path):
+	"""Eight general facts on the operator's machine, none offerable, because P had no team to send one
+	to. With the context of a repo they belong to a project and can be."""
+	nms, _dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.promote(None, "PHI reaches the frontend and must not be logged")
+	assert memory.shareable() == []                                    # no context, no destination
+	assert memory.shareable(about="neomedsys/neo-api") == [(None, "PHI reaches the frontend and must not be logged")]
+	# share returns the file it wrote, "" when nothing selects a destination
+	assert memory.share(None, "PHI reaches the frontend and must not be logged") == ""
+	assert memory.share(None, "PHI reaches the frontend and must not be logged",
+	                    about="neomedsys/neo-api") == os.path.join(nms, "general.md")
+	assert facts(os.path.join(nms, "general.md")) == ["- PHI reaches the frontend and must not be logged"]
+
+
+def test_a_general_draft_pools_to_the_project_it_came_from(monkeypatch, tmp_path):
+	"""And the automatic path too: a general observation is corroborated inside the project it is about,
+	not against every team you happen to be in."""
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	assert os.path.exists(os.path.join(nms, memory.DRAFT_POOL, "tester", "general.md"))
+	assert not os.path.exists(os.path.join(dashy, memory.DRAFT_POOL, "tester", "general.md"))

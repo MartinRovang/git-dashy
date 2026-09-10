@@ -294,9 +294,14 @@ def remember(argv):
 	if not general and not repo:
 		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name, or --general")
 	scope, where = repo or None, repo or "general"
+	# ponytail: --general threw away the repo you are standing in, which is the only thing that says
+	# WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all —
+	# neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
+	# general fact means "true across this project", and the project is that repo's team.
+	about = "" if not general else (arg("--repo", "", str, argv) or team.origin_slug("."))
 	if memory.already_known(scope, fact):
 		return print(f"gitdashy: {where} already knows that")
-	promoted = memory.append(scope, fact)
+	promoted = memory.append(scope, fact, about)
 	team.push_dir(config.MEMORY_DIR, f"memory: remembered for {where}", "mine")
 	team.push(f"memory: evidence for {where}")  # ponytail: a promotion writes the pool, which lives over there
 	if promoted:  # ponytail: the counter counts observations; it does not know which surface each came from

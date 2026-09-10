@@ -459,22 +459,44 @@ def whoami():
 
 
 def _the_one_team():
-	"""The memory dir for a fact that names no repo. "" when you are in none, or in several.
+	"""The memory dir for a fact that names no repo and has no context. "" in none, or in several.
 
 	ponytail: "" for several on purpose. A general fact is true of every repo a source covers, and with
-	two teams that is two different claims; picking one would publish to a team that never asked.
+	two teams that is two different claims; picking one would publish to a team that never asked. It is
+	the LAST resort now — `about` usually says which project the observation came from.
 	"""
 	got = team.dirs()
 	return os.path.join(got[0], "memory") if len(got) == 1 else ""
 
 
-def pool_path(user, repo):
+def _project(repo, about=""):
+	"""The memory dir a fact at `repo` scope belongs to. "" when nothing selects one.
+
+	`about` is the repo the observation was made in, and it is what gives a general fact a home.
+
+	ponytail: general.md used to mean "true for me everywhere", which is why it had nowhere to go the
+	moment you were in two teams — the eight general facts on the operator's machine could be neither
+	pooled nor shared, with nothing on screen saying why. It means "true across THIS PROJECT" now, and
+	the project is the team of the repo you were standing in when you saw it. The team-level general.md
+	that receives it already existed and was already read for every bound repo; what was missing was a
+	way to get a fact into it.
+	ponytail: an unbound `about` still selects nothing. Context narrows the answer; it never invents one,
+	and a repo bound to no team is private in this direction exactly as it is in every other.
+	"""
+	if repo:
+		return bind.team_dir(bind.of(repo)) or ""
+	if about and (d := bind.team_dir(bind.of(about))):
+		return d
+	return _the_one_team()
+
+
+def pool_path(user, repo, about=""):
 	"""Your evidence for `repo`, inside the team it is BOUND to. "" when nothing selects one.
 
 	ponytail: evidence is a disclosure, so it goes exactly where the facts go and nowhere else. With
 	several teams, publishing to the wrong one is the same error as publishing at all.
 	"""
-	d = bind.team_dir(bind.of(repo)) if repo else _the_one_team()
+	d = _project(repo, about)
 	return os.path.join(d, POOL, user, slug(repo)) if d else ""
 
 
@@ -493,7 +515,7 @@ def logged_repos(where=None):
 	return out
 
 
-def team_visible(repo):
+def team_visible(repo, about=""):
 	"""True when this repo belongs to the team, so pooling a fact about it discloses nothing new.
 
 	ponytail: the BINDING, not the shared review log. The log bootstrapped this well enough while it was
@@ -505,7 +527,7 @@ def team_visible(repo):
 	if not team.joined():
 		return False
 	if repo is None:
-		return bool(_the_one_team())  # names no repo, so no binding selects a team for it
+		return bool(_project(None, about))  # a general fact belongs to the project it was observed in
 	# ponytail: through team_dir, exactly as every READ resolves it. bool(bind.of(repo)) was true for a
 	# binding to ANY team, including one this machine is not in — so a repo bound to org/other had its
 	# name and facts written into org/mem's pool and offered for sharing, while sources() and brief()
@@ -514,13 +536,13 @@ def team_visible(repo):
 	return bool(bind.team_dir(bind.of(repo)))
 
 
-def draft_pool_path(user, repo):
+def draft_pool_path(user, repo, about=""):
 	"""Where `user`'s unconfirmed observations about `repo` live, inside the team it is bound to."""
-	d = bind.team_dir(bind.of(repo)) if repo else _the_one_team()
+	d = _project(repo, about)
 	return os.path.join(d, DRAFT_POOL, user, slug(repo)) if d else ""
 
 
-def _pool_drafts(repo):
+def _pool_drafts(repo, about=""):
 	"""Publish your unconfirmed observations about `repo`, so a teammate's can be counted beside them.
 
 	ponytail: one machine almost never proposes the same fact twice — 140 drafts on the operator's store,
@@ -534,7 +556,7 @@ def _pool_drafts(repo):
 	ponytail: the whole file is rewritten rather than appended per fact, so the pool says what the queue
 	says. A dropped or promoted draft leaves the pool the same way it leaves the queue.
 	"""
-	if not team_visible(repo) or not (p := draft_pool_path(whoami(), repo)):
+	if not team_visible(repo, about) or not (p := draft_pool_path(whoami(), repo, about)):
 		return
 	items = drafts(repo)
 	try:
@@ -593,9 +615,9 @@ def cross_check(repo, model):
 	return promoted
 
 
-def _pool(repo, fact):
+def _pool(repo, fact, about=""):
 	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt."""
-	if team_visible(repo) and (p := pool_path(whoami(), repo)):
+	if team_visible(repo, about) and (p := pool_path(whoami(), repo, about)):
 		_append_line(p, fact)
 
 
@@ -812,7 +834,7 @@ def _write_drafts(repo, items):
 	_rewrite_counted(queue_path(repo), items)  # ponytail: _rewrite reaches _history(); the call here was a second one
 
 
-def append(repo, text):
+def append(repo, text, about=""):
 	"""Record what a review proposed; return the facts that just became yours.
 
 	ponytail: drafts are NEVER read back into a prompt. If they were, the reviewer would meet its own
@@ -848,14 +870,19 @@ def append(repo, text):
 	# write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
 	for t in promoted:
 		_append_line(path(repo), t)
-		_pool(repo, t)
+		_pool(repo, t, about)
 	_write_drafts(repo, [r for r in items if r[0] < PROMOTE_AT])
-	_pool_drafts(repo)  # ponytail: so a teammate's next review can count these beside their own
+	_pool_drafts(repo, about)  # ponytail: so a teammate's next review can count these beside their own
 	return promoted
 
 
-def shareable():
-	"""[(repo, fact)] — facts of yours the team does not have. repo None is the general file."""
+def shareable(about=""):
+	"""[(repo, fact)] — facts of yours the team does not have. repo None is the general file.
+
+	ponytail: `about` is the repo you are looking at, and it is what makes a GENERAL fact offerable at
+	all once you are in more than one team — it says which project the fact is about. Without it the
+	general file is skipped, silently, which is how eight facts sat unshareable with nothing saying so.
+	"""
 	if not team.joined():
 		return []
 	out = []
@@ -863,38 +890,42 @@ def shareable():
 		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = _repo_of(name)
-		if not team_visible(repo) or not (base := _dest(repo)):
+		if not team_visible(repo, about) or not (base := _dest(repo, about)):
 			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
 		theirs = _facts(path(repo, base))
 		out += [(repo, f) for f in _facts(path(repo)) if not any(_same(f, t) for t in theirs)]
 	return out
 
 
-def _dest(repo):
+def _dest(repo, about=""):
 	"""The memory dir a fact about `repo` would be shared into. "" when nothing selects one."""
-	return (bind.team_dir(bind.of(repo)) if repo else _the_one_team()) or ""
+	return _project(repo, about)
 
 
-def share(repo, fact):
-	"""Put one of your facts into the BOUND team's memory. Returns the file written, or ""."""
-	if not (base := _dest(repo)):
+def share(repo, fact, about=""):
+	"""Put one of your facts into the BOUND team's memory. Returns the file written, or "".
+
+	ponytail: `about` names the project for a GENERAL fact — the repo you were looking at when you sent
+	it. A repo fact is unaffected: its own binding says where it goes.
+	"""
+	if not (base := _dest(repo, about)):
 		return ""
 	dest = path(repo, base)
 	_append_line(dest, fact)
-	_unpool(repo, fact)  # it is memory now; keeping the evidence would just grow forever
+	_unpool(repo, fact, about)  # it is memory now; keeping the evidence would just grow forever
 	return dest
 
 
-def _unpool(repo, fact):
-	if not (p := pool_path(whoami(), repo)):
+def _unpool(repo, fact, about=""):
+	if not (p := pool_path(whoami(), repo, about)):
 		return
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
-def forget(repo, fact):
+def forget(repo, fact, about=""):
 	"""Drop one fact from your own memory, and withdraw it as evidence."""
-	_unpool(repo, fact)
+	_unpool(repo, fact, about)
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[2], fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")

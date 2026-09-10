@@ -501,6 +501,15 @@ Same disclosure rule as the evidence pool — `team_visible`, so a repo bound to
 mirror, so a teammate's guess can never reach a prompt. What is new is that these are *unconfirmed*, so
 what a colleague sees includes wrong guesses about a bound repo.
 
+**A general fact belongs to a project, not to you.** `general.md` used to mean "true for me everywhere",
+which is why it had nowhere to go the moment you joined a second team: `_the_one_team()` refuses to guess,
+so eight general facts sat unpoolable and unshareable with nothing on screen saying why. It means "true
+across THIS PROJECT" now, and the project is the team of the repo you were in when you observed it —
+`gitdashy remember --general` keeps the directory's origin, and `P` uses the row you are on. The
+team-level `general.md` that receives it already existed and was already read for every bound repo; the
+only thing missing was a way to get a fact into it. An unbound context still selects nothing: context
+narrows the answer, it never invents one.
+
 **The count is over distinct review ids across both people.** Your `[r:7a2c]` and their `[r:91cf]` is two
 runs that did not know about each other, which is what `PROMOTE_AT` has always meant. Your own pooled
 file is excluded when reading theirs: counting it would let one review confirm itself by a route that
