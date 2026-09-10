@@ -32,7 +32,7 @@ Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME]
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
-  --gui          open the dashboard in the desktop app (falls back to your browser if it is not built)
+  --gui          open the dashboard in the desktop app (downloaded on first use)
   --browser      with --gui: use the browser even when the desktop app is available
   --no-open      with --gui: serve only, no browser — what the desktop app runs behind its splash
   --port N       with --gui --no-open: bind this port instead of a free one (the app picks it)
@@ -672,7 +672,8 @@ def run(argv=None):
 	# second app — everything above this line is shared, so a flag added there works in both.
 	if "--gui" in argv:
 		# ponytail: three ways in, one branch. --no-open means the desktop shell spawned us and wants the
-		# server only; otherwise --gui IS the app, and the browser is the fallback when it is not built.
+		# server only; otherwise --gui IS the app: built locally, else downloaded from the latest release,
+		# else the browser when the download fails.
 		# No recursion: the shell always adds --no-open to the command it runs.
 		if "--no-open" in argv:
 			# ponytail: the token arrives in the ENVIRONMENT, not argv — argv is world-readable in ps,
@@ -682,9 +683,7 @@ def run(argv=None):
 			                port=arg("--port", 0, int, argv),
 			                token=os.environ.pop("GITDASHY_GUI_TOKEN", ""))
 		if "--browser" not in argv:
-			if exe := web.desktop_binary():
+			if exe := web.desktop_binary() or web.download_desktop():
 				return web.launch_desktop(exe, argv)
-			print("gitdashy: no desktop app built, opening in your browser instead\n"
-			      "  build it with: cd desktop/src-tauri && cargo build --release")
 		return web.main(interval, auto, model, open_browser=True)
 	curses.wrapper(screen.main, interval, auto, model)

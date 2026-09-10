@@ -43,3 +43,37 @@ jobs:
           tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
           gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
           gh release create "$tag" --generate-notes
+
+  # ponytail: the desktop shell as a release asset per OS, named the way web.asset_name() looks for it.
+  # Plain cargo build, no tauri-cli/npm — frontendDist is checked-in HTML, nothing to bundle.
+  desktop:
+    if: github.event_name == 'push'
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: gitdashy-desktop-linux-x86_64
+          - os: macos-latest
+            asset: gitdashy-desktop-macos-arm64
+          - os: macos-13
+            asset: gitdashy-desktop-macos-x86_64
+          - os: windows-latest
+            asset: gitdashy-desktop-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev
+      - run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+      - shell: bash
+        run: |
+          tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
+          ext=; [ "$RUNNER_OS" = Windows ] && ext=.exe
+          cp "desktop/src-tauri/target/release/gitdashy-desktop$ext" "${{ matrix.asset }}"
+          gh release upload "$tag" "${{ matrix.asset }}" --clobber

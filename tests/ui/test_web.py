@@ -1,4 +1,5 @@
 """The GUI server. ponytail: the payload shape and the guard — the HTML is eyeballed, not asserted."""
+import io
 import json
 import os
 import threading
@@ -316,3 +317,36 @@ def test_settings_refuse_junk(served, monkeypatch, body):
 def test_payload_offers_the_pickers_their_options():
 	d = web.payload(State(interval=999, model="m"))
 	assert d["intervals"] == web.config.INTERVALS and d["models"] == web.config.MODELS
+
+
+def test_download_desktop_fetches_once_then_reuses(tmp_path, monkeypatch, capsys):
+	monkeypatch.setattr(web, "INSTALLED", str(tmp_path / "installed"))
+	monkeypatch.setattr(web, "asset_name", lambda: "gitdashy-desktop-test")
+	fetched = []
+
+	def urlopen(url, timeout=None):
+		fetched.append(url)
+		if "nowhere" in url:
+			raise urllib.error.URLError("no route")
+		return io.BytesIO(b"#!/bin/sh\n")
+
+	monkeypatch.setattr(web.urllib.request, "urlopen", urlopen)
+	exe = web.download_desktop(url="https://example/asset")
+	assert exe == str(tmp_path / "installed" / "gitdashy-desktop-test")
+	assert os.access(exe, os.X_OK) and open(exe, "rb").read() == b"#!/bin/sh\n"
+	# second call: already there, no fetch — a dead url must not matter
+	assert web.download_desktop(url="https://nowhere") == exe and fetched == ["https://example/asset"]
+	# ponytail: a failed download is a browser session, not a traceback
+	monkeypatch.setattr(web, "INSTALLED", str(tmp_path / "other"))
+	assert web.download_desktop(url="https://nowhere") == ""
+	assert "browser" in capsys.readouterr().out
+	assert not os.listdir(tmp_path / "other")  # no .part left behind
+
+
+def test_asset_name_matches_ci_naming(monkeypatch):
+	monkeypatch.setattr(web.platform, "system", lambda: "Darwin")
+	monkeypatch.setattr(web.platform, "machine", lambda: "arm64")
+	assert web.asset_name() == "gitdashy-desktop-macos-arm64"
+	monkeypatch.setattr(web.platform, "system", lambda: "Windows")
+	monkeypatch.setattr(web.platform, "machine", lambda: "AMD64")
+	assert web.asset_name() == "gitdashy-desktop-windows-x86_64.exe"

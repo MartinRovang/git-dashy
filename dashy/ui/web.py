@@ -9,10 +9,12 @@ import http.server
 import json
 import logging
 import os
+import platform
 import secrets
 import shutil
 import threading
 import time
+import urllib.request
 import webbrowser
 from urllib.parse import parse_qs, urlparse
 
@@ -227,6 +229,41 @@ def desktop_binary():
 		if os.access(exe, os.X_OK):
 			return exe
 	return shutil.which("gitdashy-desktop") or ""
+
+
+INSTALLED = os.environ.get("GITDASHY_INSTALL", os.path.expanduser("~/.prs_desktop"))  # downloaded shell lands here
+RELEASES = "https://github.com/MartinRovang/git-dashy/releases/latest/download/"
+
+
+def asset_name():
+	"""The release asset for this machine — ci.yml names them the same way."""
+	system = {"darwin": "macos"}.get(platform.system().lower(), platform.system().lower())
+	arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
+	return f"gitdashy-desktop-{system}-{arch}" + (".exe" if system == "windows" else "")
+
+
+def download_desktop(url=None):
+	"""Fetch the prebuilt shell for this OS into INSTALLED; the path, or "" when there is none to fetch.
+
+	ponytail: one GET, no version check — `latest` is whatever CI last attached, and a shell that
+	is already installed is found by desktop_binary() before this runs. Delete INSTALLED to refetch.
+	"""
+	exe = os.path.join(INSTALLED, asset_name())
+	if os.access(exe, os.X_OK):
+		return exe
+	os.makedirs(INSTALLED, exist_ok=True)
+	print(f"gitdashy: downloading the desktop app to {exe}")
+	try:
+		with urllib.request.urlopen(url or RELEASES + asset_name(), timeout=60) as r, open(exe + ".part", "wb") as f:
+			shutil.copyfileobj(r, f)
+	except OSError as e:
+		print(f"gitdashy: download failed ({e}), opening in your browser instead")
+		if os.path.exists(exe + ".part"):
+			os.remove(exe + ".part")
+		return ""
+	os.replace(exe + ".part", exe)
+	os.chmod(exe, 0o755)
+	return exe
 
 
 ENTRY = os.path.join(HERE_UI, "..", "..", "prs.py")  # the entry point for THIS copy of the package
