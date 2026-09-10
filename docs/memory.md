@@ -482,6 +482,41 @@ The id is generated inside `append()`, because one call to `append` **is** one r
 as "same review", so the failure direction refuses to sum rather than summing wrongly. Files written
 before ids existed still parse, with `()` for provenance.
 
+## 4b-3. Two people are the second observation
+
+One machine almost never proposes the same fact twice. Measured on a real store: **140 drafts, every one
+at `(1)`, and not one specific fact ever promoted by recurrence.** Two people reviewing the same repo do
+land on the same facts, and that is stronger independence than same-machine recurrence — different
+person, different PR, different moment.
+
+So drafts are pooled the way accepted facts already are:
+
+```
+<team>/memory/pool/<user>/<repo>.md      facts that person accepted     (evidence, never read)
+<team>/memory/drafts/<user>/<repo>.md    what their reviews proposed    (evidence, never read)
+```
+
+Same disclosure rule as the evidence pool — `team_visible`, so a repo bound to nothing publishes nothing
+— and the same hard invariant: nothing under either path is read by `sources()`, `scope_text()` or the
+mirror, so a teammate's guess can never reach a prompt. What is new is that these are *unconfirmed*, so
+what a colleague sees includes wrong guesses about a bound repo.
+
+**The count is over distinct review ids across both people.** Your `[r:7a2c]` and their `[r:91cf]` is two
+runs that did not know about each other, which is what `PROMOTE_AT` has always meant. Your own pooled
+file is excluded when reading theirs: counting it would let one review confirm itself by a route that
+did not exist when that rule was written.
+
+**Two thresholds, because they are two jobs.** `OVERLAP` (0.30) sizes a list a *person* reads, where a
+false candidate costs their attention. `CROSS` (0.12) feeds the *model*, where a false candidate costs
+one true/false answer and a missed one costs a fact that never promotes. The loose threshold is only
+safe because something reads the candidates — so if the model cannot be asked, `cross_check` promotes
+**nothing**, while the person's scan keeps every candidate. `judged()` returns `None` for "not asked"
+rather than a list, precisely so those two callers can take opposite directions.
+
+It runs at the end of `review()`, where new observations arrive and a background thread already exists,
+and it can never fail the review: the verdict is posted by then, and a promotion missed today happens
+next time.
+
 ## 4c. Looking at what is not a fact yet
 
 `gitdashy drafts` lists them; **`W`** in the dashboard shows one at a time, `t` accepts it as a fact,

@@ -19,6 +19,7 @@ from . import bind, log, team
 
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
+DRAFT_POOL = "drafts"  # under the team's memory: each person's UNCONFIRMED observations, never read
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
@@ -33,6 +34,12 @@ NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same f
 # zero overlap, and 12 at or above this number — a readable list where most pairs really were one fact.
 # Nothing here promotes on its own; this only decides what is shown.
 OVERLAP = 0.30
+# ponytail: the CROSS-PERSON pass is deliberately looser, because it does not decide anything — the
+# model does. A cheap filter whose only job is to hand candidates to a reader that understands meaning
+# must not MISS a pair; a false candidate costs one true/false answer, a missed one costs a fact that
+# never promotes. OVERLAP is the number for a list a person reads, where a false candidate costs their
+# attention. These are two jobs and they want two thresholds.
+CROSS = 0.12
 # ponytail: "not" and "no" are NOT stopwords here, whatever a search-engine list says. A stopword list
 # for retrieval drops the words that carry no topic; this measure asks whether two lines say the SAME
 # THING, and negation is the one word that reverses that answer. With them dropped, "the store is pruned
@@ -507,6 +514,85 @@ def team_visible(repo):
 	return bool(bind.team_dir(bind.of(repo)))
 
 
+def draft_pool_path(user, repo):
+	"""Where `user`'s unconfirmed observations about `repo` live, inside the team it is bound to."""
+	d = bind.team_dir(bind.of(repo)) if repo else _the_one_team()
+	return os.path.join(d, DRAFT_POOL, user, slug(repo)) if d else ""
+
+
+def _pool_drafts(repo):
+	"""Publish your unconfirmed observations about `repo`, so a teammate's can be counted beside them.
+
+	ponytail: one machine almost never proposes the same fact twice — 140 drafts on the operator's store,
+	every one at (1), and not a single specific fact ever promoted. Two people reviewing the same repo do
+	land on the same facts. This is what makes the second observation reachable, and it is a stronger
+	independence than same-machine recurrence: different person, different PR, different moment.
+	ponytail: the same disclosure rule the evidence pool uses — team_visible, so a repo bound to nothing
+	stays private and an unbound side project publishes nothing. What is new is that these are
+	UNCONFIRMED, so a teammate reads guesses as well as facts. They can never reach a prompt: nothing
+	under DRAFT_POOL is read by sources(), scope_text() or the mirror, exactly as POOL is not.
+	ponytail: the whole file is rewritten rather than appended per fact, so the pool says what the queue
+	says. A dropped or promoted draft leaves the pool the same way it leaves the queue.
+	"""
+	if not team_visible(repo) or not (p := draft_pool_path(whoami(), repo)):
+		return
+	items = drafts(repo)
+	try:
+		os.makedirs(os.path.dirname(p), exist_ok=True)
+		_rewrite_counted(p, items) if items else (os.remove(p) if os.path.exists(p) else None)
+	except OSError:
+		pass  # ponytail: a pool that cannot be written must never fail the review that produced it
+
+
+def theirs(repo):
+	"""[(user, count, ids, fact)] every OTHER person's unconfirmed observations about `repo`.
+
+	ponytail: yours are excluded. Your own file is in the pool too, and reading it back as corroboration
+	would let one review confirm itself — the exact thing PROMOTE_AT exists to refuse, arriving by a
+	route that did not exist when that rule was written.
+	"""
+	me, out = whoami(), []
+	for base in team.dirs():
+		root = os.path.join(base, "memory", DRAFT_POOL)
+		for user in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+			p = os.path.join(root, user, slug(repo))
+			if user == me or not os.path.isfile(p):
+				continue
+			out += [(user, n, ids, f) for n, ids, f in
+			        (_parse(l) for l in _read(p).splitlines() if l.strip())]
+	return out
+
+
+def cross_check(repo, model):
+	"""Promote what a teammate independently observed too. Returns the facts that just became yours.
+
+	The cheap pass finds candidates loosely (CROSS) and the model makes the call, so the threshold can
+	be low: missing a pair costs a fact, a false candidate costs one true/false answer.
+
+	ponytail: the count is over DISTINCT REVIEW IDS across both people, which is the same arithmetic
+	would_merge does — so "two observations" means two runs that did not know about each other, whoever
+	ran them. Two ids from one person is already two independent reviews; one each is two people.
+	ponytail: promotion goes through promote(), so it lands with the already_known guard, the evidence
+	pool and the pre-review queue cleared, exactly as every other promotion does. Reaching the TEAM's
+	memory is still `P`: this is automatic because being wrong costs only you.
+	"""
+	mine, other = drafts(repo), theirs(repo)
+	if not mine or not other:
+		return []
+	pairs = [(repo, r, a, (n, ids, f)) for a in mine for _u, n, ids, f in other
+	         if (r := _overlap(a[2], f)) >= CROSS]
+	promoted = []
+	# ponytail: `or []` — a model that could not be asked promotes NOTHING. The threshold above is loose
+	# precisely because something reads these; without that reader they are not evidence of anything.
+	for _r, _ratio, a, b in judged(pairs, model) or []:
+		if a[2] in {t for _n, _i, t in drafts(repo)} and len(set(a[1]) | set(b[1])) >= PROMOTE_AT:
+			promote(repo, a[2])
+			promoted.append(a[2])
+	if promoted:
+		_pool_drafts(repo)  # ponytail: the queue shrank, so the pool must say so
+	return promoted
+
+
 def _pool(repo, fact):
 	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt."""
 	if team_visible(repo) and (p := pool_path(whoami(), repo)):
@@ -636,9 +722,12 @@ def judged(pairs, model):
 	ponytail: it is NOT "a model made it a fact". The two observations already happened, in two reviews
 	that did not know about each other; what the model repairs is the matcher's blindness to wording.
 	The gate still counts observations, and it still takes two.
-	ponytail: a failure returns every candidate rather than none. A filter that silently empties the
-	list when the model is unreachable is worse than no filter — you would read "nothing to fold" and
-	believe it. Same reason the review path degrades rather than blocks.
+	ponytail: a failure returns None, NOT a list, because the safe direction is opposite for the two
+	callers. The scan shows a person what is left, so it keeps every candidate and lets them judge.
+	cross_check PROMOTES what comes back, so it must keep nothing — an unreachable model there would
+	otherwise promote every loose candidate at once, and the whole point of the loose threshold is that
+	something reads them. One value cannot be right for both, so this says "not judged" and each caller
+	states its own direction at the call site.
 	"""
 	if not pairs:
 		return []
@@ -649,7 +738,7 @@ def judged(pairs, model):
 		got = json.loads(text[text.index("{"):text.rindex("}") + 1])
 	except Exception:  # noqa: BLE001 — unreachable, timed out, or not JSON; all mean "not judged"
 		logging.getLogger(__name__).exception("could not judge draft pairs")
-		return list(pairs)
+		return None
 	# ponytail: only the numbers we sent, and only a literal true. A key we never sent is the model
 	# inventing a pair, and anything that is not True — a string, a null, a number — is not agreement.
 	return [p for i, p in enumerate(pairs) if got.get(str(i + 1)) is True]
@@ -761,6 +850,7 @@ def append(repo, text):
 		_append_line(path(repo), t)
 		_pool(repo, t)
 	_write_drafts(repo, [r for r in items if r[0] < PROMOTE_AT])
+	_pool_drafts(repo)  # ponytail: so a teammate's next review can count these beside their own
 	return promoted
 
 

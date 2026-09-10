@@ -864,16 +864,16 @@ def test_the_model_judges_which_candidates_are_one_claim(tmp_path, monkeypatch):
 	assert "the viewer owns mask state" in sent["prompt"]
 
 
-def test_a_model_that_cannot_be_reached_leaves_every_candidate(tmp_path, monkeypatch):
-	"""Degrade to what shipped: the person sees the same list they saw before there was a model pass.
-	A filter that silently drops everything when it fails is worse than no filter."""
+def test_a_model_that_cannot_be_reached_says_so_rather_than_deciding(tmp_path, monkeypatch):
+	"""None, not a list — the safe direction is opposite for the two callers. The scan keeps every
+	candidate and lets a person judge; cross_check promotes what comes back, so it must keep none."""
 	def boom(prompt, model, **kw):
 		raise OSError("no model here")
 	monkeypatch.setattr(llm, "ask", boom)
 	pairs = [("a/b", 0.7, (1, (), "one"), (1, (), "two"))]
-	assert REAL_JUDGED(pairs, "opus") == pairs
+	assert REAL_JUDGED(pairs, "opus") is None
 	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ("not json at all", None, 12))
-	assert REAL_JUDGED(pairs, "opus") == pairs
+	assert REAL_JUDGED(pairs, "opus") is None
 	# an answer that names a pair we never sent is ignored rather than trusted
 	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ('{"9": true}', None, 12))
 	assert REAL_JUDGED(pairs, "opus") == []
@@ -882,3 +882,87 @@ def test_a_model_that_cannot_be_reached_leaves_every_candidate(tmp_path, monkeyp
 def test_judging_nothing_asks_nothing(monkeypatch):
 	monkeypatch.setattr(llm, "ask", lambda *a, **kw: pytest.fail("must not call the model for no pairs"))
 	assert REAL_JUDGED([], "opus") == []
+
+
+def test_drafts_reach_the_team_pool_so_two_people_can_corroborate(monkeypatch, tmp_path):
+	"""One machine rarely proposes the same fact twice, which is why recurrence never fires. Two people
+	reviewing the same repo do. The drafts go where the evidence pool already goes — per user, inside
+	the team, never read into any prompt — so a count can be taken across both."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the format-check job")
+	pooled = os.path.join(str(shared), memory.DRAFT_POOL, "tester", "a__b.md")
+	assert os.path.exists(pooled)
+	n, ids, fact = memory._parse(open(pooled).read().splitlines()[0])
+	assert fact == "CI skips the format-check job" and n == 1 and len(ids) == 1
+	# an UNBOUND repo is private, exactly as its facts are
+	memory.append("c/d", "- something about private work")
+	assert not os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "c__d.md"))
+
+
+def test_a_teammates_draft_is_the_second_observation(monkeypatch, tmp_path):
+	"""The point of the whole thing: your one observation plus theirs is two, and the fact becomes yours
+	— without either of you having said it twice."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	assert memory.known("a/b") == []                      # not yet: the words do not match
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))   # the model says: same claim
+	assert memory.cross_check("a/b", "opus") == ["CI skips the format-check job"]
+	assert memory.known("a/b") == ["CI skips the format-check job"]
+	assert memory.drafts("a/b") == []                      # promoted out of the queue
+	# and it does not pay out twice
+	assert memory.cross_check("a/b", "opus") == []
+
+
+def test_the_model_is_the_decider_so_the_first_pass_only_needs_recall(monkeypatch, tmp_path):
+	"""CROSS is deliberately far below the threshold a person's scan uses: the cheap pass must not MISS
+	a pair, because the model makes the call. A pair it rejects promotes nothing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	assert memory.CROSS < memory.OVERLAP
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] CI bypasses lint entirely\n")
+	memory.append("a/b", "- the CI job for formatting is skipped")
+	pair = memory._overlap("the CI job for formatting is skipped", "CI bypasses lint entirely")
+	assert memory.CROSS <= pair < memory.OVERLAP              # too loose for a person's list, not for the model
+	seen = []
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: seen.append(len(pairs)) or [])
+	assert memory.cross_check("a/b", "opus") == []           # the model said no, so nothing promoted
+	assert seen == [1]                                        # but the loose pass DID surface it
+	assert memory.known("a/b") == []
+
+
+def test_your_own_pooled_drafts_are_not_a_second_observation(monkeypatch, tmp_path):
+	"""Your own file is in the pool too — reading it back as corroboration would make one review confirm
+	itself, which is the whole thing PROMOTE_AT refuses."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))
+	assert memory.cross_check("a/b", "opus") == []
+	assert memory.known("a/b") == []
+
+
+def test_a_model_that_cannot_be_reached_promotes_nothing(monkeypatch, tmp_path):
+	"""The loose cross-person threshold is only safe because something reads the candidates. Without
+	that reader they are not evidence, and promoting them would be the gate deciding by word overlap
+	at 0.12 — looser than anything this system has ever folded on."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: None)   # unreachable
+	assert memory.cross_check("a/b", "opus") == []
+	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 1

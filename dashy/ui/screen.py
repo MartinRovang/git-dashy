@@ -1247,37 +1247,41 @@ def drafts_screen(scr, state, sel):
 
 
 def _judge(scr, state, sel, pairs):
-	"""Let the model read the candidates while a spinner runs. Esc keeps all of them.
+	"""Let the model read the candidates while a spinner runs. None when it was not asked.
 
 	ponytail: threaded and interruptible, like the dream, because this is a model call on a keypress and
-	a curses screen that stops repainting reads as a hang. Esc keeps every candidate rather than none —
-	the same degradation memory.judged makes when the model cannot be reached at all.
+	a curses screen that stops repainting reads as a hang.
+	ponytail: an EMPTY LIST and None are different answers. [] is the model saying none of these are one
+	fact, which is a result; None is "not asked" — unreachable, or esc — and only that falls back to
+	showing every candidate. Conflating them with `or` told you it had found nothing to reject.
+	ponytail: the sentinel for "still running" is an empty box, not a None inside it, because None is now
+	one of the values being carried.
 	"""
-	box = [None]
+	box = []
 	def run():
 		try:
-			box[0] = memory.judged(pairs, state.model)
-		except Exception:  # noqa: BLE001 — judged() already swallows its own; this is the last net
+			box.append(memory.judged(pairs, state.model))
+		except Exception:  # noqa: BLE001 — judged() swallows its own; this is the last net
 			logging.getLogger(__name__).exception("judging failed")
-			box[0] = list(pairs)
+			box.append(None)
 	t = threading.Thread(target=run, daemon=True)
 	t.start()
 	# ponytail: an answer that arrives at once must not cost a keypress. The spinner loop calls getch,
 	# so without this a fast model — or a stub — swallowed the next key the person pressed.
 	t.join(0.2)
-	if box[0] is not None:
+	if box:
 		return box[0]
 	t0 = time.time()
 	scr.timeout(120)
 	try:
-		while box[0] is None:
+		while not box:
 			draw(scr, state, sel, prompt=" ")
 			spin = art.SPINNER[int((time.time() - t0) * 8) % len(art.SPINNER)]
 			panel(scr, "same fact?", [(f"{spin}  {state.model} is reading {len(pairs)} pair{'' if len(pairs) == 1 else 's'}…",
 			                           f"{int(time.time() - t0)}s")],
 			      "[esc] skip the model and read them all yourself", accent=6)
 			if scr.getch() == 27:
-				return list(pairs)
+				return None  # ponytail: "not asked", which reads them all — the same as unreachable
 	finally:
 		scr.timeout(500)
 	return box[0]
@@ -1301,7 +1305,12 @@ def overlap_screen(scr, state, sel):
 	if not pairs:
 		confirm(scr, state, sel, " no two drafts look like one fact — nothing to fold  [any key]")
 		return
-	pairs = _judge(scr, state, sel, pairs)
+	# ponytail: `or pairs` — a model that could not be asked shows you EVERY candidate, which is what
+	# shipped before there was a model pass. The opposite of cross_check's direction, and for the
+	# opposite reason: here a person decides, so more to read is the safe failure.
+	# ponytail: `is None`, not `or`. An empty list is the model saying none of them match, which is an
+	# answer; only "not asked" falls back to the full list, as it did before there was a model pass.
+	pairs = got if (got := _judge(scr, state, sel, pairs)) is not None else pairs
 	if not pairs:
 		confirm(scr, state, sel, f" {state.model} read them and none were the same fact  [any key]")
 		return
