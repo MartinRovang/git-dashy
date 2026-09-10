@@ -780,3 +780,35 @@ def test_folding_onto_a_fact_that_is_already_settled_does_not_write_it_twice(tmp
 	assert memory.merge("a/b", keep, drop) == 0       # keep is no longer a draft, so nothing is folded
 	assert memory.known("a/b") == [keep[2]]           # and the fact is not written a second time
 	assert len(memory.drafts("a/b")) == 1             # the twin is left for a person to judge
+
+
+def test_a_negated_statement_is_never_the_same_fact(tmp_path, monkeypatch):
+	"""The gate compares wording, and a single inserted "not" moves a sequence ratio by 0.08 — under
+	NEAR=0.88 two opposite statements read as one fact. So a review saying a thing is handled and a
+	later review saying it is NOT handled reached two observations, and whichever wording came first
+	was promoted as confirmed knowledge. Reachable any time the code changes between two reviews, and
+	it is the precise failure recurrence exists to prevent: a fact no two observations agreed on."""
+	assert memory._same("the store is pruned on write", "the store is pruned on write") is True
+	for a, b in (("the store is pruned on write", "the store is not pruned on write"),
+	             ("drafts are read into the prompt", "drafts are never read into the prompt"),
+	             ("a fact reaches the team automatically", "a fact never reaches the team automatically"),
+	             ("neo-api holds DDL", "neo-api holds no DDL")):
+		assert memory._same(a, b) is False, f"{a!r} folded onto its opposite"
+		assert memory._overlap(a, b) == 0.0, f"{a!r} offered as one fact with its opposite"
+	# ponytail: PARITY, not presence. Refusing whenever EITHER side carries a negation would split two
+	# ways of saying the same negative, so the guard must not fire when both sides carry one.
+	assert memory._polarity("the API does not own validation") == memory._polarity("validation is not owned by the API") == 1
+	assert memory._same("neo-api holds no DDL", "neo-api holds no DDL") is True
+	assert memory._overlap("the API does not own validation", "validation is not owned by the API") > 0.4
+	# and a line with two negations does not read as agreeing with a line that has one
+	assert memory._same("no route is not checked", "no route is checked") is False
+
+
+def test_two_reviews_that_disagree_never_promote(tmp_path, monkeypatch):
+	"""End to end through append(), which is where the damage happened: two observations, one fact."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- the drafts store is pruned on write")
+	memory.append("a/b", "- the drafts store is not pruned on write")
+	assert memory.known("a/b") == []                       # nothing agreed, so nothing is a fact
+	assert sorted(t for _n, _i, t in memory.drafts("a/b")) == [
+		"the drafts store is not pruned on write", "the drafts store is pruned on write"]

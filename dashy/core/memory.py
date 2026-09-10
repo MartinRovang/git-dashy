@@ -32,9 +32,14 @@ NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same f
 # zero overlap, and 12 at or above this number — a readable list where most pairs really were one fact.
 # Nothing here promotes on its own; this only decides what is shown.
 OVERLAP = 0.30
+# ponytail: "not" and "no" are NOT stopwords here, whatever a search-engine list says. A stopword list
+# for retrieval drops the words that carry no topic; this measure asks whether two lines say the SAME
+# THING, and negation is the one word that reverses that answer. With them dropped, "the store is pruned
+# on write" and "the store is not pruned on write" scored 1.00 — a perfect match between opposites.
 STOP = frozenset("a an the is are was were be been being of to in on for with and or but at by from as it "
-                 "its this that these those there here their our your my we you they them us not no if then "
+                 "its this that these those there here their our your my we you they them us if then "
                  "than so such can may might will would should must do does did have has had".split())
+NEG = frozenset("not no never none cannot nothing nor without".split())
 
 
 def slug(repo):
@@ -339,7 +344,26 @@ def _toks(s):
 	return [w for w in (t.strip(".,;:") for t in words) if w]
 
 
+def _polarity(a):
+	"""How many negations a line carries. ponytail: counted, not merely detected — see _same."""
+	return sum(1 for t in _toks(a) if t in NEG)
+
+
 def _same(a, b):
+	"""Whether two lines state the same fact. The gate every promotion goes through.
+
+	ponytail: OPPOSITES ARE NOT ONE FACT, however alike they read. A single inserted "not" moves a
+	sequence ratio by about 0.08, so "drafts are read into the prompt" and "drafts are never read into
+	the prompt" scored 0.92 against a 0.88 gate — folded, counted as two observations, and whichever
+	wording arrived first was promoted as confirmed. That is a fact no two observations agreed on, which
+	is the one thing recurrence exists to prevent, and it is reachable any time the code changes between
+	two reviews of a repo.
+	ponytail: PARITY, not presence. "neo-api holds no DDL" and "neo-api does not hold DDL" are one fact
+	and both carry a negation; refusing whenever either side has one would split them. Two negations on
+	one side and two on the other is the same reading, so the counts are compared rather than the flags.
+	"""
+	if _polarity(a) != _polarity(b):
+		return False
 	return difflib.SequenceMatcher(None, _toks(a), _toks(b)).ratio() >= NEAR
 
 
@@ -546,7 +570,14 @@ def overlaps(repo=None):
 
 
 def _overlap(a, b):
-	"""How much of two lines' content is the same words, ignoring order and grammar. 0.0 to 1.0."""
+	"""How much of two lines' content is the same words, ignoring order and grammar. 0.0 to 1.0.
+
+	ponytail: the same polarity guard _same carries, and it matters MORE here — this measure throws
+	order away, so it scored a negated line against its own opposite at 1.00 before "not" left STOP.
+	A pair offered to a person as "the same fact?" must never be a pair that says opposite things.
+	"""
+	if _polarity(a) != _polarity(b):
+		return 0.0
 	x, y = {t for t in _toks(a) if t not in STOP}, {t for t in _toks(b) if t not in STOP}
 	return len(x & y) / len(x | y) if x | y else 0.0
 
