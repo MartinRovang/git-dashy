@@ -7,6 +7,12 @@ from dashy.core import bind, memory, team
 from conftest import a_team
 
 
+def _offered(about=""):
+	"""(repo, fact) for what P would list — the live query, so a disclosure test
+	cannot pass against a function nothing calls."""
+	return [(r, f) for r, f, _shared in memory.in_team(about)]
+
+
 def test_one_repo_is_named_the_same_way_however_you_spell_it():
 	"""A binding must survive a re-clone and a move, so it keys on the slug, not on a path or a URL."""
 	for spelling in ("acme/api", "git@github.com:acme/api.git", "https://github.com/acme/api",
@@ -196,8 +202,8 @@ def test_an_unbound_repo_never_pools_or_offers_a_fact(monkeypatch, tmp_path):
 	(mine / "me__weekend.md").write_text("- my side project uses bun\n")
 	(mine / "neomedsys__neo-api.md").write_text("- worth telling the team\n")
 	assert memory.team_visible("neomedsys/neo-api") and not memory.team_visible("me/weekend")
-	assert ("me/weekend", "my side project uses bun") not in memory.shareable()
-	assert ("neomedsys/neo-api", "worth telling the team") in memory.shareable()
+	assert ("me/weekend", "my side project uses bun") not in _offered()
+	assert ("neomedsys/neo-api", "worth telling the team") in _offered()
 
 
 def test_a_repo_bound_to_a_team_we_are_not_in_discloses_nothing(monkeypatch, tmp_path):
@@ -217,7 +223,7 @@ def test_a_repo_bound_to_a_team_we_are_not_in_discloses_nothing(monkeypatch, tmp
 	memory.append("acme/api", "a fact about someone else's repo")       # promoted for me
 	assert memory._facts(memory.path("acme/api")) == ["a fact about someone else's repo"]  # still mine
 	assert not os.path.exists(memory.pool_path(memory.whoami(), "acme/api"))  # the name never left
-	assert ("acme/api", "a fact about someone else's repo") not in memory.shareable()
+	assert ("acme/api", "a fact about someone else's repo") not in _offered()
 
 
 def test_a_team_slug_is_matched_however_it_is_typed(monkeypatch, tmp_path):

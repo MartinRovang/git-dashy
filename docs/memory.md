@@ -446,6 +446,27 @@ other. `W` then `s` scans for these. The scan compares **content words as a set*
 dropped), which is order-insensitive and finds them — measured over 165 real drafts, 2991 pairs the gate
 had rejected, 2717 at zero overlap, 12 at or above 0.30. A person decides each pair; nothing folds on its own.
 
+**Contradictions are never one fact.** Both measures compare wording, and a single inserted negation moves a
+sequence ratio by about 0.08 — so `drafts are read into the prompt` and `drafts are *never* read into the
+prompt` scored 0.92 against the 0.88 gate. Folded, counted as two observations, and whichever wording
+arrived first was promoted as confirmed. Reachable whenever the code changes between two reviews. Both
+`_same` and `_overlap` now compare *negation parity* first and refuse outright when it differs; parity
+rather than presence, so two ways of stating the same negative still read as one fact. `not` and `no` are
+also no longer stopwords in `_overlap`: a stopword list for retrieval drops words that carry no topic,
+and this measure asks whether two lines say the same thing, where negation is the word that reverses the
+answer. With them dropped it scored a line against its own opposite at 1.00.
+
+**Word rules find candidates; they never decide.** The scan compares content words as a set, which is
+order-insensitive and therefore finds the rewordings the gate misses — but two sentences with their
+subject and object swapped share *every* token and state opposite things, so no threshold over words is
+safe to fold on at any height. Above the floor the candidates go to the model, one question per pair:
+*are these the same claim?* It is answering about wording, not about truth — the two observations already
+happened, in two reviews that did not know about each other, and what it repairs is the matcher's
+blindness. It writes nothing: the reply is `true`/`false` per numbered pair, a key that was never sent is
+discarded, and a person still presses `y`. If the model cannot be reached, times out, or answers
+something that is not JSON, **every** candidate is kept — a filter that empties the list on failure is
+worse than no filter, because "nothing to fold" would be believed.
+
 **Folding earns a count only across different reviews.** Each observation records which review made it —
 `- (2) [r:7a2c,r:91cf] the fact` — because two drafts at `(1)` are either two reviews the matcher failed to
 fold, which is a promotion it lost, or *one* review that worded a thing twice, which is the
@@ -460,6 +481,97 @@ self-confirmation `PROMOTE_AT` exists to refuse. Only the ids tell those apart:
 The id is generated inside `append()`, because one call to `append` **is** one review. A collision reads
 as "same review", so the failure direction refuses to sum rather than summing wrongly. Files written
 before ids existed still parse, with `()` for provenance.
+
+## 4b-3. Two people are the second observation
+
+One machine almost never proposes the same fact twice. Measured on a real store: **140 drafts, every one
+at `(1)`, and not one specific fact ever promoted by recurrence.** Two people reviewing the same repo do
+land on the same facts, and that is stronger independence than same-machine recurrence — different
+person, different PR, different moment.
+
+So drafts are pooled the way accepted facts already are:
+
+```
+<team>/memory/pool/<user>/<repo>.md      facts that person accepted     (evidence, never read)
+<team>/memory/drafts/<user>/<repo>.md    what their reviews proposed    (evidence, never read)
+```
+
+Same disclosure rule as the evidence pool — `team_visible`, so a repo bound to nothing publishes nothing
+— and the same hard invariant: nothing under either path is read by `sources()`, `scope_text()` or the
+mirror, so a teammate's guess can never reach a prompt. What is new is that these are *unconfirmed*, so
+what a colleague sees includes wrong guesses about a bound repo.
+
+**Reaching the team is automatic too, as of v1.43.0.** It used to be one keypress, on the argument that
+a wrong fact in your own memory you meet again tomorrow and fix, while a wrong fact in the team's lands
+where nobody who could correct it will see it happen. That argument was written when a promotion meant
+two runs of one model on one machine. A promotion now means two reviews that did not know about each
+other — usually two people — and a model that read both and called them the same claim. The keypress was
+also, measurably, where the pipeline stopped: nine facts on a real machine, none of which a colleague
+ever saw.
+
+What guards it is unchanged and is the whole of the safety: `team_visible`. A repo bound to nothing
+publishes nothing. Binding is the decision, made once, visibly, and undoable.
+
+**One keypress remains, and it is about the contract rather than about a fact.** A binding made before
+this meant "reviews of this repo read that team's context"; it did not mean "publish my facts, and my
+reviewers' unconfirmed guesses, there". So each joined team is asked once, at launch, with the counts
+of what is waiting — `~/.prs_memory/.publishing` records the answer, a no included, and nothing pools or
+publishes to a team that has not said yes. `_team_for()` mirrors `_project()` step for step so the
+permission is looked up for the same team the write goes to.
+
+**So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
+to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
+team has; `x` removes one from your memory, from theirs, and from the evidence pool — but it leaves the team's
+copy alone while another contributor is still behind it, since nothing would put it back for them. The team's copy is
+matched exactly rather than by similarity — it is the one file where a wrong removal costs everyone.
+
+**A general fact belongs to a project, not to you.** `general.md` used to mean "true for me everywhere",
+which is why it had nowhere to go the moment you joined a second team: `_the_one_team()` refuses to guess,
+so eight general facts sat unpoolable and unshareable with nothing on screen saying why. It means "true
+across THIS PROJECT" now, and the project is the team of the repo you were in when you observed it —
+`gitdashy remember --general` keeps the directory's origin, and `P` uses the row you are on. The
+team-level `general.md` that receives it already existed and was already read for every bound repo; the
+only thing missing was a way to get a fact into it. An unbound context still selects nothing: context
+narrows the answer, it never invents one.
+
+**What a teammate contributes is read from the bound team's pool only**, and capped per person
+per repo — those lines reach a model and a `true` promotes, so the size of one person's file is
+the size of a prompt they get to write. Both sides are JSON-encoded and the prompt names them as
+data; the judge is given no tools and runs in safe mode, and only a boolean is read back. The
+residual is inherent to a shared team: a teammate can promote one of your drafts by writing the
+same claim, which is what corroboration means.
+
+**Two residual risks, named rather than fixed.** `whoami()` is `$USER`, and that is the only thing
+separating your pooled drafts from a teammate's when the self-confirmation guard reads them: two
+people who both run as `ubuntu` never corroborate each other, and one person on two machines with
+different usernames does. And a teammate can promote one of your drafts by writing the same claim
+themselves — which is what corroboration *is*, so it is a property of a shared team rather than a
+defect, but it is worth knowing that the second observation is not automatically a second opinion.
+
+**The count is over distinct review ids across both people.** Your `[r:7a2c]` and their `[r:91cf]` is two
+runs that did not know about each other, which is what `PROMOTE_AT` has always meant. Your own pooled
+file is excluded when reading theirs: counting it would let one review confirm itself by a route that
+did not exist when that rule was written.
+
+**Two thresholds, because they are two jobs.** `OVERLAP` (0.30) sizes a list a *person* reads, where a
+false candidate costs their attention. `CROSS` (0.12) feeds the *model*, where a false candidate costs
+one true/false answer and a missed one costs a fact that never promotes. The loose threshold is only
+safe because something reads the candidates — so if the model cannot be asked, `cross_check` promotes
+**nothing**, while the person's scan keeps every candidate. `judged()` returns `None` for "not asked"
+rather than a list, precisely so those two callers can take opposite directions.
+
+It runs in two places. At the end of `review()`, for the repo just reviewed, where new observations
+arrive and a background thread already exists; it can never fail the review, since the verdict is
+posted by then and a promotion missed today happens next time. And on every refresh tick, right after
+`team.pull()`, as `memory.sweep()` — that is the moment a teammate's pooled drafts exist on this
+machine, and it is the only thing that reaches a repo you have stopped reviewing, or a backlog of
+drafts written before pooling existed.
+
+**A sweep is nearly free on a quiet machine.** Pooling is file writes. The model is asked only about
+pairs it has not seen: a verdict of *different* is recorded by pair id in `~/.prs_memory/.settled`, so
+a rejected pair is never bought twice — drafts never expire, so without that a tick would pay for the
+same answer every five minutes. Agreement is not recorded, because an agreed pair leaves the queue by
+promoting and cannot come back. An unreachable model settles nothing and is asked again next tick.
 
 ## 4c. Looking at what is not a fact yet
 
@@ -624,7 +736,12 @@ for one you touch monthly. It should be revisited with real numbers.
 3. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
    Wants either an age cap or inclusion in the dream (as drafts, clearly marked).
    The pool self-prunes on share and forget, so only drafts grow unboundedly.
-4. **`PROMOTE_AT` is unvalidated.** No data yet.
+4. **`PROMOTE_AT` has data now, and same-machine recurrence never fired.** On one real store:
+   140 drafts, every one at `(1)`, one per-repo fact ever confirmed against eight general ones
+   (which recur naturally, being about reviewer discipline). Two causes, since separated: the
+   matcher could not see a rewording, and a dense architectural fact is stated once or not at
+   all. Cross-person corroboration is the answer to the second; the number to watch now is how
+   often two people's reviewers land on one fact.
 5. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
    yours. You can still edit the team checkout directly with git.
 6. **Nothing here has met a real review yet.** The whole path is test-verified

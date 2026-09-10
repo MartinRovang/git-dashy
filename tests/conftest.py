@@ -10,6 +10,10 @@ from dashy import demo, config
 from dashy.core import bind, github, install, log, memory, review, state, team, update
 from dashy.ui import screen as ui
 
+# ponytail: captured at import, BEFORE the autouse fixture stubs it. The two tests that are about
+# judging need the real thing; every other test must not reach a model at all.
+REAL_JUDGED = memory.judged
+
 PR = {"repository": {"nameWithOwner": "a/b", "name": "b"}, "number": 7, "url": "u", "title": "T",
       "isDraft": False, "author": {"login": "me"}, "updatedAt": "2020-01-01T00:00:00Z"}
 
@@ -59,6 +63,13 @@ def isolated(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "INSTRUCTIONS", "")
 	monkeypatch.setenv("USER", "tester")  # ponytail: memory.whoami() reads $USER; a test must not depend on it
 	monkeypatch.setattr(update, "update_available", lambda: "")
+	# ponytail: no test consults a model. judged() shells out to the claude CLI for a bare model name,
+	# so a scan test would hang on a subprocess or pass only on a machine where claude is installed.
+	# ponytail: NONE, not identity. None means "could not be asked", and the two callers take opposite
+	# directions on it — the scan shows every candidate, cross_check promotes nothing. Identity was the
+	# unsafe one: a test that forgot to patch this would silently AUTO-PROMOTE every loose candidate and
+	# still pass. A default has to fail in the direction that writes nothing.
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: None)
 	# ponytail: github.py talks HTTP now, so a test that forgets to fake it would hit the real API with
 	# the developer's own token — which is exactly what happened once. No test gets a socket for free.
 	POSTED.clear()
@@ -156,6 +167,9 @@ def a_team(monkeypatch, tmp_path, key="org-t"):
 	d = tmp_path / "teams" / key
 	(d / ".git").mkdir(parents=True, exist_ok=True)
 	(d / "memory").mkdir(parents=True, exist_ok=True)
+	# ponytail: a fixture that joins a team is a fixture whose operator said yes to publishing.
+	# Granted through the real call, so the consent gate stays in the path every test walks.
+	memory.allow_publishing(key)
 	return d / "memory"
 
 

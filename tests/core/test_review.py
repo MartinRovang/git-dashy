@@ -478,6 +478,40 @@ def test_an_author_check_that_cannot_answer_stays_narrow(monkeypatch, posted):
 	assert seen[github.SCOPE_TEAM] == ""
 
 
+def test_a_review_checks_its_drafts_against_a_teammates(monkeypatch, tmp_path):
+	"""Where the second observation actually arrives. The review has just written drafts and is already
+	on a background thread, so this is where a teammate's pooled observations get counted beside them."""
+	from dashy.core import memory
+	asked = []
+	monkeypatch.setattr(memory, "cross_check", lambda repo, model: asked.append((repo, model)) or [])
+	monkeypatch.setattr(memory, "append", lambda repo, text: [])
+	monkeypatch.setattr(github, "comment", lambda *a, **kw: None)
+	monkeypatch.setattr(github, "post_review", lambda *a, **kw: None)
+	monkeypatch.setattr(review_mod, "_verdict", lambda *a, **kw: {"verdict": "approve", "body": "b", "memory": "- x"})
+	monkeypatch.setattr(review_mod.team, "push", lambda m: "")
+	monkeypatch.setattr(review_mod.team, "push_dir", lambda d, m, l="sync": "")
+	review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus")
+	assert asked == [("a/b", "opus")]
+
+
+def test_a_cross_check_that_fails_never_fails_the_review(monkeypatch, tmp_path):
+	"""It runs after the verdict is posted and the log is written. A model call that throws there must
+	not turn a completed review into an error on the row."""
+	from dashy.core import memory
+	monkeypatch.setattr(memory, "cross_check", lambda repo, model: 1 / 0)
+	monkeypatch.setattr(memory, "append", lambda repo, text: [])
+	monkeypatch.setattr(github, "comment", lambda *a, **kw: None)
+	monkeypatch.setattr(github, "post_review", lambda *a, **kw: None)
+	monkeypatch.setattr(review_mod, "_verdict", lambda *a, **kw: {"verdict": "approve", "body": "b", "memory": "- x"})
+	monkeypatch.setattr(review_mod.team, "push", lambda m: "")
+	monkeypatch.setattr(review_mod.team, "push_dir", lambda d, m, l="sync": "")
+	got = review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus")
+	# ponytail: the actual status, not "error" being absent — that passes on "" too, which is exactly
+	# what a review that died halfway would return.
+	assert got == log.log_review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus",
+	                             {"verdict": "approve", "body": "b", "memory": "- x"})
+
+
 def test_review_reads_the_verdict_when_the_model_signs_off_after_it(monkeypatch, posted):
 	"""The call site, not just llm.obj: a sign-off past the closing brace must not fail the review."""
 	out = json.dumps({"result": "Sure:\n" + json.dumps({"verdict": "approve", "summary": "s", "body": "b"})

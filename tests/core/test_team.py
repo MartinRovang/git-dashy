@@ -11,6 +11,12 @@ def git(*a, cwd):
 	return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout
 
 
+def _offered(about=""):
+	"""(repo, fact) for what P would list — the live query, so a disclosure test
+	cannot pass against a function nothing calls."""
+	return [(r, f) for r, f, _shared in memory.in_team(about)]
+
+
 def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
 	remote = tmp_path / "remote.git"
 	git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
@@ -202,7 +208,7 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 	assert not memory.team_visible("me/weekend-thing")
 	memory.append("me/weekend-thing", "my side project uses bun")
 	memory.append("me/weekend-thing", "my side project uses bun")   # promoted for me
-	assert ("me/weekend-thing", "my side project uses bun") not in memory.shareable()
+	assert ("me/weekend-thing", "my side project uses bun") not in _offered()
 	assert not os.path.exists(memory.pool_path(memory.whoami(), "me/weekend-thing"))
 
 

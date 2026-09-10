@@ -1152,43 +1152,55 @@ def ask(scr, state, sel, question):
 		scr.timeout(500)
 
 
-def share_screen(scr, state, sel):
+def share_screen(scr, state, sel, current=None):
 	"""Facts of yours the team does not have yet: t shares one, x forgets it.
+
+	ponytail: `current` is the row you are on, and it is what gives a GENERAL fact a project. Without it
+	the general file is skipped once you are in more than one team — `_the_one_team()` refuses to guess
+	— so facts true of the whole project were unshareable with nothing on screen saying why.
 
 	ponytail: one at a time, not a list. A fact is a sentence you have to actually read to judge, and a
 	column of clipped sentences is exactly how something wrong gets waved through into everyone's context.
 	"""
 	i = 0
 	while True:
-		items = memory.shareable()
+		about = (current or {}).get("repository", {}).get("nameWithOwner", "")
+		items = memory.in_team(about)
 		if not items:
-			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
+			confirm(scr, state, sel, f" no facts of yours belong to a team yet{'' if team.on() else ' — you are not in a team'}  [any key]")
 			return
 		index = memory.pools()  # ponytail: one scan per redraw, not one per fact
-		items.sort(key=lambda rf: -len(memory.backers(index, *rf)))  # what two people found comes first
+		# ponytail: not-sent first, then what two people found. The first key sorts by what you can act on,
+		# the second keeps the old ordering inside each group — corroboration is still the most interesting
+		# thing on the row even when nobody has to decide anything about it.
+		items.sort(key=lambda r: (r[2], -len(memory.backers(index, r[0], r[1]))))
 		i %= len(items)
-		repo, fact = items[i]
+		repo, fact, out_there = items[i]
 		who = memory.backers(index, repo, fact)
-		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
+		# ponytail: says whether the TEAM has it, because nobody pressed anything to send it. "yours"
+		# was the answer when sharing was a decision; now the useful answer is whether it went.
+		mark = ("★ %d people found this" % len(who) if len(who) > 1 else
+		        "the team has this" if out_there else "not sent yet")
 		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
 		draw(scr, state, sel, prompt=" ")
 		# ponytail: the team this FACT goes to, not "the" team. share() routes by the repo's binding, so
 		# with several joined the header has to name the same one the keypress will write to — a title
 		# saying one team while the write lands in another is the silent selection all of this removes.
-		to = bind.of(repo) if repo else (team.joined()[0] if len(team.joined()) == 1 else "")
-		panel(scr, f"share with {to or 'the team'}  ·  {i + 1}/{len(items)}",
+		to = bind.of(repo) if repo else bind.of(about)
+		panel(scr, f"{to or 'the team'} knows  ·  {i + 1}/{len(items)}",
 		      [(repo or "general", mark), ("", ""), *body],
-		      "[t] share   [x] forget   [j/k] move   [esc] close")
+		      ("[x] forget it everywhere   [j/k] move   [esc] close" if out_there else
+		       "[t] send it   [x] forget   [j/k] move   [esc] close"))
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN):
 			i += 1
 		elif k in (ord("k"), curses.KEY_UP):
 			i -= 1
 		elif k == ord("t"):
-			memory.share(repo, fact)
+			memory.share(repo, fact, about)
 			team.push(f"memory: share {repo or 'general'}")
 		elif k == ord("x"):
-			memory.forget(repo, fact)
+			memory.forget(repo, fact, about)
 			team.push_dir(config.MEMORY_DIR, f"memory: forget {repo or 'general'}", "mine")
 			team.push(f"memory: withdraw {repo or 'general'}")  # forget also withdraws it from the pool
 		elif k in (27, ord("q")):
@@ -1246,13 +1258,57 @@ def drafts_screen(scr, state, sel):
 			return
 
 
+def _judge(scr, state, sel, pairs):
+	"""Let the model read the candidates while a spinner runs. None when it was not asked.
+
+	ponytail: threaded and interruptible, like the dream, because this is a model call on a keypress and
+	a curses screen that stops repainting reads as a hang.
+	ponytail: an EMPTY LIST and None are different answers. [] is the model saying none of these are one
+	fact, which is a result; None is "not asked" — unreachable, or esc — and only that falls back to
+	showing every candidate. Conflating them with `or` told you it had found nothing to reject.
+	ponytail: the sentinel for "still running" is an empty box, not a None inside it, because None is now
+	one of the values being carried.
+	"""
+	box = []
+	def run():
+		try:
+			box.append(memory.judged(pairs, state.model))
+		except Exception:  # noqa: BLE001 — judged() swallows its own; this is the last net
+			logging.getLogger(__name__).exception("judging failed")
+			box.append(None)
+	t = threading.Thread(target=run, daemon=True)
+	t.start()
+	# ponytail: an answer that arrives at once must not cost a keypress. The spinner loop calls getch,
+	# so without this a fast model — or a stub — swallowed the next key the person pressed.
+	t.join(0.2)
+	if box:
+		return box[0]
+	t0 = time.time()
+	scr.timeout(120)
+	try:
+		while not box:
+			draw(scr, state, sel, prompt=" ")
+			spin = art.SPINNER[int((time.time() - t0) * 8) % len(art.SPINNER)]
+			panel(scr, "same fact?", [(f"{spin}  {state.model} is reading {len(pairs)} pair{'' if len(pairs) == 1 else 's'}…",
+			                           f"{int(time.time() - t0)}s")],
+			      "[esc] skip the model and read them all yourself", accent=6)
+			if scr.getch() == 27:
+				return None  # ponytail: "not asked", which reads them all — the same as unreachable
+	finally:
+		scr.timeout(500)
+	return box[0]
+
+
 def overlap_screen(scr, state, sel):
 	"""Drafts that may be one fact worded twice: y folds them, n says they are different.
 
 	ponytail: the gate compares token SEQUENCES, so the same fact in another word order is never folded
 	and both rows sit one review short of promotion forever — no later review joins them, because it
-	matches one wording or the other. The scan compares content words as a SET, which finds them, and a
-	person decides, because a set overlap is evidence and not a judgement.
+	matches one wording or the other. The scan compares content words as a SET, which finds them.
+	ponytail: then the MODEL reads the candidates, because word overlap cannot decide. "X owns state, Y
+	mirrors it" and the same line with the two swapped share every token and mean opposite things, so no
+	threshold over words is safe to fold on. It answers one question per pair — same claim or not — and
+	what it does is shorten the list a person reads, not write anything. A person still presses y.
 	ponytail: whether folding EARNS a count is memory.merge's to answer, not this screen's — it sums only
 	when the two rows name different reviews. The panel says which case it is, so a keypress is never a
 	promotion you did not know you were making.
@@ -1260,6 +1316,15 @@ def overlap_screen(scr, state, sel):
 	pairs = memory.overlaps()
 	if not pairs:
 		confirm(scr, state, sel, " no two drafts look like one fact — nothing to fold  [any key]")
+		return
+	# ponytail: `or pairs` — a model that could not be asked shows you EVERY candidate, which is what
+	# shipped before there was a model pass. The opposite of cross_check's direction, and for the
+	# opposite reason: here a person decides, so more to read is the safe failure.
+	# ponytail: `is None`, not `or`. An empty list is the model saying none of them match, which is an
+	# answer; only "not asked" falls back to the full list, as it did before there was a model pass.
+	pairs = got if (got := _judge(scr, state, sel, pairs)) is not None else pairs
+	if not pairs:
+		confirm(scr, state, sel, f" {state.model} read them and none were the same fact  [any key]")
 		return
 	i = 0
 	while i < len(pairs):
@@ -1545,6 +1610,33 @@ def _leave_team(scr, state, sel, key):
 		return False
 	state.wake.set()  # ponytail: REVIEWED must reload — that team's log is gone
 	return True
+
+
+def ask_publishing(scr, state, sel):
+	"""Ask once per team whether it may receive facts and drafts without anyone sending them.
+
+	ponytail: the ONE keypress in this, and it is not in the pipeline — it is about the contract. A
+	binding made before v1.43 meant "reviews of this repo read that team's context"; it did not mean
+	"publish my facts and my reviewers' unconfirmed guesses there". Reading it that way silently, on the
+	first tick after an upgrade, applies consent given for something narrower to somebody's colleagues.
+	ponytail: at LAUNCH, like the migration and the link retirement above it, and answered once either
+	way — a no is recorded too, or it is asked again every time the dashboard starts.
+	ponytail: the COUNTS are shown. "42 drafts and 1 fact are waiting to go" is the difference between
+	agreeing to a policy and agreeing to what is about to happen.
+	"""
+	for key, drafts, facts_ in memory.unasked():
+		it = team.info(key)["name"][:28]
+		waiting = " · ".join(x for x in (f"{drafts} draft{'' if drafts == 1 else 's'}" if drafts else "",
+		                                 f"{facts_} fact{'' if facts_ == 1 else 's'}" if facts_ else "") if x)
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"{it}  ({key})",
+		      [("from now on this team receives, for the repos bound to it:", ""), ("", ""),
+		       ("· facts of yours, as they are confirmed", ""),
+		       ("· what your reviews proposed, unconfirmed", ""), ("", ""),
+		       (f"{waiting} waiting to go" if waiting else "nothing waiting yet", "")],
+		      "[y] yes   [n] not this team", accent=6)
+		memory.allow_publishing(key, scr.getch() == ord("y"))
+		state.wake.set()
 
 
 def bind_screen(scr, state, sel, pr):
@@ -1866,6 +1958,7 @@ def main(scr, interval, auto, model):
 	if done := next((l for l in install.retire() if not l.startswith("NOTE")), ""):
 		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
+	ask_publishing(scr, state, 0)
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()
@@ -1944,7 +2037,7 @@ def main(scr, interval, auto, model):
 		elif k == ord("Z"):
 			dream_screen(scr, state, sel)
 		elif k == ord("P"):
-			share_screen(scr, state, sel)
+			share_screen(scr, state, sel, current)
 		elif k == ord("W"):
 			drafts_screen(scr, state, sel)
 		elif k == ord("b"):

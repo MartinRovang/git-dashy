@@ -140,7 +140,7 @@ L local memory dir, C where all team checkouts live, n repo memory, g general me
 1/2 or Tab switch the pane between the review summary and the code it is about,
   in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
 b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
-P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
+P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
 T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, q quit."""
 
 
@@ -294,9 +294,14 @@ def remember(argv):
 	if not general and not repo:
 		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name, or --general")
 	scope, where = repo or None, repo or "general"
+	# ponytail: --general threw away the repo you are standing in, which is the only thing that says
+	# WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all —
+	# neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
+	# general fact means "true across this project", and the project is that repo's team.
+	about = "" if not general else (arg("--repo", "", str, argv) or team.origin_slug("."))
 	if memory.already_known(scope, fact):
 		return print(f"gitdashy: {where} already knows that")
-	promoted = memory.append(scope, fact)
+	promoted = memory.append(scope, fact, about)
 	team.push_dir(config.MEMORY_DIR, f"memory: remembered for {where}", "mine")
 	team.push(f"memory: evidence for {where}")  # ponytail: a promotion writes the pool, which lives over there
 	if promoted:  # ponytail: the counter counts observations; it does not know which surface each came from

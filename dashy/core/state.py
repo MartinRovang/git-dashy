@@ -50,6 +50,7 @@ class State:
 	def __init__(self, interval=config.INTERVAL, model=config.DEFAULT_MODEL):
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
 		self.model = model
+		self.sweeping = threading.Event()  # ponytail: one draft sweep at a time; see start_sweep
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.running = set()  # urls with a review or pre-review in flight — see in_flight()
 		self.started_at = {}  # url -> when it started, so a row in flight can say how long it has been
@@ -237,12 +238,36 @@ class State:
 				pass  # 1s slices, so a change to either side takes effect within the second
 			self.wake.clear()
 
+	def start_sweep(self):
+		"""Pool and cross-check drafts on a thread of their own. Returns at once; never raises.
+
+		ponytail: NOT on the refresh thread. It was, immediately after the pull and before
+		`github.fetch()`, with `fetching` already true and a 300s model timeout — so the first sweep
+		after an upgrade, with a whole backlog newly poolable, blocked the PR list for as long as the
+		model took. Catching the exception was never the risk; the wait was. The comment claimed the
+		list must not depend on a model and the code put one in front of it.
+		ponytail: one at a time. A slow sweep must not have a second one started on top of it by the
+		next tick, both writing the same pool files and both pushing the same checkout.
+		"""
+		if self.sweeping.is_set():
+			return
+		self.sweeping.set()
+		def run():
+			try:
+				memory.sweep(self.model)
+			except Exception:  # noqa: BLE001 — surfaced in the debug log, never on the header
+				LOG.exception("draft sweep failed")
+			finally:
+				self.sweeping.clear()
+		threading.Thread(target=run, daemon=True).start()
+
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
 		team.pull()  # newest team log + memory before we read them
+		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
 		refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget

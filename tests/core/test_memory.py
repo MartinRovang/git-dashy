@@ -1,13 +1,14 @@
 import json
 import os
 import subprocess
+import threading
 
 import pytest
 
 from dashy import config
-from dashy.core import bind, memory, team
+from dashy.core import bind, llm, memory, team
 
-from conftest import Result, a_team, claude_out, counts
+from conftest import REAL_JUDGED, Result, a_team, claude_out, counts
 
 
 def facts(p):
@@ -28,6 +29,12 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 	for r in (repos or ("a/b",)):
 		bind.bind(r, "org-t")
 	return mine, shared
+
+
+def _offered(about=""):
+	"""(repo, fact) for what P would list — the live query, so a disclosure test
+	cannot pass against a function nothing calls."""
+	return [(r, f) for r, f, _shared in memory.in_team(about)]
 
 
 def test_a_fact_takes_two_independent_reviews(monkeypatch, tmp_path):
@@ -71,13 +78,16 @@ def test_reads_merge_both_sources_and_never_drafts(monkeypatch, tmp_path):
 	assert "draft nobody confirmed" not in out
 
 
-def test_shareable_is_what_the_team_lacks_and_share_closes_the_gap(monkeypatch, tmp_path):
+def test_in_team_lists_your_facts_and_says_which_the_team_has(monkeypatch, tmp_path):
+	"""What P reads. It used to answer "what has NOT gone", which after automatic sharing is almost
+	always nothing — so the screen said so and its withdraw key became unreachable."""
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- only mine\n- both have this\n")
 	(shared / "a__b.md").write_text("- both have this\n")
-	assert memory.shareable() == [("a/b", "only mine")]
+	assert memory.in_team() == [("a/b", "only mine", False), ("a/b", "both have this", True)]
 	memory.share("a/b", "only mine")
-	assert memory.shareable() == []
+	# ponytail: the sort is stable on `shared`, so once both have gone the file's own order stands
+	assert memory.in_team() == [("a/b", "only mine", True), ("a/b", "both have this", True)]
 	assert facts(shared / "a__b.md") == ["- both have this", "- only mine"]
 
 
@@ -93,7 +103,7 @@ def test_forget_drops_one_fact_of_yours(monkeypatch, tmp_path):
 def test_shareable_is_empty_when_you_are_alone(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "a__b.md").write_text("- mine alone\n")
-	assert memory.shareable() == []  # nobody to share with
+	assert _offered() == []  # nobody to share with
 
 
 def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_path):
@@ -180,19 +190,22 @@ def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
 	assert memory.backers(index, "a/b", "something nobody said") == []
 
 
-def test_sharing_and_forgetting_withdraw_the_evidence(monkeypatch, tmp_path):
+def test_forgetting_withdraws_the_evidence_and_sharing_keeps_it(monkeypatch, tmp_path):
+	"""Sharing used to withdraw the evidence — "it is team memory now" — which was right while sharing
+	was the last step. forget() asks backers() before deleting the team's copy now, so a fact with no
+	evidence behind it is one a teammate's `x` removes for everyone."""
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	logged(tmp_path, "a/b")
-	memory.append("a/b", "keep this one")
-	memory.append("a/b", "keep this one")
 	me = memory.whoami()
-	assert os.path.exists(memory.pool_path(me, "a/b"))
+	memory.append("a/b", "keep this one")
+	memory.append("a/b", "keep this one")
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]
 	memory.share("a/b", "keep this one")
-	assert not os.path.exists(memory.pool_path(me, "a/b"))  # it is team memory now, not evidence
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]  # you are still behind it
 	memory.append("a/b", "drop this one")
 	memory.append("a/b", "drop this one")
 	memory.forget("a/b", "drop this one")
-	assert not os.path.exists(memory.pool_path(me, "a/b"))  # withdrawn when you no longer accept it
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]  # only that one withdrawn
 
 
 def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
@@ -337,7 +350,7 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 	assert "A thing, for someone" in memory.brief("a/b")[0]
 	assert "A thing" not in memory.read("a/b")          # not a fact, so not in the memory block
 	assert "project.md" not in " ".join(memory.files())  # the dream tidies facts, not a brief
-	assert memory.shareable() == []                     # and it is never offered for sharing
+	assert _offered() == []                     # and it is never offered for sharing
 	memory.append("a/b", "A thing, for someone")
 	memory.append("a/b", "A thing, for someone")
 	assert (shared / "project.md").read_text().startswith("# What we are building")  # untouched
@@ -353,7 +366,7 @@ def test_a_brief_belongs_to_whoever_wrote_it(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path, "someone/else")  # a/b stays UNBOUND on purpose
 	(mine / "project.md").write_text("A tool for one person.\n")
 	assert memory.brief("a/b") == ("A tool for one person.", "yours · a/b is bound to no team")
-	assert memory.shareable() == []          # still never offered for sharing
+	assert _offered() == []          # still never offered for sharing
 	assert not any("project" in k for k in memory.files())  # and still not dreamt over
 
 
@@ -782,6 +795,602 @@ def test_folding_onto_a_fact_that_is_already_settled_does_not_write_it_twice(tmp
 	assert memory.known("a/b") == [keep[2]]           # and the fact is not written a second time
 	assert len(memory.drafts("a/b")) == 1             # the twin is left for a person to judge
 
+
+def test_a_negated_statement_is_never_the_same_fact(tmp_path, monkeypatch):
+	"""The gate compares wording, and a single inserted "not" moves a sequence ratio by 0.08 — under
+	NEAR=0.88 two opposite statements read as one fact. So a review saying a thing is handled and a
+	later review saying it is NOT handled reached two observations, and whichever wording came first
+	was promoted as confirmed knowledge. Reachable any time the code changes between two reviews, and
+	it is the precise failure recurrence exists to prevent: a fact no two observations agreed on."""
+	assert memory._same("the store is pruned on write", "the store is pruned on write") is True
+	for a, b in (("the store is pruned on write", "the store is not pruned on write"),
+	             ("drafts are read into the prompt", "drafts are never read into the prompt"),
+	             ("a fact reaches the team automatically", "a fact never reaches the team automatically"),
+	             ("neo-api holds DDL", "neo-api holds no DDL")):
+		assert memory._same(a, b) is False, f"{a!r} folded onto its opposite"
+	# ponytail: _overlap does NOT refuse these, and that is the division of labour. It is the recall
+	# pass; what it produces is read by a person or by the model, both of which are asked about negation.
+	# Hard-zeroing here hid such a pair from them as well as from the folder, with no route back.
+	assert memory._overlap("the store is pruned on write", "the store is not pruned on write") > 0.5
+	# ponytail: PARITY, not presence. Refusing whenever EITHER side carries a negation would split two
+	# ways of saying the same negative, so the guard must not fire when both sides carry one.
+	assert memory._polarity("the API does not own validation") == memory._polarity("validation is not owned by the API")
+	assert memory._same("neo-api holds no DDL", "neo-api holds no DDL") is True
+	assert memory._overlap("the API does not own validation", "validation is not owned by the API") > 0.4
+	# and a line with two negations does not read as agreeing with a line that has one
+	assert memory._same("no route is not checked", "no route is checked") is False
+
+
+def test_two_reviews_that_disagree_never_promote(tmp_path, monkeypatch):
+	"""End to end through append(), which is where the damage happened: two observations, one fact."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	memory.append("a/b", "- the drafts store is pruned on write")
+	memory.append("a/b", "- the drafts store is not pruned on write")
+	assert memory.known("a/b") == []                       # nothing agreed, so nothing is a fact
+	assert sorted(t for _n, _i, t in memory.drafts("a/b")) == [
+		"the drafts store is not pruned on write", "the drafts store is pruned on write"]
+
+
+def test_a_qualifier_that_narrows_a_claim_is_a_different_claim(tmp_path, monkeypatch):
+	"""Negation was the first family found; these are its siblings, each of which folded. "only the API
+	validates input" scored 0.92 against the 0.88 gate and became the same fact as "the API validates
+	input" — a broader claim confirmed by a narrower one, which is how a wrong fact gets certified."""
+	for a, b in (("only the API validates input", "the API validates input"),
+	             ("just the router is stubbed", "the router is stubbed"),
+	             ("solely the viewer writes masks", "the viewer writes masks")):
+		assert memory._same(a, b) is False, f"{a!r} folded onto a broader claim"
+	# synonyms inside one group are still one claim, which is why the counts are per group
+	assert memory._polarity("neo-api holds no DDL") == memory._polarity("neo-api does not hold DDL")
+	assert memory._polarity("only X is checked") == memory._polarity("just X is checked")
+	assert memory._polarity("only X") != memory._polarity("not X")
+	# ponytail: and the boundary is deliberate. A wider list REFINED rather than contradicted, and split
+	# a real rewording — "…reports skipping" against the same line ending "every run" — so universality,
+	# quantity and ordinals are left out. They narrow a claim; they do not reverse it.
+	assert memory._overlap("the format-check job reports skipping",
+	                       "the format-check job reports skipping every run") > 0.5
+
+
+def test_word_rules_cannot_separate_a_role_swap(tmp_path, monkeypatch):
+	"""The limit, asserted so nobody mistakes the filter for a decision procedure: these share every
+	token and state opposite things, so no comparison over words can tell them apart. It is why folding
+	is offered to a person rather than done."""
+	a = "the viewer owns mask state, the store mirrors it"
+	b = "the store owns mask state, the viewer mirrors it"
+	assert memory._overlap(a, b) == 1.0 and memory._polarity(a) == memory._polarity(b)
+	# ponytail: contractions land in the negation group too, or the guard splits a claim from itself
+	assert memory._polarity("the API doesn't own validation") == memory._polarity("the API does not own validation")
+	assert memory._same(a, b) is False        # the SEQUENCE gate happens to refuse this one
+
+
+def test_the_model_judges_which_candidates_are_one_claim(tmp_path, monkeypatch):
+	"""Word overlap finds candidates and screens out contradictions; it cannot decide, because two
+	sentences with swapped roles share every token. The model answers one question per pair — are these
+	the same claim — and never writes a fact: the two observations already happened, and what it fixes
+	is the matcher's blindness, not what is true."""
+	sent = {}
+	def fake_ask(prompt, model, **kw):
+		sent["prompt"], sent["model"] = prompt, model
+		return '{"1": true, "2": false}', None, 12
+	monkeypatch.setattr(llm, "ask", fake_ask)
+	pairs = [("a/b", 0.7, (1, ("x",), "CI skips the format-check job"), (1, ("y",), "the format-check job is skipped in CI")),
+	         ("a/b", 0.6, (1, ("x",), "the viewer owns mask state"), (1, ("y",), "the store owns mask state"))]
+	kept = REAL_JUDGED(pairs, "opus")
+	assert [p[2][2] for p in kept] == ["CI skips the format-check job"]
+	assert sent["model"] == "opus"
+	# every candidate reaches the model, numbered, and nothing else does
+	assert "1." in sent["prompt"] and "2." in sent["prompt"]
+	assert "the viewer owns mask state" in sent["prompt"]
+
+
+def test_a_model_that_cannot_be_reached_says_so_rather_than_deciding(tmp_path, monkeypatch):
+	"""None, not a list — the safe direction is opposite for the two callers. The scan keeps every
+	candidate and lets a person judge; cross_check promotes what comes back, so it must keep none."""
+	def boom(prompt, model, **kw):
+		raise OSError("no model here")
+	monkeypatch.setattr(llm, "ask", boom)
+	pairs = [("a/b", 0.7, (1, (), "one"), (1, (), "two"))]
+	assert REAL_JUDGED(pairs, "opus") is None
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ("not json at all", None, 12))
+	assert REAL_JUDGED(pairs, "opus") is None
+	# an answer that names a pair we never sent is ignored rather than trusted
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ('{"9": true}', None, 12))
+	assert REAL_JUDGED(pairs, "opus") == []
+
+
+def test_judging_nothing_asks_nothing(monkeypatch):
+	monkeypatch.setattr(llm, "ask", lambda *a, **kw: pytest.fail("must not call the model for no pairs"))
+	assert REAL_JUDGED([], "opus") == []
+
+
+def test_drafts_reach_the_team_pool_so_two_people_can_corroborate(monkeypatch, tmp_path):
+	"""One machine rarely proposes the same fact twice, which is why recurrence never fires. Two people
+	reviewing the same repo do. The drafts go where the evidence pool already goes — per user, inside
+	the team, never read into any prompt — so a count can be taken across both."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the format-check job")
+	pooled = os.path.join(str(shared), memory.DRAFT_POOL, "tester", "a__b.md")
+	assert os.path.exists(pooled)
+	n, ids, fact = memory._parse(open(pooled).read().splitlines()[0])
+	assert fact == "CI skips the format-check job" and n == 1 and len(ids) == 1
+	# an UNBOUND repo is private, exactly as its facts are
+	memory.append("c/d", "- something about private work")
+	assert not os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "c__d.md"))
+
+
+def test_a_teammates_draft_is_the_second_observation(monkeypatch, tmp_path):
+	"""The point of the whole thing: your one observation plus theirs is two, and the fact becomes yours
+	— without either of you having said it twice."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	assert memory.known("a/b") == []                      # not yet: the words do not match
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))   # the model says: same claim
+	assert memory.cross_check("a/b", "opus") == ["CI skips the format-check job"]
+	assert memory.known("a/b") == ["CI skips the format-check job"]
+	assert memory.drafts("a/b") == []                      # promoted out of the queue
+	# and it does not pay out twice
+	assert memory.cross_check("a/b", "opus") == []
+
+
+def test_the_model_is_the_decider_so_the_first_pass_only_needs_recall(monkeypatch, tmp_path):
+	"""CROSS is deliberately far below the threshold a person's scan uses: the cheap pass must not MISS
+	a pair, because the model makes the call. A pair it rejects promotes nothing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	assert memory.CROSS < memory.OVERLAP
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] CI bypasses lint entirely\n")
+	memory.append("a/b", "- the CI job for formatting is skipped")
+	pair = memory._overlap("the CI job for formatting is skipped", "CI bypasses lint entirely")
+	assert memory.CROSS <= pair < memory.OVERLAP              # too loose for a person's list, not for the model
+	seen = []
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: seen.append(len(pairs)) or [])
+	assert memory.cross_check("a/b", "opus") == []           # the model said no, so nothing promoted
+	assert seen == [1]                                        # but the loose pass DID surface it
+	assert memory.known("a/b") == []
+
+
+def test_your_own_pooled_drafts_are_not_a_second_observation(monkeypatch, tmp_path):
+	"""Your own file is in the pool too — reading it back as corroboration would make one review confirm
+	itself, which is the whole thing PROMOTE_AT refuses."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))
+	assert memory.cross_check("a/b", "opus") == []
+	assert memory.known("a/b") == []
+
+
+def test_a_model_that_cannot_be_reached_promotes_nothing(monkeypatch, tmp_path):
+	"""The loose cross-person threshold is only safe because something reads the candidates. Without
+	that reader they are not evidence, and promoting them would be the gate deciding by word overlap
+	at 0.12 — looser than anything this system has ever folded on."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: None)   # unreachable
+	assert memory.cross_check("a/b", "opus") == []
+	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 1
+
+
+def _two_teams_bound(monkeypatch, tmp_path):
+	"""Two joined teams, one repo bound to each — the state where a general fact has no home today."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	bind.bind("martin/git-dashy", "dashy")
+	# ponytail: a fixture that joins a team is a fixture whose operator said yes to publishing.
+	# Granted through the real call, so the consent gate stays in the path every test walks.
+	memory.allow_publishing("nms")
+	memory.allow_publishing("dashy")
+
+	return str(tmp_path / "teams" / "nms" / "memory"), str(tmp_path / "teams" / "dashy" / "memory")
+
+
+def test_a_general_fact_belongs_to_the_project_it_was_observed_in(monkeypatch, tmp_path):
+	"""general.md meant "true for me everywhere", which is why it had nowhere to go once you were in two
+	teams: _the_one_team() refuses to guess and the fact is stuck. It means "true across this project"
+	now, and the project is the team of the repo you were in when you saw it."""
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	assert memory._project(None) == ""                                   # no context, two teams: still refuses
+	assert memory._project(None, about="neomedsys/neo-api") == nms
+	assert memory._project(None, about="martin/git-dashy") == dashy
+	assert memory._project(None, about="someone/unbound") == ""           # an unbound repo names no project
+	assert memory._project("neomedsys/neo-api") == nms                    # a repo fact is unaffected
+
+
+def test_a_general_fact_can_be_shared_once_it_has_a_project(monkeypatch, tmp_path):
+	"""Eight general facts on the operator's machine, none offerable, because P had no team to send one
+	to. With the context of a repo they belong to a project and can be."""
+	nms, _dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.promote(None, "PHI reaches the frontend and must not be logged")
+	assert _offered() == []                                    # no context, no destination
+	assert _offered(about="neomedsys/neo-api") == [(None, "PHI reaches the frontend and must not be logged")]
+	# share returns the file it wrote, "" when nothing selects a destination
+	assert memory.share(None, "PHI reaches the frontend and must not be logged") == ""
+	assert memory.share(None, "PHI reaches the frontend and must not be logged",
+	                    about="neomedsys/neo-api") == os.path.join(nms, "general.md")
+	assert facts(os.path.join(nms, "general.md")) == ["- PHI reaches the frontend and must not be logged"]
+
+
+def test_a_general_draft_pools_to_the_project_it_came_from(monkeypatch, tmp_path):
+	"""And the automatic path too: a general observation is corroborated inside the project it is about,
+	not against every team you happen to be in."""
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	assert os.path.exists(os.path.join(nms, memory.DRAFT_POOL, "tester", "general.md"))
+	assert not os.path.exists(os.path.join(dashy, memory.DRAFT_POOL, "tester", "general.md"))
+
+
+def test_the_sweep_pools_a_backlog_that_no_review_has_touched(monkeypatch, tmp_path):
+	"""Pooling happens when a review appends, so 140 drafts already on disk publish nothing and a
+	teammate has nothing of yours to corroborate against. The sweep is what closes that."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"))
+	open(memory.queue_path("a/b"), "w").write("- (1) [r:abcd] a fact nobody has pooled\n")
+	open(memory.queue_path("c/d"), "w").write("- (1) [r:abcd] about an unbound repo\n")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: [])
+	memory.sweep("opus")
+	assert os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "a__b.md"))
+	assert not os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "c__d.md"))
+
+
+def test_the_sweep_cross_checks_every_repo_not_just_the_one_reviewed(monkeypatch, tmp_path):
+	"""cross_check ran only inside review(), for the repo just reviewed. A teammate's corroboration
+	arriving after your last review of a repo waited until you reviewed it again — or forever."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))
+	assert memory.sweep("opus") == ["CI skips the format-check job"]
+	assert memory.known("a/b") == ["CI skips the format-check job"]
+
+
+def test_a_pair_the_model_called_different_is_never_asked_twice(monkeypatch, tmp_path):
+	"""Drafts never expire, so a rejected pair is a candidate forever — and a sweep on every tick would
+	pay for the same answer every five minutes. A no is remembered."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	asked = []
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: asked.append(len(pairs)) or [])
+	assert memory.sweep("opus") == [] and asked == [1]
+	assert memory.sweep("opus") == [] and asked == [1]      # the no is remembered, not re-asked
+	# a yes is not recorded as a no: a third observation of the same wording still promotes
+	assert memory.cross_check("a/b", "opus") == []
+
+
+def test_the_sweep_asks_nothing_when_there_is_nothing_new(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- a lonely observation")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: pytest.fail("no candidates, no model call"))
+	assert memory.sweep("opus") == []
+
+
+def test_a_fact_reaches_the_team_without_anyone_sending_it(monkeypatch, tmp_path):
+	"""The last keypress. A fact that has crossed the gate for a bound repo is the team's — waiting for
+	someone to press P meant a pipeline that promoted automatically and then stopped, and on a real
+	machine that is nine facts none of which a colleague ever saw."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the DB tests")
+	assert memory._facts(memory.path("a/b", str(shared))) == []   # one observation is not a fact
+	memory.append("a/b", "- CI skips the DB tests")
+	assert memory.known("a/b") == ["CI skips the DB tests"]
+	assert memory._facts(memory.path("a/b", str(shared))) == ["CI skips the DB tests"]
+	# an UNBOUND repo is private in this direction as in every other
+	memory.append("c/d", "- something about private work")
+	memory.append("c/d", "- something about private work")
+	assert not os.path.exists(memory.path("c/d", str(shared)))
+
+
+def test_a_hand_promotion_reaches_the_team_too(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["the API owns all validation"]
+
+
+def test_forgetting_a_fact_takes_it_out_of_the_team_too(monkeypatch, tmp_path):
+	"""The withdraw path that has to exist once sharing is automatic. Nobody chose to publish it, so
+	removing it must not need them to know it was published."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	memory.promote("a/b", "and something else true")
+	memory.forget("a/b", "the API owns all validation")
+	assert memory.known("a/b") == ["and something else true"]
+	assert memory._facts(memory.path("a/b", str(shared))) == ["and something else true"]
+
+
+def test_a_general_fact_reaches_the_project_it_belongs_to(monkeypatch, tmp_path):
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	assert memory._facts(os.path.join(nms, "general.md")) == ["releases go out through neogate"]
+	assert not os.path.exists(os.path.join(dashy, "general.md"))
+
+
+def _real_team(monkeypatch, tmp_path):
+	"""A team that is a REAL git checkout with a remote, so a dirty tree is observable."""
+	for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"),
+	             ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+		monkeypatch.setenv(k, v)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(tmp_path / "r.git")], check=True)
+	assert team.start("T") == "" and team.connect("t", str(tmp_path / "r.git")) == ""
+	bind.bind("a/b", "t")
+	# ponytail: a fixture that joins a team is a fixture whose operator said yes to publishing.
+	# Granted through the real call, so the consent gate stays in the path every test walks.
+	memory.allow_publishing("t")
+
+	return team.dir_of("t")
+
+
+def _porcelain(d):
+	return subprocess.run(["git", "-C", d, "status", "--porcelain"], capture_output=True, text=True).stdout
+
+
+def test_the_sweep_leaves_the_team_checkout_clean(monkeypatch, tmp_path):
+	"""The pooled files live INSIDE the team's git checkout and nothing on the tick path committed them.
+	Once tracked, the next `pull --rebase` failed with "Please commit or stash them" and team sync was
+	dead until an unrelated push swept them in under its own message. Reproduced before this."""
+	d = _real_team(monkeypatch, tmp_path)
+	memory.append("a/b", "- a draft that gets pooled")
+	memory.sweep("opus")
+	assert _porcelain(d) == "", "the sweep left the team checkout dirty"
+	memory.append("a/b", "- a second draft, modifying a tracked file")
+	memory.sweep("opus")
+	assert _porcelain(d) == ""
+	team.pull_dir(d)
+	assert team.ERROR == "", f"the next tick's pull failed: {team.ERROR}"
+
+
+def test_a_sweep_with_nothing_new_writes_nothing(monkeypatch, tmp_path):
+	"""It runs on every refresh. Rewriting an unchanged file still dirties a tracked one, and git does
+	not care that the bytes match."""
+	d = _real_team(monkeypatch, tmp_path)
+	memory.append("a/b", "- a draft that gets pooled")
+	memory.sweep("opus")
+	wrote = []
+	monkeypatch.setattr(memory, "_rewrite", lambda p, t: wrote.append(p))
+	memory.sweep("opus")
+	# ponytail: the PUSH still happens — it is what keeps the checkout clean whoever dirtied it — but
+	# nothing is rewritten, so no tracked file is touched and git has nothing to commit.
+	assert wrote == [] and _porcelain(d) == ""
+
+
+def test_a_pair_that_cannot_reach_the_count_is_not_asked_forever(monkeypatch, tmp_path):
+	"""Settling by what the model REJECTED left an agreed pair whose ids cannot reach PROMOTE_AT
+	unsettled and unpromoted — bought again on every tick, forever, about exactly the id-less backlog
+	this feature exists to serve."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) the format-check job is skipped by CI\n")
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"), exist_ok=True)
+	open(memory.queue_path("a/b"), "w").write("- (1) CI skips the format-check job\n")
+	asked = []
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: asked.append(len(pairs)) or list(pairs))
+	assert memory.cross_check("a/b", "opus") == []      # agreed, but neither row names a review
+	assert memory.known("a/b") == []
+	assert memory.cross_check("a/b", "opus") == []
+	assert asked == [1], "an agreed pair that cannot promote was asked again"
+
+
+def test_forgetting_leaves_a_fact_a_teammate_also_reached(monkeypatch, tmp_path):
+	"""One person's x must not delete for everyone. Nothing puts it back: _pool writes at promotion, and
+	for them that already happened."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	mate = os.path.join(str(shared), memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- the API owns all validation\n")
+	memory.forget("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b")) == []                                   # gone from yours
+	assert memory._facts(memory.path("a/b", str(shared))) == ["the API owns all validation"]  # theirs stands
+	assert memory._facts(memory.pool_path("tester", "a/b")) == []                    # your evidence is withdrawn
+	# and once nobody is behind it, forgetting takes the team's copy too
+	os.remove(os.path.join(mate, "a__b.md"))
+	memory.promote("a/b", "the API owns all validation")
+	memory.forget("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b", str(shared))) == []
+
+
+def test_nothing_publishes_to_a_team_nobody_agreed_to(monkeypatch, tmp_path):
+	"""A binding made before this version meant "reviews here read that team's context". Reading it as
+	"publish my facts and my reviewers' guesses there" is this version's reading of the same row, and
+	applying it silently on the first tick after an upgrade is not a thing to do to a colleague."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	memory.allow_publishing("org-t", False)          # asked, and answered no
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- a draft")
+	memory.promote("a/b", "a fact of mine")
+	assert not os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "a__b.md"))
+	assert memory._facts(memory.path("a/b", str(shared))) == []
+	assert memory._facts(memory.pool_path("tester", "a/b")) == []
+	assert memory.known("a/b") == ["a fact of mine"]  # still yours; only the publishing is refused
+	# and saying yes starts it, without asking again
+	memory.allow_publishing("org-t")
+	assert memory.unasked() == []
+	memory.promote("a/b", "a second fact")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["a second fact"]
+
+
+def test_a_team_is_asked_about_once_and_the_counts_are_real(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	monkeypatch.setattr(memory, "PUBLISHING", ".publishing-fresh")   # a_team already answered yes
+	bind.bind("a/b", "org-t")
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"), exist_ok=True)
+	open(memory.queue_path("a/b"), "w").write("- (1) one\n- (1) two\n")
+	open(memory.path("a/b"), "w").write("- a settled fact\n")
+	assert memory.unasked() == [("org-t", 2, 1)]
+	memory.allow_publishing("org-t", False)
+	assert memory.unasked() == []                     # a no is an answer, not a postponement
+
+
+def test_a_contraction_is_a_negation(tmp_path, monkeypatch):
+	"""_toks splits on the apostrophe, so "can't" arrives as "can" + "t" and the negation is gone: the
+	gate scored `can` against `can't` at 0.952 and folded, which is the failure this guard exists to
+	close. A list of stems was the first attempt and was worse — "won" is an ordinary English word, so
+	"the race was won" counted as negated and could never fold with its own rewording."""
+	for a, b in (("the store can be pruned on write", "the store can't be pruned on write"),
+	             ("the job runs on every push", "the job won't run on every push"),
+	             ("the API owns validation", "the API doesn't own validation"),
+	             ("the router is stubbed", "the router isn't stubbed")):
+		assert memory._same(a, b) is False, f"{b!r} folded onto its positive"
+	# an ordinary word that merely looks like a stem is not a negation
+	assert memory._polarity("the race was won by the second runner") == memory._polarity("the second runner won")
+	# and a contraction still agrees with the same claim spelled out
+	assert memory._polarity("the API doesn't own validation") == memory._polarity("the API does not own validation")
+
+
+def test_sharing_by_hand_leaves_the_evidence_a_teammate_checks(monkeypatch, tmp_path):
+	"""forget() asks backers() before deleting the team's copy. A fact sent with `t` withdrew its own
+	evidence, so a teammate's `x` on the same line saw no backer and removed the copy you were behind."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	open(memory.path("a/b"), "w").write("- a fact from before this version\n")
+	memory.share("a/b", "a fact from before this version")
+	assert memory._facts(memory.pool_path("tester", "a/b")) == ["a fact from before this version"]
+	# now a teammate holds it too, and their forget must leave yours standing
+	mate = os.path.join(str(shared), memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- a fact from before this version\n")
+	memory.forget("a/b", "a fact from before this version")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["a fact from before this version"]
+
+
+def test_the_launch_prompt_counts_facts_that_have_no_drafts_left(monkeypatch, tmp_path):
+	"""Counting facts off the drafts walk undercounted them: a repo whose observations all promoted has
+	no queue left, and those are exactly the facts about to publish."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	monkeypatch.setattr(memory, "PUBLISHING", ".publishing-fresh")
+	bind.bind("a/b", "org-t")
+	os.makedirs(tmp_path / "mine", exist_ok=True)
+	open(memory.path("a/b"), "w").write("- a settled fact\n- another\n")
+	assert memory.unasked() == [("org-t", 0, 2)]
+
+
+def test_the_judge_reads_the_first_object_not_everything_up_to_the_last_brace(monkeypatch):
+	"""Same parse main fixed in #46, on input a teammate influences: slicing to the last `}` swept up
+	whatever the model wrote after the answer and died on "Extra data" — which returns None, which for
+	cross_check means every candidate goes unjudged."""
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw:
+	                    ('{"1": true}\n\nHope that helps! {see the docs}', None, 12))
+	pairs = [("a/b", 0.7, (1, ("x",), "one"), (1, ("y",), "two"))]
+	assert REAL_JUDGED(pairs, "opus") == pairs
+
+
+def test_the_ui_is_not_blocked_while_a_sweep_waits_on_the_model(monkeypatch, tmp_path):
+	"""cross_check was @_guarded and judged() waits up to JUDGE_TIMEOUT, so a sweep on the tick thread
+	held the write lock for five minutes while the UI thread's x, t and P all blocked on it: curses
+	frozen over a promotion that could have happened next tick. Fixing a race with a lock and then
+	holding it across a model call is the remedy carried past its reason."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	open(memory.path("a/b"), "w").write("- something the UI will forget\n")
+
+	asked, release = threading.Event(), threading.Event()
+	def slow(pairs, model):
+		asked.set()
+		release.wait(10)
+		return []
+	monkeypatch.setattr(memory, "judged", slow)
+	t = threading.Thread(target=memory.cross_check, args=("a/b", "opus"), daemon=True)
+	t.start()
+	assert asked.wait(5), "the model was never asked"
+	done = threading.Event()
+	threading.Thread(target=lambda: (memory.forget("a/b", "something the UI will forget"), done.set()),
+	                 daemon=True).start()
+	assert done.wait(5), "forget() blocked behind a model call — the UI would be frozen"
+	assert memory._facts(memory.path("a/b")) == []
+	release.set()
+	t.join(5)
+
+
+def test_two_threads_writing_the_queue_never_lose_a_draft(monkeypatch, tmp_path):
+	"""The queue is read-modify-write from the tick's sweep, a review and the UI. Without the lock a
+	promote reads the file, is descheduled, and writes back a version without a freshly appended draft."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"))
+	open(memory.queue_path("a/b"), "w").write("- (1) [r:abcd] first\n")
+	inside, go = threading.Event(), threading.Event()
+	real = memory._rewrite_counted
+	def slow_write(p, items):
+		if inside.is_set():
+			return real(p, items)
+		inside.set()
+		go.wait(5)          # ponytail: hold the writer open, so a second thread must wait on the lock
+		return real(p, items)
+	monkeypatch.setattr(memory, "_rewrite_counted", slow_write)
+	t = threading.Thread(target=memory.drop, args=("a/b", "first"), daemon=True)
+	t.start()
+	assert inside.wait(5)
+	other = threading.Thread(target=memory.append, args=("a/b", "- second"), daemon=True)
+	other.start()
+	go.set()
+	t.join(5)
+	other.join(5)
+	assert [t for _n, _i, t in memory.drafts("a/b")] == ["second"], "an interleaved write lost a draft"
+
+
+def test_sharing_twice_writes_one_line(monkeypatch, tmp_path):
+	"""Reachable from `t` on a row the automatic path had already sent, which after auto-sharing is
+	most of them."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	open(memory.path("a/b"), "w").write("- a fact\n")
+	memory.share("a/b", "a fact")
+	memory.share("a/b", "a fact")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["a fact"]
+	assert memory._facts(memory.pool_path("tester", "a/b")) == ["a fact"]
 
 def test_dream_reads_the_answer_when_the_model_signs_off_after_it(monkeypatch, tmp_path):
 	"""The call site, not just llm.obj: prose past the closing brace must not kill a dream."""

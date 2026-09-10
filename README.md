@@ -121,8 +121,8 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
-| `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
-| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice |
+| `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
+| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
@@ -292,24 +292,28 @@ union driver, so two people reviewing at once do not conflict. **Joining does no
 holds reviews of other teams' repos and of private work.
 
 **Your memory does not move there, and joining does not publish it.** Team memory is a separate, second
-source that reviews read *alongside* yours, and a fact only reaches it when you send it:
+source that reviews read *alongside* yours. What reaches it is what has crossed the gate — two reviews
+that did not know about each other, and a model that read both and called them the same claim — for a
+repo **bound to that team**. Binding is the decision; nothing else is a keypress.
+
+Your unconfirmed observations are pooled too, so a colleague's reviewer can be the second observation
+your own machine rarely produces:
 
 ```
-P  →  ★ 2 people found this
-      neo-api CI reports "skipping" for format-check
-      t  share this one       x  forget it       esc  leave it
+<team>/memory/drafts/<user>/<repo>.md    what their reviews proposed   (never read into a prompt)
+<team>/memory/pool/<user>/<repo>.md      what they have accepted        (never read into a prompt)
 ```
 
-Facts two people arrived at independently sort first and say so. That works without anyone's drafts
-leaving their machine: when a fact is promoted into your own memory it is also written to
-`memory/pool/<you>/`, a record of what you have already accepted — evidence only, never read into
-anyone's prompt, mirror or dream. Two people's pools agreeing is four independent reviews across two
-humans. It only covers repos already named in the shared review log, so it tells the team nothing that
-reviewing there had not already told them. Sharing or forgetting a fact withdraws it from the pool.
+Neither is read by a review, a session, the mirror or the dream — they are evidence, and the only thing
+they decide is whether two people saw the same thing. Two people's pools agreeing is four independent
+reviews across two humans, and `P` still says so with `★ 2 people found this`.
 
-Nothing reaches team memory automatically. A wrong fact in your own memory you meet again tomorrow and
-fix; a wrong fact in the team's lands in contexts where nobody who could correct it will ever see it
-happen. So promotion into your own memory is automatic, and promotion out of it is one keypress.
+**`P` is the way back out.** It lists your facts for repos bound to a team and says which the team has;
+`x` removes one from your memory, from theirs, and from the evidence. Nobody chose to publish it, so
+nobody has to know it was published in order to take it back.
+
+A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
+private however many teams you are in.
 
 If your own memory directory is itself a git repo, gitdashy pushes it too — so your facts and drafts follow
 you between machines without ever passing through the team. The header's `Knowledge` group shows

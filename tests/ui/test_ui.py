@@ -424,20 +424,25 @@ def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, s
 	keys = iter([ord("t"), ord("x"), 27])
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "share with org-t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "org-t knows" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "not sent yet" in seen[0]
 	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
 	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
 	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
 	assert [w for w, _ in pushes] == ["team", "mine", "team"]
 
 
-def test_share_screen_says_so_when_there_is_nothing_to_share(screen, monkeypatch, st, tmp_path):
+def test_share_screen_says_which_facts_the_team_already_has(screen, monkeypatch, st, tmp_path):
+	"""Sharing is automatic, so "what has not gone" is almost always nothing and the screen said so —
+	taking its withdraw key with it, which is the key that matters more once nobody chose to publish."""
 	mine, shared = _team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- already theirs\n")
 	(shared / "a__b.md").write_text("- already theirs\n")
 	screen.getch, screen.timeout = _keys(27), lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "nothing of yours the team is missing" in screen.text()
+	out = screen.text()
+	assert "already theirs" in out and "the team has this" in out
+	assert "[x] forget it everywhere" in out and "[t] send it" not in out
 
 
 def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
@@ -445,7 +450,7 @@ def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
 	ui.memory.append("a/b", "one review said so")  # a draft is not yours to share
 	screen.getch, screen.timeout = _keys(27), lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "nothing of yours the team is missing" in screen.text()
+	assert "no facts of yours belong to a team yet" in screen.text()
 
 
 def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):
@@ -1322,6 +1327,10 @@ def _two_teams(monkeypatch, tmp_path):
 		monkeypatch.setenv(k, v)
 	team.start("NeoMedSys Platform", "precision medicine")
 	team.start("Acme Tools", "internal")
+	# ponytail: a fixture that joins a team is a fixture whose operator said yes to publishing.
+	# Granted through the real call, so the consent gate stays in the path every test walks.
+	ui.memory.allow_publishing("neomedsys-platform")
+	ui.memory.allow_publishing("acme-tools")
 	return dict(PR, repository={"nameWithOwner": "NeoMedSys/neo-api", "name": "neo-api"})
 
 
@@ -2398,3 +2407,85 @@ def test_declining_a_claim_sticks_and_is_never_asked_again(screen, monkeypatch, 
 	screen.getch = _keys(ord("1"), 27, 27)
 	ui.team_setup(screen, st, 0)
 	assert asked == [] and bind.owners() == {}
+
+
+def test_the_scan_lets_the_model_shorten_the_list_before_you_read_it(screen, monkeypatch, st, tmp_path):
+	"""Word overlap finds candidates; it cannot decide. The model answers same-or-not per pair and the
+	person still presses y — this only shortens what they read."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	for line in ("- CI reports skipping for the format-check job",
+	             "- the format-check job in CI reports skipping every run",
+	             "- skipping is what the format-check job in CI reports"):
+		memory.append("a/b", line)
+	assert len(memory.overlaps()) == 3
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: pairs[:1])   # the model keeps one
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("s"), ord("y"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert "1/1" in seen[1]                       # one pair to read, not three
+	assert len(memory.known("a/b")) == 1
+
+
+def test_the_scan_says_so_when_the_model_rejects_them_all(screen, monkeypatch, st, tmp_path):
+	from dashy.core import memory
+	_overlapping(monkeypatch, tmp_path)
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: [])
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("s"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert any("none were the same fact" in p for p in said)
+	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 2
+
+
+def test_p_can_share_a_general_fact_using_the_row_you_are_on(screen, monkeypatch, st, tmp_path):
+	"""A general fact means "true across this project", and the row you are looking at says which one.
+	Without that context P skipped the general file entirely once two teams were joined — eight facts
+	unshareable on the operator's machine, with nothing saying why."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	bind.bind("martin/git-dashy", "dashy")
+	memory.promote(None, "PHI reaches the frontend and must not be logged")
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": "")
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	pr = dict(PR, repository={"nameWithOwner": "neomedsys/neo-api", "name": "neo-api"})
+	screen.getch, screen.timeout = _keys(ord("t"), 27), lambda t: None
+	ui.share_screen(screen, st, 0, pr)
+	shared = tmp_path / "teams" / "nms" / "memory" / "general.md"
+	assert shared.exists() and "PHI reaches the frontend" in shared.read_text()
+	assert not (tmp_path / "teams" / "dashy" / "memory" / "general.md").exists()
+
+
+def test_launch_asks_once_per_team_before_anything_publishes(screen, monkeypatch, st, tmp_path):
+	"""The one keypress left, and it is about the contract rather than about a fact. A binding made
+	before this version authorised READING the team's context here; it is now also read as permission
+	to publish, and that must not apply retroactively without anyone being told."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	os.makedirs(tmp_path / "mem" / "drafts")
+	open(memory.queue_path("neomedsys/neo-api"), "w").write("- (1) one\n- (1) two\n")
+	seen = []
+	# ponytail: team.joined() is sorted, so "dashy" is asked about before "nms" — the answers go in that
+	# order, and a test that assumed otherwise was reading the wrong frame and answering the wrong team.
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("n"), ord("y")), lambda t: None
+	ui.ask_publishing(screen, st, 0)
+	assert "nothing waiting yet" in seen[0]           # dashy, which has no drafts bound to it
+	assert "2 drafts waiting to go" in seen[1]        # nms, which does, and the count is real
+	assert "unconfirmed" in seen[1] and "[y] yes" in seen[1]
+	assert memory.publishing("nms") is True and memory.publishing("dashy") is False
+	# answered, so a later launch asks nothing at all
+	screen.getch = _keys()
+	ui.ask_publishing(screen, st, 0)

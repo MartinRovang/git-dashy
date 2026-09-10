@@ -1,11 +1,12 @@
 """Run Claude headless on a PR and post its verdict."""
 import datetime
 import json
+import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
-import subprocess
 
 from .. import HERE, config
 from . import bind, github, llm, log, memory, team
@@ -347,6 +348,17 @@ def review(pr, model):
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		promoted = memory.append(repo, verdict.get("memory"))  # drafts, and whatever a second review confirmed
+		# ponytail: and whatever a TEAMMATE independently observed. This is where new observations arrive
+		# and it is already a background thread, so it is where the cross-person count belongs — the
+		# alternative was a tick, which would ask a model on a clock rather than when something changed.
+		# ponytail: before the pushes, so one push carries the drafts, the promotions and the pool.
+		# ponytail: NEVER fails the review. The verdict is posted by now; a model call that throws here
+		# would turn a finished review into an error on the row, over a promotion that can happen next
+		# time. Same contract team.push has two lines down.
+		try:
+			promoted += memory.cross_check(repo, model)
+		except Exception:  # noqa: BLE001 — surfaced in the debug log, never on the row
+			logging.getLogger(__name__).exception("cross-check failed for %s", repo)
 		status = log.log_review(pr, model, verdict)
 		team.push(f"review {repo}#{n}: {verdict['verdict']}")
 		team.push_dir(config.MEMORY_DIR, f"memory: {repo}#{n}" + (f", {len(promoted)} confirmed" if promoted else ""), "mine")
