@@ -6,7 +6,9 @@ the team's memory is never automatic — that lands in contexts where nobody who
 it happen — so it takes one keypress from you.
 """
 import difflib
+import threading
 import hashlib
+import functools
 import json
 import logging
 import os
@@ -22,6 +24,12 @@ POOL = "pool"  # under the team's memory: facts each person has accepted, as evi
 DRAFT_POOL = "drafts"  # under the team's memory: each person's UNCONFIRMED observations, never read
 SETTLED = ".settled"  # under your own memory: pairs a model has already called different, so we stop asking
 PUBLISHING = ".publishing"  # under your own memory: team keys you have agreed may receive facts automatically
+# ponytail: the drafts queue is READ-MODIFY-WRITE from two threads now — the tick's sweep and a review's
+# append — and it was not before, when only a review touched it. A sweep promoting while a review appends
+# reads the file, is descheduled, and writes back a version without the freshly written draft: an
+# observation lost with nothing saying so. team.py's lock guards git, not this. RE-ENTRANT because
+# cross_check calls promote calls drop, all of which take it.
+_write = threading.RLock()
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
@@ -60,12 +68,17 @@ STOP = frozenset("a an the is are was were be been being of to in on for with an
 # ponytail: this closes the cases we can name; it cannot close the class. "the viewer owns mask state,
 # the store mirrors it" and the same sentence with the two nouns swapped share every token and state
 # opposite things. Word rules find candidates. They never decide.
-# ponytail: _toks splits on the apostrophe, so "don't" arrives as "don" + "t" and "doesn't" as
-# "doesn" + "t". Without those stems a contracted negative reads as a DIFFERENT polarity from the same
-# claim spelled out, and the two never fold — the guard splitting what it exists to keep together.
-QUALIFIERS = (frozenset("not no never none cannot nothing nor without don doesn didn isn aren wasn "
-                        "weren won wouldn couldn shouldn cann hasn haven hadn".split()),  # negation
-              frozenset("only just solely".split()))                                       # exclusivity
+QUALIFIERS = (frozenset("not no never none cannot nothing nor without".split()),  # negation
+              frozenset("only just solely".split()))                              # exclusivity
+
+
+def _guarded(fn):
+	"""Serialise a writer of the drafts and memory files. See _write."""
+	@functools.wraps(fn)
+	def go(*a, **kw):
+		with _write:
+			return fn(*a, **kw)
+	return go
 
 
 def slug(repo):
@@ -90,6 +103,7 @@ def self_drafts(repo):
 	return [_parse(l) for l in _read(self_path(repo)).splitlines() if l.strip()]  # (n, ids, fact)
 
 
+@_guarded
 def append_self(repo, text):
 	"""Record what a PRE-review found. Never promotes on its own; returns what was kept.
 
@@ -376,8 +390,14 @@ def _polarity(a):
 	ponytail: COUNTS PER GROUP, not a set of the words. A set would split "neo-api holds no DDL" from
 	"neo-api does not hold DDL" — synonyms inside one group — and a bare total would merge "only" with
 	"always". Counting each group separately keeps synonyms together and keeps distinct claims apart.
+	ponytail: contractions are EXPANDED, not stemmed. _toks splits on the apostrophe, so "can't" arrives
+	as "can" + "t" and the negation is simply gone — `"the store can be pruned"` and the same line with
+	`can't` scored 0.952 and folded, which is the failure this guard exists to close. A list of stems was
+	the first attempt and it was worse: "don"/"isn" are safe, but "won" is an ordinary English word, so
+	`"the race was won"` counted as negated and could never fold with its own rewording. Expanding the
+	contraction fixes every one of them, including the ones nobody thought to list.
 	"""
-	toks = _toks(a)
+	toks = _toks(re.sub(r"n[\u2019']t\b", " not", a, flags=re.I))
 	return tuple(sum(1 for t in toks if t in group) for group in QUALIFIERS)
 
 
@@ -480,6 +500,11 @@ def _the_one_team():
 def _project(repo, about=""):
 	"""The memory dir a fact at `repo` scope belongs to. "" when nothing selects one.
 
+	ponytail: a thin read of _project_key, so the KEY a permission is looked up under and the DIRECTORY a
+	write lands in can never disagree. They were separate functions and they diverged: for an `about`
+	bound to a team this machine is not in, one fell back to the single joined team and the other
+	returned the foreign key, so publishing was refused for a write that would have gone somewhere.
+
 	`about` is the repo the observation was made in, and it is what gives a general fact a home.
 
 	ponytail: general.md used to mean "true for me everywhere", which is why it had nowhere to go the
@@ -491,11 +516,18 @@ def _project(repo, about=""):
 	ponytail: an unbound `about` still selects nothing. Context narrows the answer; it never invents one,
 	and a repo bound to no team is private in this direction exactly as it is in every other.
 	"""
+	return _project_key(repo, about)[1]
+
+
+def _project_key(repo, about=""):
+	"""(team key, memory dir) for a fact at `repo` scope. ("", "") when nothing selects one."""
 	if repo:
-		return bind.team_dir(bind.of(repo)) or ""
-	if about and (d := bind.team_dir(bind.of(about))):
-		return d
-	return _the_one_team()
+		k = bind.of(repo)
+		return (k, d) if (d := bind.team_dir(k)) else ("", "")
+	if about and (k := bind.of(about)) and (d := bind.team_dir(k)):
+		return k, d
+	got = team.joined()
+	return (got[0], _the_one_team()) if len(got) == 1 else ("", "")
 
 
 def pool_path(user, repo, about=""):
@@ -598,9 +630,13 @@ def theirs(repo):
 	would let one review confirm itself — the exact thing PROMOTE_AT exists to refuse, arriving by a
 	route that did not exist when that rule was written.
 	"""
+	# ponytail: the BOUND team's pool, which is what docs/memory.md says and what every write here uses.
+	# Walking every joined team found nothing extra — a repo binds to one team and the slugs are unique —
+	# but it was a second reading of the binding living beside the first, and those are the two that
+	# drift. One resolver, one answer.
 	me, out = whoami(), []
-	for base in team.dirs():
-		root = os.path.join(base, "memory", DRAFT_POOL)
+	for base in [_project(repo)] if _project(repo) else []:
+		root = os.path.join(base, DRAFT_POOL)
 		for user in sorted(os.listdir(root)) if os.path.isdir(root) else []:
 			p = os.path.join(root, user, slug(repo))
 			if user == me or not os.path.isfile(p):
@@ -675,6 +711,7 @@ def sweep(model):
 	return out
 
 
+@_guarded
 def cross_check(repo, model):
 	"""Promote what a teammate independently observed too. Returns the facts that just became yours.
 
@@ -756,29 +793,30 @@ def unasked():
 	for key in team.joined():
 		if key in said:
 			continue
-		d = f = 0
-		for repo, _p in _counted_files(QUEUE):
-			if repo and bind.of(repo) == key:
-				d += len(drafts(repo))
-				f += len(_facts(path(repo)))
+		# ponytail: facts are counted from the MEMORY files, not from the repos that happen to have a
+		# drafts file. Counting both off the drafts walk undercounted "facts waiting" — a repo whose
+		# observations all promoted has no queue left, and those are exactly the facts about to publish.
+		d = sum(len(drafts(r)) for r, _p in _counted_files(QUEUE) if r and bind.of(r) == key)
+		f = sum(len(_facts(path(r))) for r in _fact_repos() if r and bind.of(r) == key)
 		out.append((key, d, f))
 	return out
+
+
+def _fact_repos():
+	"""Every repo your own memory holds facts for. None for the general file."""
+	base = config.MEMORY_DIR
+	names = sorted(os.listdir(base)) if os.path.isdir(base) else []
+	return [_repo_of(n) for n in names if n.endswith(".md") and n != PROJECT]
 
 
 def _team_for(repo, about=""):
 	"""The team key a fact at `repo` scope would publish to, "" when none does.
 
-	ponytail: mirrors _project step for step, because it answers the same question in keys rather than
-	in paths. When the two disagreed the consent gate looked up a team the write was not going to — a
-	general fact with no context resolved its DESTINATION through _the_one_team() and its PERMISSION
-	through "", so it was refused on a machine with one team and every general fact stopped pooling.
+	ponytail: the other half of _project_key, so the permission is asked about exactly the team the write
+	goes to. Two functions restating one rule is how the consent gate came to refuse a write that had a
+	destination, and how a general fact with no context stopped pooling on a machine with one team.
 	"""
-	if repo:
-		return bind.of(repo)
-	if about and bind.of(about):
-		return bind.of(about)
-	got = team.joined()
-	return got[0] if len(got) == 1 else ""
+	return _project_key(repo, about)[0]
 
 
 def _pool(repo, fact, about=""):
@@ -800,7 +838,7 @@ def _pool(repo, fact, about=""):
 		return
 	if p := pool_path(whoami(), repo, about):
 		_append_line(p, fact)
-	if base := _dest(repo, about):
+	if base := _project(repo, about):
 		theirs = _facts(path(repo, base))
 		if not any(_same(fact, t) for t in theirs):
 			_append_line(path(repo, base), fact)
@@ -1034,6 +1072,7 @@ def _write_drafts(repo, items):
 	_rewrite_counted(queue_path(repo), items)  # ponytail: _rewrite reaches _history(); the call here was a second one
 
 
+@_guarded
 def append(repo, text, about=""):
 	"""Record what a review proposed; return the facts that just became yours.
 
@@ -1087,11 +1126,13 @@ def in_team(about=""):
 	ponytail: unshared rows still exist and are worth the `t` key: facts promoted before this version
 	never went, and a write can fail. Sorting them first puts the actionable ones under the cursor.
 	"""
+	# ponytail: NOT sorted here. share_screen sorts by the same key plus corroboration, and two sorts
+	# over one list is the pair where the second silently decides and the first is decoration.
 	out = []
 	for repo, fact in _mine_for_teams(about):
-		base = _dest(repo, about)
+		base = _project(repo, about)
 		out.append((repo, fact, bool(base) and any(_same(fact, t) for t in _facts(path(repo, base)))))
-	return sorted(out, key=lambda r: r[2])
+	return out
 
 
 def _mine_for_teams(about=""):
@@ -1101,14 +1142,9 @@ def _mine_for_teams(about=""):
 		if not name.endswith(".md") or name == PROJECT:
 			continue
 		repo = _repo_of(name)
-		if team_visible(repo, about) and _dest(repo, about):
+		if team_visible(repo, about) and _project(repo, about):
 			out += [(repo, f) for f in _facts(path(repo))]
 	return out
-
-
-def _dest(repo, about=""):
-	"""The memory dir a fact about `repo` would be shared into. "" when nothing selects one."""
-	return _project(repo, about)
 
 
 def share(repo, fact, about=""):
@@ -1117,11 +1153,18 @@ def share(repo, fact, about=""):
 	ponytail: `about` names the project for a GENERAL fact — the repo you were looking at when you sent
 	it. A repo fact is unaffected: its own binding says where it goes.
 	"""
-	if not (base := _dest(repo, about)):
+	if not (base := _project(repo, about)):
 		return ""
 	dest = path(repo, base)
 	_append_line(dest, fact)
-	_unpool(repo, fact, about)  # it is memory now; keeping the evidence would just grow forever
+	# ponytail: the evidence line STAYS. It used to be withdrawn here — "it is memory now" — and that was
+	# right while sharing was the last step. It is not the last step now: forget() asks backers() whether
+	# anyone else is behind a fact before it deletes the team's copy, so a fact sent with `t` left no
+	# trace of you, and a teammate's `x` on the same line then removed the copy you were behind. It also
+	# never earned "★ 2 people found this". _pool keeps it for exactly these two reasons; this matches.
+	if p := pool_path(whoami(), repo, about):
+		if not any(_is(fact, t) for t in _facts(p)):
+			_append_line(p, fact)
 	return dest
 
 
@@ -1132,6 +1175,7 @@ def _unpool(repo, fact, about=""):
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
+@_guarded
 def forget(repo, fact, about=""):
 	"""Drop one fact from your own memory, from the team's, and as evidence.
 
@@ -1148,7 +1192,7 @@ def forget(repo, fact, about=""):
 	_unpool(repo, fact, about)
 	if backers(pools(), repo, fact):
 		return _forget_mine(repo, fact)
-	if base := _dest(repo, about):
+	if base := _project(repo, about):
 		q = path(repo, base)
 		left = [l.rstrip() for l in _read(q).splitlines() if l.strip() and not _is(_plain(l), fact)]
 		if os.path.exists(q):
@@ -1195,6 +1239,7 @@ def waiting():
 	return kept
 
 
+@_guarded
 def drop(repo, fact):
 	"""Forget one unconfirmed observation, from whichever queue holds it. True when one went.
 
@@ -1213,6 +1258,7 @@ def drop(repo, fact):
 	return gone
 
 
+@_guarded
 def promote(repo, fact):
 	"""Accept an observation by hand: it becomes one of your facts. Returns the file it landed in.
 

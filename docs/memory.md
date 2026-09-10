@@ -534,6 +534,13 @@ team-level `general.md` that receives it already existed and was already read fo
 only thing missing was a way to get a fact into it. An unbound context still selects nothing: context
 narrows the answer, it never invents one.
 
+**What a teammate contributes is read from the bound team's pool only**, and capped per person
+per repo — those lines reach a model and a `true` promotes, so the size of one person's file is
+the size of a prompt they get to write. Both sides are JSON-encoded and the prompt names them as
+data; the judge is given no tools and runs in safe mode, and only a boolean is read back. The
+residual is inherent to a shared team: a teammate can promote one of your drafts by writing the
+same claim, which is what corroboration means.
+
 **The count is over distinct review ids across both people.** Your `[r:7a2c]` and their `[r:91cf]` is two
 runs that did not know about each other, which is what `PROMOTE_AT` has always meant. Your own pooled
 file is excluded when reading theirs: counting it would let one review confirm itself by a route that

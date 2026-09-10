@@ -188,19 +188,22 @@ def test_backers_counts_people_not_reviews(monkeypatch, tmp_path):
 	assert memory.backers(index, "a/b", "something nobody said") == []
 
 
-def test_sharing_and_forgetting_withdraw_the_evidence(monkeypatch, tmp_path):
+def test_forgetting_withdraws_the_evidence_and_sharing_keeps_it(monkeypatch, tmp_path):
+	"""Sharing used to withdraw the evidence — "it is team memory now" — which was right while sharing
+	was the last step. forget() asks backers() before deleting the team's copy now, so a fact with no
+	evidence behind it is one a teammate's `x` removes for everyone."""
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	logged(tmp_path, "a/b")
-	memory.append("a/b", "keep this one")
-	memory.append("a/b", "keep this one")
 	me = memory.whoami()
-	assert os.path.exists(memory.pool_path(me, "a/b"))
+	memory.append("a/b", "keep this one")
+	memory.append("a/b", "keep this one")
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]
 	memory.share("a/b", "keep this one")
-	assert not os.path.exists(memory.pool_path(me, "a/b"))  # it is team memory now, not evidence
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]  # you are still behind it
 	memory.append("a/b", "drop this one")
 	memory.append("a/b", "drop this one")
 	memory.forget("a/b", "drop this one")
-	assert not os.path.exists(memory.pool_path(me, "a/b"))  # withdrawn when you no longer accept it
+	assert memory._facts(memory.pool_path(me, "a/b")) == ["keep this one"]  # only that one withdrawn
 
 
 def test_the_pool_is_never_read_into_a_prompt(monkeypatch, tmp_path):
@@ -1003,11 +1006,11 @@ def test_a_general_fact_belongs_to_the_project_it_was_observed_in(monkeypatch, t
 	teams: _the_one_team() refuses to guess and the fact is stuck. It means "true across this project"
 	now, and the project is the team of the repo you were in when you saw it."""
 	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
-	assert memory._dest(None) == ""                                   # no context, two teams: still refuses
-	assert memory._dest(None, about="neomedsys/neo-api") == nms
-	assert memory._dest(None, about="martin/git-dashy") == dashy
-	assert memory._dest(None, about="someone/unbound") == ""           # an unbound repo names no project
-	assert memory._dest("neomedsys/neo-api") == nms                    # a repo fact is unaffected
+	assert memory._project(None) == ""                                   # no context, two teams: still refuses
+	assert memory._project(None, about="neomedsys/neo-api") == nms
+	assert memory._project(None, about="martin/git-dashy") == dashy
+	assert memory._project(None, about="someone/unbound") == ""           # an unbound repo names no project
+	assert memory._project("neomedsys/neo-api") == nms                    # a repo fact is unaffected
 
 
 def test_a_general_fact_can_be_shared_once_it_has_a_project(monkeypatch, tmp_path):
@@ -1260,3 +1263,48 @@ def test_a_team_is_asked_about_once_and_the_counts_are_real(monkeypatch, tmp_pat
 	assert memory.unasked() == [("org-t", 2, 1)]
 	memory.allow_publishing("org-t", False)
 	assert memory.unasked() == []                     # a no is an answer, not a postponement
+
+
+def test_a_contraction_is_a_negation(tmp_path, monkeypatch):
+	"""_toks splits on the apostrophe, so "can't" arrives as "can" + "t" and the negation is gone: the
+	gate scored `can` against `can't` at 0.952 and folded, which is the failure this guard exists to
+	close. A list of stems was the first attempt and was worse — "won" is an ordinary English word, so
+	"the race was won" counted as negated and could never fold with its own rewording."""
+	for a, b in (("the store can be pruned on write", "the store can't be pruned on write"),
+	             ("the job runs on every push", "the job won't run on every push"),
+	             ("the API owns validation", "the API doesn't own validation"),
+	             ("the router is stubbed", "the router isn't stubbed")):
+		assert memory._same(a, b) is False, f"{b!r} folded onto its positive"
+	# an ordinary word that merely looks like a stem is not a negation
+	assert memory._polarity("the race was won by the second runner") == memory._polarity("the second runner won")
+	# and a contraction still agrees with the same claim spelled out
+	assert memory._polarity("the API doesn't own validation") == memory._polarity("the API does not own validation")
+
+
+def test_sharing_by_hand_leaves_the_evidence_a_teammate_checks(monkeypatch, tmp_path):
+	"""forget() asks backers() before deleting the team's copy. A fact sent with `t` withdrew its own
+	evidence, so a teammate's `x` on the same line saw no backer and removed the copy you were behind."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	open(memory.path("a/b"), "w").write("- a fact from before this version\n")
+	memory.share("a/b", "a fact from before this version")
+	assert memory._facts(memory.pool_path("tester", "a/b")) == ["a fact from before this version"]
+	# now a teammate holds it too, and their forget must leave yours standing
+	mate = os.path.join(str(shared), memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- a fact from before this version\n")
+	memory.forget("a/b", "a fact from before this version")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["a fact from before this version"]
+
+
+def test_the_launch_prompt_counts_facts_that_have_no_drafts_left(monkeypatch, tmp_path):
+	"""Counting facts off the drafts walk undercounted them: a repo whose observations all promoted has
+	no queue left, and those are exactly the facts about to publish."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	monkeypatch.setattr(memory, "PUBLISHING", ".publishing-fresh")
+	bind.bind("a/b", "org-t")
+	os.makedirs(tmp_path / "mine", exist_ok=True)
+	open(memory.path("a/b"), "w").write("- a settled fact\n- another\n")
+	assert memory.unasked() == [("org-t", 0, 2)]

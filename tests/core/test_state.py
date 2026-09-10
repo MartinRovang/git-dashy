@@ -687,4 +687,9 @@ def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 	st.tick(time.time())
 	assert rang.wait(5)
 	assert st.fetched_at is not None and st.error == ""
-	assert st.sweeping.wait(0) is False or not st.sweeping.is_set()   # and the guard is released
+	# ponytail: the flag clears in a `finally` AFTER the exception, so checking it the instant the body
+	# ran is a race with the thread's own cleanup — wait for it, with a deadline.
+	deadline = time.time() + 5
+	while st.sweeping.is_set() and time.time() < deadline:
+		time.sleep(0.01)
+	assert not st.sweeping.is_set(), "a sweep that threw left the guard set, so none can run again"
