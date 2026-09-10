@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import threading
@@ -7,7 +8,7 @@ import pytest
 from dashy import config
 from dashy.core import bind, llm, memory, team
 
-from conftest import REAL_JUDGED, a_team, claude_out, counts
+from conftest import REAL_JUDGED, Result, a_team, claude_out, counts
 
 
 def facts(p):
@@ -1390,3 +1391,13 @@ def test_sharing_twice_writes_one_line(monkeypatch, tmp_path):
 	memory.share("a/b", "a fact")
 	assert memory._facts(memory.path("a/b", str(shared))) == ["a fact"]
 	assert memory._facts(memory.pool_path("tester", "a/b")) == ["a fact"]
+
+def test_dream_reads_the_answer_when_the_model_signs_off_after_it(monkeypatch, tmp_path):
+	"""The call site, not just llm.obj: prose past the closing brace must not kill a dream."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("- run make lint\n")
+	out = json.dumps({"result": "Sure:\n" + json.dumps({"summary": "tidied", "files": {}})
+	                  + "\n\nLet me know! {not json}"})
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(out))
+	summary, before, new = memory.dream("sonnet")
+	assert summary == "tidied" and new == before

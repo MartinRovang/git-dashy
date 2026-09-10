@@ -510,3 +510,12 @@ def test_a_cross_check_that_fails_never_fails_the_review(monkeypatch, tmp_path):
 	# what a review that died halfway would return.
 	assert got == log.log_review(dict(PR, repository={"nameWithOwner": "a/b", "name": "b"}), "opus",
 	                             {"verdict": "approve", "body": "b", "memory": "- x"})
+
+
+def test_review_reads_the_verdict_when_the_model_signs_off_after_it(monkeypatch, posted):
+	"""The call site, not just llm.obj: a sign-off past the closing brace must not fail the review."""
+	out = json.dumps({"result": "Sure:\n" + json.dumps({"verdict": "approve", "summary": "s", "body": "b"})
+	                  + "\n\nHope that helps! {not json}"})
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(out))
+	assert review(dict(PR), "opus") == "✓ approved"
+	assert posted[1][1] == {"event": "APPROVE", "body": "b"}
