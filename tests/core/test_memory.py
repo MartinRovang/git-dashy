@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 
 import pytest
 
@@ -1318,3 +1319,74 @@ def test_the_judge_reads_the_first_object_not_everything_up_to_the_last_brace(mo
 	                    ('{"1": true}\n\nHope that helps! {see the docs}', None, 12))
 	pairs = [("a/b", 0.7, (1, ("x",), "one"), (1, ("y",), "two"))]
 	assert REAL_JUDGED(pairs, "opus") == pairs
+
+
+def test_the_ui_is_not_blocked_while_a_sweep_waits_on_the_model(monkeypatch, tmp_path):
+	"""cross_check was @_guarded and judged() waits up to JUDGE_TIMEOUT, so a sweep on the tick thread
+	held the write lock for five minutes while the UI thread's x, t and P all blocked on it: curses
+	frozen over a promotion that could have happened next tick. Fixing a race with a lock and then
+	holding it across a model call is the remedy carried past its reason."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	open(memory.path("a/b"), "w").write("- something the UI will forget\n")
+
+	asked, release = threading.Event(), threading.Event()
+	def slow(pairs, model):
+		asked.set()
+		release.wait(10)
+		return []
+	monkeypatch.setattr(memory, "judged", slow)
+	t = threading.Thread(target=memory.cross_check, args=("a/b", "opus"), daemon=True)
+	t.start()
+	assert asked.wait(5), "the model was never asked"
+	done = threading.Event()
+	threading.Thread(target=lambda: (memory.forget("a/b", "something the UI will forget"), done.set()),
+	                 daemon=True).start()
+	assert done.wait(5), "forget() blocked behind a model call — the UI would be frozen"
+	assert memory._facts(memory.path("a/b")) == []
+	release.set()
+	t.join(5)
+
+
+def test_two_threads_writing_the_queue_never_lose_a_draft(monkeypatch, tmp_path):
+	"""The queue is read-modify-write from the tick's sweep, a review and the UI. Without the lock a
+	promote reads the file, is descheduled, and writes back a version without a freshly appended draft."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"))
+	open(memory.queue_path("a/b"), "w").write("- (1) [r:abcd] first\n")
+	inside, go = threading.Event(), threading.Event()
+	real = memory._rewrite_counted
+	def slow_write(p, items):
+		if inside.is_set():
+			return real(p, items)
+		inside.set()
+		go.wait(5)          # ponytail: hold the writer open, so a second thread must wait on the lock
+		return real(p, items)
+	monkeypatch.setattr(memory, "_rewrite_counted", slow_write)
+	t = threading.Thread(target=memory.drop, args=("a/b", "first"), daemon=True)
+	t.start()
+	assert inside.wait(5)
+	other = threading.Thread(target=memory.append, args=("a/b", "- second"), daemon=True)
+	other.start()
+	go.set()
+	t.join(5)
+	other.join(5)
+	assert [t for _n, _i, t in memory.drafts("a/b")] == ["second"], "an interleaved write lost a draft"
+
+
+def test_sharing_twice_writes_one_line(monkeypatch, tmp_path):
+	"""Reachable from `t` on a row the automatic path had already sent, which after auto-sharing is
+	most of them."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	open(memory.path("a/b"), "w").write("- a fact\n")
+	memory.share("a/b", "a fact")
+	memory.share("a/b", "a fact")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["a fact"]
+	assert memory._facts(memory.pool_path("tester", "a/b")) == ["a fact"]

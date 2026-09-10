@@ -24,11 +24,16 @@ POOL = "pool"  # under the team's memory: facts each person has accepted, as evi
 DRAFT_POOL = "drafts"  # under the team's memory: each person's UNCONFIRMED observations, never read
 SETTLED = ".settled"  # under your own memory: pairs a model has already called different, so we stop asking
 PUBLISHING = ".publishing"  # under your own memory: team keys you have agreed may receive facts automatically
-# ponytail: the drafts queue is READ-MODIFY-WRITE from two threads now — the tick's sweep and a review's
-# append — and it was not before, when only a review touched it. A sweep promoting while a review appends
-# reads the file, is descheduled, and writes back a version without the freshly written draft: an
-# observation lost with nothing saying so. team.py's lock guards git, not this. RE-ENTRANT because
-# cross_check calls promote calls drop, all of which take it.
+# ponytail: the drafts queue is READ-MODIFY-WRITE from three threads now — the tick's sweep, a review,
+# and the UI on `t`/`x` — and it was not before, when only a review touched it. A sweep promoting while a
+# review appends reads the file, is descheduled, and writes back a version without the freshly written
+# draft: an observation lost with nothing saying so. team.py's lock guards git, not this. RE-ENTRANT
+# because promote calls drop, and both take it.
+# ponytail: NEVER held across a model call. See cross_check — the UI blocks on this lock, so anything
+# slow inside it is a frozen screen.
+# ponytail: _pool_drafts is deliberately outside it. It only mirrors the queue into the team, so the
+# worst a concurrent write costs is a pool file one tick stale, which the next sweep corrects — and
+# guarding it would put the lock back around the sweep's whole loop.
 _write = threading.RLock()
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
@@ -635,7 +640,7 @@ def theirs(repo):
 	# but it was a second reading of the binding living beside the first, and those are the two that
 	# drift. One resolver, one answer.
 	me, out = whoami(), []
-	for base in [_project(repo)] if _project(repo) else []:
+	for base in ([b] if (b := _project(repo)) else []):
 		root = os.path.join(base, DRAFT_POOL)
 		for user in sorted(os.listdir(root)) if os.path.isdir(root) else []:
 			p = os.path.join(root, user, slug(repo))
@@ -711,7 +716,6 @@ def sweep(model):
 	return out
 
 
-@_guarded
 def cross_check(repo, model):
 	"""Promote what a teammate independently observed too. Returns the facts that just became yours.
 
@@ -725,31 +729,39 @@ def cross_check(repo, model):
 	pool and the pre-review queue cleared, exactly as every other promotion does. Reaching the TEAM's
 	memory is still `P`: this is automatic because being wrong costs only you.
 	"""
-	mine, other = drafts(repo), theirs(repo)
-	if not mine or not other:
-		return []
-	settled = _settled()
-	pairs = [(repo, r, a, (n, ids, f)) for a in mine for _u, n, ids, f in other
-	         if (r := _overlap(a[2], f)) >= CROSS and _pair_key(a[2], f) not in settled]
+	# ponytail: the lock is taken to READ and taken again to WRITE, and is not held across judged().
+	# It was — cross_check was @_guarded, and judged() waits up to JUDGE_TIMEOUT on a model — so a sweep
+	# on the tick thread held _write for five minutes while the UI thread's `x`, `t` and `P` all block
+	# on it: curses frozen, over a promotion that could have happened next tick. That was the previous
+	# round's race fix carried past its reason. Nothing else has to move, because the promote loop
+	# already re-reads the queue and tolerates it having changed while the model was thinking.
+	with _write:
+		mine, other = drafts(repo), theirs(repo)
+		if not mine or not other:
+			return []
+		settled = _settled()
+		pairs = [(repo, r, a, (n, ids, f)) for a in mine for _u, n, ids, f in other
+		         if (r := _overlap(a[2], f)) >= CROSS and _pair_key(a[2], f) not in settled]
 	if not pairs:
 		return []
 	# ponytail: asked ONCE. Calling judged() again to work out what to settle would buy the same answer
 	# a second time, at the same cost, on every sweep.
-	kept = judged(pairs, model)
+	kept = judged(pairs, model)  # ponytail: UNLOCKED — this is the model call
 	if kept is None:
 		return []  # ponytail: not asked. Promote nothing, settle nothing, ask again next time.
-	promoted = []
-	for _r, _ratio, a, b in kept:
-		if a[2] in {t for _n, _i, t in drafts(repo)} and len(set(a[1]) | set(b[1])) >= PROMOTE_AT:
-			promote(repo, a[2])
-			promoted.append(a[2])
+	with _write:
+		promoted = []
+		for _r, _ratio, a, b in kept:
+			if a[2] in {t for _n, _i, t in drafts(repo)} and len(set(a[1]) | set(b[1])) >= PROMOTE_AT:
+				promote(repo, a[2])
+				promoted.append(a[2])
 	# ponytail: settled by what did NOT PROMOTE, not by what the model rejected. A pair it AGREED on
 	# whose ids cannot reach PROMOTE_AT — two drafts written before ids existed both parse as () — is
 	# neither promoted nor recorded, so it was asked again on every tick, forever, about exactly the
 	# backlog this feature exists to serve.
-	_settle({_pair_key(a[2], b[2]) for _r, _ratio, a, b in pairs if a[2] not in promoted})
-	if promoted:
-		_pool_drafts(repo)  # ponytail: the queue shrank, so the pool must say so
+		_settle({_pair_key(a[2], b[2]) for _r, _ratio, a, b in pairs if a[2] not in promoted})
+		if promoted:
+			_pool_drafts(repo)  # ponytail: the queue shrank, so the pool must say so
 	return promoted
 
 
@@ -1150,6 +1162,7 @@ def _mine_for_teams(about=""):
 	return out
 
 
+@_guarded
 def share(repo, fact, about=""):
 	"""Put one of your facts into the BOUND team's memory. Returns the file written, or "".
 
@@ -1159,7 +1172,10 @@ def share(repo, fact, about=""):
 	if not (base := _project(repo, about)):
 		return ""
 	dest = path(repo, base)
-	_append_line(dest, fact)
+	# ponytail: not twice. Sharing a fact the team already holds appended a second copy — reachable from
+	# `t` on a row the automatic path had already sent, which after auto-sharing is most of them.
+	if not any(_is(fact, t) for t in _facts(dest)):
+		_append_line(dest, fact)
 	# ponytail: the evidence line STAYS. It used to be withdrawn here — "it is memory now" — and that was
 	# right while sharing was the last step. It is not the last step now: forget() asks backers() whether
 	# anyone else is behind a fact before it deletes the team's copy, so a fact sent with `t` left no
@@ -1169,13 +1185,6 @@ def share(repo, fact, about=""):
 		if not any(_is(fact, t) for t in _facts(p)):
 			_append_line(p, fact)
 	return dest
-
-
-def _unpool(repo, fact, about=""):
-	if not (p := pool_path(whoami(), repo, about)):
-		return
-	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
-	_rewrite(p, "\n".join(kept) + "\n" if kept else "")
 
 
 @_guarded
@@ -1191,8 +1200,13 @@ def forget(repo, fact, about=""):
 	copy goes only if no other contributor remains — otherwise one person's `x` deletes a fact a
 	colleague independently reached, and nothing puts it back, because _pool writes at promotion and
 	that already happened for them.
+	ponytail: the evidence withdrawal is inline. It was _unpool(), which had exactly this one caller
+	once share() stopped using it, and a helper with one caller is a name to look up rather than a step
+	to read.
 	"""
-	_unpool(repo, fact, about)
+	if p := pool_path(whoami(), repo, about):
+		left = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_plain(l), fact)]
+		_rewrite(p, "\n".join(left) + "\n" if left else "")
 	if backers(pools(), repo, fact):
 		return _forget_mine(repo, fact)
 	if base := _project(repo, about):

@@ -541,6 +541,13 @@ data; the judge is given no tools and runs in safe mode, and only a boolean is r
 residual is inherent to a shared team: a teammate can promote one of your drafts by writing the
 same claim, which is what corroboration means.
 
+**Two residual risks, named rather than fixed.** `whoami()` is `$USER`, and that is the only thing
+separating your pooled drafts from a teammate's when the self-confirmation guard reads them: two
+people who both run as `ubuntu` never corroborate each other, and one person on two machines with
+different usernames does. And a teammate can promote one of your drafts by writing the same claim
+themselves — which is what corroboration *is*, so it is a property of a shared team rather than a
+defect, but it is worth knowing that the second observation is not automatically a second opinion.
+
 **The count is over distinct review ids across both people.** Your `[r:7a2c]` and their `[r:91cf]` is two
 runs that did not know about each other, which is what `PROMOTE_AT` has always meant. Your own pooled
 file is excluded when reading theirs: counting it would let one review confirm itself by a route that
