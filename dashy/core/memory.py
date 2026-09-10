@@ -768,7 +768,7 @@ def cross_check(repo, model):
 def publishing(key):
 	"""Whether team `key` may receive facts and drafts without anyone sending them.
 
-	ponytail: a binding made before v1.48 meant "reviews of this repo read that team's context". It did
+	ponytail: a binding made before v1.43 meant "reviews of this repo read that team's context". It did
 	NOT mean "publish my facts, and my reviewers' unconfirmed guesses, there" — that is this version's
 	reading of the same row. Applying it to consent given for something narrower, silently, on the first
 	tick after an upgrade, is not a thing to do to somebody's colleagues. Asked once per team, answered

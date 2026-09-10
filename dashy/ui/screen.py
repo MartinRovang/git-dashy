@@ -1616,7 +1616,7 @@ def ask_publishing(scr, state, sel):
 	"""Ask once per team whether it may receive facts and drafts without anyone sending them.
 
 	ponytail: the ONE keypress in this, and it is not in the pipeline — it is about the contract. A
-	binding made before v1.48 meant "reviews of this repo read that team's context"; it did not mean
+	binding made before v1.43 meant "reviews of this repo read that team's context"; it did not mean
 	"publish my facts and my reviewers' unconfirmed guesses there". Reading it that way silently, on the
 	first tick after an upgrade, applies consent given for something narrower to somebody's colleagues.
 	ponytail: at LAUNCH, like the migration and the link retirement above it, and answered once either

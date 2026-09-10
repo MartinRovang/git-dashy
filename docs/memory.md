@@ -501,7 +501,7 @@ Same disclosure rule as the evidence pool — `team_visible`, so a repo bound to
 mirror, so a teammate's guess can never reach a prompt. What is new is that these are *unconfirmed*, so
 what a colleague sees includes wrong guesses about a bound repo.
 
-**Reaching the team is automatic too, as of v1.48.0.** It used to be one keypress, on the argument that
+**Reaching the team is automatic too, as of v1.43.0.** It used to be one keypress, on the argument that
 a wrong fact in your own memory you meet again tomorrow and fix, while a wrong fact in the team's lands
 where nobody who could correct it will see it happen. That argument was written when a promotion meant
 two runs of one model on one machine. A promotion now means two reviews that did not know about each
