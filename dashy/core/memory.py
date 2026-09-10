@@ -833,7 +833,7 @@ def dream(model):
 		raise ValueError("no memory to dream about")
 	prompt = DREAM.format(files="\n\n".join(f"### {n}\n{t}" for n, t in before.items()))
 	text = llm.ask(prompt, model, timeout=TIMEOUT)[0]  # ponytail: no tools and no system prompt — the files are in the prompt
-	got = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	got = llm.obj(text)
 	sent = got.get("files") or {}
 	new = {n: str(sent.get(n, t)) for n, t in before.items()}  # a name we did not list keeps what it had
 	# ponytail: say when the model answered with names we never sent. Those edits are dropped, and a
