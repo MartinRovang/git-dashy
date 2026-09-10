@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 
@@ -6,7 +7,7 @@ import pytest
 from dashy import config
 from dashy.core import bind, memory, team
 
-from conftest import a_team, claude_out, counts
+from conftest import Result, a_team, claude_out, counts
 
 
 def facts(p):
@@ -780,3 +781,14 @@ def test_folding_onto_a_fact_that_is_already_settled_does_not_write_it_twice(tmp
 	assert memory.merge("a/b", keep, drop) == 0       # keep is no longer a draft, so nothing is folded
 	assert memory.known("a/b") == [keep[2]]           # and the fact is not written a second time
 	assert len(memory.drafts("a/b")) == 1             # the twin is left for a person to judge
+
+
+def test_dream_reads_the_answer_when_the_model_signs_off_after_it(monkeypatch, tmp_path):
+	"""The call site, not just llm.obj: prose past the closing brace must not kill a dream."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("- run make lint\n")
+	out = json.dumps({"result": "Sure:\n" + json.dumps({"summary": "tidied", "files": {}})
+	                  + "\n\nLet me know! {not json}"})
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(out))
+	summary, before, new = memory.dream("sonnet")
+	assert summary == "tidied" and new == before

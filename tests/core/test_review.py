@@ -476,3 +476,12 @@ def test_an_author_check_that_cannot_answer_stays_narrow(monkeypatch, posted):
 	                    lambda cmd, **kw: seen.update(kw.get("env") or {}) or claude_out(verdict="approve", summary="s", body="b"))
 	review(dict(PR), "sonnet")
 	assert seen[github.SCOPE_TEAM] == ""
+
+
+def test_review_reads_the_verdict_when_the_model_signs_off_after_it(monkeypatch, posted):
+	"""The call site, not just llm.obj: a sign-off past the closing brace must not fail the review."""
+	out = json.dumps({"result": "Sure:\n" + json.dumps({"verdict": "approve", "summary": "s", "body": "b"})
+	                  + "\n\nHope that helps! {not json}"})
+	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(out))
+	assert review(dict(PR), "opus") == "✓ approved"
+	assert posted[1][1] == {"event": "APPROVE", "body": "b"}
