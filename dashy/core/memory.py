@@ -8,6 +8,7 @@ it happen — so it takes one keypress from you.
 import difflib
 import hashlib
 import json
+import logging
 import os
 import re
 import tarfile
@@ -600,6 +601,58 @@ def _overlap(a, b):
 		return 0.0
 	x, y = {t for t in _toks(a) if t not in STOP}, {t for t in _toks(b) if t not in STOP}
 	return len(x & y) / len(x | y) if x | y else 0.0
+
+
+JUDGE = """Two review notes about the same codebase are below, in numbered pairs. For each pair, answer
+whether A and B state THE SAME CLAIM — the same thing about the same subject, one of them worded
+differently — or two different claims.
+
+Answer false when they differ in ANY of: which thing is the subject and which is the object; whether
+something happens or does not; how often, how many, or under what condition; or when one is about a
+different file, function or component. Two notes can share almost every word and still be different
+claims — "X owns state, Y mirrors it" and "Y owns state, X mirrors it" are NOT the same claim.
+
+You are not judging whether either note is TRUE, and you are not writing anything down. Two people
+already observed these; the only question is whether they observed the same thing.
+
+Reply with JSON and nothing else: an object keyed by the pair number, each value true or false.
+Example: {{"1": true, "2": false}}
+
+{pairs}
+"""
+JUDGE_TIMEOUT = 300  # seconds; this is a batch of short yes/no calls, not a rewrite of every file
+
+
+def judged(pairs, model):
+	"""The pairs a model agrees are one claim. Returns `pairs` unchanged when it cannot be asked.
+
+	`pairs` is what overlaps() returned. Nothing is written, and the model never supplies text: it
+	answers true or false per numbered pair and anything else it says is discarded.
+
+	ponytail: word overlap FINDS candidates and screens out the contradictions it can name. It cannot
+	decide — two sentences with their subject and object swapped share every token — so above the floor
+	the judgement needs something that reads meaning. This is that, and it is a filter on what a person
+	is shown, not a promotion: merge() still runs on a keypress.
+	ponytail: it is NOT "a model made it a fact". The two observations already happened, in two reviews
+	that did not know about each other; what the model repairs is the matcher's blindness to wording.
+	The gate still counts observations, and it still takes two.
+	ponytail: a failure returns every candidate rather than none. A filter that silently empties the
+	list when the model is unreachable is worse than no filter — you would read "nothing to fold" and
+	believe it. Same reason the review path degrades rather than blocks.
+	"""
+	if not pairs:
+		return []
+	from . import llm
+	body = "\n\n".join(f"{i + 1}.\nA: {a[2]}\nB: {b[2]}" for i, (_r, _ratio, a, b) in enumerate(pairs))
+	try:
+		text = llm.ask(JUDGE.format(pairs=body), model, timeout=JUDGE_TIMEOUT)[0]
+		got = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	except Exception:  # noqa: BLE001 — unreachable, timed out, or not JSON; all mean "not judged"
+		logging.getLogger(__name__).exception("could not judge draft pairs")
+		return list(pairs)
+	# ponytail: only the numbers we sent, and only a literal true. A key we never sent is the model
+	# inventing a pair, and anything that is not True — a string, a null, a number — is not agreement.
+	return [p for i, p in enumerate(pairs) if got.get(str(i + 1)) is True]
 
 
 def _counted_files(sub):

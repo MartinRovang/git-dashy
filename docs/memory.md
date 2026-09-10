@@ -456,6 +456,17 @@ also no longer stopwords in `_overlap`: a stopword list for retrieval drops word
 and this measure asks whether two lines say the same thing, where negation is the word that reverses the
 answer. With them dropped it scored a line against its own opposite at 1.00.
 
+**Word rules find candidates; they never decide.** The scan compares content words as a set, which is
+order-insensitive and therefore finds the rewordings the gate misses — but two sentences with their
+subject and object swapped share *every* token and state opposite things, so no threshold over words is
+safe to fold on at any height. Above the floor the candidates go to the model, one question per pair:
+*are these the same claim?* It is answering about wording, not about truth — the two observations already
+happened, in two reviews that did not know about each other, and what it repairs is the matcher's
+blindness. It writes nothing: the reply is `true`/`false` per numbered pair, a key that was never sent is
+discarded, and a person still presses `y`. If the model cannot be reached, times out, or answers
+something that is not JSON, **every** candidate is kept — a filter that empties the list on failure is
+worse than no filter, because "nothing to fold" would be believed.
+
 **Folding earns a count only across different reviews.** Each observation records which review made it —
 `- (2) [r:7a2c,r:91cf] the fact` — because two drafts at `(1)` are either two reviews the matcher failed to
 fold, which is a promotion it lost, or *one* review that worded a thing twice, which is the

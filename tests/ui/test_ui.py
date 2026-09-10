@@ -2398,3 +2398,35 @@ def test_declining_a_claim_sticks_and_is_never_asked_again(screen, monkeypatch, 
 	screen.getch = _keys(ord("1"), 27, 27)
 	ui.team_setup(screen, st, 0)
 	assert asked == [] and bind.owners() == {}
+
+
+def test_the_scan_lets_the_model_shorten_the_list_before_you_read_it(screen, monkeypatch, st, tmp_path):
+	"""Word overlap finds candidates; it cannot decide. The model answers same-or-not per pair and the
+	person still presses y — this only shortens what they read."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(ui.team, "push_dir", lambda d, m, l="sync": None)
+	monkeypatch.setattr(ui.team, "push", lambda m: "")
+	for line in ("- CI reports skipping for the format-check job",
+	             "- the format-check job in CI reports skipping every run",
+	             "- skipping is what the format-check job in CI reports"):
+		memory.append("a/b", line)
+	assert len(memory.overlaps()) == 3
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: pairs[:1])   # the model keeps one
+	seen = []
+	screen.getch, screen.timeout = _keys_seen(screen, seen, ord("s"), ord("y"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert "1/1" in seen[1]                       # one pair to read, not three
+	assert len(memory.known("a/b")) == 1
+
+
+def test_the_scan_says_so_when_the_model_rejects_them_all(screen, monkeypatch, st, tmp_path):
+	from dashy.core import memory
+	_overlapping(monkeypatch, tmp_path)
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: [])
+	said = []
+	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
+	screen.getch, screen.timeout = _keys(ord("s"), 27), lambda t: None
+	ui.drafts_screen(screen, st, 0)
+	assert any("none were the same fact" in p for p in said)
+	assert memory.known("a/b") == [] and len(memory.drafts("a/b")) == 2

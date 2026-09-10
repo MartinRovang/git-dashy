@@ -4,9 +4,9 @@ import subprocess
 import pytest
 
 from dashy import config
-from dashy.core import bind, memory, team
+from dashy.core import bind, llm, memory, team
 
-from conftest import a_team, claude_out, counts
+from conftest import REAL_JUDGED, a_team, claude_out, counts
 
 
 def facts(p):
@@ -842,3 +842,43 @@ def test_word_rules_cannot_separate_a_role_swap(tmp_path, monkeypatch):
 	b = "the store owns mask state, the viewer mirrors it"
 	assert memory._overlap(a, b) == 1.0 and memory._polarity(a) == memory._polarity(b)
 	assert memory._same(a, b) is False        # the SEQUENCE gate happens to refuse this one
+
+
+def test_the_model_judges_which_candidates_are_one_claim(tmp_path, monkeypatch):
+	"""Word overlap finds candidates and screens out contradictions; it cannot decide, because two
+	sentences with swapped roles share every token. The model answers one question per pair — are these
+	the same claim — and never writes a fact: the two observations already happened, and what it fixes
+	is the matcher's blindness, not what is true."""
+	sent = {}
+	def fake_ask(prompt, model, **kw):
+		sent["prompt"], sent["model"] = prompt, model
+		return '{"1": true, "2": false}', None, 12
+	monkeypatch.setattr(llm, "ask", fake_ask)
+	pairs = [("a/b", 0.7, (1, ("x",), "CI skips the format-check job"), (1, ("y",), "the format-check job is skipped in CI")),
+	         ("a/b", 0.6, (1, ("x",), "the viewer owns mask state"), (1, ("y",), "the store owns mask state"))]
+	kept = REAL_JUDGED(pairs, "opus")
+	assert [p[2][2] for p in kept] == ["CI skips the format-check job"]
+	assert sent["model"] == "opus"
+	# every candidate reaches the model, numbered, and nothing else does
+	assert "1." in sent["prompt"] and "2." in sent["prompt"]
+	assert "the viewer owns mask state" in sent["prompt"]
+
+
+def test_a_model_that_cannot_be_reached_leaves_every_candidate(tmp_path, monkeypatch):
+	"""Degrade to what shipped: the person sees the same list they saw before there was a model pass.
+	A filter that silently drops everything when it fails is worse than no filter."""
+	def boom(prompt, model, **kw):
+		raise OSError("no model here")
+	monkeypatch.setattr(llm, "ask", boom)
+	pairs = [("a/b", 0.7, (1, (), "one"), (1, (), "two"))]
+	assert REAL_JUDGED(pairs, "opus") == pairs
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ("not json at all", None, 12))
+	assert REAL_JUDGED(pairs, "opus") == pairs
+	# an answer that names a pair we never sent is ignored rather than trusted
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw: ('{"9": true}', None, 12))
+	assert REAL_JUDGED(pairs, "opus") == []
+
+
+def test_judging_nothing_asks_nothing(monkeypatch):
+	monkeypatch.setattr(llm, "ask", lambda *a, **kw: pytest.fail("must not call the model for no pairs"))
+	assert REAL_JUDGED([], "opus") == []

@@ -1246,13 +1246,53 @@ def drafts_screen(scr, state, sel):
 			return
 
 
+def _judge(scr, state, sel, pairs):
+	"""Let the model read the candidates while a spinner runs. Esc keeps all of them.
+
+	ponytail: threaded and interruptible, like the dream, because this is a model call on a keypress and
+	a curses screen that stops repainting reads as a hang. Esc keeps every candidate rather than none —
+	the same degradation memory.judged makes when the model cannot be reached at all.
+	"""
+	box = [None]
+	def run():
+		try:
+			box[0] = memory.judged(pairs, state.model)
+		except Exception:  # noqa: BLE001 — judged() already swallows its own; this is the last net
+			logging.getLogger(__name__).exception("judging failed")
+			box[0] = list(pairs)
+	t = threading.Thread(target=run, daemon=True)
+	t.start()
+	# ponytail: an answer that arrives at once must not cost a keypress. The spinner loop calls getch,
+	# so without this a fast model — or a stub — swallowed the next key the person pressed.
+	t.join(0.2)
+	if box[0] is not None:
+		return box[0]
+	t0 = time.time()
+	scr.timeout(120)
+	try:
+		while box[0] is None:
+			draw(scr, state, sel, prompt=" ")
+			spin = art.SPINNER[int((time.time() - t0) * 8) % len(art.SPINNER)]
+			panel(scr, "same fact?", [(f"{spin}  {state.model} is reading {len(pairs)} pair{'' if len(pairs) == 1 else 's'}…",
+			                           f"{int(time.time() - t0)}s")],
+			      "[esc] skip the model and read them all yourself", accent=6)
+			if scr.getch() == 27:
+				return list(pairs)
+	finally:
+		scr.timeout(500)
+	return box[0]
+
+
 def overlap_screen(scr, state, sel):
 	"""Drafts that may be one fact worded twice: y folds them, n says they are different.
 
 	ponytail: the gate compares token SEQUENCES, so the same fact in another word order is never folded
 	and both rows sit one review short of promotion forever — no later review joins them, because it
-	matches one wording or the other. The scan compares content words as a SET, which finds them, and a
-	person decides, because a set overlap is evidence and not a judgement.
+	matches one wording or the other. The scan compares content words as a SET, which finds them.
+	ponytail: then the MODEL reads the candidates, because word overlap cannot decide. "X owns state, Y
+	mirrors it" and the same line with the two swapped share every token and mean opposite things, so no
+	threshold over words is safe to fold on. It answers one question per pair — same claim or not — and
+	what it does is shorten the list a person reads, not write anything. A person still presses y.
 	ponytail: whether folding EARNS a count is memory.merge's to answer, not this screen's — it sums only
 	when the two rows name different reviews. The panel says which case it is, so a keypress is never a
 	promotion you did not know you were making.
@@ -1260,6 +1300,10 @@ def overlap_screen(scr, state, sel):
 	pairs = memory.overlaps()
 	if not pairs:
 		confirm(scr, state, sel, " no two drafts look like one fact — nothing to fold  [any key]")
+		return
+	pairs = _judge(scr, state, sel, pairs)
+	if not pairs:
+		confirm(scr, state, sel, f" {state.model} read them and none were the same fact  [any key]")
 		return
 	i = 0
 	while i < len(pairs):
