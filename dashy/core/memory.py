@@ -995,7 +995,10 @@ def judged(pairs, model):
 	                   for i, (_r, _ratio, a, b) in enumerate(pairs))
 	try:
 		text = llm.ask(JUDGE.format(pairs=body), model, timeout=JUDGE_TIMEOUT)[0]
-		got = json.loads(text[text.index("{"):text.rindex("}") + 1])
+		# ponytail: llm.obj, which main added in #46 — raw_decode stops at the object's end, where
+		# slicing to the last `}` swept up whatever the model wrote after it and died on "Extra data".
+		# The same parse this had, on input a teammate influences, so it inherits the same fix.
+		got = llm.obj(text)
 	except Exception:  # noqa: BLE001 — unreachable, timed out, or not JSON; all mean "not judged"
 		logging.getLogger(__name__).exception("could not judge draft pairs")
 		return None
@@ -1338,7 +1341,7 @@ def dream(model):
 		raise ValueError("no memory to dream about")
 	prompt = DREAM.format(files="\n\n".join(f"### {n}\n{t}" for n, t in before.items()))
 	text = llm.ask(prompt, model, timeout=TIMEOUT)[0]  # ponytail: no tools and no system prompt — the files are in the prompt
-	got = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	got = llm.obj(text)
 	sent = got.get("files") or {}
 	new = {n: str(sent.get(n, t)) for n, t in before.items()}  # a name we did not list keeps what it had
 	# ponytail: say when the model answered with names we never sent. Those edits are dropped, and a

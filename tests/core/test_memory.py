@@ -1308,3 +1308,13 @@ def test_the_launch_prompt_counts_facts_that_have_no_drafts_left(monkeypatch, tm
 	os.makedirs(tmp_path / "mine", exist_ok=True)
 	open(memory.path("a/b"), "w").write("- a settled fact\n- another\n")
 	assert memory.unasked() == [("org-t", 0, 2)]
+
+
+def test_the_judge_reads_the_first_object_not_everything_up_to_the_last_brace(monkeypatch):
+	"""Same parse main fixed in #46, on input a teammate influences: slicing to the last `}` swept up
+	whatever the model wrote after the answer and died on "Extra data" — which returns None, which for
+	cross_check means every candidate goes unjudged."""
+	monkeypatch.setattr(llm, "ask", lambda p, m, **kw:
+	                    ('{"1": true}\n\nHope that helps! {see the docs}', None, 12))
+	pairs = [("a/b", 0.7, (1, ("x",), "one"), (1, ("y",), "two"))]
+	assert REAL_JUDGED(pairs, "opus") == pairs

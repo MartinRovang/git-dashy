@@ -282,7 +282,7 @@ def _verdict(repo, n, model, prev=None):
 	# ponytail: the scope rides the environment, not the prompt or the argv — see github.scoped.
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT,
 	                         env={github.SCOPE: repo, github.SCOPE_TEAM: team} if claude else None)
-	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	verdict = llm.obj(text)
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):
 		verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"

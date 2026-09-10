@@ -22,6 +22,16 @@ BODY_MAX = 8 << 20  # bytes; an answer is a few KB, so anything past this is pad
 READ_TIMEOUT = 60  # s per socket read; the whole-request bound is `timeout`, in read_by
 
 
+def obj(text):
+	"""The first JSON object in a model's answer.
+
+	ponytail: raw_decode STOPS at the object's end. Slicing to the last `}` swept up whatever the model
+	wrote after it — a sign-off, a fenced example — and json.loads died with "Extra data".
+	"""
+	i = text.index("{")
+	return json.JSONDecoder().raw_decode(text, i)[0]
+
+
 def provider(model):
 	"""('claude', name) for a bare name, ('openrouter'|'local', name) for a prefixed one."""
 	name, _, rest = model.partition(":")

@@ -203,3 +203,9 @@ def test_ask_without_an_env_leaves_the_child_environment_alone(monkeypatch):
 	assert seen["env"] is None
 	llm.ask("hi", "sonnet", env={"PRS_API_REPO": "a/b"})
 	assert seen["env"]["PRS_API_REPO"] == "a/b" and "PATH" in seen["env"]
+
+
+def test_obj_ignores_trailing_prose():
+	"""A sign-off after the object used to make json.loads die with "Extra data"."""
+	assert llm.obj('here you go:\n{"verdict": "approve"}\n\nHope that helps! :)') == {"verdict": "approve"}
+	assert llm.obj('{"a": {"b": 1}} then ```{"not": "mine"}```') == {"a": {"b": 1}}
