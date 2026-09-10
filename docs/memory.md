@@ -522,9 +522,18 @@ safe because something reads the candidates — so if the model cannot be asked,
 **nothing**, while the person's scan keeps every candidate. `judged()` returns `None` for "not asked"
 rather than a list, precisely so those two callers can take opposite directions.
 
-It runs at the end of `review()`, where new observations arrive and a background thread already exists,
-and it can never fail the review: the verdict is posted by then, and a promotion missed today happens
-next time.
+It runs in two places. At the end of `review()`, for the repo just reviewed, where new observations
+arrive and a background thread already exists; it can never fail the review, since the verdict is
+posted by then and a promotion missed today happens next time. And on every refresh tick, right after
+`team.pull()`, as `memory.sweep()` — that is the moment a teammate's pooled drafts exist on this
+machine, and it is the only thing that reaches a repo you have stopped reviewing, or a backlog of
+drafts written before pooling existed.
+
+**A sweep is nearly free on a quiet machine.** Pooling is file writes. The model is asked only about
+pairs it has not seen: a verdict of *different* is recorded by pair id in `~/.prs_memory/.settled`, so
+a rejected pair is never bought twice — drafts never expire, so without that a tick would pay for the
+same answer every five minutes. Agreement is not recorded, because an agreed pair leaves the queue by
+promoting and cannot come back. An unreachable model settles nothing and is asked again next tick.
 
 ## 4c. Looking at what is not a fact yet
 

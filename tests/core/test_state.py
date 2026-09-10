@@ -610,3 +610,33 @@ def test_a_failed_tick_waits_a_full_interval_before_retrying(monkeypatch):
 	with pytest.raises(SystemExit):
 		st.loop()
 	assert len(tries) == 1 and st.error == "gh exploded"
+
+
+def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
+	"""The pull is what brings a teammate's pooled drafts down, so the sweep belongs right after it —
+	that is the moment new corroboration exists, and the tick is already a background thread."""
+	from dashy.core import memory
+	order = []
+	monkeypatch.setattr(state.team, "pull", lambda: order.append("pull"))
+	monkeypatch.setattr(memory, "sweep", lambda model: order.append(f"sweep:{model}") or [])
+	monkeypatch.setattr(state.github, "fetch", lambda: [])
+	monkeypatch.setattr(state.log, "mark_rereviews", lambda data: [])
+	monkeypatch.setattr(state.update, "update_available", lambda: "")
+	monkeypatch.setattr(state, "refresh_mirrors", lambda: None)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert order == ["pull", "sweep:opus"]
+
+
+def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
+	"""It calls a model. A refresh that dies because of it would take the PR list down with it."""
+	from dashy.core import memory
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	monkeypatch.setattr(memory, "sweep", lambda model: 1 / 0)
+	monkeypatch.setattr(state.github, "fetch", lambda: [])
+	monkeypatch.setattr(state.log, "mark_rereviews", lambda data: [])
+	monkeypatch.setattr(state.update, "update_available", lambda: "")
+	monkeypatch.setattr(state, "refresh_mirrors", lambda: None)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert st.fetched_at is not None and st.error == ""

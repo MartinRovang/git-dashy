@@ -20,6 +20,7 @@ from . import bind, log, team
 QUEUE = "drafts"  # under your own memory dir: unconfirmed facts, and how often each has recurred
 POOL = "pool"  # under the team's memory: facts each person has accepted, as evidence only, never read
 DRAFT_POOL = "drafts"  # under the team's memory: each person's UNCONFIRMED observations, never read
+SETTLED = ".settled"  # under your own memory: pairs a model has already called different, so we stop asking
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
@@ -585,6 +586,57 @@ def theirs(repo):
 	return out
 
 
+def _pair_key(a, b):
+	"""A stable id for one pair of wordings, whichever order they arrive in."""
+	return hashlib.sha256("\u0000".join(sorted((_norm(a), _norm(b)))).encode()).hexdigest()[:16]
+
+
+def _settled():
+	"""Pair ids a model has already called different. ponytail: never raises — this only saves money."""
+	try:
+		with open(os.path.join(config.MEMORY_DIR, SETTLED)) as f:
+			return {l.strip() for l in f if l.strip()}
+	except OSError:
+		return set()
+
+
+def _settle(keys):
+	"""Remember that these pairs were judged different, so the next sweep does not pay for them again.
+
+	ponytail: drafts never expire, so a rejected pair stays a candidate forever — and a sweep on every
+	refresh would buy the same answer every five minutes. Only NOs are recorded: a yes leaves the queue
+	by promoting, so it cannot come back, and writing yeses would be a cache of decisions rather than a
+	record of questions already asked.
+	ponytail: append-only ids, no text. The file is a cost control, not a store — losing it costs one
+	round of questions, so nothing here is worth an error path.
+	"""
+	if not keys:
+		return
+	try:
+		os.makedirs(config.MEMORY_DIR, exist_ok=True)
+		with open(os.path.join(config.MEMORY_DIR, SETTLED), "a") as f:
+			f.write("".join(k + "\n" for k in sorted(keys)))
+	except OSError:
+		pass
+
+
+def sweep(model):
+	"""Pool every bound repo's drafts and cross-check them all. Returns what became yours.
+
+	ponytail: cross_check ran only inside review(), for the repo just reviewed — so a teammate's
+	corroboration arriving after your last review of a repo waited until you reviewed it again, or
+	forever if you never did. And a backlog of drafts written before pooling existed published nothing
+	at all, which is 140 observations on the operator's machine that a colleague could not see.
+	ponytail: pooling is free and runs every time; the MODEL is only asked about pairs that are new,
+	because _settled remembers the nos. So a sweep on the refresh tick costs nothing on a quiet machine.
+	"""
+	out = []
+	for repo, _p in _counted_files(QUEUE):
+		_pool_drafts(repo)
+		out += cross_check(repo, model)
+	return out
+
+
 def cross_check(repo, model):
 	"""Promote what a teammate independently observed too. Returns the facts that just became yours.
 
@@ -601,15 +653,25 @@ def cross_check(repo, model):
 	mine, other = drafts(repo), theirs(repo)
 	if not mine or not other:
 		return []
+	settled = _settled()
 	pairs = [(repo, r, a, (n, ids, f)) for a in mine for _u, n, ids, f in other
-	         if (r := _overlap(a[2], f)) >= CROSS]
+	         if (r := _overlap(a[2], f)) >= CROSS and _pair_key(a[2], f) not in settled]
+	if not pairs:
+		return []
+	# ponytail: asked ONCE. Calling judged() again to work out what to settle would buy the same answer
+	# a second time, at the same cost, on every sweep.
+	kept = judged(pairs, model)
+	if kept is None:
+		return []  # ponytail: not asked. Promote nothing, settle nothing, ask again next time.
 	promoted = []
-	# ponytail: `or []` — a model that could not be asked promotes NOTHING. The threshold above is loose
-	# precisely because something reads these; without that reader they are not evidence of anything.
-	for _r, _ratio, a, b in judged(pairs, model) or []:
+	for _r, _ratio, a, b in kept:
 		if a[2] in {t for _n, _i, t in drafts(repo)} and len(set(a[1]) | set(b[1])) >= PROMOTE_AT:
 			promote(repo, a[2])
 			promoted.append(a[2])
+	# ponytail: everything the model did not agree on is settled, so the next sweep asks nothing about
+	# it. A pair it DID agree on is not recorded: it left the queue by promoting, so it cannot return.
+	agreed = {_pair_key(a[2], b[2]) for _r, _ratio, a, b in kept}
+	_settle({k for _r, _ratio, a, b in pairs if (k := _pair_key(a[2], b[2])) not in agreed})
 	if promoted:
 		_pool_drafts(repo)  # ponytail: the queue shrank, so the pool must say so
 	return promoted

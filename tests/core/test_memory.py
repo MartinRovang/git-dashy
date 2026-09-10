@@ -1013,3 +1013,60 @@ def test_a_general_draft_pools_to_the_project_it_came_from(monkeypatch, tmp_path
 	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
 	assert os.path.exists(os.path.join(nms, memory.DRAFT_POOL, "tester", "general.md"))
 	assert not os.path.exists(os.path.join(dashy, memory.DRAFT_POOL, "tester", "general.md"))
+
+
+def test_the_sweep_pools_a_backlog_that_no_review_has_touched(monkeypatch, tmp_path):
+	"""Pooling happens when a review appends, so 140 drafts already on disk publish nothing and a
+	teammate has nothing of yours to corroborate against. The sweep is what closes that."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	os.makedirs(os.path.join(tmp_path, "mine", "drafts"))
+	open(memory.queue_path("a/b"), "w").write("- (1) [r:abcd] a fact nobody has pooled\n")
+	open(memory.queue_path("c/d"), "w").write("- (1) [r:abcd] about an unbound repo\n")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: [])
+	memory.sweep("opus")
+	assert os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "a__b.md"))
+	assert not os.path.exists(os.path.join(str(shared), memory.DRAFT_POOL, "tester", "c__d.md"))
+
+
+def test_the_sweep_cross_checks_every_repo_not_just_the_one_reviewed(monkeypatch, tmp_path):
+	"""cross_check ran only inside review(), for the repo just reviewed. A teammate's corroboration
+	arriving after your last review of a repo waited until you reviewed it again — or forever."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: list(pairs))
+	assert memory.sweep("opus") == ["CI skips the format-check job"]
+	assert memory.known("a/b") == ["CI skips the format-check job"]
+
+
+def test_a_pair_the_model_called_different_is_never_asked_twice(monkeypatch, tmp_path):
+	"""Drafts never expire, so a rejected pair is a candidate forever — and a sweep on every tick would
+	pay for the same answer every five minutes. A no is remembered."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	mate = os.path.join(str(shared), memory.DRAFT_POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- (1) [r:abcd] the format-check job is skipped by CI\n")
+	memory.append("a/b", "- CI skips the format-check job")
+	asked = []
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: asked.append(len(pairs)) or [])
+	assert memory.sweep("opus") == [] and asked == [1]
+	assert memory.sweep("opus") == [] and asked == [1]      # the no is remembered, not re-asked
+	# a yes is not recorded as a no: a third observation of the same wording still promotes
+	assert memory.cross_check("a/b", "opus") == []
+
+
+def test_the_sweep_asks_nothing_when_there_is_nothing_new(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- a lonely observation")
+	monkeypatch.setattr(memory, "judged", lambda pairs, model: pytest.fail("no candidates, no model call"))
+	assert memory.sweep("opus") == []

@@ -243,6 +243,16 @@ class State:
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
 		team.pull()  # newest team log + memory before we read them
+		# ponytail: right after the pull, because that is the moment a teammate's pooled drafts exist on
+		# this machine — a corroboration that arrived since the last tick has nowhere else to be noticed.
+		# It also pools a backlog no review has touched, which is every draft written before pooling did.
+		# ponytail: cheap on a quiet machine. Pooling is file writes, and the model is only asked about
+		# pairs that are new, because a "different" verdict is remembered.
+		# ponytail: NEVER takes the refresh down. This calls a model; the PR list must not depend on one.
+		try:
+			memory.sweep(self.model)
+		except Exception:  # noqa: BLE001 — surfaced in the debug log, never on the header
+			LOG.exception("draft sweep failed")
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
 		refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
