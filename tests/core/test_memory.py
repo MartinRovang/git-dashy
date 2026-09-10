@@ -1070,3 +1070,50 @@ def test_the_sweep_asks_nothing_when_there_is_nothing_new(monkeypatch, tmp_path)
 	memory.append("a/b", "- a lonely observation")
 	monkeypatch.setattr(memory, "judged", lambda pairs, model: pytest.fail("no candidates, no model call"))
 	assert memory.sweep("opus") == []
+
+
+def test_a_fact_reaches_the_team_without_anyone_sending_it(monkeypatch, tmp_path):
+	"""The last keypress. A fact that has crossed the gate for a bound repo is the team's — waiting for
+	someone to press P meant a pipeline that promoted automatically and then stopped, and on a real
+	machine that is nine facts none of which a colleague ever saw."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.append("a/b", "- CI skips the DB tests")
+	assert memory._facts(memory.path("a/b", str(shared))) == []   # one observation is not a fact
+	memory.append("a/b", "- CI skips the DB tests")
+	assert memory.known("a/b") == ["CI skips the DB tests"]
+	assert memory._facts(memory.path("a/b", str(shared))) == ["CI skips the DB tests"]
+	# an UNBOUND repo is private in this direction as in every other
+	memory.append("c/d", "- something about private work")
+	memory.append("c/d", "- something about private work")
+	assert not os.path.exists(memory.path("c/d", str(shared)))
+
+
+def test_a_hand_promotion_reaches_the_team_too(monkeypatch, tmp_path):
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["the API owns all validation"]
+
+
+def test_forgetting_a_fact_takes_it_out_of_the_team_too(monkeypatch, tmp_path):
+	"""The withdraw path that has to exist once sharing is automatic. Nobody chose to publish it, so
+	removing it must not need them to know it was published."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	memory.promote("a/b", "and something else true")
+	memory.forget("a/b", "the API owns all validation")
+	assert memory.known("a/b") == ["and something else true"]
+	assert memory._facts(memory.path("a/b", str(shared))) == ["and something else true"]
+
+
+def test_a_general_fact_reaches_the_project_it_belongs_to(monkeypatch, tmp_path):
+	nms, dashy = _two_teams_bound(monkeypatch, tmp_path)
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	memory.append(None, "- releases go out through neogate", about="neomedsys/neo-api")
+	assert memory._facts(os.path.join(nms, "general.md")) == ["releases go out through neogate"]
+	assert not os.path.exists(os.path.join(dashy, "general.md"))

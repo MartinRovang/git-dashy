@@ -424,20 +424,25 @@ def test_share_screen_shares_one_fact_and_forgets_another(screen, monkeypatch, s
 	keys = iter([ord("t"), ord("x"), 27])
 	screen.getch, screen.timeout = getch, lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "share with org-t" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "org-t knows" in seen[0] and "worth sharing" in seen[0] and "1/2" in seen[0]
+	assert "not sent yet" in seen[0]
 	assert (shared / "a__b.md").read_text() == "- worth sharing\n"  # t shared exactly the one on screen
 	assert (mine / "a__b.md").read_text() == "- worth sharing\n"  # sharing copies; x forgot only the other one
 	# t pushes the team repo; x touches both, since forgetting also withdraws the pooled evidence
 	assert [w for w, _ in pushes] == ["team", "mine", "team"]
 
 
-def test_share_screen_says_so_when_there_is_nothing_to_share(screen, monkeypatch, st, tmp_path):
+def test_share_screen_says_which_facts_the_team_already_has(screen, monkeypatch, st, tmp_path):
+	"""Sharing is automatic, so "what has not gone" is almost always nothing and the screen said so —
+	taking its withdraw key with it, which is the key that matters more once nobody chose to publish."""
 	mine, shared = _team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- already theirs\n")
 	(shared / "a__b.md").write_text("- already theirs\n")
 	screen.getch, screen.timeout = _keys(27), lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "nothing of yours the team is missing" in screen.text()
+	out = screen.text()
+	assert "already theirs" in out and "the team has this" in out
+	assert "[x] forget it everywhere" in out and "[t] send it" not in out
 
 
 def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
@@ -445,7 +450,7 @@ def test_share_screen_never_offers_a_draft(screen, monkeypatch, st, tmp_path):
 	ui.memory.append("a/b", "one review said so")  # a draft is not yours to share
 	screen.getch, screen.timeout = _keys(27), lambda t: None
 	ui.share_screen(screen, st, 0)
-	assert "nothing of yours the team is missing" in screen.text()
+	assert "no facts of yours belong to a team yet" in screen.text()
 
 
 def test_share_screen_puts_what_two_people_found_first(screen, monkeypatch, st, tmp_path):

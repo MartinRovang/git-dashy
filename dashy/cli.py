@@ -140,7 +140,7 @@ L local memory dir, C where all team checkouts live, n repo memory, g general me
 1/2 or Tab switch the pane between the review summary and the code it is about,
   in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
 b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
-P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
+P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
 T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, q quit."""
 
 

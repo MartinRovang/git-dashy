@@ -1165,25 +1165,32 @@ def share_screen(scr, state, sel, current=None):
 	i = 0
 	while True:
 		about = (current or {}).get("repository", {}).get("nameWithOwner", "")
-		items = memory.shareable(about)
+		items = memory.in_team(about)
 		if not items:
-			confirm(scr, state, sel, f" nothing of yours the team is missing{'' if team.on() else ' — you are not in a team'}  [any key]")
+			confirm(scr, state, sel, f" no facts of yours belong to a team yet{'' if team.on() else ' — you are not in a team'}  [any key]")
 			return
 		index = memory.pools()  # ponytail: one scan per redraw, not one per fact
-		items.sort(key=lambda rf: -len(memory.backers(index, *rf)))  # what two people found comes first
+		# ponytail: not-sent first, then what two people found. The first key sorts by what you can act on,
+		# the second keeps the old ordering inside each group — corroboration is still the most interesting
+		# thing on the row even when nobody has to decide anything about it.
+		items.sort(key=lambda r: (r[2], -len(memory.backers(index, r[0], r[1]))))
 		i %= len(items)
-		repo, fact = items[i]
+		repo, fact, out_there = items[i]
 		who = memory.backers(index, repo, fact)
-		mark = f"★ {len(who)} people found this" if len(who) > 1 else "yours"
+		# ponytail: says whether the TEAM has it, because nobody pressed anything to send it. "yours"
+		# was the answer when sharing was a decision; now the useful answer is whether it went.
+		mark = ("★ %d people found this" % len(who) if len(who) > 1 else
+		        "the team has this" if out_there else "not sent yet")
 		body = [(l, "") for l in textwrap.wrap(fact, 62)] or [("", "")]
 		draw(scr, state, sel, prompt=" ")
 		# ponytail: the team this FACT goes to, not "the" team. share() routes by the repo's binding, so
 		# with several joined the header has to name the same one the keypress will write to — a title
 		# saying one team while the write lands in another is the silent selection all of this removes.
-		to = bind.of(repo) if repo else (team.joined()[0] if len(team.joined()) == 1 else "")
-		panel(scr, f"share with {to or 'the team'}  ·  {i + 1}/{len(items)}",
+		to = bind.of(repo) if repo else bind.of(about)
+		panel(scr, f"{to or 'the team'} knows  ·  {i + 1}/{len(items)}",
 		      [(repo or "general", mark), ("", ""), *body],
-		      "[t] share   [x] forget   [j/k] move   [esc] close")
+		      ("[x] forget it everywhere   [j/k] move   [esc] close" if out_there else
+		       "[t] send it   [x] forget   [j/k] move   [esc] close"))
 		k = scr.getch()
 		if k in (ord("j"), curses.KEY_DOWN):
 			i += 1

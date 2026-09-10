@@ -678,9 +678,28 @@ def cross_check(repo, model):
 
 
 def _pool(repo, fact, about=""):
-	"""Publish a fact you have accepted, as evidence that you did. Never read into any prompt."""
-	if team_visible(repo, about) and (p := pool_path(whoami(), repo, about)):
+	"""Publish a fact you have accepted, as evidence that you did, AND into the team's memory.
+
+	ponytail: sharing is no longer a keypress. Every fact of yours about a repo bound to a team is the
+	team's — a pipeline that promoted automatically and then waited for someone to press P produced, on
+	a real machine, nine facts a colleague never saw. The operator asked for the wait to go.
+	ponytail: the disclosure rule is unchanged and is the whole safety of this — team_visible, so a repo
+	bound to nothing publishes nothing, and an unbound side project is as private as it ever was. What
+	changed is only WHO decides for a bound repo, and binding is that decision, made once, visibly.
+	ponytail: the evidence line is still written. It is what "★ 2 people found this" reads, and with
+	sharing automatic it is the only record of who arrived at a fact independently.
+	ponytail: what makes this safe to automate is that it is REVERSIBLE and visible — plain markdown in
+	git, attributed, and forget() now takes a fact out of the team as well as out of your own memory.
+	Nobody chose to publish it, so nobody should have to know it was published to remove it.
+	"""
+	if not team_visible(repo, about):
+		return
+	if p := pool_path(whoami(), repo, about):
 		_append_line(p, fact)
+	if base := _dest(repo, about):
+		theirs = _facts(path(repo, base))
+		if not any(_same(fact, t) for t in theirs):
+			_append_line(path(repo, base), fact)
 
 
 def pools():
@@ -707,8 +726,15 @@ def backers(index, repo, fact):
 
 
 def known(repo):
-	"""Every approved fact already covering `repo`, across both sources and both scopes."""
-	return [f for _, base in sources(repo) for scope in (None, repo) for f in _facts(path(scope, base))]
+	"""Every approved fact already covering `repo`, across both sources and both scopes. No duplicates.
+
+	ponytail: deduplicated, because a shared fact is now in TWO files by construction — yours and the
+	team's — so every one of them came back twice. It also folded the older quirk where the general
+	scope was read twice for repo None: `(None, repo)` is one scope there, not two.
+	ponytail: order preserved. Callers read this to show a person what is known; a set would shuffle it.
+	"""
+	return list(dict.fromkeys(f for _, base in sources(repo) for scope in dict.fromkeys((None, repo))
+	                          for f in _facts(path(scope, base))))
 
 
 def already_known(repo, fact):
@@ -938,6 +964,35 @@ def append(repo, text, about=""):
 	return promoted
 
 
+def in_team(about=""):
+	"""[(repo, fact, shared)] — your facts about repos bound to a team, and whether the team has each.
+
+	ponytail: what `P` lists now that sharing is automatic. shareable() answered "what has NOT gone",
+	which after auto-sharing is almost always nothing — so the screen said "nothing of yours the team is
+	missing" and its withdraw key became unreachable, which is the one key that matters more once nobody
+	chose to publish. This lists the same facts and says which are out there.
+	ponytail: unshared rows still exist and are worth the `t` key: facts promoted before this version
+	never went, and a write can fail. Sorting them first puts the actionable ones under the cursor.
+	"""
+	out = []
+	for repo, fact in _mine_for_teams(about):
+		base = _dest(repo, about)
+		out.append((repo, fact, bool(base) and any(_same(fact, t) for t in _facts(path(repo, base)))))
+	return sorted(out, key=lambda r: r[2])
+
+
+def _mine_for_teams(about=""):
+	"""[(repo, fact)] every fact of yours about a repo the team can see."""
+	out = []
+	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
+		if not name.endswith(".md") or name == PROJECT:
+			continue
+		repo = _repo_of(name)
+		if team_visible(repo, about) and _dest(repo, about):
+			out += [(repo, f) for f in _facts(path(repo))]
+	return out
+
+
 def shareable(about=""):
 	"""[(repo, fact)] — facts of yours the team does not have. repo None is the general file.
 
@@ -986,8 +1041,20 @@ def _unpool(repo, fact, about=""):
 
 
 def forget(repo, fact, about=""):
-	"""Drop one fact from your own memory, and withdraw it as evidence."""
+	"""Drop one fact from your own memory, from the team's, and as evidence.
+
+	ponytail: the team's copy too, now that nobody chose to put it there. A withdraw that only reached
+	your own file would leave the published copy behind, and the person removing it would have to know
+	it had been published at all — which is exactly the knowledge automatic sharing takes away.
+	ponytail: EXACT match on the team's side, like the pool. _same would take a neighbouring fact with
+	it, and this is the one file where a wrong removal costs everyone.
+	"""
 	_unpool(repo, fact, about)
+	if base := _dest(repo, about):
+		q = path(repo, base)
+		left = [l.rstrip() for l in _read(q).splitlines() if l.strip() and not _is(_plain(l), fact)]
+		if os.path.exists(q):
+			_rewrite(q, "\n".join(left) + "\n" if left else "")
 	p = path(repo)
 	kept = [l.rstrip() for l in _read(p).splitlines() if l.strip() and not _is(_parse(l)[2], fact)]
 	_rewrite(p, "\n".join(kept) + "\n" if kept else "")

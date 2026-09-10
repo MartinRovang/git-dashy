@@ -121,7 +121,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
-| `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
+| `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |

@@ -501,6 +501,22 @@ Same disclosure rule as the evidence pool — `team_visible`, so a repo bound to
 mirror, so a teammate's guess can never reach a prompt. What is new is that these are *unconfirmed*, so
 what a colleague sees includes wrong guesses about a bound repo.
 
+**Reaching the team is automatic too, as of v1.48.0.** It used to be one keypress, on the argument that
+a wrong fact in your own memory you meet again tomorrow and fix, while a wrong fact in the team's lands
+where nobody who could correct it will see it happen. That argument was written when a promotion meant
+two runs of one model on one machine. A promotion now means two reviews that did not know about each
+other — usually two people — and a model that read both and called them the same claim. The keypress was
+also, measurably, where the pipeline stopped: nine facts on a real machine, none of which a colleague
+ever saw.
+
+What guards it is unchanged and is the whole of the safety: `team_visible`. A repo bound to nothing
+publishes nothing. Binding is the decision, made once, visibly, and undoable.
+
+**So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
+to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
+team has; `x` removes one from your memory, from theirs, and from the evidence pool. The team's copy is
+matched exactly rather than by similarity — it is the one file where a wrong removal costs everyone.
+
 **A general fact belongs to a project, not to you.** `general.md` used to mean "true for me everywhere",
 which is why it had nowhere to go the moment you joined a second team: `_the_one_team()` refuses to guess,
 so eight general facts sat unpoolable and unshareable with nothing on screen saying why. It means "true
