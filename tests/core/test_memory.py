@@ -29,6 +29,12 @@ def in_a_team(monkeypatch, tmp_path, *repos):
 	return mine, shared
 
 
+def _offered(about=""):
+	"""(repo, fact) for what P would list — the live query, so a disclosure test
+	cannot pass against a function nothing calls."""
+	return [(r, f) for r, f, _shared in memory.in_team(about)]
+
+
 def test_a_fact_takes_two_independent_reviews(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	assert memory.append("a/b", "CI skips the DB tests") == []
@@ -70,13 +76,16 @@ def test_reads_merge_both_sources_and_never_drafts(monkeypatch, tmp_path):
 	assert "draft nobody confirmed" not in out
 
 
-def test_shareable_is_what_the_team_lacks_and_share_closes_the_gap(monkeypatch, tmp_path):
+def test_in_team_lists_your_facts_and_says_which_the_team_has(monkeypatch, tmp_path):
+	"""What P reads. It used to answer "what has NOT gone", which after automatic sharing is almost
+	always nothing — so the screen said so and its withdraw key became unreachable."""
 	mine, shared = in_a_team(monkeypatch, tmp_path)
 	(mine / "a__b.md").write_text("- only mine\n- both have this\n")
 	(shared / "a__b.md").write_text("- both have this\n")
-	assert memory.shareable() == [("a/b", "only mine")]
+	assert memory.in_team() == [("a/b", "only mine", False), ("a/b", "both have this", True)]
 	memory.share("a/b", "only mine")
-	assert memory.shareable() == []
+	# ponytail: the sort is stable on `shared`, so once both have gone the file's own order stands
+	assert memory.in_team() == [("a/b", "only mine", True), ("a/b", "both have this", True)]
 	assert facts(shared / "a__b.md") == ["- both have this", "- only mine"]
 
 
@@ -92,7 +101,7 @@ def test_forget_drops_one_fact_of_yours(monkeypatch, tmp_path):
 def test_shareable_is_empty_when_you_are_alone(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
 	(tmp_path / "a__b.md").write_text("- mine alone\n")
-	assert memory.shareable() == []  # nobody to share with
+	assert _offered() == []  # nobody to share with
 
 
 def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_path):
@@ -336,7 +345,7 @@ def test_the_team_brief_is_declared_not_learned(monkeypatch, tmp_path):
 	assert "A thing, for someone" in memory.brief("a/b")[0]
 	assert "A thing" not in memory.read("a/b")          # not a fact, so not in the memory block
 	assert "project.md" not in " ".join(memory.files())  # the dream tidies facts, not a brief
-	assert memory.shareable() == []                     # and it is never offered for sharing
+	assert _offered() == []                     # and it is never offered for sharing
 	memory.append("a/b", "A thing, for someone")
 	memory.append("a/b", "A thing, for someone")
 	assert (shared / "project.md").read_text().startswith("# What we are building")  # untouched
@@ -352,7 +361,7 @@ def test_a_brief_belongs_to_whoever_wrote_it(monkeypatch, tmp_path):
 	mine, shared = in_a_team(monkeypatch, tmp_path, "someone/else")  # a/b stays UNBOUND on purpose
 	(mine / "project.md").write_text("A tool for one person.\n")
 	assert memory.brief("a/b") == ("A tool for one person.", "yours · a/b is bound to no team")
-	assert memory.shareable() == []          # still never offered for sharing
+	assert _offered() == []          # still never offered for sharing
 	assert not any("project" in k for k in memory.files())  # and still not dreamt over
 
 
@@ -997,8 +1006,8 @@ def test_a_general_fact_can_be_shared_once_it_has_a_project(monkeypatch, tmp_pat
 	to. With the context of a repo they belong to a project and can be."""
 	nms, _dashy = _two_teams_bound(monkeypatch, tmp_path)
 	memory.promote(None, "PHI reaches the frontend and must not be logged")
-	assert memory.shareable() == []                                    # no context, no destination
-	assert memory.shareable(about="neomedsys/neo-api") == [(None, "PHI reaches the frontend and must not be logged")]
+	assert _offered() == []                                    # no context, no destination
+	assert _offered(about="neomedsys/neo-api") == [(None, "PHI reaches the frontend and must not be logged")]
 	# share returns the file it wrote, "" when nothing selects a destination
 	assert memory.share(None, "PHI reaches the frontend and must not be logged") == ""
 	assert memory.share(None, "PHI reaches the frontend and must not be logged",

@@ -714,7 +714,12 @@ for one you touch monthly. It should be revisited with real numbers.
 3. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
    Wants either an age cap or inclusion in the dream (as drafts, clearly marked).
    The pool self-prunes on share and forget, so only drafts grow unboundedly.
-4. **`PROMOTE_AT` is unvalidated.** No data yet.
+4. **`PROMOTE_AT` has data now, and same-machine recurrence never fired.** On one real store:
+   140 drafts, every one at `(1)`, one per-repo fact ever confirmed against eight general ones
+   (which recur naturally, being about reviewer discipline). Two causes, since separated: the
+   matcher could not see a rewording, and a dense architectural fact is stated once or not at
+   all. Cross-person corroboration is the answer to the second; the number to watch now is how
+   often two people's reviewers land on one fact.
 5. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
    yours. You can still edit the team checkout directly with git.
 6. **Nothing here has met a real review yet.** The whole path is test-verified

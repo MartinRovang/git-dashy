@@ -967,10 +967,11 @@ def append(repo, text, about=""):
 def in_team(about=""):
 	"""[(repo, fact, shared)] — your facts about repos bound to a team, and whether the team has each.
 
-	ponytail: what `P` lists now that sharing is automatic. shareable() answered "what has NOT gone",
-	which after auto-sharing is almost always nothing — so the screen said "nothing of yours the team is
-	missing" and its withdraw key became unreachable, which is the one key that matters more once nobody
-	chose to publish. This lists the same facts and says which are out there.
+	ponytail: what `P` lists now that sharing is automatic. It replaced shareable(), which answered "what
+	has NOT gone" — after auto-sharing almost always nothing, so the screen said "nothing of yours the
+	team is missing" and its withdraw key became unreachable, which is the one key that matters more once
+	nobody chose to publish. Deleted rather than kept beside this: two queries over the same files, one
+	of them with no caller, is the pair that drifts and the one nobody notices drifting.
 	ponytail: unshared rows still exist and are worth the `t` key: facts promoted before this version
 	never went, and a write can fail. Sorting them first puts the actionable ones under the cursor.
 	"""
@@ -990,27 +991,6 @@ def _mine_for_teams(about=""):
 		repo = _repo_of(name)
 		if team_visible(repo, about) and _dest(repo, about):
 			out += [(repo, f) for f in _facts(path(repo))]
-	return out
-
-
-def shareable(about=""):
-	"""[(repo, fact)] — facts of yours the team does not have. repo None is the general file.
-
-	ponytail: `about` is the repo you are looking at, and it is what makes a GENERAL fact offerable at
-	all once you are in more than one team — it says which project the fact is about. Without it the
-	general file is skipped, silently, which is how eight facts sat unshareable with nothing saying so.
-	"""
-	if not team.joined():
-		return []
-	out = []
-	for name in sorted(os.listdir(config.MEMORY_DIR)) if os.path.isdir(config.MEMORY_DIR) else []:
-		if not name.endswith(".md") or name == PROJECT:
-			continue
-		repo = _repo_of(name)
-		if not team_visible(repo, about) or not (base := _dest(repo, about)):
-			continue  # ponytail: sharing a fact about a repo the team is not bound to is a disclosure
-		theirs = _facts(path(repo, base))
-		out += [(repo, f) for f in _facts(path(repo)) if not any(_same(f, t) for t in theirs)]
 	return out
 
 
