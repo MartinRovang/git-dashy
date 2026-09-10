@@ -797,7 +797,7 @@ def test_a_negated_statement_is_never_the_same_fact(tmp_path, monkeypatch):
 		assert memory._overlap(a, b) == 0.0, f"{a!r} offered as one fact with its opposite"
 	# ponytail: PARITY, not presence. Refusing whenever EITHER side carries a negation would split two
 	# ways of saying the same negative, so the guard must not fire when both sides carry one.
-	assert memory._polarity("the API does not own validation") == memory._polarity("validation is not owned by the API") == 1
+	assert memory._polarity("the API does not own validation") == memory._polarity("validation is not owned by the API")
 	assert memory._same("neo-api holds no DDL", "neo-api holds no DDL") is True
 	assert memory._overlap("the API does not own validation", "validation is not owned by the API") > 0.4
 	# and a line with two negations does not read as agreeing with a line that has one
@@ -812,3 +812,33 @@ def test_two_reviews_that_disagree_never_promote(tmp_path, monkeypatch):
 	assert memory.known("a/b") == []                       # nothing agreed, so nothing is a fact
 	assert sorted(t for _n, _i, t in memory.drafts("a/b")) == [
 		"the drafts store is not pruned on write", "the drafts store is pruned on write"]
+
+
+def test_a_qualifier_that_narrows_a_claim_is_a_different_claim(tmp_path, monkeypatch):
+	"""Negation was the first family found; these are its siblings, each of which folded. "only the API
+	validates input" scored 0.92 against the 0.88 gate and became the same fact as "the API validates
+	input" — a broader claim confirmed by a narrower one, which is how a wrong fact gets certified."""
+	for a, b in (("only the API validates input", "the API validates input"),
+	             ("just the router is stubbed", "the router is stubbed"),
+	             ("solely the viewer writes masks", "the viewer writes masks")):
+		assert memory._same(a, b) is False, f"{a!r} folded onto a broader claim"
+		assert memory._overlap(a, b) == 0.0
+	# synonyms inside one group are still one claim, which is why the counts are per group
+	assert memory._polarity("neo-api holds no DDL") == memory._polarity("neo-api does not hold DDL")
+	assert memory._polarity("only X is checked") == memory._polarity("just X is checked")
+	assert memory._polarity("only X") != memory._polarity("not X")
+	# ponytail: and the boundary is deliberate. A wider list REFINED rather than contradicted, and split
+	# a real rewording — "…reports skipping" against the same line ending "every run" — so universality,
+	# quantity and ordinals are left out. They narrow a claim; they do not reverse it.
+	assert memory._overlap("the format-check job reports skipping",
+	                       "the format-check job reports skipping every run") > 0.5
+
+
+def test_word_rules_cannot_separate_a_role_swap(tmp_path, monkeypatch):
+	"""The limit, asserted so nobody mistakes the filter for a decision procedure: these share every
+	token and state opposite things, so no comparison over words can tell them apart. It is why folding
+	is offered to a person rather than done."""
+	a = "the viewer owns mask state, the store mirrors it"
+	b = "the store owns mask state, the viewer mirrors it"
+	assert memory._overlap(a, b) == 1.0 and memory._polarity(a) == memory._polarity(b)
+	assert memory._same(a, b) is False        # the SEQUENCE gate happens to refuse this one

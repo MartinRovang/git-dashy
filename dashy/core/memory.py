@@ -39,7 +39,17 @@ OVERLAP = 0.30
 STOP = frozenset("a an the is are was were be been being of to in on for with and or but at by from as it "
                  "its this that these those there here their our your my we you they them us if then "
                  "than so such can may might will would should must do does did have has had".split())
-NEG = frozenset("not no never none cannot nothing nor without".split())
+# ponytail: words that CONTRADICT, grouped so synonyms do not split a pair that agrees. Counted per
+# group: "no" against "not" is one negation each and still one fact, while "only X" against "X" differs
+# by an exclusivity and is not. Two groups only, and the boundary is deliberate — a wider list was tried
+# and split "the format-check job reports skipping" from the same line ending "every run", where "every"
+# is emphasis rather than a different claim. Universality, quantity and ordinals REFINE a statement;
+# negation and exclusivity REVERSE or narrow it, and only the second kind can certify a falsehood.
+# ponytail: this closes the cases we can name; it cannot close the class. "the viewer owns mask state,
+# the store mirrors it" and the same sentence with the two nouns swapped share every token and state
+# opposite things. Word rules find candidates. They never decide.
+QUALIFIERS = (frozenset("not no never none cannot nothing nor without".split()),   # negation
+              frozenset("only just solely".split()))                                # exclusivity                                      # ordinal
 
 
 def slug(repo):
@@ -345,14 +355,20 @@ def _toks(s):
 
 
 def _polarity(a):
-	"""How many negations a line carries. ponytail: counted, not merely detected — see _same."""
-	return sum(1 for t in _toks(a) if t in NEG)
+	"""How many of each qualifier group a line carries. Two lines that differ here make different claims.
+
+	ponytail: COUNTS PER GROUP, not a set of the words. A set would split "neo-api holds no DDL" from
+	"neo-api does not hold DDL" — synonyms inside one group — and a bare total would merge "only" with
+	"always". Counting each group separately keeps synonyms together and keeps distinct claims apart.
+	"""
+	toks = _toks(a)
+	return tuple(sum(1 for t in toks if t in group) for group in QUALIFIERS)
 
 
 def _same(a, b):
 	"""Whether two lines state the same fact. The gate every promotion goes through.
 
-	ponytail: OPPOSITES ARE NOT ONE FACT, however alike they read. A single inserted "not" moves a
+	ponytail: A QUALIFIER CHANGES THE CLAIM, however alike two lines read. A single inserted "not" moves a
 	sequence ratio by about 0.08, so "drafts are read into the prompt" and "drafts are never read into
 	the prompt" scored 0.92 against a 0.88 gate — folded, counted as two observations, and whichever
 	wording arrived first was promoted as confirmed. That is a fact no two observations agreed on, which
@@ -361,6 +377,10 @@ def _same(a, b):
 	ponytail: PARITY, not presence. "neo-api holds no DDL" and "neo-api does not hold DDL" are one fact
 	and both carry a negation; refusing whenever either side has one would split them. Two negations on
 	one side and two on the other is the same reading, so the counts are compared rather than the flags.
+	ponytail: and this cannot be finished by adding words. "the viewer owns mask state, the store mirrors
+	it" and the same sentence with the two nouns swapped share every token and state opposite things — no
+	comparison over words can separate them. What follows is a filter that removes the cases we can name,
+	not a decision procedure. Anything past it wants a reader, or a model asked to judge.
 	"""
 	if _polarity(a) != _polarity(b):
 		return False

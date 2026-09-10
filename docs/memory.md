@@ -446,7 +446,7 @@ other. `W` then `s` scans for these. The scan compares **content words as a set*
 dropped), which is order-insensitive and finds them — measured over 165 real drafts, 2991 pairs the gate
 had rejected, 2717 at zero overlap, 12 at or above 0.30. A person decides each pair; nothing folds on its own.
 
-**Opposites are never one fact.** Both measures compare wording, and a single inserted negation moves a
+**Contradictions are never one fact.** Both measures compare wording, and a single inserted negation moves a
 sequence ratio by about 0.08 — so `drafts are read into the prompt` and `drafts are *never* read into the
 prompt` scored 0.92 against the 0.88 gate. Folded, counted as two observations, and whichever wording
 arrived first was promoted as confirmed. Reachable whenever the code changes between two reviews. Both
