@@ -91,8 +91,8 @@ review that lands on the same fact by itself confirms one — the pre-review and
 same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
 than whether the fact recurred.
 
-The key hints sit on one row at the bottom, grouped by what they act on. `?` shows each setting's key
-beside it in the sidebar; every key below also has a button somewhere on the page.
+The key hints sit on one row at the bottom, grouped by what they act on. Every key below also has a
+button somewhere on the page.
 
 ## Keys
 
@@ -112,7 +112,6 @@ beside it in the sidebar; every key below also has a button somewhere on the pag
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
-| `?` | show each setting's key next to it in the sidebar |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |

@@ -286,7 +286,7 @@ export function Pane({
                       style={{ fontSize: 10, color: 'var(--violet)', marginLeft: 'auto', cursor: 'pointer' }}
                       onClick={() => onTab('code')}
                     >
-                      2 in code →
+                      {found.length} in code →
                     </span>
                   ) : null}
                 </div>

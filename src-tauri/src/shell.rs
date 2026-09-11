@@ -42,7 +42,9 @@ pub fn run(state: State, port: u16, token: String) {
             // the page — they all fired before it loaded, so only the first step ever spun.
             let listening = Arc::new(AtomicBool::new(false));
             let flag = listening.clone();
-            handle.listen("gitdashy-splash-ready", move |_| flag.store(true, Ordering::SeqCst));
+            handle.listen("gitdashy-splash-ready", move |_| {
+                flag.store(true, Ordering::SeqCst)
+            });
             // ponytail: off the main thread. Waiting for the fetch in setup means the splash never paints.
             std::thread::spawn(move || {
                 // ponytail: the server and the socket are up before this window exists, so the splash
@@ -67,7 +69,8 @@ pub fn run(state: State, port: u16, token: String) {
                         // larger and re-centered. One window, so the growth happens here, at the
                         // handoff, rather than at startup where it would blow up the splash too.
                         Ok(parsed) => {
-                            let _ = main.set_size(tauri::LogicalSize::new(DASHBOARD_SIZE.0, DASHBOARD_SIZE.1));
+                            let _ =
+                                main.set_size(tauri::LogicalSize::new(DASHBOARD_SIZE.0, DASHBOARD_SIZE.1));
                             let _ = main.center();
                             let _ = main.navigate(parsed);
                         }

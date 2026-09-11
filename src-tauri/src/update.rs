@@ -91,12 +91,48 @@ pub fn newer(tag: &str, current: &str) -> String {
     }
 }
 
-/// The released version newer than ours, or "".
+/// The released version newer than ours THAT THIS MACHINE CAN ACTUALLY DOWNLOAD, or "".
+///
+/// ponytail: a TAG is not a downloadable release. The v1 check could stop at the newest tag because it
+/// updated by `git checkout`, and a tag is all a checkout needs. This one downloads a per-OS asset, and
+/// ci.yml pushes the tag and creates the release FIRST, then builds and uploads the four binaries after:
+/// for the ten-odd minutes that takes, and permanently if one of those jobs fails, ls-remote sees a
+/// version whose asset for this machine is not there. Every running dashboard showed the update pill and
+/// every press 404'd. So the offer is made only once the thing it would download exists.
 pub fn update_available() -> String {
     if config::get().demo {
         return String::new();
     }
-    newer(&latest_release(), config::VERSION)
+    offer(&newer(&latest_release(), config::VERSION), asset_ready)
+}
+
+/// `tag`, once `ready` says its asset is there. "" for no newer tag, so `ready` is never asked then.
+fn offer(tag: &str, ready: impl FnOnce(&str) -> bool) -> String {
+    if tag.is_empty() || !ready(tag) {
+        return String::new();
+    }
+    tag.to_string()
+}
+
+/// Whether this machine's asset for `version` can be fetched. One HEAD, and only on a newer tag, so the
+/// normal tick pays nothing. No token on it, same as the download.
+fn asset_ready(version: &str) -> bool {
+    let url = format!(
+        "https://github.com/{REPO}/releases/download/v{version}/{}",
+        asset_name()
+    );
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(15)))
+            .build(),
+    );
+    match agent.head(&url).call() {
+        Ok(_) => true,
+        Err(e) => {
+            log::warn!("v{version} is tagged but has no {}: {e}", asset_name());
+            false
+        }
+    }
 }
 
 /// The release asset name for this machine: gitdashy-{linux-x86_64,macos-arm64,macos-x86_64,windows-x86_64.exe}.
@@ -226,6 +262,13 @@ mod tests {
         let mut cmd = Command::new("git");
         cmd.args(["ls-remote", "--tags", "--refs", "/nonexistent/no-such-repo"]);
         assert_eq!(run_capture(&mut cmd, 10), None);
+    }
+
+    #[test]
+    fn an_update_is_offered_only_once_its_asset_exists() {
+        assert_eq!(offer("1.10.0", |_| true), "1.10.0");
+        assert_eq!(offer("1.10.0", |_| false), ""); // tagged, binaries not up yet
+        assert_eq!(offer("", |_| panic!("not asked when there is no newer tag")), "");
     }
 
     #[test]

@@ -15,7 +15,7 @@ use log::{debug, error};
 use serde_json::{json, Map, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::state::{in_flight, last_line, now, State};
+use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
     bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update,
@@ -745,14 +745,16 @@ fn repo_of(body: &Body) -> Option<String> {
 
 fn post_review(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
-    if in_flight(&state.lock(), &pr.url) {
-        return Err(Fail::new(409, "already running"));
-    }
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
-    if truthy(body, "self") {
-        state.start_self_review(&pr);
+    // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
+    // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
+    let started = if truthy(body, "self") {
+        state.start_self_review(&pr)
     } else {
-        state.start_review(&pr);
+        state.start_review(&pr)
+    };
+    if !started {
+        return Err(Fail::new(409, "already running"));
     }
     Ok(json!({"ok": true}))
 }

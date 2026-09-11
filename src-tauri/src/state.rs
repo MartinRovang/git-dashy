@@ -337,17 +337,28 @@ impl State {
         self.waker().set(); // refetch so an approved PR drops off the list
     }
 
-    fn begin(&self, url: &str, status: &str) {
+    /// Claim `url` for a review. False when one is already running: the caller must not spawn.
+    ///
+    /// ponytail: the claim IS the check. Testing in_flight() and then calling this took the lock twice,
+    /// and every request has its own thread, so two POSTs for one URL both passed and both spawned:
+    /// two "on its way" comments, two paid model runs, two posted verdicts.
+    fn begin(&self, url: &str, status: &str) -> bool {
         let mut inner = self.lock();
+        if !inner.running.insert(url.to_string()) {
+            return false;
+        }
         inner.reviews.insert(url.to_string(), status.to_string());
-        inner.running.insert(url.to_string());
         inner.since.insert(url.to_string(), now());
+        true
     }
 
-    pub fn start_review(&self, pr: &Pr) {
+    /// False when a review of this PR is already running, and nothing was started.
+    pub fn start_review(&self, pr: &Pr) -> bool {
         let model = config::get().model;
         let (me, pr) = (self.clone(), pr.clone());
-        self.begin(&pr.url, "reviewing...");
+        if !self.begin(&pr.url, "reviewing...") {
+            return false;
+        }
         std::thread::spawn(move || {
             // ponytail: the row spins until this thread writes a status, so a failure review() does not
             // catch would leave it spinning for the rest of the session with nothing to press. Catch here
@@ -367,13 +378,17 @@ impl State {
             info!("review {} -> {}", pr.url, status);
             me.finish(&pr.url, status);
         });
+        true
     }
 
     /// Pre-review one of MY PRs. Posts nothing; the file it writes is found again by its name.
-    pub fn start_self_review(&self, pr: &Pr) {
+    /// False when a review of this PR is already running, and nothing was started.
+    pub fn start_self_review(&self, pr: &Pr) -> bool {
         let model = config::get().model;
         let (me, pr) = (self.clone(), pr.clone());
-        self.begin(&pr.url, "pre-reviewing...");
+        if !self.begin(&pr.url, "pre-reviewing...") {
+            return false;
+        }
         std::thread::spawn(move || {
             // ponytail: same reason as start_review: a dead thread must not wedge the row
             let status = match catch_unwind(AssertUnwindSafe(|| review::self_review(&pr, &model))) {
@@ -390,6 +405,7 @@ impl State {
             info!("self-review {} -> {}", pr.url, status);
             me.finish(&pr.url, status);
         });
+        true
     }
 
     /// Refresh forever on this thread. A tick that fails is reported and retried; it never ends the thread.
@@ -644,7 +660,7 @@ impl State {
             }
         };
         for p in &new {
-            self.start_review(p);
+            self.start_review(p); // already running is not an error here: auto only skips it
         }
         let asks: Vec<&Section> = data
             .iter()

@@ -378,7 +378,10 @@ fn split_blocks(text: &str, begin: &str, end: &str) -> (String, String) {
         else {
             break; // ponytail: an unclosed marker is NOT a block of ours: nothing held, nothing stripped
         };
-        held.extend(lines[at + 1..close].iter().map(|(l, _)| l.to_string()));
+        // ponytail: get(), because one line can hold BOTH markers, making close == at and the range
+        // reversed. Python's lines[at+1:close] yielded [] there; a panic here aborts the app at launch.
+        let inner = lines.get(at + 1..close).unwrap_or(&[]);
+        held.extend(inner.iter().map(|(l, _)| l.to_string()));
         let head = lines[..at].iter().map(|(l, _)| *l).collect::<Vec<_>>().join("\n");
         let tail = lines[close + 1..]
             .iter()
@@ -1902,8 +1905,9 @@ pub fn setup_done(corpus_home: Option<&Path>, project: bool) -> bool {
 }
 
 /// Walk the briefs a corpus needs, writing only what was answered. Returns report lines.
-/// `ask(question, current)` returns the answer, or None to skip; `current` is the first line of what
-/// a blank answer keeps, "" when there is nothing yet.
+/// `ask(question, current)` returns the answer, or None to STOP: nothing is written and the walk ends
+/// where it stood. A blank answer is `Some("")` and keeps what is there; `current` is the first line of
+/// what it keeps, "" when there is nothing yet.
 ///
 /// ponytail: asked rather than templated. A blank template is a template nobody fills in, and an agent
 /// that knows neither who you are nor what the work is for reasons from the code alone, which is the
@@ -1952,7 +1956,14 @@ pub fn setup(
                 .map(|(_, v)| v.as_str())
                 .unwrap_or("");
             let current: String = now.lines().next().unwrap_or("").chars().take(60).collect();
-            let answer = ask(&format!("{k}: {hint}"), &current).filter(|a| !a.is_empty());
+            // ponytail: None is EOF, not a blank answer (a blank one is Some("")). Python raised
+            // SystemExit here, which unwound before any write. Taking it as "keep current" walked on and
+            // rewrote USER.md, stamping it SETUP_MARK, while the caller printed "nothing written".
+            let Some(answer) = ask(&format!("{k}: {hint}"), &current) else {
+                out.push("ok     nothing written: stopped before the first write".into());
+                return out;
+            };
+            let answer = Some(answer).filter(|a| !a.is_empty());
             said.push((k.to_string(), answer.unwrap_or_else(|| now.to_string())));
         }
         // ponytail: the file's own order, then anything new. Appending the unasked ones moved a section
@@ -2067,15 +2078,15 @@ pub fn setup(
     }
     out.push(String::new());
     out.push(format!("Now what the work is for. This brief is {whose}."));
-    let got: Vec<(String, String)> = ASK_PROJECT
-        .iter()
-        .map(|(k, hint)| {
-            (
-                k.to_string(),
-                ask(&format!("{k}: {hint}"), "").unwrap_or_default(),
-            )
-        })
-        .collect();
+    // ponytail: same as above. EOF here must not write the brief, and must not push it to the team.
+    let mut got: Vec<(String, String)> = Vec::new();
+    for (k, hint) in ASK_PROJECT {
+        let Some(a) = ask(&format!("{k}: {hint}"), "") else {
+            out.push("ok     no brief written: stopped before the write".into());
+            return out;
+        };
+        got.push((k.to_string(), a));
+    }
     let text = compose(
         "What is being built",
         "Written by `gitdashy setup`. Reviews of the repos it covers read this.",
@@ -2320,11 +2331,22 @@ mod tests {
         let out = setup(&mut |_q: &str, _c: &str| Some(s("x")), Some(&home), false);
         assert!(out[0].contains("yours already"));
         assert_eq!(fs::read_to_string(&user).unwrap(), "# me\n");
-        // a seeded template is still fillable, and answering nothing writes nothing
+        // a seeded template is still fillable, and stopping at the first question writes nothing
         fs::write(home.join("identity").join("USER.md.template"), "tmpl\n").unwrap();
         fs::write(&user, "tmpl\n").unwrap();
         let out = setup(&mut |_q: &str, _c: &str| None, Some(&home), false);
-        assert!(out[0].contains("nothing answered"), "{out:?}");
+        assert!(out[0].contains("nothing written"), "{out:?}");
+        assert_eq!(fs::read_to_string(&user).unwrap(), "tmpl\n"); // untouched, not rewritten
+        assert!(!setup_done(Some(&home), false));
+        // stopping PART WAY through must not write the answers already given
+        let mut half = vec![Some(s("Nils")), None].into_iter();
+        let out = setup(
+            &mut |_q: &str, _c: &str| half.next().flatten(),
+            Some(&home),
+            false,
+        );
+        assert!(out[0].contains("nothing written"), "{out:?}");
+        assert_eq!(fs::read_to_string(&user).unwrap(), "tmpl\n");
         assert!(!setup_done(Some(&home), false));
         let out = setup(&mut |_q: &str, _c: &str| Some(s("N")), Some(&home), false);
         assert!(out[0].starts_with("wrote"));

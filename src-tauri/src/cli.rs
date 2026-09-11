@@ -289,7 +289,15 @@ fn sync_memory(into: Option<String>, repo: Option<String>, no_pull: bool, genera
 /// Where the shipped corpus lives. ponytail: the binary embeds it (install::CORPUS); this path names
 /// the checkout's copy for the installer that wants a directory, as Python's HERE/corpus did.
 fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("corpus")
+    // ponytail: CARGO_MANIFEST_DIR is the path on the machine that BUILT this binary, so on every
+    // installed copy it names a directory that is not there. An empty path is Src::Embedded, which is
+    // what a shipped binary must use; the checkout's copy still wins when you are standing in it.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("corpus");
+    if dir.is_dir() {
+        dir
+    } else {
+        PathBuf::new()
+    }
 }
 
 /// Wire this machine, after saying what that means and being told to go ahead.
@@ -1067,7 +1075,7 @@ fn teams(
 /// user cannot leave except by killing the session, so the second ask is never made.
 pub fn hook_decision(
     hook: &Value,
-    signals: (u32, u32),
+    signals: impl FnOnce() -> (u32, u32),
     reason: impl Fn(u32, u32) -> String,
 ) -> Option<String> {
     let active = match hook.get("stop_hook_active") {
@@ -1087,7 +1095,8 @@ pub fn hook_decision(
     {
         return None;
     }
-    let said = reason(signals.0, signals.1);
+    let (interrupts, denials) = signals();
+    let said = reason(interrupts, denials);
     if said.is_empty() {
         return None;
     }
@@ -1123,10 +1132,15 @@ fn friction(claude_hook: bool, repo: Option<String>, interrupts: u32, denials: u
         Err(_) => return 0, // ponytail: a hook that cannot parse its own input says nothing, never blocks a stop
     };
     let path = PathBuf::from(hook.get("transcript_path").and_then(Value::as_str).unwrap_or(""));
-    let signals = if path.as_os_str().is_empty() {
-        (0, 0)
-    } else {
-        friction_mod::claude_signals(&path)
+    // ponytail: the signals are read LAZILY, so the stop_hook_active early-out happens first.
+    // claude_signals() parses the whole transcript, which is tens of MB by the end of a long session,
+    // and this runs at every stop of every session: on a second stop the answer was thrown away.
+    let signals = || {
+        if path.as_os_str().is_empty() {
+            (0, 0)
+        } else {
+            friction_mod::claude_signals(&path)
+        }
     };
     let Some(answer) = hook_decision(&hook, signals, friction_mod::reason) else {
         return 0;
@@ -1635,15 +1649,15 @@ mod tests {
             serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": false}"#)
                 .unwrap();
         assert_eq!(
-            hook_decision(&hook, (4, 0), reason).as_deref(),
+            hook_decision(&hook, || (4, 0), reason).as_deref(),
             Some(r#"{"decision": "block", "reason": "you interrupted a lot"}"#)
         );
-        assert_eq!(hook_decision(&hook, (0, 0), reason), None);
+        assert_eq!(hook_decision(&hook, || (0, 0), reason), None);
         let again: Value =
             serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": true}"#).unwrap();
-        assert_eq!(hook_decision(&again, (4, 0), reason), None);
+        assert_eq!(hook_decision(&again, || (4, 0), reason), None);
         let none: Value = serde_json::from_str(r#"{}"#).unwrap();
-        assert_eq!(hook_decision(&none, (4, 0), reason), None);
+        assert_eq!(hook_decision(&none, || (4, 0), reason), None);
     }
 
     #[test]

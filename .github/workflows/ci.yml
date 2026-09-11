@@ -45,7 +45,9 @@ jobs:
       - run: git fetch origin "$GITHUB_BASE_REF" --depth=1
       - name: version in Cargo.toml must differ from base branch
         run: |
-          base=$(git show "origin/$GITHUB_BASE_REF:src-tauri/Cargo.toml" | grep -m1 '^version = ')
+          # a PR that ADDS src-tauri/Cargo.toml has no base version: git show fatals, and under `set -e`
+          # that killed the step before the comparison. No base is not the same as no bump.
+          base=$(git show "origin/$GITHUB_BASE_REF:src-tauri/Cargo.toml" 2>/dev/null | grep -m1 '^version = ' || true)
           head=$(grep -m1 '^version = ' src-tauri/Cargo.toml)
           echo "base: $base"; echo "head: $head"
           [ "$base" != "$head" ] || { echo "::error::Bump version in Cargo.toml before merging"; exit 1; }

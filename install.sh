@@ -23,7 +23,7 @@ case "$(uname -s)-$(uname -m)" in
 	Linux-x86_64) ASSET=gitdashy-linux-x86_64 ;;
 	Darwin-arm64) ASSET=gitdashy-macos-arm64 ;;
 	Darwin-x86_64) ASSET=gitdashy-macos-x86_64 ;;
-	*) printf '  no prebuilt binary for %s-%s; build with: cargo install --git https://github.com/%s\n' "$(uname -s)" "$(uname -m)" "$REPO"; exit 1 ;;
+	*) printf '  no prebuilt binary for %s-%s; build from source: git clone https://github.com/%s && cargo install --path %s/src-tauri\n' "$(uname -s)" "$(uname -m)" "$REPO" "$(basename "$REPO")"; exit 1 ;;
 esac
 
 # ponytail: REF installs a release by tag; default is the newest release.
@@ -37,6 +37,12 @@ TMP="$BIN/.$NAME.download"
 curl -fsSL --retry 3 -o "$TMP" "$URL"
 chmod +x "$TMP"
 mv -f "$TMP" "$BIN/$NAME"
+# ponytail: installs before the rewrite linked $BIN/prs at prs.py, which this release removes. Repoint
+# it, so the old name keeps working instead of dying with "No such file or directory". Only when it is
+# already there: this does not create the legacy name on a fresh machine.
+if [ -e "$BIN/prs" ] || [ -L "$BIN/prs" ]; then
+	ln -sf "$BIN/$NAME" "$BIN/prs"
+fi
 TAG=$("$BIN/$NAME" --version 2>/dev/null | awk '{print $NF}')
 
 row() { printf '    %s%-22s%s %s%s%s\n' "$CYAN" "$1" "$R" "$DIM" "$2" "$R"; }

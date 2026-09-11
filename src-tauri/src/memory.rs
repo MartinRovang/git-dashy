@@ -938,13 +938,16 @@ fn counted_text(items: &[Draft]) -> String {
 /// under DRAFT_POOL is read by sources(), scope_text() or the mirror, exactly as POOL is not.
 /// ponytail: the whole file is rewritten rather than appended per fact, so the pool says what the queue
 /// says. A dropped or promoted draft leaves the pool the same way it leaves the queue.
-fn pool_drafts(repo: Option<&str>, about: &str) -> bool {
+/// ponytail: no return value. It used to answer `true` even when the write failed, and not one caller
+/// read the answer, so the only thing the bool did was look like a check nobody was making. rewrite()
+/// logs a failed write, which is all any caller here could act on anyway.
+fn pool_drafts(repo: Option<&str>, about: &str) {
     let r = repo.unwrap_or("");
     if !team_visible(r, about) || !publishing(&team_for(repo, about)) {
-        return false;
+        return;
     }
     let Some(p) = draft_pool_path(&whoami(), r, about) else {
-        return false;
+        return;
     };
     let items = rows(repo);
     let want = counted_text(&items);
@@ -956,11 +959,11 @@ fn pool_drafts(repo: Option<&str>, about: &str) -> bool {
     // test never matched and every sweep rewrote every pool file, which is exactly the dirty tracked
     // file this check exists to prevent. The one that fails silently is the one worth spelling out.
     if want.trim() == read_file(&p) {
-        return false;
+        return;
     }
     if let Some(d) = p.parent() {
         if std::fs::create_dir_all(d).is_err() {
-            return false; // ponytail: a pool that cannot be written must never fail the review that produced it
+            return; // ponytail: a pool that cannot be written must never fail the review that produced it
         }
     }
     if !items.is_empty() {
@@ -968,7 +971,6 @@ fn pool_drafts(repo: Option<&str>, about: &str) -> bool {
     } else if p.exists() {
         let _ = std::fs::remove_file(&p);
     }
-    true
 }
 
 /// Every OTHER person's unconfirmed observations about `repo`: (user, count, ids, fact).
@@ -1287,15 +1289,17 @@ pub fn team_lines(key: &str) -> HashSet<(Option<String>, String)> {
 /// count teammates' facts.
 pub fn arrivals(key: &str, before: &HashSet<(Option<String>, String)>) -> usize {
     // ponytail: your facts are read once per REPO, not once per candidate line.
-    let gained: Vec<&(Option<String>, String)> = {
+    // ponytail: owned, not leaked. This runs once per tick for the life of the process, so the leak
+    // that bought 'static refs here grew without bound for a borrow the loop below never needed.
+    let gained: Vec<(Option<String>, String)> = {
         let now = team_lines(key);
         let mut g: Vec<(Option<String>, String)> = now.difference(before).cloned().collect();
         g.sort();
-        g.leak().iter().collect()
+        g
     };
     let mut mine: HashMap<Option<String>, Vec<String>> = HashMap::new();
     let mut n = 0;
-    for (r, f) in gained {
+    for (r, f) in &gained {
         let known = mine
             .entry(r.clone())
             .or_insert_with(|| facts(&path(r.as_deref(), None)).iter().map(|m| norm(m)).collect());

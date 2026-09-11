@@ -662,7 +662,12 @@ pub fn info(key: &str) -> Info {
 
 /// Python's str.isprintable: no control, format or separator characters other than a plain space.
 fn printable(c: char) -> bool {
-    !c.is_control() && (c == ' ' || !c.is_whitespace()) && c != '\u{200b}' && c != '\u{feff}'
+    // ponytail: the whole Cf category, not a two-name blocklist. U+200B and U+FEFF were named and
+    // U+202E (right-to-left override) was not, so a team name could reverse the rest of the line it was
+    // rendered in. These names arrive in a clone from someone else's machine.
+    static CF: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let cf = CF.get_or_init(|| regex::Regex::new(r"^\p{Cf}$").expect("static regex"));
+    !c.is_control() && (c == ' ' || !c.is_whitespace()) && !cf.is_match(c.encode_utf8(&mut [0u8; 4]))
 }
 
 /// What the team declares it covers, sorted: ["acme/api", "neomedsys/*"]. [] when nothing.
