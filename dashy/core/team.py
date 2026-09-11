@@ -62,6 +62,60 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+FAILED = "dashy-pull-failed"  # under a checkout's .git: why its last pull did not land, "" when it did
+
+
+def _mark_pull(d, why):
+	"""Record on the CHECKOUT itself why its last pull did not land, or clear it when one does.
+
+	ponytail: on the checkout, not in a module global. `ERROR` is last-writer-wins across every git
+	call in one process, so one team's failure was pinned on every team's line and a later team's
+	success wiped it — and it is a process global, so a session hook rewriting the mirror in a fresh
+	process had ERROR == "" and reported "last pulled just now" over a pull that had failed elsewhere.
+	This is a file beside FETCH_HEAD, which every reader can stat and no other process can contradict.
+	ponytail: never raises. A checkout we cannot write a marker into is not a reason to fail the pull
+	that already happened; the age alone is what the header falls back to.
+	"""
+	p = os.path.join(d, ".git", FAILED)
+	try:
+		if why:
+			with open(p, "w") as f:
+				f.write(why[:200])
+		elif os.path.exists(p):
+			os.remove(p)
+	except OSError:
+		pass
+
+
+def pull_failed(d):
+	"""Why `d`'s last pull did not land, "" when it did or when nothing has tried."""
+	try:
+		with open(os.path.join(d, ".git", FAILED)) as f:
+			return f.read().strip()
+	except OSError:
+		return ""
+
+
+def fetched_at(d):
+	"""When `d` last reached its remote, as a unix time. None when it never has or has none to reach.
+
+	ponytail: FETCH_HEAD, not a commit date. It measures when the team was last reached; a pull that
+	found nothing new still rewrites it. A commit date measures when the team last said something, and
+	reads as weeks stale on a team that is simply quiet.
+	ponytail: a stat, not a subprocess, and the .git DIRECTORY is checked here rather than left to
+	has_remote — which falls back to spawning git when .git is a file. This is read on the mirror path,
+	which a SessionStart hook calls inside a ten-second budget, so "not a subprocess" has to be true of
+	every shape of checkout and not only the common one. A worktree reports no age, which is the same
+	answer a checkout that has never been pulled gives.
+	"""
+	if not os.path.isdir(os.path.join(d, ".git")) or not has_remote(d):
+		return None
+	try:
+		return os.stat(os.path.join(d, ".git", "FETCH_HEAD")).st_mtime
+	except OSError:
+		return None  # cloned and never pulled since, or a .git this cannot stat — no age to report
+
+
 def has_remote(d):
 	"""True when the checkout at `d` has an origin.
 
@@ -214,8 +268,10 @@ def _pull(d, label, *ref):
 	nothing is lost and the next tick starts from a state git can work with.
 	"""
 	if _note(_git("pull", "--rebase", "-q", *ref, cwd=d), label):
+		_mark_pull(d, "")
 		return True
 	_git("rebase", "--abort", cwd=d)  # ponytail: a no-op when none is in progress; ERROR keeps the pull's reason
+	_mark_pull(d, ERROR)
 	return False
 
 

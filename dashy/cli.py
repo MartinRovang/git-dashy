@@ -272,7 +272,12 @@ def init(argv):
 	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
 	if not repo:
 		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name")
-	print("\n".join(install_mod.wire_repo(into, loader, repo)))
+	# ponytail: a REFUSAL exits non-zero. wire_repo reports in prose, so `init` printed "refused — git
+	# would commit …" and exited 0; the session hook reads that status to decide whether to start its
+	# background sync, and took the refusal for a success.
+	print("\n".join(lines := install_mod.wire_repo(into, loader, repo)))
+	if any("refused" in l for l in lines):
+		raise SystemExit(1)
 
 
 def remember(argv):

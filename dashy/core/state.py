@@ -7,7 +7,7 @@ import threading
 import time
 
 from .. import config
-from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
+from . import diff, github, heartbeat, install, log, memory, mirror, review as review_mod, team, update
 
 LOG = logging.getLogger(__name__)
 
@@ -266,7 +266,23 @@ class State:
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
-		team.pull()  # newest team log + memory before we read them
+		# ponytail: FIRST, and before the pull it is a claim about. Anything reading this while the tick
+		# runs should be told a dashboard is here, or it does the pull itself — which is the one thing
+		# the beat exists to prevent. Written every tick rather than once at startup, so a dashboard
+		# that stopped refreshing (suspended, wedged) stops counting as one.
+		heartbeat.beat(self.interval)
+		# ponytail: the tick takes the LOCK too. It used to beat and then pull unguarded, on the
+		# argument that a beat is enough — but a hook sync that claimed the lock while no dashboard was
+		# up keeps pulling after one starts, and the first tick then rebased the same checkout beside
+		# it. "Only one process ever pulls a given checkout" was in the README and was not true.
+		# ponytail: the lock is not waited for. A tick that cannot have it skips the pull and takes the
+		# next one — the alternative is blocking the refresh thread, and everything after this line
+		# (the PR list, the mirrors) has nothing to do with the team's git.
+		if heartbeat.claim():
+			try:
+				team.pull()  # newest team log + memory before we read them
+			finally:
+				heartbeat.unclaim()
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
@@ -276,6 +292,11 @@ class State:
 		newer = update.update_available()
 		if self.fetched_at is None:
 			time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
+		# ponytail: beaten AGAIN, at the end. The first beat is stamped at tick start and alive() allows
+		# one interval plus GRACE, but the next tick starts at fetched_at + interval — so any tick
+		# longer than GRACE made a healthy dashboard read as dead until it came round again, and one
+		# slow team pull is enough at a 120s git timeout. So the tick beats again at the end.
+		heartbeat.beat(self.interval)
 		with self.lock:
 			self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 			self.error = ""  # this tick landed, so whatever the last one said is over
