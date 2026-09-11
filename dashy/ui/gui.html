@@ -1223,6 +1223,10 @@ document.addEventListener("click", async (e) => {
   if ((x = t("[data-fold]"))) { state.folded[x.dataset.fold] = !state.folded[x.dataset.fold]; return render(); }
   if ((x = t("[data-uid]"))) return select(x.dataset.uid);
 });
+document.addEventListener("dblclick", (e) => {
+  const row = e.target.closest("[data-uid]");
+  if (row) { state.sel = row.dataset.uid; state.pane = true; render(); pull(); }
+});
 document.addEventListener("change", (e) => {
   const set = e.target.closest("[data-set]");
   if (!set) return;
