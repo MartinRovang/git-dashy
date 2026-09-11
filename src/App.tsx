@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { errorText, post } from './api'
+import { api, errorText, post } from './api'
 import { flat, selected, visible } from './board'
+import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
+import { confirm, editor, ModalHost, picker, prompt, viewer } from './modals'
+import { CONTEXTS, every, tone } from './tokens'
+import type { Code, Detail, Row } from './types'
 import { useNow, useStatePoll } from './usePoll'
-import { every } from './tokens'
 
-/** The dashboard: one poll of /api/state, and the queue derived from it. */
+/** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
 export default function App() {
   const [data, reload] = useStatePoll(2000)
   const now = useNow(1000)
@@ -17,17 +20,86 @@ export default function App() {
   const [folded, setFolded] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
+  const [pane, setPane] = useState(true)
+  const [detail, setDetail] = useState<Detail | null>(null)
+  const [diff, setDiff] = useState<Code | null>(null)
+  const [tab, setTab] = useState<'summary' | 'code'>('summary')
+  const [scope, setScope] = useState('marks')
+  const [context, setContext] = useState<number>(CONTEXTS[0])
+  const [at, setAt] = useState(0)
 
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
   const running = data?.running || 0
+  const current = selected(rows, sel)
+  const selUid = current?.uid || ''
+  const url = current?.url || ''
 
   useEffect(() => {
     if (!flash) return
     const id = setTimeout(() => setFlash(''), 4000)
     return () => clearTimeout(id)
   }, [flash])
+
+  // The pane's detail: a second request per PR, re-asked while the server reports pending.
+  useEffect(() => {
+    if (!pane || !url) return
+    let alive = true
+    let timer: number | undefined
+    const run = async () => {
+      try {
+        const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
+        if (!r.ok) return
+        const got = (await r.json()) as Detail
+        if (!alive) return
+        setDetail(got)
+        if (got.pending) timer = window.setTimeout(run, 1500)
+      } catch {
+        /* the next tick retries */
+      }
+    }
+    setDetail((d) => (d && d.url === url ? d : null))
+    run()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [pane, url])
+
+  // The diff, only while the code tab is open.
+  useEffect(() => {
+    if (!pane || !url || tab !== 'code') return
+    let alive = true
+    let timer: number | undefined
+    const run = async () => {
+      try {
+        const r = await api(`/api/diff?url=${encodeURIComponent(url)}&scope=${scope}&context=${context}`)
+        if (!r.ok) return
+        const got = (await r.json()) as Code
+        if (!alive) return
+        setDiff(got)
+        if (got.pending) timer = window.setTimeout(run, 1500)
+      } catch {
+        /* the next tick retries */
+      }
+    }
+    setDiff((d) => (d && d.url === url ? d : null))
+    run()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [pane, url, tab, scope, context])
+
+  useEffect(() => {
+    setAt(0)
+  }, [url])
+
+  useEffect(() => {
+    if (tab !== 'code' || !diff || diff.pending) return
+    document.getElementById('jumpto')?.scrollIntoView({ block: 'center' })
+  }, [diff, at, tab])
 
   async function call(path: string, body?: unknown, okMsg?: string) {
     const r = await post(path, body)
@@ -56,17 +128,114 @@ export default function App() {
     await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
   }
 
-  const onAuto = () => {
+  async function onAuto() {
     const on = !data?.auto
-    const includeExisting = on && data?.pending ? confirm(`Auto on. Also review the ${data.pending} already listed?`) : false
+    let includeExisting = false
+    if (on && data?.pending) includeExisting = await confirm(`Auto on. Also review the ${data.pending} already listed?`)
     call('/api/auto', { on, includeExisting }, on ? 'auto on' : 'auto off')
   }
+
   const onJump = (name: string) => {
     document.querySelector(`[data-fold="${name}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 
-  const current = selected(rows, sel)
-  const selUid = current?.uid || ''
+  async function review(p: Row) {
+    if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (tone(p.review)) {
+      setFlash(`#${p.number} is already reviewed`)
+      return
+    }
+    if (!(await confirm(`Claude review + post verdict on #${p.number}?`))) return
+    await call('/api/review', { url: p.url }, `review started on #${p.number}`)
+  }
+
+  async function preReview(p: Row) {
+    if (!p || p.busy || p.section !== 'MINE') return
+    if (p.pre && !p.pre.moved) {
+      const r = await api(`/api/prereview?url=${encodeURIComponent(p.url)}`)
+      if (!r.ok) {
+        setFlash(`✗ ${await errorText(r)}`)
+        return
+      }
+      const got = await r.json()
+      viewer(`pre-review of #${p.number}`, got.text, got.path)
+      return
+    }
+    if (!(await confirm(p.pre ? `#${p.number} changed since its pre-review. Run again?` : `Pre-review #${p.number}? Nothing is posted.`))) return
+    await call('/api/review', { url: p.url, self: true }, `pre-review started on #${p.number}`)
+  }
+
+  async function copyUrl(p: Row) {
+    if (!p) return
+    const out = await call('/api/copy', { url: p.url })
+    if (out) setFlash(out.tool === 'terminal' ? `sent ${p.url} to the terminal — if nothing landed, install wl-clipboard or xclip` : `✓ copied ${p.url} (via ${out.tool})`)
+  }
+
+  async function addReviewer(p: Row) {
+    if (!p || p.section !== 'MINE') return
+    setFlash(`fetching collaborators of ${p.repo}…`)
+    const r = await api(`/api/collaborators?url=${encodeURIComponent(p.url)}`)
+    const logins: string[] = r.ok ? (await r.json()).logins : []
+    const ask = async (login: string) => {
+      if (login) await call('/api/request-review', { url: p.url, login }, `✓ asked ${login} to review #${p.number}`)
+    }
+    if (!logins.length) return ask(await prompt(`reviewer login for #${p.number}:`))
+    picker(`request review · ${p.repo}#${p.number}`, logins, '', String, ask)
+  }
+
+  async function bindScreen(p: Row) {
+    const r = await api(`/api/bind?repo=${encodeURIComponent(p.repo)}`)
+    if (!r.ok) {
+      setFlash(`✗ ${await errorText(r)}`)
+      return
+    }
+    const b = await r.json()
+    if (!b.teams.length) {
+      setFlash('no teams yet — T starts one')
+      return
+    }
+    const now = (b.kind === 'owner' ? `${b.to}  · via ${b.owner}/*` : b.to) || 'no team'
+    picker(`bind ${b.repo} — now: ${now}`, b.teams.map((t: { key: string }) => t.key), b.to, (k: string) => b.teams.find((t: { key: string }) => t.key === k)?.name || k, (key: string) =>
+      void call('/api/bind', { op: 'bind', repo: p.repo, team: key }, `bound to ${key}`),
+    )
+  }
+
+  async function memoryEditor(repo: string) {
+    const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}`)
+    if (!r.ok) {
+      setFlash(`✗ ${await errorText(r)}`)
+      return
+    }
+    const got = await r.json()
+    editor(
+      `memory · ${got.repo}`,
+      got.text,
+      async (text) => {
+        const out = await call('/api/memory', { repo: got.repo, text }, `${got.repo} memory saved`)
+        if (out?.error) setFlash(`saved, but not pushed: ${out.error}`)
+      },
+      got.path,
+    )
+  }
+
+  function doAct(name: string) {
+    if (!current) return
+    const p = current
+    const fns: Record<string, () => void> = {
+      review: () => void review(p),
+      pre: () => void preReview(p),
+      openpre: () => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'),
+      view: () => {
+        if (detail?.review) viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
+      },
+      open: () => void call('/api/open', { url: p.url }),
+      copy: () => void copyUrl(p),
+      reviewer: () => void addReviewer(p),
+      bind: () => void bindScreen(p),
+      memory: () => void memoryEditor(p.repo),
+    }
+    fns[name]?.()
+  }
 
   return (
     <div id="app">
@@ -82,22 +251,41 @@ export default function App() {
       <div className="body">
         <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} />
         <div className="main">
-          <div className="queue">
-            <Queue
-              data={data}
-              secs={secs}
-              now={now}
-              sel={selUid}
-              query={query}
-              onQuery={setQuery}
-              failing={failing}
-              onFailing={() => setFailing((v) => !v)}
-              folded={folded}
-              expanded={expanded}
-              onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
-              onExpand={(url) => setExpanded((e) => ({ ...e, [url]: !e[url] }))}
-              onSelect={setSel}
-            />
+          <div className="body">
+            <div className="queue">
+              <Queue
+                data={data}
+                secs={secs}
+                now={now}
+                sel={selUid}
+                query={query}
+                onQuery={setQuery}
+                failing={failing}
+                onFailing={() => setFailing((v) => !v)}
+                folded={folded}
+                expanded={expanded}
+                onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
+                onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
+                onSelect={setSel}
+              />
+            </div>
+            {pane ? (
+              <Pane
+                p={current}
+                detail={detail}
+                diff={diff}
+                tab={tab}
+                scope={scope}
+                context={context}
+                at={at}
+                onTab={setTab}
+                onScope={setScope}
+                onContext={() => setContext((c) => CONTEXTS[(CONTEXTS.indexOf(c) + 1) % CONTEXTS.length])}
+                onAt={setAt}
+                onAct={doAct}
+                onClose={() => setPane(false)}
+              />
+            ) : null}
           </div>
           <div className="hints">
             <div className="g">
@@ -122,6 +310,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      <ModalHost />
     </div>
   )
 }

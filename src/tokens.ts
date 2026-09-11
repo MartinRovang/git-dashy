@@ -53,6 +53,8 @@ export function age(iso: string): string {
 export const every = (v: number) => (v < 60 || v % 60 ? `${v}s` : `${v / 60}m`)
 export const elapsed = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`)
 
+export const when = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+
 // ponytail: the status strings are already human — classify by their leading glyph, do not re-derive.
 export function tone(s: string | undefined | null): string {
   if (!s) return ''
