@@ -1262,7 +1262,7 @@ def drop(repo, fact):
 	"""Forget one unconfirmed observation, from whichever queue holds it. True when one went.
 
 	ponytail: the prune the drafts store never had. Everything else self-limits — facts are dropped by
-	`forget`, the pool is withdrawn on share or forget — and drafts only ever grew.
+	`forget`, which withdraws the pool line with them — and drafts only ever grew.
 	"""
 	gone = False
 	for p in (queue_path(repo), self_path(repo)):

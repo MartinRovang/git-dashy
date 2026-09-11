@@ -36,13 +36,21 @@ it costs other people.** A wrong fact in your own memory, you meet again tomorro
 and correct. A wrong fact in the team's memory lands in contexts where nobody who
 could correct it will ever see it happen.
 
-The keypresses that asymmetry buys are **binding** and **consent**, taken once
-per repo and once per team, and what makes the promotion itself safe to automate
-is unchanged: nothing crosses into the team's file until two reviews that did not
-know about each other landed on the same claim, folded by the token matcher of
-§3.1. A model is asked about near-misses that matcher *refused*, across two
-people, and never about a fold it already made (§4b-3). Nothing decides a single
-fact by hand — §3.3.
+Two things follow from it, and they are different rules:
+
+- **Automatic promotion needs two independent observations.** Nothing crosses on
+  its own until two reviews that did not know about each other landed on the same
+  claim, folded by the token matcher of §3.1. A model is asked about near-misses
+  that matcher *refused*, across two people, and never about a fold it already
+  made (§4b-3).
+- **A hand promotion needs one keypress and no recurrence.** `W` → `t` accepts a
+  single draft, and `P` → `t` sends a fact the team has not got. Both publish
+  immediately, for a repo that is bound and a team that consented. A person who
+  has read the line is the second opinion the counter was standing in for, which
+  is why they are allowed to skip it — but the count is not what gates them.
+
+`binding` and `consent` are the keypresses the asymmetry buys, taken once per repo
+and once per team. Nothing prompts about an individual fact — §3.3.
 
 ---
 
@@ -83,10 +91,10 @@ fact by hand — §3.3.
   ┌─ pool (evidence, not memory) ─────────────────────────────────┐
   │  <team>/memory/pool/<user>/<owner>__<repo>.md                 │
   │  Facts each person has ALREADY accepted for themselves.       │
-  │  Written on promotion, withdrawn on forget — and then only   │
-  │  when no other contributor is still behind the fact.          │
+  │  Written on promotion, withdrawn on forget — always yours,    │
+  │  while the TEAM's copy stays if another backer remains.       │
   │  NEVER read into any prompt, any mirror, or the dream.        │
-  │  Only for repos already named in the shared review log.       │
+  │  Only for repos bound to the team (§4b-3), never the rest.    │
   └───────────────────────────────────────────────────────────────┘
 
   ┌─ project brief (declared, not learned) ───────────────────────┐
@@ -176,13 +184,12 @@ keypress. Two things gate it, and neither is a decision made per fact:
 
 This was one keypress until v1.43.0, and the argument for the keypress was that a
 wrong fact in the team's memory lands where nobody who could correct it will see
-it happen. What changed is who the two observations come from: they used to be two
-runs of one model on one machine, and cross-person pooling made them two people's
-reviews that did not know about each other. The gate itself is the same one §3.2
-describes. §4b-3 has the full account, including what a *no* to consent does and
-where a model does get asked.
+it happen. The two observations now come from two people's independent reviews;
+they used to be two runs of one model on one machine. The gate itself is the one
+§3.2 describes. §4b-3 has the full account, including what a *no* to consent does
+and where a model gets asked.
 
-**`P` is the view and the way back out, not the gate.** It lists your facts for
+**`P` shows your facts and lets you take one back.** It lists your facts for
 repos bound to a team, one at a time (a fact is a sentence you must read to judge;
 a column of clipped sentences is how something wrong gets waved through), and says
 of each whether the team has it:
@@ -192,8 +199,7 @@ of each whether the team has it:
   already has does not offer it.
 - `x` forgets it from your memory, from the evidence pool, and from the team's
   file unless a teammate independently reached it too — §4b-3 says why theirs
-  survives yours. Nobody chose to publish it, so nobody has to know it was
-  published to take it back.
+  survives yours.
 - `esc` leaves it alone.
 
 Facts two people have independently accepted sort first and are marked
@@ -206,21 +212,21 @@ people's pools agreeing is four independent reviews across two humans. Raw draft
 never leave your machine; what is shared is what you already accepted, and even
 that is evidence only, never context.
 
-**When does a fact pool?** On promotion, and only if the team can already see the
-repo's name — which means one of:
+**When does a fact pool?** On promotion, and only if the repo belongs to the team
+— `team_visible()`, which asks the binding:
 
 | condition | why it is enough |
 |---|---|
-| the repo is in the shared review log | reviewing there already showed them the name |
-| the team holds memory for the repo | they demonstrably work on it |
-| the fact is general | it names no repo, so there is nothing to disclose |
+| the repo is bound to a joined team | you said so, visibly, and can take it back |
+| the fact is general | it names no repo, so its project decides (§4b-3) |
 
-The log is what bootstraps this: it fills as you review, where "repos the team
-already has memory for" would have started empty and never filled. Team memory is
-there as well, or a repo you only ever *code* in could never corroborate, despite
-being just as plainly theirs. And a repo that is neither — a side project you
-reviewed privately — never has its name leave your machine, though its facts still
-become yours.
+It used to be the shared review log, or the team already holding memory for the
+repo. Both were true enough while the log was the only rule, and both were wrong
+for the job: reviewing one PR put a repo in the log for ever, with no undo, and
+the thing being decided is whether facts about your private work reach other
+people. Joining still seeds bindings from the log, so nothing stopped working; the
+decision became one you can see and reverse. A repo bound to nothing never has its
+name leave your machine, though its facts still become yours.
 
 ### 3.4 Discard
 
@@ -228,7 +234,7 @@ become yours.
 |---|---|
 | a proposed fact | on arrival, if already known in `mine` or `team` |
 | a draft | when it reaches the threshold (it becomes a fact) |
-| a fact of yours | `x` in the `P` screen — from yours, the team's and the pool |
+| a fact of yours | `x` in the `P` screen — yours and your pool line always; the team's only when no other backer remains |
 | any fact, merged or dropped | `Z` dream, after you approve the diff |
 | a mirror file | when its source is empty or gone — a mirror never outlives its source |
 
@@ -757,7 +763,7 @@ for one you touch monthly. It should be revisited with real numbers.
 ## 8. Open issues
 
 1. **A departed teammate's evidence keeps counting.** Pool entries are pruned by
-   their owner, on share or forget. gitdashy has no concept of membership — a team
+   their owner, on forget. gitdashy has no concept of membership — a team
    is a git repo, not a member list — so it cannot know someone left, and their
    backing lingers. Their observation was real when they made it, so this may be
    correct; it is at least undecided.

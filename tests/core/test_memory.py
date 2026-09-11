@@ -1114,6 +1114,10 @@ def test_a_fact_reaches_the_team_without_anyone_sending_it(monkeypatch, tmp_path
 
 
 def test_a_hand_promotion_reaches_the_team_too(monkeypatch, tmp_path):
+	"""The oracle for SPEC §1's second rule: a hand promotion publishes on one keypress and no
+	recurrence. `W` -> `t` is this call, with no draft count behind it, and the team's file has the
+	fact when it returns. The spec said for a while that nothing crossed without two observations,
+	which was true of the automatic path and false of this one."""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	shared = a_team(monkeypatch, tmp_path, "org-t")
 	bind.bind("a/b", "org-t")
@@ -1132,6 +1136,23 @@ def test_forgetting_a_fact_takes_it_out_of_the_team_too(monkeypatch, tmp_path):
 	memory.forget("a/b", "the API owns all validation")
 	assert memory.known("a/b") == ["and something else true"]
 	assert memory._facts(memory.path("a/b", str(shared))) == ["and something else true"]
+
+
+def test_forget_always_withdraws_your_own_evidence_even_when_a_teammate_backs_it(monkeypatch, tmp_path):
+	"""The condition belongs to the TEAM's copy, not to the pool, and the spec had it on the wrong
+	store. backers() decides whether the team keeps the fact; your pool line goes either way, because
+	it is a record of what YOU accepted and you have just stopped accepting it."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	bind.bind("a/b", "org-t")
+	me = memory.whoami()
+	memory.promote("a/b", "the API owns all validation")
+	mate = os.path.join(str(shared), memory.POOL, "martin")
+	os.makedirs(mate)
+	open(os.path.join(mate, "a__b.md"), "w").write("- the API owns all validation\n")
+	memory.forget("a/b", "the API owns all validation")
+	assert memory._facts(memory.pool_path(me, "a/b")) == []          # yours goes, backer or no backer
+	assert memory._facts(memory.path("a/b", str(shared))) == ["the API owns all validation"]
 
 
 def test_a_general_fact_reaches_the_project_it_belongs_to(monkeypatch, tmp_path):
