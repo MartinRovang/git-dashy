@@ -9,6 +9,8 @@ from dashy import config
 from dashy.core import github, log, review as review_mod, state, team, update
 from dashy.core.state import State
 
+from conftest import a_team
+
 from conftest import PR, fake_http, gql_nodes
 
 
@@ -636,7 +638,6 @@ def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path
 	"""team.pull() fast-forwards silently and the mirror is overwritten in place, so a fact arriving —
 	the moment to read it — passed with nothing on screen saying one had."""
 	from dashy.core import memory
-	from conftest import a_team
 	mem = a_team(monkeypatch, tmp_path)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	(mem / "a__b.md").write_text("- uses tabs\n")
@@ -665,20 +666,37 @@ def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path
 	assert st.arrived == {"org-t": 2}
 
 
-def test_a_promotion_landing_mid_sweep_is_not_reported_as_a_teammates(monkeypatch, tmp_path):
-	"""The sweep writes YOUR promoted facts into the team's files. Counted blind, one of those inside
-	the pull window reads as something a colleague sent you, which is the one thing the badge is for."""
-	from conftest import a_team
+def test_your_own_promoted_fact_is_never_reported_as_a_teammates(monkeypatch, tmp_path):
+	"""_pool() writes YOUR promoted facts into the team's files, and it is reached from three places —
+	the sweep, a review finishing on its own thread, and promote() on a keypress. A guard on
+	State.sweeping closed one door of the three; asking whether the line is already yours closes all of
+	them, because that is the real question. This drives the door the guard did not cover."""
 	mem = a_team(monkeypatch, tmp_path)
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	(mem / "a__b.md").write_text("- uses tabs\n")
+	os.makedirs(str(tmp_path / "mem"), exist_ok=True)
+	open(str(tmp_path / "mem" / "a__b.md"), "w").write("- one this machine promoted\n")
 	_quiet_tick(monkeypatch)
+	# ponytail: no sweep in flight — this is promote() on the UI thread, or a review's own thread.
 	monkeypatch.setattr(state.team, "pull",
 	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- one this machine promoted\n"))
 	st = state.State(60, "opus")
-	st.sweeping.set()  # an earlier tick's sweep is still running
+	st.sweeping.clear()
 	st.tick(time.time())
 	assert st.arrived == {}
+
+
+def test_a_teammates_fact_survives_a_deletion_in_the_same_pull(monkeypatch, tmp_path):
+	"""The count was net, so a teammate who dropped three lines and added two produced no news at all.
+	Lines rather than totals: an arrival is an arrival whatever else moved."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- one\n- two\n- three\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull", lambda: (mem / "a__b.md").write_text("- four\n"))
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert st.arrived == {"org-t": 1}
 
 
 def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):

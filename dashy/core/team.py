@@ -776,11 +776,6 @@ bug, anything git already records.
 
 This is the half of the loop that is usually missing. Reviews propose; without a second observer
 most drafts sit at one observation for ever, and nothing reaches the team.
-
-## Never edit a mirror
-
-`.agent/team/*.md` are read-only copies. Edits there are lost at the next sync and fork the truth
-in the meantime. Change the source: `n` / `g` in the dashboard, or the team checkout itself.
 """
 
 PROJECT_TEMPLATE = """# What we are building

@@ -348,6 +348,11 @@ joining a team seeds one; a team that already exists gets it by adding `memory/a
 checkout. What belongs in it is whatever the team needs its members' sessions to do — above all,
 `gitdashy remember`, since a session that files nothing leaves every draft at one observation.
 
+**It is the one thing a team sends that you are asked about.** Facts, a brief and other people's drafts
+are evidence a reader weighs; this is imperative text handed to an agent that holds tools, and whoever
+can push to the team's repo writes it. So the dashboard shows it and asks before any session reads it,
+and asks again if the wording changes. Until then it stays out of the mirror and nothing else changes.
+
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its
 reviews are told, which facts they read, and whether a fact about it may be shared. **A repo bound to

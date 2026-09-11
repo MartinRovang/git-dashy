@@ -39,6 +39,7 @@ SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
 AGENTS = "agents.md"  # the team's instruction to its members' agent SESSIONS. People write it; reviews never see it.
+AGENTS_OK = ".agents-ok"  # under your own memory: "<key> <sha>" per team whose agents.md you have read
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
 # ponytail: what overlaps() offers a person, and a DIFFERENT measure from the gate above on purpose.
@@ -364,12 +365,10 @@ def session_context(repo, general_mirrored=False):
 	text, source = brief(repo)
 	if text:
 		parts.append(f"### brief — {source}\n{text}")
-	if not general_mirrored:
-		for label, base in sources(repo)[1:]:
-			if t := _read(path(None, base)):
-				parts.append(f"### {label} — true of every repo it covers\n{t}")
 	for label, base in sources(repo)[1:]:
-		if t := _read(os.path.join(base, AGENTS)):
+		if not general_mirrored and (t := _read(path(None, base))):
+			parts.append(f"### {label} — true of every repo it covers\n{t}")
+		if t := agents_text(bind.of(repo), base):
 			parts.append(f"### how {label} works — for this session, not for a review\n{t}")
 	return "\n\n".join(parts)
 
@@ -822,17 +821,97 @@ def unasked():
 	return out
 
 
-def team_facts(key):
-	"""How many facts the team `key` holds right now, across every repo and the general file.
+def team_lines(key):
+	"""{(repo, fact)} the team `key` holds right now. repo is None for the general file.
 
-	ponytail: the BRIEF and the agents file are not facts and are excluded — they are prose people
-	wrote, they change for reasons that have nothing to do with what reviews learned, and an edit to
-	either would otherwise read as "the team learned 30 things".
+	ponytail: the LINES, not how many. A count cannot tell a fact arriving from one leaving, so a
+	teammate who deleted three and added two produced no news at all — and, worse, it cannot tell whose
+	a new line is. `_pool()` writes YOUR promoted facts into these same files, from a review thread and
+	from `promote()` on a keypress, so a count taken around the pull reported your own fact as a
+	colleague's. That is the one thing the badge exists not to say.
+	ponytail: the BRIEF and the agents file are excluded — they are prose people wrote, they change for
+	reasons that have nothing to do with what reviews learned, and an edit to either would otherwise
+	read as "the team learned 30 things".
 	"""
 	base = bind.team_dir(key)
-	names = sorted(os.listdir(base)) if base and os.path.isdir(base) else []
-	return sum(len(_facts(os.path.join(base, n)))
-	           for n in names if n.endswith(".md") and n not in (PROJECT, AGENTS))
+	names = sorted(os.listdir(base)) if os.path.isdir(base) else []
+	return {(_repo_of(n), f) for n in names if n.endswith(".md") and n not in (PROJECT, AGENTS)
+	        for f in _facts(os.path.join(base, n))}
+
+
+def arrivals(key, before):
+	"""How many facts the team gained since the `before` snapshot that were not already yours.
+
+	ponytail: yours are excluded rather than the sweep being skipped. The sweep is not the only writer
+	into the team's files — a review promoting on its own thread and `promote()` on a keypress both
+	reach `_pool()` — so a guard on `State.sweeping` closed one door of three. Asking "was this already
+	mine" closes all of them, because that is the actual question: a line that matches a fact you hold
+	arrived because you published it.
+	"""
+	return len([(r, f) for r, f in team_lines(key) - before
+	            if not any(_is(f, m) for m in _facts(path(r)))])
+
+
+def _agents_seen():
+	"""{key: sha} for every team whose agents.md you have read and accepted, at the wording you read."""
+	out = {}
+	try:
+		with open(os.path.join(config.MEMORY_DIR, AGENTS_OK)) as f:
+			for line in f:
+				if len(bits := line.split()) == 2:
+					out[bits[0]] = bits[1]
+	except OSError:
+		pass
+	return out
+
+
+def _agents_sha(base):
+	""""" when the team has no agents.md, else a digest of exactly the bytes a session would be given."""
+	t = _read(os.path.join(base, AGENTS))
+	return hashlib.sha256(t.encode()).hexdigest()[:16] if t.strip() else ""
+
+
+def agents_text(key, base):
+	"""The team's instruction to its sessions, but only at a wording you have accepted. "" otherwise.
+
+	ponytail: a KEYPRESS, because this one costs other people. Everything else the team sends is
+	evidence a reader weighs — facts, a brief, someone's drafts. This is imperative text handed to an
+	agent that holds tools, pulled automatically on the refresh tick, and it reaches every teammate at
+	once. Anyone with push access to the team's memory repo would otherwise steer everybody's sessions
+	with nothing on any screen. The house rule is the one in SPEC §1: automate where being wrong costs
+	only you, ask where it costs other people.
+	ponytail: keyed on the CONTENT, not on the team. Accepting a team once and then trusting whatever
+	that file says next month is the same hole with a slower fuse — the acknowledgement is of the
+	wording that was read, so an edit asks again.
+	"""
+	return _read(os.path.join(base, AGENTS)) if key and _agents_seen().get(key) == _agents_sha(base) else ""
+
+
+def unacked_agents():
+	"""[(key, text)] per joined team whose agents.md is new or has changed since you read it."""
+	seen = _agents_seen()
+	out = []
+	for key in team.joined():
+		base = bind.team_dir(key)
+		# ponytail: the stored value is compared with its refusal marker stripped. A no records "!<sha>",
+		# and asking again on every launch for a file somebody has already declined is how a prompt
+		# teaches people to dismiss it. The file has to CHANGE before it is offered again.
+		if (sha := _agents_sha(base)) and seen.get(key, "").lstrip("!") != sha:
+			out.append((key, _read(os.path.join(base, AGENTS))))
+	return out
+
+
+def allow_agents(key, base, yes=True):
+	"""Record that you have read this team's agents.md at its current wording. A no records the
+	refusal, so the file has to CHANGE before it is offered again rather than at every launch."""
+	seen = _agents_seen()
+	seen[key] = _agents_sha(base) if yes else "!" + _agents_sha(base)
+	try:
+		os.makedirs(config.MEMORY_DIR, exist_ok=True)
+		with open(os.path.join(config.MEMORY_DIR, AGENTS_OK), "w") as f:
+			f.write("".join(f"{k} {v}\n" for k, v in sorted(seen.items())))
+	except OSError:
+		pass  # ponytail: unrecorded is unaccepted — the block stays out rather than going in unasked
 
 
 def _fact_repos():

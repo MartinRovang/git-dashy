@@ -1001,7 +1001,7 @@ def test_a_team_we_are_not_in_reads_no_team_json_from_the_working_directory(monk
 	assert team.covers("gone") == []
 
 
-def test_starting_and_joining_a_team_seed_the_instruction_its_sessions_read(monkeypatch, tmp_path):
+def test_starting_a_team_seeds_the_instruction_its_sessions_read(monkeypatch, tmp_path):
 	"""The rule that makes a session file drafts lived in one machine's own corpus, so a colleague's
 	sessions never filed any. A team is the right scope: it is the team that wants the drafts, and it
 	is already a git repo everyone pulls."""
@@ -1012,3 +1012,23 @@ def test_starting_and_joining_a_team_seed_the_instruction_its_sessions_read(monk
 	open(p, "w").write("ours, not yours\n")
 	team.seed_agents(p)
 	assert open(p).read() == "ours, not yours\n"  # never overwritten; a team that edited it owns it
+
+
+def test_joining_a_team_seeds_it_too(monkeypatch, tmp_path):
+	"""The leg the README promises and the one most people take: the first person starts the team, and
+	everyone after them joins it. Named for both and only the start half was driven."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	origin = tmp_path / "origin"
+	origin.mkdir()
+	git("init", "-q", "--bare", ".", cwd=str(origin))
+	seed = tmp_path / "seed"
+	seed.mkdir()
+	git("init", "-q", ".", cwd=str(seed))
+	(seed / "README.md").write_text("a team\n")
+	git("add", "-A", cwd=str(seed))
+	git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init", cwd=str(seed))
+	git("remote", "add", "origin", str(origin), cwd=str(seed))
+	git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=str(seed))
+	assert team.setup(str(origin), "Org J") == ""
+	key = team.joined()[0]
+	assert "gitdashy remember" in open(os.path.join(team.dir_of(key), "memory", "agents.md")).read()

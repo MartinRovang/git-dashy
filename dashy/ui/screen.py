@@ -1643,6 +1643,33 @@ def ask_publishing(scr, state, sel):
 		state.wake.set()
 
 
+def ask_agents(scr, state, sel):
+	"""Ask before a team's instruction to your agent sessions is put in front of them.
+
+	ponytail: this one is not about what LEAVES the machine, it is about what arrives and then acts.
+	Everything else a team sends is evidence a reader weighs — facts, a brief, someone's drafts.
+	agents.md is imperative text handed to an agent holding tools, pulled on the refresh tick, reaching
+	every member at once; anyone with push access to the team's repo would otherwise steer everybody's
+	sessions with nothing on any screen. SPEC §1 is the rule: ask where being wrong costs other people.
+	ponytail: the first lines are SHOWN. "Do you trust this file" is not a question anybody can answer;
+	"here is what it will tell your sessions to do" is. Clipped to the panel, and the whole file is one
+	`less` away in the team checkout.
+	ponytail: asked again when the WORDING changes, not once per team. Accepting a team and then taking
+	whatever that file says next month is the same hole with a slower fuse.
+	"""
+	for key, text in memory.unacked_agents():
+		it = team.info(key)["name"][:28]
+		body = [(l[:60], "") for l in text.splitlines() if l.strip()][:8]
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"{it}  ({key})  ·  what it tells your sessions to do",
+		      [("this team's agents.md reaches every session in its repos.", ""),
+		       ("it is written by whoever can push to the team's repo.", ""), ("", ""), *body, ("", ""),
+		       ("reviews never see it. nothing else on this machine changes.", "")],
+		      "[y] let sessions read it   [n] keep it out", accent=6)
+		memory.allow_agents(key, bind.team_dir(key), scr.getch() == ord("y"))
+		state.wake.set()
+
+
 def bind_screen(scr, state, sel, pr):
 	"""Bind the selected PR's repo to a team, its whole owner, or nothing. `b` on any row.
 
@@ -1812,8 +1839,7 @@ def team_setup(scr, state, sel, current=None):
 	# ponytail: cleared on the way IN, not on the way out. The badge means "something landed that you
 	# have not looked at", and this screen is where you look — leaving it up while the panel is open
 	# would have it still there after the only act that answers it.
-	arrived = dict(state.arrived)
-	state.arrived.clear()
+	arrived = state.take_arrivals()
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
@@ -1970,6 +1996,7 @@ def main(scr, interval, auto, model):
 		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
 	ask_publishing(scr, state, 0)
+	ask_agents(scr, state, 0)
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()

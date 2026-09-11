@@ -267,21 +267,32 @@ class State:
 				self.sweeping.clear()
 		threading.Thread(target=run, daemon=True).start()
 
+	def take_arrivals(self):
+		"""What has arrived since anyone last looked, and forget it. Under the lock: the refresh thread
+		adds to this while the UI reads it, and an arrival landing between a copy and a clear was
+		silently dropped."""
+		with self.lock:
+			got = dict(self.arrived)
+			self.arrived.clear()
+			return got
+
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
-		# ponytail: counted around the pull, and skipped while a sweep from an earlier tick is still
-		# running. A sweep promotes YOUR facts into the team's files, and a promotion landing inside this
-		# window would be reported as something a teammate sent you. Undercounting during a sweep is the
-		# safe direction of being wrong: a badge that does not appear is a missed nudge, and a badge that
-		# claims a teammate found what you found yourself is a lie about the one thing it exists to say.
-		was = {} if self.sweeping.is_set() else {k: memory.team_facts(k) for k in team.joined()}
+		# ponytail: the LINES around the pull, and arrivals that are already yours do not count. A sweep
+		# promotes your own facts into the team's files, and so does a review finishing on its own
+		# thread and `promote()` on a keypress — all three reach _pool(). A guard on `self.sweeping`
+		# closed one door of the three; asking whether a line is already yours closes all of them,
+		# because that is the real question. A badge claiming a teammate found what you found yourself
+		# is a lie about the one thing it exists to say.
+		was = {k: memory.team_lines(k) for k in team.joined()}
 		team.pull()  # newest team log + memory before we read them
 		for key, before in was.items():
-			if (grew := memory.team_facts(key) - before) > 0:
-				self.arrived[key] = self.arrived.get(key, 0) + grew
+			if n := memory.arrivals(key, before):
+				with self.lock:  # ponytail: read on the UI thread, like every other cross-thread field
+					self.arrived[key] = self.arrived.get(key, 0) + n
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
