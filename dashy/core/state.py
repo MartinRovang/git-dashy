@@ -49,6 +49,12 @@ def refresh_mirrors():
 class State:
 	def __init__(self, interval=config.INTERVAL, model=config.DEFAULT_MODEL):
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
+		# ponytail: since this dashboard STARTED, and not persisted. The question a badge answers is
+		# "has anything landed that I have not looked at", and a dashboard the operator leaves running
+		# for days is exactly where that goes unnoticed. Persisting it would mean a file that changes
+		# whenever the team does, inside a directory push_dir commits, for a number that is only ever
+		# read by the header of the process that wrote it.
+		self.arrived = {}
 		self.model = model
 		self.sweeping = threading.Event()  # ponytail: one draft sweep at a time; see start_sweep
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
@@ -261,6 +267,15 @@ class State:
 				self.sweeping.clear()
 		threading.Thread(target=run, daemon=True).start()
 
+	def take_arrivals(self):
+		"""What has arrived since anyone last looked, and forget it. Under the lock: the refresh thread
+		adds to this while the UI reads it, and an arrival landing between a copy and a clear was
+		silently dropped."""
+		with self.lock:
+			got = dict(self.arrived)
+			self.arrived.clear()
+			return got
+
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
 		LOG.debug("tick")
@@ -271,6 +286,19 @@ class State:
 		# the beat exists to prevent. Written every tick rather than once at startup, so a dashboard
 		# that stopped refreshing (suspended, wedged) stops counting as one.
 		heartbeat.beat(self.interval)
+		# ponytail: the lines around the pull, with your own facts excluded — see memory.arrivals.
+		# ponytail: the snapshot must not be able to cost the pull. _read raises on anything but a
+		# missing file, so one unreadable team file — a permission, a half-written merge, a non-UTF-8
+		# byte a teammate pushed — would have skipped that tick's git entirely, for the sake of a
+		# badge. The badge is the optional half.
+		# ponytail: ValueError as well as OSError. UnicodeDecodeError is a ValueError, so `except
+		# OSError` alone missed exactly the case a team-pushed file produces, which is the one that
+		# arrives without anybody on this machine doing anything.
+		try:
+			was = {k: memory.team_lines(k) for k in team.joined()}
+		except (OSError, ValueError):
+			LOG.exception("could not count team facts before the pull")
+			was = {}
 		# ponytail: the tick takes the LOCK too. It used to beat and then pull unguarded, on the
 		# argument that a beat is enough — but a hook sync that claimed the lock while no dashboard was
 		# up keeps pulling after one starts, and the first tick then rebased the same checkout beside
@@ -283,6 +311,18 @@ class State:
 				team.pull()  # newest team log + memory before we read them
 			finally:
 				heartbeat.unclaim()
+		# ponytail: guarded on THIS side too. The pull is what brings in the unreadable file, so the
+		# read after it is the likelier of the two to meet one — and everything below here, the sweep,
+		# the mirrors and the PR list, was riding on a counter.
+		try:
+			grew = {key: n for key, before in was.items() if (n := memory.arrivals(key, before))}
+		except (OSError, ValueError):
+			LOG.exception("could not count what the pull brought")
+			grew = {}
+		if grew:
+			with self.lock:  # ponytail: read on the UI thread, like every other cross-thread field
+				for key, n in grew.items():
+					self.arrived[key] = self.arrived.get(key, 0) + n
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after

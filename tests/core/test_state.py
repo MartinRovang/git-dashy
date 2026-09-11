@@ -9,7 +9,7 @@ from dashy import config
 from dashy.core import github, heartbeat, log, memory, review as review_mod, state, team, update
 from dashy.core.state import State
 
-from conftest import PR, fake_http, gql_nodes
+from conftest import PR, a_team, fake_http, gql_nodes
 
 
 def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
@@ -756,3 +756,115 @@ def test_a_dashboard_still_reads_as_alive_after_a_tick_longer_than_the_grace(mon
 	st.tick(now[0])
 	now[0] = st.fetched_at + st.interval - 1  # the moment the next tick is about to start
 	assert heartbeat.alive(), "a dashboard about to tick must not read as stopped"
+
+
+def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path):
+	"""team.pull() fast-forwards silently and the mirror is overwritten in place, so a fact arriving —
+	the moment to read it — passed with nothing on screen saying one had."""
+	from dashy.core import memory
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- and no DDL here\n- nor there\n"))
+	st = state.State(60, "opus")
+
+	def one_tick():
+		# ponytail: cleared first, or start_sweep skips and this is not the tick the test means to run.
+		st.sweeping.clear()
+		st.tick(time.time())
+
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+	one_tick()
+	assert st.arrived == {"org-t": 2}  # a second pull that brought nothing does not inflate it
+	# ponytail: a teammate rewriting the brief is not the team learning thirty things. project.md and
+	# agents.md are prose people wrote and change for reasons that have nothing to do with the reviews.
+	monkeypatch.setattr(state.team, "pull", lambda: [
+		(mem / "project.md").write_text("# What we are building\n\nA longer brief than before.\n"),
+		(mem / "agents.md").write_text("# For agent sessions\n\nFile what you work out.\n")])
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+
+
+def test_your_own_promoted_fact_is_never_reported_as_a_teammates(monkeypatch, tmp_path):
+	"""_pool() writes YOUR promoted facts into the team's files, and it is reached from three places —
+	the sweep, a review finishing on its own thread, and promote() on a keypress. A guard on
+	State.sweeping closed one door of the three; asking whether the line is already yours closes all of
+	them, because that is the real question. This drives the door the guard did not cover."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	os.makedirs(str(tmp_path / "mem"), exist_ok=True)
+	open(str(tmp_path / "mem" / "a__b.md"), "w").write("- one this machine promoted\n")
+	_quiet_tick(monkeypatch)
+	# ponytail: no sweep in flight — this is promote() on the UI thread, or a review's own thread.
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- one this machine promoted\n"))
+	st = state.State(60, "opus")
+	st.sweeping.clear()
+	st.tick(time.time())
+	assert st.arrived == {}
+
+
+def test_a_teammates_fact_survives_a_deletion_in_the_same_pull(monkeypatch, tmp_path):
+	"""The count was net, so a teammate who dropped three lines and added two produced no news at all.
+	Lines rather than totals: an arrival is an arrival whatever else moved."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- one\n- two\n- three\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull", lambda: (mem / "a__b.md").write_text("- four\n"))
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert st.arrived == {"org-t": 1}
+
+
+def test_an_unreadable_team_file_does_not_cost_the_tick_its_pull(monkeypatch, tmp_path):
+    """The badge's snapshot runs before team.pull(), and _read raises on anything but a missing file.
+    So one unreadable team file — a permission, a half-written merge — skipped that tick's git
+    entirely, for the sake of a counter. The counter is the optional half."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    a_team(monkeypatch, tmp_path)
+    pulls = []
+    monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(state.memory, "team_lines", lambda k: (_ for _ in ()).throw(OSError("EACCES")))
+    _quiet_tick(monkeypatch)
+    st = state.State(60, "opus")
+    st.tick(time.time())
+    assert pulls == [1] and st.arrived == {}
+
+
+def test_a_team_file_nobody_can_decode_does_not_stop_the_pr_list(monkeypatch, tmp_path):
+	"""A real non-UTF-8 file, not a stub that raises OSError. UnicodeDecodeError is a ValueError, so
+	`except OSError` missed exactly the case a team-pushed file produces — and the tick raises before
+	team.pull(), so the PR list froze on every refresh for the sake of a badge."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe not text\n")
+	fetched, pulls = [], []
+	monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert pulls == [1] and fetched == [1]
+
+
+def test_a_bad_team_file_arriving_with_the_pull_does_not_stop_the_rest(monkeypatch, tmp_path):
+	"""The pull is what brings the file in, so the read AFTER it is the likelier of the two to meet
+	one — and the sweep, the mirrors and the fetch all sit below it."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	fetched = []
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe\n"))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert fetched == [1] and st.arrived == {}

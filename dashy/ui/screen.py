@@ -132,8 +132,12 @@ def header_groups(state):
 	reviewer = [row("m"), row("d"), row("e"), row("x"), row("h")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
+	# ponytail: "+N" beside the team that sent them. A fact arriving is the moment to read it, and
+	# until now nothing said one had: team.pull() fast-forwards silently and the mirror is overwritten
+	# in place. Named per team rather than totalled, because which team learned it is half the news.
+	names = ", ".join(s + (f" +{n}" if (n := state.arrived.get(s)) else "") for s in team.joined())
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
-	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (names or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	# ponytail: session_notes() are standing, not errors — what a session on this machine is NOT being
 	# told. A missing `remember` instruction starved the whole pipeline for weeks with nothing saying so.
@@ -1112,14 +1116,41 @@ def asking(scr, text, keep=" [y/n]"):
 	return text + keep if len(text) + len(keep) <= room else text[:room - len(keep) - 1] + "…" + keep
 
 
+def yes_no(scr):
+	"""Block until the reader actually answers y or n. The ONE place that reads a consent keypress.
+
+	ponytail: main() leaves the screen on a 500 ms timeout so the header can animate, so a bare
+	getch() returns -1 half a second after a panel is drawn. Every consent prompt written without
+	timeout(-1) therefore answered ITSELF — `-1 == ord("y")` is False, so it recorded a refusal, on
+	every launch, with the panel visible for long enough to look like it had been shown and dismissed.
+	ask_publishing shipped with exactly that defect and nobody saw it, because its test stubs
+	scr.timeout and hands getch a key immediately.
+	ponytail: it LOOPS. Any other key — a stray arrow, a resize, the -1 from a timeout that something
+	else set — must not count as an answer to a question that is recorded and not asked again.
+	"""
+	scr.timeout(-1)
+	try:
+		while (k := scr.getch()) not in (ord("y"), ord("n"), ord("Y"), ord("N")):
+			pass
+		return k in (ord("y"), ord("Y"))
+	finally:
+		scr.timeout(500)
+
+
 def confirm(scr, state, sel, question):
-	"""Draw the question in the footer and block for y/n."""
+	"""Draw the question in the footer and block for one key; True only for y.
+
+	ponytail: ONE read, not yes_no's loop. Most callers here end in "[any key]" and ignore the answer,
+	so a loop that insists on y or n would hang them. A consent panel, where a stray key must not
+	count as an answer, uses yes_no instead.
+	"""
 	draw(scr, state, sel, prompt=question)
 	scr.refresh()
 	scr.timeout(-1)
-	yes = scr.getch() == ord("y")
-	scr.timeout(500)
-	return yes
+	try:
+		return scr.getch() == ord("y")
+	finally:
+		scr.timeout(500)
 
 
 def edit_memory(scr, state, sel, repo):
@@ -1635,7 +1666,38 @@ def ask_publishing(scr, state, sel):
 		       ("· what your reviews proposed, unconfirmed", ""), ("", ""),
 		       (f"{waiting} waiting to go" if waiting else "nothing waiting yet", "")],
 		      "[y] yes   [n] not this team", accent=6)
-		memory.allow_publishing(key, scr.getch() == ord("y"))
+		memory.allow_publishing(key, yes_no(scr))
+		state.wake.set()
+
+
+def ask_agents(scr, state, sel):
+	"""Ask before a team's instruction to your agent sessions is put in front of them.
+
+	ponytail: memory.agents_text says why this file is the one that gets a keypress. The screen's own
+	job is to make the question answerable: it shows what the file will tell your sessions to do, and
+	says how much of it is off the panel, because "do you trust this file" is not a question.
+	ponytail: the COUNT of what is not shown, and where to read it. Eight lines fit; the shipped
+	template alone is about fifteen, so a payload appended at the end was never on screen when y was
+	pressed — which makes the panel's argument for itself false exactly when it matters.
+	ponytail: CUT LINES count too, not only dropped ones. Each line is clipped at 60 characters, so a
+	single 300-character agents.md showed its first 60, reported nothing missing, and had 240
+	characters accepted unseen — the same hole as the dropped tail, through the other axis.
+	"""
+	for key, text in memory.unacked_agents():
+		it, lines = team.info(key)["name"][:28], [l for l in text.splitlines() if l.strip()]
+		body = [(l[:60], "") for l in lines[:8]]
+		more = len(lines) - len(body) + sum(1 for l in lines[:8] if len(l) > 60)
+		draw(scr, state, sel, prompt=" ")
+		panel(scr, f"{it}  ({key})  ·  what it tells your sessions to do",
+		      [("this team's agents.md reaches every session in its repos.", ""),
+		       ("it is written by whoever can push to the team's repo.", ""), ("", ""), *body,
+		       (f"… {more} line{'' if more == 1 else 's'} hidden or cut — read the file first:"
+		        if more else "", ""),
+		       (knowledge.tilde(os.path.join(bind.team_dir(key), memory.AGENTS)) if more else "", ""),
+		       ("", ""), ("reviews never see it. nothing else on this machine changes.", "")],
+		      "[y] let sessions read it   [n] keep it out", accent=6)
+		# ponytail: the text that was SHOWN is what gets recorded, not the file re-read afterwards.
+		memory.allow_agents(key, text, yes_no(scr))
 		state.wake.set()
 
 
@@ -1805,10 +1867,16 @@ def team_setup(scr, state, sel, current=None):
 	ceremony for the common case. With several, the list offers only numbers, so nothing here ever
 	asks "which team?" as typed text.
 	"""
+	# ponytail: cleared on the way IN, not on the way out. The badge means "something landed that you
+	# have not looked at", and this screen is where you look — leaving it up while the panel is open
+	# would have it still there after the only act that answers it.
+	arrived = state.take_arrivals()
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
-		rows = [(f"{i + 1}  {team.info(s)['name']}", _remote_label(u) if (u := team.origin_url(team.dir_of(s))) else "no remote yet")
+		rows = [(f"{i + 1}  {team.info(s)['name']}",
+		         (f"{n} new · " if (n := arrived.get(s)) else "")
+		         + (_remote_label(u) if (u := team.origin_url(team.dir_of(s))) else "no remote yet"))
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],
@@ -1959,6 +2027,7 @@ def main(scr, interval, auto, model):
 		confirm(scr, state, 0, f" {done[:110]}  [any key]")
 	team.activate()
 	ask_publishing(scr, state, 0)
+	ask_agents(scr, state, 0)
 	if auto:
 		state.set_auto(True)  # baseline is empty, so everything currently review-requested gets reviewed too
 	threading.Thread(target=state.loop, daemon=True).start()

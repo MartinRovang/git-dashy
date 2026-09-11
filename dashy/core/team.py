@@ -811,6 +811,28 @@ def is_own_memory(repo):
 		return True
 	return is_repo(config.MEMORY_DIR) and same_remote(repo, _url(config.MEMORY_DIR))
 
+AGENTS_TEMPLATE = """# For agent sessions working in this team's repos
+
+This file is the team's, not one machine's. It reaches every session in every repo bound to this
+team, through that repo's `.agent/team/repo.md` mirror. Reviews never see it: it says how to work
+here, which is not something a reviewer should be told about the code it is judging.
+
+## File what you work out
+
+A session that establishes something about the code files it, and it costs one line:
+
+```sh
+gitdashy remember "the viewer owns mask state; the store only mirrors it"
+gitdashy remember --general "logic that can live in the API does"
+```
+
+It becomes a draft, never a fact. A draft is confirmed only when a review, or a teammate, arrives
+at the same thing independently — so file freely. What does not belong: what this task did, one
+bug, anything git already records.
+
+Without these, most drafts stay at one observation.
+"""
+
 PROJECT_TEMPLATE = """# What we are building
 
 Fill this in once, together. Everyone who joins this team reads it, and so does every review —
@@ -842,6 +864,20 @@ def seed_project(path):
 	if not os.path.exists(path):
 		with open(path, "w") as f:
 			f.write(PROJECT_TEMPLATE)
+
+
+def seed_agents(path):
+	"""Give a new team repo the instruction its members' agent sessions will read.
+
+	ponytail: shipped with the TEAM, not with the machine. The rule that makes a session file drafts
+	lived in one operator's own corpus, so a colleague's sessions never filed any and half the second
+	observers the recurrence gate needs did not exist. A team is the right scope for it: it is the team
+	that wants the drafts, and a team is already a git repo that everyone pulls.
+	ponytail: never overwrites, exactly like the brief. A team that has edited this owns it.
+	"""
+	if not os.path.exists(path):
+		with open(path, "w") as f:
+			f.write(AGENTS_TEMPLATE)
 
 
 def _undo(dest):
@@ -909,6 +945,7 @@ def start(name, description="", at=""):
 	union_attrs(dest)
 	write_info(key, name, description)
 	seed_project(os.path.join(dest, "memory", "project.md"))
+	seed_agents(os.path.join(dest, "memory", "agents.md"))
 	push_dir(dest, "gitdashy: new team " + name, "join")
 	return ""
 
@@ -1076,6 +1113,7 @@ def setup(repo, name=""):
 	union_attrs(dest)
 	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	seed_project(os.path.join(dest, "memory", "project.md"))
+	seed_agents(os.path.join(dest, "memory", "agents.md"))
 	# ponytail: a repo that predates team.json gets one NOW — the name you gave, or the key that was
 	# derived — and the push below carries it. Without it every joiner keyed the same repo by whatever
 	# they typed, so two people on one team held two keys, and a binding one of them made meant nothing
