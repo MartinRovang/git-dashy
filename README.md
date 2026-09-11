@@ -559,7 +559,8 @@ dashy/
     team.py       git-backed sync of the log and memory
     mirror.py     read-only copies of the memory, for agent sessions
     update.py     release check and self-update
-tests/            mirrors dashy/: one test file per module
+tests/            mirrors dashy/: one test file per module, plus test_docs.py,
+                  which mirrors no module and pins the prose to the code
 ```
 
 Swappable seams, for adding things: `core.github.fetch`, `core.review.review` and
