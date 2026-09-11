@@ -221,7 +221,7 @@ def test_voice_and_hunter_flags_are_checked(monkeypatch, capsys):
 	assert "--voice must be from review, caveman, bot" in capsys.readouterr().out
 	monkeypatch.setattr(config, "VOICE", ["review"])  # the refused value is not undone; a real run exits here
 	cli.run(["gitdashy", "--hunter", "tests,nope"])
-	assert "--hunter must be from ponytail, security, tests" in capsys.readouterr().out
+	assert "--hunter must be from ponytail, security, tests, humanizer" in capsys.readouterr().out
 
 
 def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):

@@ -117,7 +117,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
-| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / humanizer |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
@@ -181,7 +181,8 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 `caveman` and `bot` restate the verdict in caveman speech and as a terse machine log. Any mix, at
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
-over-engineering, `security` only security, `tests` only missing or toothless tests. The hello
+over-engineering, `security` only security, `tests` only missing or toothless tests,
+`humanizer` only AI-sounding prose in the description, docs and comments. The hello
 comment names both so the author knows why the review reads that way. `x` and `h` tick them at runtime.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
