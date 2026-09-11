@@ -57,23 +57,19 @@
   </div>
 </div>
 <script>
-// ponytail: the shell reports two real events — server up (it closes this window) and server failed.
-// The steps below are the phases it does go through, advanced on a clock because none of them report
-// progress. The bar is asymptotic to 90%: always moving, never claiming done before the handover.
-const STEPS = [
-  { name: "spawn_server", at: 0 },
-  { name: "await_socket", at: 900 },
-  { name: "fetch_pull_requests", at: 2200 },
-];
+// ponytail: the shell names each phase as it starts (gitdashy-step) and says when it failed. The bar
+// fills a third per phase and creeps asymptotically within one: always moving, never claiming done
+// before the handover, which is the shell navigating this window to the dashboard.
+const STEPS = ["spawn_server", "await_socket", "fetch_pull_requests"];
 const stepsEl = document.getElementById("steps");
-stepsEl.innerHTML = STEPS.map(s => `<div class="step"><i></i><b>${s.name}</b><s>queued</s></div>`).join("");
+stepsEl.innerHTML = STEPS.map(s => `<div class="step"><i></i><b>${s}</b><s>queued</s></div>`).join("");
 const rows = [...stepsEl.children];
-const t0 = Date.now();
+let active = 1, t0 = Date.now();
 
 const timer = setInterval(() => {
   const dt = Date.now() - t0;
-  const active = STEPS.filter(s => dt >= s.at).length;
-  document.getElementById("fill").style.width = (90 * (1 - Math.exp(-dt / 2600))).toFixed(1) + "%";
+  const pct = (100 / STEPS.length) * (active - 1 + 0.9 * (1 - Math.exp(-dt / 2600)));
+  document.getElementById("fill").style.width = pct.toFixed(1) + "%";
   rows.forEach((r, i) => {
     const st = i < active - 1 ? "ok" : i === active - 1 ? "run" : "";
     r.className = "step " + st;
@@ -89,6 +85,7 @@ function fail(msg) {
 }
 
 window.__TAURI__?.event?.listen("gitdashy-error", (e) => fail(String(e.payload)));
+window.__TAURI__?.event?.listen("gitdashy-step", (e) => { active = Math.max(active, STEPS.indexOf(e.payload) + 1); t0 = Date.now(); });
 </script>
 </body>
 </html>

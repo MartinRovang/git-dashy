@@ -23,6 +23,8 @@ use tauri::{Emitter, Manager};
 /// How long the server gets to answer before the splash reports failure.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_EVERY: Duration = Duration::from_millis(100);
+/// How long the first fetch gets before the dashboard is shown anyway, still fetching.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The server process, so it can be killed when the window closes.
 // ponytail: a child that outlives its window is a python server holding your token and polling
@@ -49,33 +51,37 @@ fn token() -> Result<String, String> {
     Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// True once the server answers 200 on this port with this token.
+/// The server's state, once it answers 200 on this port with this token. None until then.
 // ponytail: a raw GET over TcpStream, not an http client crate. One request to one known loopback
-// address, and the only thing being asked is whether it answers.
-fn answers(port: u16, token: &str) -> bool {
-    let Ok(mut sock) = TcpStream::connect(("127.0.0.1", port)) else {
-        return false;
-    };
-    let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+// address; HTTP/1.0 with Connection: close, so the body is simply everything after the blank line.
+fn state(port: u16, token: &str) -> Option<serde_json::Value> {
+    let mut sock = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    let _ = sock.set_read_timeout(Some(Duration::from_secs(5)));
     let req = format!(
-		"GET /api/state HTTP/1.0\r\nHost: 127.0.0.1\r\nX-Dashy-Token: {token}\r\nConnection: close\r\n\r\n"
-	);
-    if sock.write_all(req.as_bytes()).is_err() {
-        return false;
+        "GET /api/state HTTP/1.0\r\nHost: 127.0.0.1\r\nX-Dashy-Token: {token}\r\nConnection: close\r\n\r\n"
+    );
+    sock.write_all(req.as_bytes()).ok()?;
+    let mut raw = Vec::new();
+    sock.read_to_end(&mut raw).ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text.split_once("\r\n\r\n")?;
+    if !(head.starts_with("HTTP/1.") && head.get(9..12) == Some("200")) {
+        return None;
     }
-    let mut head = [0u8; 15]; // "HTTP/1.0 200 OK" is 15 bytes; the status line is all that matters
-    let mut got = 0;
-    while got < head.len() {
-        match sock.read(&mut head[got..]) {
-            Ok(0) | Err(_) => return false,
-            Ok(n) => got += n,
-        }
-    }
-    head.starts_with(b"HTTP/1.") && head[9..12] == *b"200"
+    serde_json::from_str(body).ok()
 }
 
-/// Start the server on a port we chose, and wait for it to answer there.
-fn start(extra: &[String]) -> Result<(Child, String), String> {
+/// True once the server has finished its first fetch, or given up on it.
+// ponytail: an error counts as done. A machine with no token or no network would otherwise sit on
+// the splash for the whole FETCH_TIMEOUT, and the dashboard is where that error is explained.
+fn fetched(v: &serde_json::Value) -> bool {
+    v["fetchedAt"].is_number() || v["error"].as_str().is_some_and(|e| !e.is_empty())
+}
+
+/// Start the server on a port we chose, and wait for it to answer there and fetch once.
+/// `step` is told each phase as it begins, for the splash.
+fn start(extra: &[String], step: &dyn Fn(&str)) -> Result<(Child, String), String> {
+    step("spawn_server");
     let port = free_port()?;
     let token = token()?;
     let mut child = Command::new(binary())
@@ -95,13 +101,24 @@ fn start(extra: &[String]) -> Result<(Child, String), String> {
             )
         })?;
 
+    step("await_socket");
     let deadline = Instant::now() + READY_TIMEOUT;
     while Instant::now() < deadline {
         // a server that has already exited will never answer; its status says more than a timeout
         if let Ok(Some(status)) = child.try_wait() {
             return Err(format!("gitdashy exited before serving ({status})"));
         }
-        if answers(port, &token) {
+        if state(port, &token).is_some() {
+            step("fetch_pull_requests");
+            // ponytail: the first fetch happens behind the splash, so the dashboard opens populated.
+            // Past FETCH_TIMEOUT it opens anyway, still fetching: a slow GitHub is not a failure.
+            let until = Instant::now() + FETCH_TIMEOUT;
+            while Instant::now() < until && !state(port, &token).is_some_and(|v| fetched(&v)) {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Err(format!("gitdashy exited while fetching ({status})"));
+                }
+                std::thread::sleep(POLL_EVERY * 3);
+            }
             return Ok((child, format!("http://127.0.0.1:{port}/?token={token}")));
         }
         std::thread::sleep(POLL_EVERY);
@@ -125,7 +142,11 @@ pub fn run() {
             // setup means the splash never paints.
             std::thread::spawn(move || {
                 let extra: Vec<String> = std::env::args().skip(1).collect();
-                match start(&extra) {
+                let splash = handle.clone();
+                let step = move |name: &str| {
+                    let _ = splash.emit("gitdashy-step", name);
+                };
+                match start(&extra, &step) {
                     Ok((child, url)) => {
                         *handle.state::<Server>().0.lock().unwrap() = Some(child);
                         // ponytail: the page's Quit stops the server; a window over a dead server is a
