@@ -10,22 +10,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "label": "splashscreen",
-        "url": "splashscreen.html",
-        "title": "gitdashy",
-        "width": 620,
-        "height": 460,
-        "decorations": false,
-        "resizable": false,
-        "center": true
-      },
-      {
         "label": "main",
         "url": "splashscreen.html",
         "title": "gitdashy",
         "width": 1100,
         "height": 800,
-        "visible": false,
         "center": true
       }
     ],

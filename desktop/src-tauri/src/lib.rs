@@ -1,4 +1,7 @@
-//! The desktop shell: a splash window, and a `gitdashy --no-open` server behind it.
+//! The desktop shell: one window showing a splash page, and a `gitdashy --no-open` server behind it.
+//!
+//! ponytail: ONE window, never hidden. A main window built with visible(false) and shown later has dead
+//! title bar buttons on Linux (tauri-apps/tauri#11856), so the splash is a page in the main window.
 //!
 //! ponytail: the shell owns no UI of its own beyond the splash. It starts the same server
 //! `gitdashy --browser` starts and points the window at it. One UI, in the browser and here.
@@ -27,7 +30,7 @@ const POLL_EVERY: Duration = Duration::from_millis(100);
 struct Server(Mutex<Option<Child>>);
 
 fn binary() -> String {
-	std::env::var("GITDASHY_BIN").unwrap_or_else(|_| "gitdashy".into())
+    std::env::var("GITDASHY_BIN").unwrap_or_else(|_| "gitdashy".into())
 }
 
 /// A free port on loopback.
@@ -35,145 +38,143 @@ fn binary() -> String {
 // in which something else could take it — vanishingly unlikely on loopback, and the alternative is
 // passing a socket across a process boundary. A lost race surfaces as the startup timeout below.
 fn free_port() -> Result<u16, String> {
-	TcpListener::bind("127.0.0.1:0")
-		.and_then(|l| l.local_addr().map(|a| a.port()))
-		.map_err(|e| format!("could not reserve a port: {e}"))
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr().map(|a| a.port()))
+        .map_err(|e| format!("could not reserve a port: {e}"))
 }
 
 fn token() -> Result<String, String> {
-	let mut raw = [0u8; 24];
-	getrandom::fill(&mut raw).map_err(|e| format!("no randomness for the session token: {e}"))?;
-	Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+    let mut raw = [0u8; 24];
+    getrandom::fill(&mut raw).map_err(|e| format!("no randomness for the session token: {e}"))?;
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// True once the server answers 200 on this port with this token.
 // ponytail: a raw GET over TcpStream, not an http client crate. One request to one known loopback
 // address, and the only thing being asked is whether it answers.
 fn answers(port: u16, token: &str) -> bool {
-	let Ok(mut sock) = TcpStream::connect(("127.0.0.1", port)) else {
-		return false;
-	};
-	let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
-	let req = format!(
+    let Ok(mut sock) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+    let req = format!(
 		"GET /api/state HTTP/1.0\r\nHost: 127.0.0.1\r\nX-Dashy-Token: {token}\r\nConnection: close\r\n\r\n"
 	);
-	if sock.write_all(req.as_bytes()).is_err() {
-		return false;
-	}
-	let mut head = [0u8; 15]; // "HTTP/1.0 200 OK" is 15 bytes; the status line is all that matters
-	let mut got = 0;
-	while got < head.len() {
-		match sock.read(&mut head[got..]) {
-			Ok(0) | Err(_) => return false,
-			Ok(n) => got += n,
-		}
-	}
-	head.starts_with(b"HTTP/1.") && head[9..12] == *b"200"
+    if sock.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 15]; // "HTTP/1.0 200 OK" is 15 bytes; the status line is all that matters
+    let mut got = 0;
+    while got < head.len() {
+        match sock.read(&mut head[got..]) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => got += n,
+        }
+    }
+    head.starts_with(b"HTTP/1.") && head[9..12] == *b"200"
 }
 
 /// Start the server on a port we chose, and wait for it to answer there.
 fn start(extra: &[String]) -> Result<(Child, String), String> {
-	let port = free_port()?;
-	let token = token()?;
-	let mut child = Command::new(binary())
-		.arg("--no-open")
-		.arg("--port")
-		.arg(port.to_string())
-		.args(extra)
-		// ponytail: the token goes in the ENVIRONMENT. argv is world-readable in ps, and this token
-		// starts review runs that cost money.
-		.env("GITDASHY_GUI_TOKEN", &token)
-		.stdout(Stdio::null())
-		.spawn()
-		.map_err(|e| format!("could not run {}: {e}. Install it, or set GITDASHY_BIN.", binary()))?;
+    let port = free_port()?;
+    let token = token()?;
+    let mut child = Command::new(binary())
+        .arg("--no-open")
+        .arg("--port")
+        .arg(port.to_string())
+        .args(extra)
+        // ponytail: the token goes in the ENVIRONMENT. argv is world-readable in ps, and this token
+        // starts review runs that cost money.
+        .env("GITDASHY_GUI_TOKEN", &token)
+        .stdout(Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "could not run {}: {e}. Install it, or set GITDASHY_BIN.",
+                binary()
+            )
+        })?;
 
-	let deadline = Instant::now() + READY_TIMEOUT;
-	while Instant::now() < deadline {
-		// a server that has already exited will never answer; its status says more than a timeout
-		if let Ok(Some(status)) = child.try_wait() {
-			return Err(format!("gitdashy exited before serving ({status})"));
-		}
-		if answers(port, &token) {
-			return Ok((child, format!("http://127.0.0.1:{port}/?token={token}")));
-		}
-		std::thread::sleep(POLL_EVERY);
-	}
-	let _ = child.kill();
-	let _ = child.wait();
-	Err(format!(
-		"gitdashy did not answer on port {port} within {}s",
-		READY_TIMEOUT.as_secs()
-	))
+    let deadline = Instant::now() + READY_TIMEOUT;
+    while Instant::now() < deadline {
+        // a server that has already exited will never answer; its status says more than a timeout
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!("gitdashy exited before serving ({status})"));
+        }
+        if answers(port, &token) {
+            return Ok((child, format!("http://127.0.0.1:{port}/?token={token}")));
+        }
+        std::thread::sleep(POLL_EVERY);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(format!(
+        "gitdashy did not answer on port {port} within {}s",
+        READY_TIMEOUT.as_secs()
+    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-	tauri::Builder::default()
-		.plugin(tauri_plugin_opener::init())
-		.manage(Server(Mutex::new(None)))
-		.setup(|app| {
-			let handle = app.handle().clone();
-			// ponytail: off the main thread — start() blocks until the server answers, and blocking
-			// setup means the splash never paints.
-			std::thread::spawn(move || {
-				let extra: Vec<String> = std::env::args().skip(1).collect();
-				match start(&extra) {
-					Ok((child, url)) => {
-						*handle.state::<Server>().0.lock().unwrap() = Some(child);
-						// ponytail: the page's Quit stops the server; a window over a dead server is a
-						// blank pane nobody can close from inside, so the shell follows it out.
-						let watcher = handle.clone();
-						std::thread::spawn(move || loop {
-							std::thread::sleep(Duration::from_millis(500));
-							let gone = match watcher.state::<Server>().0.lock().unwrap().as_mut() {
-								Some(c) => matches!(c.try_wait(), Ok(Some(_))),
-								None => return,
-							};
-							if gone {
-								watcher.exit(0);
-								return;
-							}
-						});
-						if let Some(main) = handle.get_webview_window("main") {
-							match url.parse() {
-								Ok(parsed) => {
-									let _ = main.navigate(parsed);
-									let _ = main.show();
-									let _ = main.set_focus();
-								}
-								Err(e) => {
-									if let Some(s) = handle.get_webview_window("splashscreen") {
-										let _ = s.emit("gitdashy-error", format!("bad url {url}: {e}"));
-									}
-									return;
-								}
-							}
-						}
-						if let Some(splash) = handle.get_webview_window("splashscreen") {
-							let _ = splash.close();
-						}
-					}
-					// the splash is the only window up, so a failure has to be said there
-					Err(e) => {
-						if let Some(splash) = handle.get_webview_window("splashscreen") {
-							let _ = splash.emit("gitdashy-error", e);
-						}
-					}
-				}
-			});
-			Ok(())
-		})
-		.build(tauri::generate_context!())
-		.expect("error while building tauri application")
-		// ponytail: RunEvent::Exit, not the main window's Destroyed — it fires for every graceful way
-		// out (last window closed, quit, ctrl-c), where Destroyed only covers one of them. The server
-		// also watches its own parent, because nothing here runs if this process is SIGKILLed.
-		.run(|handle, event| {
-			if let tauri::RunEvent::Exit = event {
-				if let Some(mut child) = handle.state::<Server>().0.lock().unwrap().take() {
-					let _ = child.kill();
-					let _ = child.wait(); // reap it, or it lingers as a zombie
-				}
-			}
-		});
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .manage(Server(Mutex::new(None)))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            // ponytail: off the main thread — start() blocks until the server answers, and blocking
+            // setup means the splash never paints.
+            std::thread::spawn(move || {
+                let extra: Vec<String> = std::env::args().skip(1).collect();
+                match start(&extra) {
+                    Ok((child, url)) => {
+                        *handle.state::<Server>().0.lock().unwrap() = Some(child);
+                        // ponytail: the page's Quit stops the server; a window over a dead server is a
+                        // blank pane nobody can close from inside, so the shell follows it out.
+                        let watcher = handle.clone();
+                        std::thread::spawn(move || loop {
+                            std::thread::sleep(Duration::from_millis(500));
+                            let gone = match watcher.state::<Server>().0.lock().unwrap().as_mut() {
+                                Some(c) => matches!(c.try_wait(), Ok(Some(_))),
+                                None => return,
+                            };
+                            if gone {
+                                watcher.exit(0);
+                                return;
+                            }
+                        });
+                        if let Some(main) = handle.get_webview_window("main") {
+                            match url.parse() {
+                                Ok(parsed) => {
+                                    let _ = main.navigate(parsed);
+                                }
+                                Err(e) => {
+                                    let _ =
+                                        main.emit("gitdashy-error", format!("bad url {url}: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    // the splash page is what is showing, so a failure is said there
+                    Err(e) => {
+                        if let Some(main) = handle.get_webview_window("main") {
+                            let _ = main.emit("gitdashy-error", e);
+                        }
+                    }
+                }
+            });
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // ponytail: RunEvent::Exit, not the main window's Destroyed — it fires for every graceful way
+        // out (last window closed, quit, ctrl-c), where Destroyed only covers one of them. The server
+        // also watches its own parent, because nothing here runs if this process is SIGKILLed.
+        .run(|handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(mut child) = handle.state::<Server>().0.lock().unwrap().take() {
+                    let _ = child.kill();
+                    let _ = child.wait(); // reap it, or it lingers as a zombie
+                }
+            }
+        });
 }
