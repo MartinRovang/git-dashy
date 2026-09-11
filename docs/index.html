@@ -266,7 +266,7 @@
     if (navigator.clipboard) navigator.clipboard.writeText(CMD).then(done, done); else done();
   }
   // Keep the version in sync with Cargo.toml on main; falls back to the hardcoded one.
-  fetch("https://raw.githubusercontent.com/MartinRovang/github-dashy/main/Cargo.toml")
+  fetch("https://raw.githubusercontent.com/MartinRovang/github-dashy/main/src-tauri/Cargo.toml")
     .then(r => r.text())
     .then(t => { const m = /^version = "([^"]+)"/m.exec(t); if (m) document.querySelectorAll(".version").forEach(e => e.textContent = "v" + m[1]); })
     .catch(() => {});
