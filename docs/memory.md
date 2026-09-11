@@ -56,7 +56,7 @@ could correct it will ever see it happen.
   │  <private>/<owner>__<repo>.md your facts, one repo            │
   │  Pushed straight to your own private git repo, if it is one.  │
   └───────────────────────────────────────────────────────────────┘
-             │ MANUAL — P, then t. Never automatic.
+             │ automatic, when the repo is bound and that team consented
              ▼
   ┌─ team ────────────────────────────────────────────────────────┐
   │  <team>/memory/general.md                                     │
