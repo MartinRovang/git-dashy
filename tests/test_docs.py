@@ -26,7 +26,15 @@ def handled():
 	src = read("dashy", "ui", "screen.py")
 	loop = src[src.index("\ndef main("):]
 	table = src[src.index("def settings(state)"):src.index("def set_theme")]
-	return set(re.findall(r'ord\("(\S)"\)', loop)) | set(re.findall(r'"(\w)": \(', table))
+	# ponytail: the arrows are handled by NAME, not by ord(), and the README's move row promises them
+	# beside j/k. Left out, the table check reported ↑ and ↓ as promises nothing keeps, which is the
+	# kind of false positive that gets a parity test deleted rather than fixed.
+	# ponytail: the arrows only. Enter is handled by name too, and the README documents it as the WORD
+	# `Enter` rather than a single character — so it is outside what a one-character regex can see, and
+	# adding it here would report a key the README documents perfectly well as missing.
+	named = {"↑": "KEY_UP", "↓": "KEY_DOWN"}
+	return (set(re.findall(r'ord\("(\S)"\)', loop)) | set(re.findall(r'"(\w)": \(', table))
+	        | {k for k, name in named.items() if f"curses.{name}" in loop})
 
 
 def keys_section():
@@ -43,9 +51,14 @@ def keys_section():
 
 
 def table_rows():
-	"""The single-char keys the README's key table gives a row of their own."""
+	"""Every single-char key the README's key table promises, wherever it sits in its row.
+
+	ponytail: not only the FIRST key of a row. `N`, `c` and `2` live in rows whose first key is
+	something else, so deleting those handlers passed this — and those are precisely the keys a
+	ponytail in screen.py records as having once silently done nothing.
+	"""
 	rows = re.findall(r"^\| (`\S`[^|]*?) \| ", keys_section(), re.M)
-	return {k for r in rows for k in re.findall(r"^`(\S)`", r)}
+	return {k for r in rows for k in re.findall(r"`(\S)`", r)}
 
 
 def test_every_dashboard_key_is_named_in_the_keys_section():
@@ -55,6 +68,18 @@ def test_every_dashboard_key_is_named_in_the_keys_section():
 
 def test_every_key_the_readme_table_promises_still_exists():
 	assert not (table_rows() - handled()), "README rows for keys the dashboard no longer acts on"
+
+
+def test_the_numbers_the_spec_quotes_are_the_numbers_the_code_uses():
+	"""§3.1 said NEAR was 0.82 while it had been 0.88 for weeks, and §7 said 0.88 two hundred lines
+	away. A number written into prose drifts the moment the constant moves, and this is the drift the
+	rest of this PR exists to repair — so it gets an oracle rather than another proofread."""
+	from dashy.core import memory
+	spec = read("docs", "memory.md")
+	assert f"`NEAR` (0.88)".replace("0.88", str(memory.NEAR)) in spec
+	assert f"| `NEAR` | {memory.NEAR} |" in spec
+	assert f"| `PROMOTE_AT` | {memory.PROMOTE_AT} |" in spec
+	assert f"`PROMOTE_AT = {memory.PROMOTE_AT}` is a guess" in spec
 
 
 def test_usage_synopsis_and_the_command_dispatch_are_the_same_list():

@@ -36,6 +36,12 @@ it costs other people.** A wrong fact in your own memory, you meet again tomorro
 and correct. A wrong fact in the team's memory lands in contexts where nobody who
 could correct it will ever see it happen.
 
+The keypresses that asymmetry buys are **binding** and **consent**, taken once
+per repo and once per team, and they are what makes the promotion itself safe to
+automate: what crosses into the team's file has recurred across two reviews that
+did not know about each other, and a model has read both and called them one
+claim. Nothing decides a single fact by hand — §3.3.
+
 ---
 
 ## 2. The seven stores
@@ -75,7 +81,8 @@ could correct it will ever see it happen.
   ┌─ pool (evidence, not memory) ─────────────────────────────────┐
   │  <team>/memory/pool/<user>/<owner>__<repo>.md                 │
   │  Facts each person has ALREADY accepted for themselves.       │
-  │  Written on promotion, withdrawn on share or forget.          │
+  │  Written on promotion, withdrawn on forget — and then only   │
+  │  when no other contributor is still behind the fact.          │
   │  NEVER read into any prompt, any mirror, or the dream.        │
   │  Only for repos already named in the shared review log.       │
   └───────────────────────────────────────────────────────────────┘
@@ -179,9 +186,10 @@ of each whether the team has it:
 - `t` sends one that never went — a fact older than consent, or promoted while the
   repo was bound to nothing. It is the only thing `t` is for; a fact the team
   already has does not offer it.
-- `x` forgets it from your memory, from the team's and from the evidence pool.
-  Nobody chose to publish it, so nobody has to know it was published to take it
-  back.
+- `x` forgets it from your memory, from the evidence pool, and from the team's
+  file unless a teammate independently reached it too — §4b-3 says why theirs
+  survives yours. Nobody chose to publish it, so nobody has to know it was
+  published to take it back.
 - `esc` leaves it alone.
 
 Facts two people have independently accepted sort first and are marked
@@ -611,8 +619,8 @@ but once you HAVE read it and know it is true, requiring a second review to redi
 machine to re-derive what you can already see. It pools like any promotion, so the evidence trail says
 the same thing either way.
 
-`x` is the prune the drafts store never had. Everything else self-limits — facts go with `forget`, the
-pool is withdrawn on share or forget — and drafts only ever grew (SPEC §8).
+`x` is the prune the drafts store never had. Everything else self-limits — facts go with `forget`, which
+withdraws the pool line with them — and drafts only ever grew (SPEC §8).
 
 A `pre-review` row carries no count, because a pre-review and the real review are one model on one
 diff. It sorts last, and it is still promotable by hand: a person reading it is a second opinion in a
@@ -624,8 +632,8 @@ way a second run of the same model is not.
 |---|---|---|
 | review proposes facts | drafts, promotions into `mine`, and the pool | private + team repo |
 | `gitdashy remember` | the same drafts, and the pool on promotion | private + team repo |
-| `P` → `t` | team memory file, withdraws from the pool | team repo |
-| `P` → `x` | removes from `mine`, withdraws from the pool | private + team repo |
+| `P` → `t` | the team memory file; the pool line stays | team repo |
+| `P` → `x` | removes from `mine`, from the team's file when no other backer remains, and from the pool | private + team repo |
 | `n` / `g` edit | `mine` only — team memory is not hand-editable from the TUI | private repo |
 | `Z` dream | `mine` and `team`, after you approve | both |
 | review verdict | `reviewed.jsonl` | team repo |
@@ -704,10 +712,10 @@ can walk back.
 
 ## 6. What is deliberately *not* done
 
-- **No automatic team promotion, even on corroboration.** Two people agreeing is
-  strong enough evidence to justify it, and it is deliberately still one keypress:
-  corroboration changes what `P` shows you first, not what happens without you.
-  That also means only one threshold (`PROMOTE_AT`) actually decides anything.
+- **No per-fact decision, in either direction.** Promotion into the team is
+  automatic as of v1.43.0 (§3.3); what is still deliberately absent is any prompt
+  that asks about one fact. The keypresses are the binding and the consent, taken
+  once each, so only one threshold (`PROMOTE_AT`) decides anything.
 - **No raw drafts shared, and no hashing.** SimHash over fact text would let
   corroboration work without publishing any wording at all. Not built: everyone in
   the pool already has push access to the same private repo and reads the same
