@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::Engine;
+use include_dir::{include_dir, Dir};
 use log::{debug, error};
 use serde_json::{json, Map, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -21,8 +21,8 @@ use crate::{
     bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update,
 };
 
-pub const PAGE: &str = include_str!("../ui/gui.html");
-pub const LOGO: &[u8] = include_bytes!("../ui/head.png");
+/// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
+static DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../dist");
 /// The page carries the palettes; this is what the picker offers.
 pub const THEMES: &[&str] = &["dashy", "dracula", "gruvbox", "nord"];
 
@@ -1365,18 +1365,26 @@ pub fn launch_asks() -> Vec<Value> {
     asks
 }
 
-/// The page with the mascot inlined.
-///
-/// ponytail: inlined, not served. An <img src> carries no token, so a route for it would have to be
-/// a hole in the guard, and the mark is 3 KB. One substitution beats an exempted endpoint.
-pub fn page() -> String {
-    PAGE.replace(
-        "{{LOGO}}",
-        &format!(
-            "data:image/png;base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(LOGO)
-        ),
-    )
+/// The built app's index shell. Vite emits one; a binary with no dist is a build mistake, not a crash.
+fn index_html() -> Vec<u8> {
+    DIST.get_file("index.html")
+        .map(|f| f.contents().to_vec())
+        .unwrap_or_default()
+}
+
+/// One embedded asset by request path ("/assets/x.js"), and its content type.
+fn asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let file = DIST.get_file(path.trim_start_matches('/'))?;
+    let ctype = match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    };
+    Some((file.contents().to_vec(), ctype))
 }
 
 fn parse_query(raw: &str) -> Query {
@@ -1417,6 +1425,19 @@ fn send_json(req: Request, code: u16, body: Value) {
     send(req, code, body.to_string(), "application/json");
 }
 
+/// A binary asset, same headers as send(). Cacheable hashed names, but no-store keeps it simple.
+fn send_bytes(req: Request, code: u16, body: Vec<u8>, ctype: &str) {
+    let ok = |h: Result<Header, ()>| h.expect("a static header is well formed");
+    let resp = Response::from_data(body)
+        .with_status_code(code)
+        .with_header(ok(Header::from_bytes("Content-Type", ctype)))
+        .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")))
+        .with_header(ok(Header::from_bytes("Cache-Control", "no-store")));
+    if let Err(e) = req.respond(resp) {
+        debug!("gui reply failed: {e}");
+    }
+}
+
 /// Equal without leaking where they differ.
 fn same_token(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -1444,6 +1465,13 @@ fn guard(req: &Request, query: &Query, token: &str) -> Result<(), (u16, &'static
     if !["127.0.0.1", "localhost", "::1"].contains(&host.as_str()) {
         return Err((403, "bad host"));
     }
+    // The shell and its assets hold no data, so they load without a token; every /api route keeps one.
+    // ponytail: the app bundle is 270 KB of JS, and a token query on every <script>/<link> would mean
+    // rewriting Vite's index — a hole in the guard for static files is the smaller price.
+    let path = req.url().split('?').next().unwrap_or("");
+    if path != "/" && !path.starts_with("/api/") {
+        return Ok(());
+    }
     let got = header(req, "X-Dashy-Token");
     let got = if got.is_empty() {
         q(query, "token").to_string()
@@ -1464,7 +1492,7 @@ fn answer(req: Request, out: Out) {
     }
 }
 
-fn handle(state: &State, token: &str, page: &str, mut req: Request) {
+fn handle(state: &State, token: &str, mut req: Request) {
     let url = req.url().to_string();
     let (path, raw_query) = url.split_once('?').unwrap_or((&url, ""));
     let query = parse_query(raw_query);
@@ -1475,7 +1503,10 @@ fn handle(state: &State, token: &str, page: &str, mut req: Request) {
     match req.method() {
         Method::Get => {
             if path == "/" {
-                return send(req, 200, page.to_string(), "text/html; charset=utf-8");
+                return send_bytes(req, 200, index_html(), "text/html; charset=utf-8");
+            }
+            if let Some((body, ctype)) = asset(path) {
+                return send_bytes(req, 200, body, ctype);
             }
             match get_route(path) {
                 Some(f) => answer(req, f(state, &query)),
@@ -1513,11 +1544,10 @@ pub fn serve(state: State, port: u16, token: String) -> std::io::Result<u16> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| std::io::Error::other(e.to_string()))?;
     let bound = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(port);
     state.lock().token = token.clone();
-    let page = Arc::new(page());
     std::thread::spawn(move || {
         for req in server.incoming_requests() {
-            let (state, token, page) = (state.clone(), token.clone(), page.clone());
-            std::thread::spawn(move || handle(&state, &token, &page, req));
+            let (state, token) = (state.clone(), token.clone());
+            std::thread::spawn(move || handle(&state, &token, req));
         }
     });
     Ok(bound)
@@ -1638,14 +1668,21 @@ mod tests {
     }
 
     #[test]
-    fn the_page_carries_the_logo_inline() {
+    fn the_shell_is_guarded_but_its_assets_are_not() {
         let (base, token, _state) = served();
         let (code, body) = get(&format!("{base}/?token={token}"), None);
         assert_eq!(code, 200);
         let html = body.as_str().unwrap();
-        assert!(html.contains("data:image/png;base64,"));
-        assert!(!html.contains("{{LOGO}}"));
+        assert!(html.contains("<div id=\"root\">"));
         assert_eq!(get(&format!("{base}/"), None).0, 401);
+        // static assets load with no token; the app's own <script>/<link> carry none
+        let status = agent()
+            .get(format!("{base}/head.png"))
+            .call()
+            .unwrap()
+            .status()
+            .as_u16();
+        assert_eq!(status, 200);
     }
 
     #[test]

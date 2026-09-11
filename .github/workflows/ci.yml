@@ -21,6 +21,15 @@ jobs:
         with:
           workspaces: src-tauri
       - run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: cargo fmt --all -- --check
         working-directory: src-tauri
       - run: cargo clippy --all-targets -- -D warnings
@@ -58,7 +67,7 @@ jobs:
           gh release create "$tag" --generate-notes
 
   # ponytail: one binary per OS as a release asset, named the way update::asset_name() looks for it.
-  # Plain cargo build, no tauri-cli/npm: the frontend is checked-in HTML, nothing to bundle.
+  # The Vite bundle is built first and embedded into the binary by include_dir!.
   binaries:
     if: github.event_name == 'push'
     needs: release
@@ -86,6 +95,14 @@ jobs:
           workspaces: src-tauri
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: cargo build --release
         working-directory: src-tauri
       - shell: bash

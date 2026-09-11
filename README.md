@@ -35,10 +35,13 @@ Re-running it updates in place. To install an older release, name its tag:
 REF=v2.0.0 ./install.sh
 ```
 
-Or build it yourself (Rust stable; on Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev`):
+Or build it yourself (Rust stable; on Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev`; Node + pnpm
+for the frontend, which is built first and embedded into the binary):
 
 ```sh
-cargo install --git https://github.com/MartinRovang/github-dashy
+git clone https://github.com/MartinRovang/github-dashy && cd github-dashy
+pnpm install && pnpm build
+cargo install --path src-tauri
 ```
 
 ## Run
@@ -575,28 +578,33 @@ Then `m` cycles them like any other model.
 ## Layout
 
 ```
-src/
-  main.rs         entry point
-  cli.rs          argv, --help, the subcommands, opens the window or serves the page
-  shell.rs        the Tauri window: splash, then the dashboard
-  web.rs          the localhost API: one JSON route per thing the dashboard can do
-  state.rs        background refresh loop, shared state
-  config.rs       tunables, paths and env overrides
-  github.rs       everything that talks to the GitHub API (no gh)
-  llm.rs          which model answers a prompt: the claude CLI, or an OpenAI-compatible API
-  review.rs       runs Claude headless, posts the verdict
-  log.rs          ~/.prs_reviewed.jsonl store + detail view
-  memory.rs       ~/.prs_memory store, drafts, pools, and the dream cleanup
-  team.rs         git-backed sync of the log and memory
-  bind.rs         which team a repo belongs to
-  mirror.rs       read-only copies of the memory, for agent sessions
-  install.rs      wiring: CLAUDE.md imports, hooks, the corpus, setup briefs
-  update.rs       release check and self-update
-  demo.rs         canned PRs and a fake reviewer
-ui/               gui.html (the page: list, pane, settings, every modal; polls /api/state),
-                  splashscreen.html, head.png, notify.png
+src-tauri/
+  Cargo.toml      the crate; its build embeds dist/, so `pnpm build` must run first
+  tauri.conf.json the window: splashscreen.html, then the dashboard
+  src/
+    main.rs         entry point
+    cli.rs          argv, --help, the subcommands, opens the window or serves the page
+    shell.rs        the Tauri window: splash, then the dashboard
+    web.rs          the localhost API: one JSON route per thing the dashboard can do
+    state.rs        background refresh loop, shared state
+    config.rs       tunables, paths and env overrides
+    github.rs       everything that talks to the GitHub API (no gh)
+    llm.rs          which model answers a prompt: the claude CLI, or an OpenAI-compatible API
+    review.rs       runs Claude headless, posts the verdict
+    log.rs          ~/.prs_reviewed.jsonl store + detail view
+    memory.rs       ~/.prs_memory store, drafts, pools, and the dream cleanup
+    team.rs         git-backed sync of the log and memory
+    bind.rs         which team a repo belongs to
+    mirror.rs       read-only copies of the memory, for agent sessions
+    install.rs      wiring: CLAUDE.md imports, hooks, the corpus, setup briefs
+    update.rs       release check and self-update
+    demo.rs         canned PRs and a fake reviewer
+  ui/               splashscreen.html and notify.png (the shell before the dashboard)
 hooks/            the Claude Code hooks `gitdashy install --full` registers
 corpus/           the agent corpus a full install copies to ~/.agent-corpus
+src/              the React app: main.tsx, App.tsx, screens.tsx, modals.tsx, components/
+index.html        the Vite entry
+vite.config.ts    dev server and the /api proxy to the local server
 ```
 
 `--demo` flips `config.demo`, and the few functions that reach the network (fetch, detail, the model)
@@ -605,7 +613,8 @@ answer from `demo.rs` instead. Unit tests live beside the code in each module.
 ## Tests
 
 ```sh
-cargo test
+pnpm install && pnpm build   # web.rs embeds dist/, so the frontend must exist before cargo
+cd src-tauri && cargo test
 ```
 
 Created by Martin Soria Røvang.
