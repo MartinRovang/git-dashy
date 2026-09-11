@@ -17,6 +17,7 @@ type Props = {
   onFold: (name: string) => void
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
+  onOpen: () => void
 }
 
 function mineNote(prs: Row[]): string {
@@ -25,7 +26,7 @@ function mineNote(prs: Row[]): string {
   return [work ? `${work} need work` : '', wait ? `${wait} waiting` : ''].filter(Boolean).join(' · ')
 }
 
-function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect }: {
+function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect, onOpen }: {
   p: Row
   child?: boolean
   sel: string
@@ -33,6 +34,7 @@ function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect }: {
   subs: string
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
+  onOpen: () => void
 }) {
   const st = rowState(p)
   const pal = PALETTE[st.key] || PALETTE.idle
@@ -85,6 +87,7 @@ function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect }: {
     <div
       className={`pr${p.uid === sel ? ' sel' : ''}${child ? ' child' : ''}`}
       onClick={() => onSelect(p.uid)}
+      onDoubleClick={() => onOpen()}
     >
       {child ? <div className="twist" /> : twist}
       <div className="age">{age(p.updatedAt)}</div>
@@ -202,7 +205,7 @@ export function Queue(p: Props) {
                             ─ {label || 'not bound to a team'} <i />
                           </div>
                         ) : null}
-                        <PrRow p={row} sel={p.sel} expanded={p.expanded} subs={subs} onExpand={p.onExpand} onSelect={p.onSelect} />
+                        <PrRow p={row} sel={p.sel} expanded={p.expanded} subs={subs} onExpand={p.onExpand} onSelect={p.onSelect} onOpen={p.onOpen} />
                         {p.expanded[row.url]
                           ? row.older.map((o) => (
                               <PrRow
@@ -214,6 +217,7 @@ export function Queue(p: Props) {
                                 subs={subs}
                                 onExpand={p.onExpand}
                                 onSelect={p.onSelect}
+                                onOpen={p.onOpen}
                               />
                             ))
                           : null}

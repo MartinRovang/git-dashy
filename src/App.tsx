@@ -453,6 +453,7 @@ export default function App() {
                   setSel(uid)
                   setAt(0)
                 }}
+                onOpen={() => setPane(true)}
               />
             </div>
             {pane ? (
