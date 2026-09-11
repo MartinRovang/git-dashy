@@ -173,6 +173,9 @@
   /* ponytail: a drag that runs over the sidebar is a text selection to the browser. Turn it off for
      the duration of the drag so dragging a width never paints the sidebar blue. */
   html.dragging, html.dragging * { user-select: none !important; -webkit-user-select: none !important; }
+  /* ponytail: a full diff is thousands of rows; re-laying them per drag frame is what lags. Hide the
+     diff body while the pane is being dragged — the rest of the pane and the queue stay put. */
+  html.resizing-pane .pane .code { display: none; }
   .tab { height: 26px; padding: 0 10px; border-radius: 6px; display: flex; align-items: center; gap: 6px; cursor: pointer;
          font-family: var(--mono); font-size: 11px; color: var(--dim2); border: 1px solid transparent; }
   .tab.on { color: var(--ink); background: var(--bg4); border-color: var(--edge); }

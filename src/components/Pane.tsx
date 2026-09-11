@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Code, CodeRow, Detail, Row } from '../types'
 import { age, avatar, CHECK_TONE, FINDING_TONE, MARK, PALETTE, rowState, tone, when } from '../tokens'
 
@@ -29,7 +30,7 @@ function actsHTML(p: Row, d: Detail | null): Act[] {
   return acts
 }
 
-function CodeTab({
+const CodeTab = memo(function CodeTab({
   c,
   scope,
   context,
@@ -90,7 +91,7 @@ function CodeTab({
       </div>
     </>
   )
-}
+})
 
 function nearestFile(rows: CodeRow[], i: number): string {
   for (let k = i; k >= 0; k--) if (rows[k].kind === 'file') return (rows[k] as { path: string }).path
