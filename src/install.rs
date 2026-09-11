@@ -52,7 +52,9 @@ repo is told exactly the same ones.
 ";
 
 pub fn claude_dir() -> PathBuf {
-    std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".claude"))
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::config::home().join(".claude"))
 }
 
 /// (link, target) for the one path a session reads memory through.
@@ -80,10 +82,23 @@ pub fn stale_team_link() -> Option<PathBuf> {
     // $HOME with a hand-made ~/.claude/prs-team -> ~/work/notes and the link is gone. A relative root is
     // refused for the same reason: it is only meaningful against a cwd this has no business trusting.
     let c = config::get();
-    let roots = [c.teams.clone(), if c.team.as_os_str().is_empty() { PathBuf::new() } else { c.team.join("memory") }];
-    let stores: Vec<PathBuf> =
-        roots.iter().filter(|r| !r.as_os_str().is_empty() && r.is_absolute()).map(|r| abspath(r)).collect();
-    stores.iter().any(|st| target == *st || target.starts_with(st)).then_some(link)
+    let roots = [
+        c.teams.clone(),
+        if c.team.as_os_str().is_empty() {
+            PathBuf::new()
+        } else {
+            c.team.join("memory")
+        },
+    ];
+    let stores: Vec<PathBuf> = roots
+        .iter()
+        .filter(|r| !r.as_os_str().is_empty() && r.is_absolute())
+        .map(|r| abspath(r))
+        .collect();
+    stores
+        .iter()
+        .any(|st| target == *st || target.starts_with(st))
+        .then_some(link)
 }
 
 /// Retire the pre-2026-09-08 team link and the imports that went through it. [] when nothing to do.
@@ -113,8 +128,10 @@ pub fn retire(dry: bool) -> Vec<String> {
         ));
         if !dry {
             if let Err(e) = fs::remove_file(&old) {
-                *out.last_mut().unwrap() =
-                    format!("gitdashy: could not retire {}: {e}; remove it by hand", tilde(&old));
+                *out.last_mut().unwrap() = format!(
+                    "gitdashy: could not retire {}: {e}; remove it by hand",
+                    tilde(&old)
+                );
             }
         }
     }
@@ -124,7 +141,10 @@ pub fn retire(dry: bool) -> Vec<String> {
     // a CLAUDE.md that merely QUOTED the old block in a code sample (docs/install.md shows exactly that),
     // stripped nothing, and appended BLOCK again on every run, never reaching "ok".
     if inside_blocks(&text).contains(STALE) {
-        out.push(format!("{did}update the import block in {}: the team imports are per repo now", tilde(&md)));
+        out.push(format!(
+            "{did}update the import block in {}: the team imports are per repo now",
+            tilde(&md)
+        ));
         if !dry {
             let body = strip_blocks(&text, BEGIN, END);
             if let Err(e) = write_text(&md, &format!("{}\n\n{BLOCK}", body.trim_end_matches('\n'))) {
@@ -160,7 +180,9 @@ pub fn hand_wired_team_import(text: Option<&str>) -> bool {
             &owned
         }
     };
-    outside(&strip_blocks(text, BEGIN, END)).iter().any(|(l, out)| *out && l.contains(STALE))
+    outside(&strip_blocks(text, BEGIN, END))
+        .iter()
+        .any(|(l, out)| *out && l.contains(STALE))
 }
 
 /// Whether the installed identity ever tells a session to `gitdashy remember`. None when there is none.
@@ -170,7 +192,9 @@ pub fn hand_wired_team_import(text: Option<&str>) -> bool {
 /// the pipeline's second observer was silent and nothing said so. A check that reports beats a
 /// sentence in a README the reader is assumed to have followed.
 pub fn corpus_remembers(ident: Option<&Path>) -> Option<bool> {
-    let ident = ident.map(Path::to_path_buf).unwrap_or_else(|| claude_dir().join("identity"));
+    let ident = ident
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| claude_dir().join("identity"));
     if !ident.is_dir() {
         return None;
     }
@@ -178,7 +202,11 @@ pub fn corpus_remembers(ident: Option<&Path>) -> Option<bool> {
     // through session_notes(). is_dir() above answers "is it there", never "can it be opened".
     // Unreadable is not "a corpus without the instruction": it is nothing we can say.
     let names = md_names(&ident)?;
-    Some(names.iter().any(|n| read(&ident.join(n)).contains("gitdashy remember")))
+    Some(
+        names
+            .iter()
+            .any(|n| read(&ident.join(n)).contains("gitdashy remember")),
+    )
 }
 
 /// The `*.md` names in `dir`, sorted; None when it cannot be listed.
@@ -229,7 +257,10 @@ fn notes_key() -> NotesKey {
     NotesKey {
         ident: names.iter().map(|n| (n.clone(), stamp(&ident.join(n)))).collect(),
         md: stamp(&d.join("CLAUDE.md")),
-        agents: dirs.into_iter().map(|t| (t.clone(), stamp(&t.join("memory").join("agents.md")))).collect(),
+        agents: dirs
+            .into_iter()
+            .map(|t| (t.clone(), stamp(&t.join("memory").join("agents.md"))))
+            .collect(),
         ok: stamp(&knowledge::effective().join(".agents-ok")),
         d,
     }
@@ -264,14 +295,20 @@ pub fn session_notes() -> Vec<String> {
     // ponytail: a refusal is a note too, and unacked_agents forgets a team once it is answered.
     let waiting: Vec<String> = memory::unacked_agents().into_iter().map(|(k, _)| k).collect();
     if !waiting.is_empty() {
-        out.push(format!("{}: agents.md not read, restart to be asked", waiting.join(", ")));
+        out.push(format!(
+            "{}: agents.md not read, restart to be asked",
+            waiting.join(", ")
+        ));
     }
     // ponytail: names the command that ACTUALLY re-asks. It said "restart to be asked again", and a
     // restart asked nothing: ask_agents walks unacked_agents, which drops a team whose refusal
     // matches the file it still has. Nothing cleared a `!` entry at all.
     let refused = memory::refused_agents();
     if !refused.is_empty() {
-        out.push(format!("{}: agents.md refused, `gitdashy teams --agents-again`", refused.join(", ")));
+        out.push(format!(
+            "{}: agents.md refused, `gitdashy teams --agents-again`",
+            refused.join(", ")
+        ));
     }
     *cache = Some((key, out.clone()));
     out
@@ -331,14 +368,23 @@ fn split_blocks(text: &str, begin: &str, end: &str) -> (String, String) {
     let mut text = text.to_string();
     loop {
         let lines = outside(&text);
-        let Some(at) = lines.iter().position(|(l, out)| *out && l.contains(begin)) else { break };
-        let Some(close) = lines.iter().enumerate().position(|(i, (l, out))| i >= at && *out && l.contains(end))
+        let Some(at) = lines.iter().position(|(l, out)| *out && l.contains(begin)) else {
+            break;
+        };
+        let Some(close) = lines
+            .iter()
+            .enumerate()
+            .position(|(i, (l, out))| i >= at && *out && l.contains(end))
         else {
             break; // ponytail: an unclosed marker is NOT a block of ours: nothing held, nothing stripped
         };
         held.extend(lines[at + 1..close].iter().map(|(l, _)| l.to_string()));
         let head = lines[..at].iter().map(|(l, _)| *l).collect::<Vec<_>>().join("\n");
-        let tail = lines[close + 1..].iter().map(|(l, _)| *l).collect::<Vec<_>>().join("\n");
+        let tail = lines[close + 1..]
+            .iter()
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>()
+            .join("\n");
         // ponytail: lines() drops the terminator, so rejoining a file that ended in a newline gave
         // it back without one. It is a user-owned file; leave it shaped the way they had it.
         let body = format!(
@@ -347,7 +393,11 @@ fn split_blocks(text: &str, begin: &str, end: &str) -> (String, String) {
             if head.trim().is_empty() { "" } else { "\n" },
             tail.trim_start_matches('\n').trim_end_matches('\n')
         );
-        text = if text.ends_with('\n') && !body.ends_with('\n') { body + "\n" } else { body };
+        text = if text.ends_with('\n') && !body.ends_with('\n') {
+            body + "\n"
+        } else {
+            body
+        };
     }
     (held.join("\n"), text)
 }
@@ -438,7 +488,9 @@ fn abspath(p: &Path) -> PathBuf {
     let p = if p.is_absolute() {
         p.to_path_buf()
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")).join(p)
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(p)
     };
     let mut out = PathBuf::new();
     for c in p.components() {
@@ -482,7 +534,9 @@ fn realpath(p: &Path, depth: usize) -> PathBuf {
 }
 
 fn is_link(p: &Path) -> bool {
-    fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+    fs::symlink_metadata(p)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 /// Python's lexists: there, even as a dangling link.
@@ -536,13 +590,14 @@ fn quote(s: &str) -> String {
 /// What install would change on this machine, in the user's own paths. Returns report lines.
 pub fn explain() -> Vec<String> {
     let d = claude_dir();
-    let mut out = Vec::new();
-    out.push("gitdashy install wires this machine so every agent session reads what your reviews learned.".into());
-    out.push("".into());
-    out.push("Reviews do not need this. They read memory through their own prompt and always have; this is".into());
-    out.push("only so a coding session sees the same facts. It is additive, and reversible.".into());
-    out.push("".into());
-    out.push("It will:".into());
+    let mut out = vec![
+        "gitdashy install wires this machine so every agent session reads what your reviews learned.".into(),
+        "".into(),
+        "Reviews do not need this. They read memory through their own prompt and always have; this is".into(),
+        "only so a coding session sees the same facts. It is additive, and reversible.".into(),
+        "".into(),
+        "It will:".into(),
+    ];
     for (link, target) in links() {
         let state = if ours(&link, &target) {
             "already correct"
@@ -551,7 +606,11 @@ pub fn explain() -> Vec<String> {
         } else {
             "new"
         };
-        out.push(format!("  · symlink {} -> {}   [{state}]", tilde(&link), tilde(&target)));
+        out.push(format!(
+            "  · symlink {} -> {}   [{state}]",
+            tilde(&link),
+            tilde(&target)
+        ));
     }
     let md = d.join("CLAUDE.md");
     let n = BLOCK.matches("\n@").count(); // ponytail: counted, not written down: "four" outlived the block it described
@@ -559,7 +618,11 @@ pub fn explain() -> Vec<String> {
         "  · append {n} import{} to {}, inside a marked block{}",
         if n != 1 { "s" } else { "" },
         tilde(&md),
-        if read(&md).contains(IMPORT) { "   [already there]" } else { "   [new]" }
+        if read(&md).contains(IMPORT) {
+            "   [already there]"
+        } else {
+            "   [new]"
+        }
     ));
     // ponytail: the consent screen must name the migration it is asking consent for. It said nothing
     // about removing a symlink and rewriting a block in the user's own config; this install's whole
@@ -568,12 +631,18 @@ pub fn explain() -> Vec<String> {
         out.push(format!("  · {}", line.strip_prefix("would ").unwrap_or(&line)));
     }
     out.push("".into());
-    out.push("It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.".into());
-    out.push("Cross-repo facts load live through the symlink: the session reads the same file a review".into());
+    out.push(
+        "It will NOT: install hooks, touch settings.json, change any repo, or send anything anywhere.".into(),
+    );
+    out.push(
+        "Cross-repo facts load live through the symlink: the session reads the same file a review".into(),
+    );
     out.push("writes, so nothing is copied and nothing goes stale. Per-repo facts are separate: run".into());
     out.push("`gitdashy init` inside a repo to add those, or leave them out.".into());
     out.push("".into());
-    out.push("Reverse it any time with `gitdashy install --uninstall`, which removes only what it wrote.".into());
+    out.push(
+        "Reverse it any time with `gitdashy install --uninstall`, which removes only what it wrote.".into(),
+    );
     out
 }
 
@@ -581,24 +650,46 @@ pub fn explain() -> Vec<String> {
 pub fn apply(dry: bool) -> Vec<String> {
     let d = claude_dir();
     if !d.is_dir() {
-        return vec![format!("FAIL  no agent config directory at {}: is claude installed?", tilde(&d))];
+        return vec![format!(
+            "FAIL  no agent config directory at {}: is claude installed?",
+            tilde(&d)
+        )];
     }
     let mut out = Vec::new();
     let did = if dry { "would " } else { "" };
     let local = config::get().local_memory;
     for (link, target) in links() {
         if ours(&link, &target) {
-            out.push(format!("ok    {} already points at {}", tilde(&link), tilde(&target)));
+            out.push(format!(
+                "ok    {} already points at {}",
+                tilde(&link),
+                tilde(&target)
+            ));
         } else if lexists(&link) {
             // ponytail: never replace something we did not make
-            out.push(format!("SKIP  {} exists and is not ours: left alone", tilde(&link)));
+            out.push(format!(
+                "SKIP  {} exists and is not ours: left alone",
+                tilde(&link)
+            ));
         } else {
-            let pending = if target.is_dir() { "" } else { "   (waits until there is one)" };
-            out.push(format!("{did}link  {} -> {}{pending}", tilde(&link), tilde(&target)));
+            let pending = if target.is_dir() {
+                ""
+            } else {
+                "   (waits until there is one)"
+            };
+            out.push(format!(
+                "{did}link  {} -> {}{pending}",
+                tilde(&link),
+                tilde(&target)
+            ));
             if !dry {
                 // ponytail: make your own memory dir rather than leaving a link to nothing. The team's is
                 // left dangling on purpose: it exists once you join, and a missing import is skipped.
-                let r = if target == local { fs::create_dir_all(&target) } else { Ok(()) };
+                let r = if target == local {
+                    fs::create_dir_all(&target)
+                } else {
+                    Ok(())
+                };
                 if let Err(e) = r.and_then(|_| symlink(&target, &link)) {
                     out.push(format!("FAIL  could not link {}: {e}", tilde(&link)));
                 }
@@ -632,7 +723,11 @@ fn missing_newline(text: &str) -> &'static str {
 
 fn append(path: &Path, text: &str) -> io::Result<()> {
     use io::Write;
-    fs::OpenOptions::new().append(true).create(true).open(path)?.write_all(text.as_bytes())
+    fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)?
+        .write_all(text.as_bytes())
 }
 
 /// Undo exactly what apply() wrote, and say so when something is not ours to undo.
@@ -648,7 +743,10 @@ pub fn remove(dry: bool) -> Vec<String> {
                 }
             }
         } else if lexists(&link) {
-            out.push(format!("SKIP    {} is not the link we made: left alone", tilde(&link)));
+            out.push(format!(
+                "SKIP    {} is not the link we made: left alone",
+                tilde(&link)
+            ));
         } else {
             out.push(format!("ok      {} is not there", tilde(&link)));
         }
@@ -671,7 +769,10 @@ pub fn remove(dry: bool) -> Vec<String> {
             }
         }
     } else if text.contains(IMPORT) {
-        out.push(format!("SKIP    {} imports the memory but not in a block we wrote: remove it by hand", tilde(&md)));
+        out.push(format!(
+            "SKIP    {} imports the memory but not in a block we wrote: remove it by hand",
+            tilde(&md)
+        ));
     } else {
         out.push(format!("ok      {} does not import it", tilde(&md)));
     }
@@ -716,7 +817,11 @@ pub fn registered() -> Vec<(PathBuf, String, PathBuf, PathBuf)> {
             }
         };
         let field = |k: &str| e.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let into = if field("into").is_empty() { field("forget") } else { field("into") };
+        let into = if field("into").is_empty() {
+            field("forget")
+        } else {
+            field("into")
+        };
         if into.is_empty() {
             continue;
         }
@@ -726,7 +831,12 @@ pub fn registered() -> Vec<(PathBuf, String, PathBuf, PathBuf)> {
                 seen.remove(i);
             }
         } else {
-            let entry = (PathBuf::from(&into), field("repo"), PathBuf::from(field("root")), PathBuf::from(field("loader")));
+            let entry = (
+                PathBuf::from(&into),
+                field("repo"),
+                PathBuf::from(field("root")),
+                PathBuf::from(field("loader")),
+            );
             match at {
                 Some(i) => seen[i] = entry,
                 None => seen.push(entry),
@@ -782,7 +892,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break s,
-            Ok(None) if start.elapsed() < Duration::from_secs(60) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if start.elapsed() < Duration::from_secs(60) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -808,7 +920,9 @@ fn toplevel(path: &Path) -> Option<PathBuf> {
             _ => break,
         }
     }
-    git(&base, &["rev-parse", "--show-toplevel"]).filter(|s| !s.is_empty()).map(PathBuf::from)
+    git(&base, &["rev-parse", "--show-toplevel"])
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The directory holding info/exclude. ponytail: NOT <root>/.git: in a linked worktree or a
@@ -826,7 +940,11 @@ fn relpath(path: &Path, start: &Path) -> String {
     let sc: Vec<_> = s.components().collect();
     let common = pc.iter().zip(sc.iter()).take_while(|(a, b)| a == b).count();
     let mut parts: Vec<String> = vec!["..".to_string(); sc.len() - common];
-    parts.extend(pc[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+    parts.extend(
+        pc[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
     if parts.is_empty() {
         ".".into()
     } else {
@@ -847,8 +965,12 @@ fn exclude(root: &Path, rel: &str) -> String {
     if read(&p).lines().any(|l| l == rule) {
         return format!("ok    {rule} is already excluded");
     }
-    let r = fs::create_dir_all(gd.join("info"))
-        .and_then(|_| append(&p, &format!("\n# gitdashy mirror (local, never commit)\n{rule}\n")));
+    let r = fs::create_dir_all(gd.join("info")).and_then(|_| {
+        append(
+            &p,
+            &format!("\n# gitdashy mirror (local, never commit)\n{rule}\n"),
+        )
+    });
     match r {
         Ok(()) => format!("added {rule} to .git/info/exclude"),
         Err(e) => format!("FAIL  could not write {}: {e}", tilde(&p)),
@@ -864,7 +986,12 @@ fn import(loader: &Path, line: &str) -> String {
         Some(d) if !d.as_os_str().is_empty() => fs::create_dir_all(d),
         _ => Ok(()),
     }
-    .and_then(|_| append(loader, &format!("{}\n{MIRROR_COMMENT}\n{line}\n", missing_newline(&text))));
+    .and_then(|_| {
+        append(
+            loader,
+            &format!("{}\n{MIRROR_COMMENT}\n{line}\n", missing_newline(&text)),
+        )
+    });
     match r {
         Ok(()) => format!("added {line} to {}", tilde(loader)),
         Err(e) => format!("FAIL  could not write {}: {e}", tilde(loader)),
@@ -873,7 +1000,10 @@ fn import(loader: &Path, line: &str) -> String {
 
 /// The `@...` line a loader imports `into` through.
 fn import_line(into: &Path, loader: &Path) -> String {
-    format!("@{}/repo.md", relpath(into, loader.parent().unwrap_or(Path::new(""))))
+    format!(
+        "@{}/repo.md",
+        relpath(into, loader.parent().unwrap_or(Path::new("")))
+    )
 }
 
 /// Take out the import line we added, and the comment above it. The mirror files stay.
@@ -884,7 +1014,10 @@ fn import_line(into: &Path, loader: &Path) -> String {
 fn unimport(loader: &Path, into: &Path) -> String {
     let line = import_line(into, loader);
     let text = read(loader);
-    let kept: Vec<&str> = text.lines().filter(|l| l.trim() != line && l.trim() != MIRROR_COMMENT).collect();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| l.trim() != line && l.trim() != MIRROR_COMMENT)
+        .collect();
     if kept.len() == text.lines().count() {
         return String::new();
     }
@@ -904,14 +1037,19 @@ pub fn wire_repo(into: &Path, loader: &Path, repo: &str) -> Vec<String> {
     let root = toplevel(&into);
     out.push(match &root {
         Some(r) => exclude(r, &relpath(&into, r)),
-        None => format!("note  {} is not inside a git repo: nothing to exclude", tilde(&into)),
+        None => format!(
+            "note  {} is not inside a git repo: nothing to exclude",
+            tilde(&into)
+        ),
     });
     out.push(import(&loader, &import_line(&into, &loader)));
-    out.push(if register(&into, repo, root.as_deref().unwrap_or(Path::new("")), &loader) {
-        format!("added {} to the refresh list, as {repo}", tilde(&into))
-    } else {
-        format!("ok    {} is already refreshed every tick", tilde(&into))
-    });
+    out.push(
+        if register(&into, repo, root.as_deref().unwrap_or(Path::new("")), &loader) {
+            format!("added {} to the refresh list, as {repo}", tilde(&into))
+        } else {
+            format!("ok    {} is already refreshed every tick", tilde(&into))
+        },
+    );
     out.push(format!("      {}", mirror::sync(&into, repo, false, false)));
     out
 }
@@ -953,7 +1091,10 @@ impl Src {
             Src::Embedded => CORPUS
                 .get_dir("identity")
                 .map(|d| {
-                    d.files().filter_map(|f| f.path().file_name()).map(|n| n.to_string_lossy().into_owned()).collect()
+                    d.files()
+                        .filter_map(|f| f.path().file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .collect()
                 })
                 .unwrap_or_default(),
         };
@@ -964,16 +1105,22 @@ impl Src {
     fn text(&self, rel: &str) -> String {
         match self {
             Src::Dir(d) => read(&d.join(rel)),
-            Src::Embedded => CORPUS.get_file(rel).and_then(|f| f.contents_utf8()).unwrap_or_default().to_string(),
+            Src::Embedded => CORPUS
+                .get_file(rel)
+                .and_then(|f| f.contents_utf8())
+                .unwrap_or_default()
+                .to_string(),
         }
     }
     /// See corpus_remembers.
     fn remembers(&self) -> Option<bool> {
         match self {
             Src::Dir(d) => corpus_remembers(Some(&d.join("identity"))),
-            Src::Embedded => self
-                .has_identity()
-                .then(|| self.names().iter().any(|n| self.text(&format!("identity/{n}")).contains("gitdashy remember"))),
+            Src::Embedded => self.has_identity().then(|| {
+                self.names()
+                    .iter()
+                    .any(|n| self.text(&format!("identity/{n}")).contains("gitdashy remember"))
+            }),
         }
     }
     /// Put a copy at `dest`. "" or why not.
@@ -1005,8 +1152,15 @@ pub fn corpus_files(corpus: &Path) -> Vec<String> {
 }
 
 fn corpus_block(names: &[String], from: &Path) -> String {
-    let body = names.iter().map(|n| format!("@identity/{n}")).collect::<Vec<_>>().join("\n");
-    let label = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the shipped corpus".into());
+    let body = names
+        .iter()
+        .map(|n| format!("@identity/{n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let label = from
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "the shipped corpus".into());
     format!(
         "{CBEGIN}
 # Agent corpus
@@ -1029,13 +1183,20 @@ pub fn full_explain(corpus: &Path, url: &str) -> Vec<String> {
     // shipped corpus here named the wrong files and the wrong cost to anyone who had pointed
     // corpus_home at their own corpus: "import 3 files: AGENT.md, AGENTS.md, RULES.md" on a machine
     // about to import six others.
-    let src = if home.is_dir() { Src::Dir(home.clone()) } else { Src::of(corpus) };
+    let src = if home.is_dir() {
+        Src::Dir(home.clone())
+    } else {
+        Src::of(corpus)
+    };
     // ponytail: with --corpus URL and no corpus_home yet, the remote's identity/ cannot be read before the
     // clone. Naming the SHIPPED corpus's files and token cost here described a corpus that was about to be
     // replaced by a different one: an unknown is disclosed as unknown, never filled in with a stand-in.
     let unread = !url.is_empty() && !home.is_dir();
     let names = src.names();
-    let words: usize = names.iter().map(|n| src.text(&format!("identity/{n}")).split_whitespace().count()).sum();
+    let words: usize = names
+        .iter()
+        .map(|n| src.text(&format!("identity/{n}")).split_whitespace().count())
+        .sum();
     out.push("gitdashy install --full puts an agent corpus on this machine, so every coding session".into());
     out.push("works to the same discipline, and adds the review-memory wiring `install` does.".into());
     out.push("".into());
@@ -1044,21 +1205,44 @@ pub fn full_explain(corpus: &Path, url: &str) -> Vec<String> {
     out.push("It will:".into());
     out.push(format!(
         "  · {} to {}{}",
-        if url.is_empty() { "copy the corpus gitdashy ships".to_string() } else { format!("clone {url}") },
+        if url.is_empty() {
+            "copy the corpus gitdashy ships".to_string()
+        } else {
+            format!("clone {url}")
+        },
         tilde(&home),
-        if home.is_dir() { "   [EXISTS, will be left alone]" } else { "   [new]" }
+        if home.is_dir() {
+            "   [EXISTS, will be left alone]"
+        } else {
+            "   [new]"
+        }
     ));
-    out.push(format!("  · symlink {} -> that corpus's identity/", tilde(&d.join("identity"))));
+    out.push(format!(
+        "  · symlink {} -> that corpus's identity/",
+        tilde(&d.join("identity"))
+    ));
     let into = tilde(&d.join("CLAUDE.md"));
     if unread {
-        out.push(format!("  · import that corpus's identity/*.md into {into}: which files, and how many, cannot be"));
+        out.push(format!(
+            "  · import that corpus's identity/*.md into {into}: which files, and how many, cannot be"
+        ));
         out.push("    known until it is cloned".into());
     } else {
-        out.push(format!("  · import {} files into {into}: {}", names.len(), names.join(", ")));
+        out.push(format!(
+            "  · import {} files into {into}: {}",
+            names.len(),
+            names.join(", ")
+        ));
     }
     out.push("  · seed USER.md from the template, for you to fill in, if it is not there already".into());
-    out.push(format!("  · write a SessionStart and a Stop hook script into {}", tilde(&d.join("hooks"))));
-    out.push(format!("  · register a SessionStart and a Stop hook in {}", tilde(&d.join("settings.json"))));
+    out.push(format!(
+        "  · write a SessionStart and a Stop hook script into {}",
+        tilde(&d.join("hooks"))
+    ));
+    out.push(format!(
+        "  · register a SessionStart and a Stop hook in {}",
+        tilde(&d.join("settings.json"))
+    ));
     out.push("  · everything plain `gitdashy install` does, for review memory".into());
     out.push("".into());
     out.push("What that costs, every session on this machine, permanently:".into());
@@ -1073,7 +1257,9 @@ pub fn full_explain(corpus: &Path, url: &str) -> Vec<String> {
     out.push("  · one hook at the start of every session, and one at the end, in every repo".into());
     out.push("".into());
     out.push("The SessionStart hook seeds .agent/ notes in a repo, excludes them from git (via".into());
-    out.push(".git/info/exclude, never the tracked .gitignore), and mirrors that repo's review memory.".into());
+    out.push(
+        ".git/info/exclude, never the tracked .gitignore), and mirrors that repo's review memory.".into(),
+    );
     out.push("It writes nothing that git can see, and exits quietly if it is not in a repo.".into());
     out.push("".into());
     // ponytail: the Stop hook can BLOCK a stop, which is a thing done TO the session rather than for it,
@@ -1088,8 +1274,12 @@ pub fn full_explain(corpus: &Path, url: &str) -> Vec<String> {
     // templates copied. The hook now RUNS a script out of it, so a --corpus URL is no longer only text you
     // read: it is code that executes at every session start. That is a different thing to agree to, and
     // consent that does not name it is not consent to it.
-    out.push("It also RUNS one script from that corpus if it ships an executable bin/budget-check.sh:".into());
-    out.push("shell, at every session start, in every repo. A corpus is code you run, not only text you".into());
+    out.push(
+        "It also RUNS one script from that corpus if it ships an executable bin/budget-check.sh:".into(),
+    );
+    out.push(
+        "shell, at every session start, in every repo. A corpus is code you run, not only text you".into(),
+    );
     out.push("read: `--corpus URL` grants that to whoever can push to it.".into());
     out.push("".into());
     out.push("`gitdashy install --full --uninstall` reverses all of it. The corpus is left on disk,".into());
@@ -1102,7 +1292,7 @@ fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -1133,7 +1323,13 @@ const HOOK_TABLE: [Hook; 2] = [
         saying: "Preparing repo notes",
         takes_home: true,
     },
-    Hook { event: "Stop", name: "claude-stop.sh", text: STOP_HOOK, saying: "Checking what this session learned", takes_home: false },
+    Hook {
+        event: "Stop",
+        name: "claude-stop.sh",
+        text: STOP_HOOK,
+        saying: "Checking what this session learned",
+        takes_home: false,
+    },
 ];
 
 /// Where a hook script is installed. ponytail: the FULL path is what a registered command is matched
@@ -1160,11 +1356,18 @@ fn write_hook(script: &Path, text: &str) -> io::Result<()> {
 
 /// How many of `event`'s hooks there are in total, across every group.
 pub fn count(settings: &Value, event: &str) -> usize {
-    groups(settings, event).iter().map(|g| g.get("hooks").and_then(Value::as_array).map_or(0, Vec::len)).sum()
+    groups(settings, event)
+        .iter()
+        .map(|g| g.get("hooks").and_then(Value::as_array).map_or(0, Vec::len))
+        .sum()
 }
 
 fn groups<'a>(settings: &'a Value, event: &str) -> &'a [Value] {
-    settings.get("hooks").and_then(|h| h.get(event)).and_then(Value::as_array).map_or(&[], Vec::as_slice)
+    settings
+        .get("hooks")
+        .and_then(|h| h.get(event))
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
 }
 
 /// `event`'s groups with our hook taken out. Empty groups are dropped.
@@ -1180,7 +1383,12 @@ pub fn hooks(settings: &Value, script: &str, event: &str) -> Vec<Value> {
             .and_then(Value::as_array)
             .map(|hs| {
                 hs.iter()
-                    .filter(|h| !h.get("command").and_then(Value::as_str).unwrap_or("").contains(script))
+                    .filter(|h| {
+                        !h.get("command")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .contains(script)
+                    })
                     .cloned()
                     .collect()
             })
@@ -1237,27 +1445,46 @@ fn full_fail(mut out: Vec<String>, undo: Undo, msg: &str) -> Vec<String> {
         out.push(format!("      undone: {}", done.join(", ")));
     }
     if !left.is_empty() {
-        out.push(format!("      COULD NOT UNDO: {}: remove by hand", left.join(", ")));
+        out.push(format!(
+            "      COULD NOT UNDO: {}: remove by hand",
+            left.join(", ")
+        ));
     }
     out
 }
 
-fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mut Undo) -> Result<Vec<String>, String> {
+fn full_go(
+    corpus: &Path,
+    url: &str,
+    dry: bool,
+    out: &mut Vec<String>,
+    undo: &mut Undo,
+) -> Result<Vec<String>, String> {
     let d = claude_dir();
     let did = if dry { "would " } else { "" };
     let corpus_home = config::get().corpus_home;
     let e = |r: io::Error| r.to_string();
     if !d.is_dir() {
-        return Ok(vec![format!("FAIL  no agent config directory at {}: is claude installed?", tilde(&d))]);
+        return Ok(vec![format!(
+            "FAIL  no agent config directory at {}: is claude installed?",
+            tilde(&d)
+        )]);
     }
     if corpus_home.is_dir() {
-        out.push(format!("ok    {} is already there: left as it is", tilde(&corpus_home)));
+        out.push(format!(
+            "ok    {} is already there: left as it is",
+            tilde(&corpus_home)
+        ));
     } else {
         out.push(format!("{did}install  the corpus into {}", tilde(&corpus_home)));
         if !dry {
             // ponytail: the clone path checked its error; the copy path did not, and then symlinked,
             // imported and hooked a directory that was never there.
-            let err = if url.is_empty() { Src::of(corpus).install(&corpus_home) } else { team::clone(url, &corpus_home) };
+            let err = if url.is_empty() {
+                Src::of(corpus).install(&corpus_home)
+            } else {
+                team::clone(url, &corpus_home)
+            };
             if corpus_home.is_dir() {
                 // ponytail: the path is bound HERE, into the closure. Reading the config when the undo
                 // runs would let anything that changes it between these two points retarget a
@@ -1271,7 +1498,11 @@ fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mu
         }
     }
     // What is read: the installed corpus once it is there, the source before it is (a dry run).
-    let src = if !dry || corpus_home.is_dir() { Src::Dir(corpus_home.clone()) } else { Src::of(corpus) };
+    let src = if !dry || corpus_home.is_dir() {
+        Src::Dir(corpus_home.clone())
+    } else {
+        Src::of(corpus)
+    };
     let home = match &src {
         Src::Dir(p) => p.clone(),
         Src::Embedded => corpus_home.clone(),
@@ -1281,7 +1512,10 @@ fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mu
     if ours(&link, &ident) {
         out.push(format!("ok    {} already points at the corpus", tilde(&link)));
     } else if lexists(&link) {
-        out.push(format!("SKIP  {} exists and is not ours: left alone, so nothing is imported", tilde(&link)));
+        out.push(format!(
+            "SKIP  {} exists and is not ours: left alone, so nothing is imported",
+            tilde(&link)
+        ));
     } else if !src.has_identity() {
         // ponytail: refuse rather than leave a link to nothing. An identity that is not there imports
         // nothing, and a dangling symlink in the agent config is worse than an install that stopped.
@@ -1300,14 +1534,19 @@ fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mu
     if src.has("identity/USER.md") {
         out.push("ok    USER.md is already filled in".into());
     } else if src.has("identity/USER.md.template") {
-        out.push(format!("{did}seed  USER.md from the template: fill it in, it is the highest-value file here"));
+        out.push(format!(
+            "{did}seed  USER.md from the template: fill it in, it is the highest-value file here"
+        ));
         if !dry {
             fs::copy(ident.join("USER.md.template"), &user).map_err(e)?;
             // ponytail: an unwound install must not leave a template in a corpus that was already
             // there. Only reachable when corpus_home pre-existed (otherwise the clone's own undo
             // takes it), which is exactly the case where the directory is not ours to litter.
             let u = user.clone();
-            undo.push((format!("the seeded {}", tilde(&user)), Box::new(move || io_err(fs::remove_file(&u)))));
+            undo.push((
+                format!("the seeded {}", tilde(&user)),
+                Box::new(move || io_err(fs::remove_file(&u))),
+            ));
         }
     }
     if src.remembers() == Some(false) {
@@ -1327,13 +1566,24 @@ fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mu
     } else {
         out.push(format!("{did}add   the corpus imports to {}", tilde(&md)));
         if !dry {
-            append(&md, &format!("{}\n{}", missing_newline(&text), corpus_block(&src.names(), &home))).map_err(e)?;
+            append(
+                &md,
+                &format!(
+                    "{}\n{}",
+                    missing_newline(&text),
+                    corpus_block(&src.names(), &home)
+                ),
+            )
+            .map_err(e)?;
             // ponytail: read FIRST, and undo with what was read. A truncate-then-read wrote back an
             // empty file: the user's whole global CLAUDE.md, destroyed by the code added to stop this
             // path leaving things behind.
             // ponytail: a file we created is removed, not left empty. Undo means the state before.
             let (m, before) = (md.clone(), text.clone());
-            undo.push((format!("the imports in {}", tilde(&md)), Box::new(move || unwrite(&m, &before))));
+            undo.push((
+                format!("the imports in {}", tilde(&md)),
+                Box::new(move || unwrite(&m, &before)),
+            ));
         }
     }
     let sp = d.join("settings.json");
@@ -1364,17 +1614,34 @@ fn full_go(corpus: &Path, url: &str, dry: bool, out: &mut Vec<String>, undo: &mu
         if !executable(&script) {
             // ponytail: only reachable if the write landed as something that cannot run, but reported
             // per hook, because one broken script must not silently cost you the other.
-            *out.last_mut().unwrap() =
-                format!("SKIP  {} is missing or not executable: no {} hook", tilde(&script), h.event);
+            *out.last_mut().unwrap() = format!(
+                "SKIP  {} is missing or not executable: no {} hook",
+                tilde(&script),
+                h.event
+            );
             continue;
         }
-        let cmd = quote(&m) + &if h.takes_home { format!(" {}", quote(&home.to_string_lossy())) } else { String::new() };
-        let group = json!({"hooks": [{"type": "command", "command": cmd, "timeout": 10, "statusMessage": h.saying}]});
-        let hooks_obj = settings.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
+        let cmd = quote(&m)
+            + &if h.takes_home {
+                format!(" {}", quote(&home.to_string_lossy()))
+            } else {
+                String::new()
+            };
+        let group =
+            json!({"hooks": [{"type": "command", "command": cmd, "timeout": 10, "statusMessage": h.saying}]});
+        let hooks_obj = settings
+            .as_object_mut()
+            .unwrap()
+            .entry("hooks")
+            .or_insert_with(|| json!({}));
         if !hooks_obj.is_object() {
             *hooks_obj = json!({});
         }
-        let list = hooks_obj.as_object_mut().unwrap().entry(h.event).or_insert_with(|| json!([]));
+        let list = hooks_obj
+            .as_object_mut()
+            .unwrap()
+            .entry(h.event)
+            .or_insert_with(|| json!([]));
         if !list.is_array() {
             *list = json!([]);
         }
@@ -1409,7 +1676,10 @@ pub fn full_remove(dry: bool) -> Vec<String> {
             }
         }
     } else if lexists(&link) {
-        out.push(format!("SKIP    {} is not the link we made: left alone", tilde(&link)));
+        out.push(format!(
+            "SKIP    {} is not the link we made: left alone",
+            tilde(&link)
+        ));
     }
     let md = d.join("CLAUDE.md");
     let text = read(&md);
@@ -1423,9 +1693,13 @@ pub fn full_remove(dry: bool) -> Vec<String> {
     }
     let sp = d.join("settings.json");
     let raw = read(&sp);
-    let mut settings: Option<Value> = serde_json::from_str(if raw.trim().is_empty() { "{}" } else { &raw }).ok();
+    let mut settings: Option<Value> =
+        serde_json::from_str(if raw.trim().is_empty() { "{}" } else { &raw }).ok();
     if settings.is_none() {
-        out.push(format!("SKIP    {} is not valid JSON: remove the hook by hand", tilde(&sp)));
+        out.push(format!(
+            "SKIP    {} is not valid JSON: remove the hook by hand",
+            tilde(&sp)
+        ));
     }
     // ponytail: every hook in the table, not the one this branch happened to add. An uninstall that
     // leaves a Stop hook pointing into a checkout the user then deletes fails at the end of every
@@ -1483,7 +1757,10 @@ pub fn full_remove(dry: bool) -> Vec<String> {
             }
         }
     }
-    out.push(format!("note    {} is left on disk: you may have edited it", tilde(&corpus_home)));
+    out.push(format!(
+        "note    {} is left on disk: you may have edited it",
+        tilde(&corpus_home)
+    ));
     out.push(String::new());
     out.extend(remove(dry));
     out
@@ -1495,13 +1772,21 @@ pub fn full_remove(dry: bool) -> Vec<String> {
 // own USER.md is the proof: ten of its thirteen sections are about one platform, and its cross-cutting
 // section says so out loud ("these are cross-cutting: they hold in every repo"). Ownership moved to the
 // project brief, where it is scoped by binding and where a review of that repo is actually told it.
-pub const ASK_YOU: [(&str, &str); 2] =
-    [("Name", "what you would like to be called"), ("How you work", "where you want friction and where you do not")];
+pub const ASK_YOU: [(&str, &str); 2] = [
+    ("Name", "what you would like to be called"),
+    ("How you work", "where you want friction and where you do not"),
+];
 pub const ASK_PROJECT: [(&str, &str); 5] = [
     ("The project", "what it is, and who uses it"),
     ("Why it matters", "the outcome that makes the work worth doing"),
-    ("Constraints", "regulatory, contractual, performance: anything with real consequences"),
-    ("How the code is shaped", "what a newcomer would otherwise learn the hard way"),
+    (
+        "Constraints",
+        "regulatory, contractual, performance: anything with real consequences",
+    ),
+    (
+        "How the code is shaped",
+        "what a newcomer would otherwise learn the hard way",
+    ),
     // ponytail: WHO, not only what. Ownership is a property of the project, so it belongs
     // here rather than in USER.md, and a review of one of these repos is told it, which is
     // the point. Shared with the team when the brief is a team's: on a small team "who
@@ -1556,7 +1841,11 @@ fn escape(body: &str) -> String {
     for l in body.lines() {
         let was = at;
         at = fence(l, at);
-        out.push(if l.starts_with('#') && was.is_none() && at.is_none() { format!("\\{l}") } else { l.to_string() });
+        out.push(if l.starts_with('#') && was.is_none() && at.is_none() {
+            format!("\\{l}")
+        } else {
+            l.to_string()
+        });
     }
     // ponytail: an answer with an unclosed fence would otherwise bleed into the sections after it:
     // the writer tracks fences per body, the reader per file, so the next read hands back one section
@@ -1603,7 +1892,9 @@ pub fn compose(title: &str, lead: &str, answers: &[(String, String)], extra: &[(
 /// question, and a "done" that still waited on a brief nobody was going to be asked for would offer
 /// the prompt forever on a machine that answered everything it was asked.
 pub fn setup_done(corpus_home: Option<&Path>, project: bool) -> bool {
-    let home = corpus_home.map(Path::to_path_buf).unwrap_or_else(|| config::get().corpus_home);
+    let home = corpus_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| config::get().corpus_home);
     let user = read(&home.join("identity").join("USER.md"));
     let tmpl = read(&home.join("identity").join("USER.md.template"));
     let mine = !user.trim().is_empty() && user.trim() != tmpl.trim(); // a seeded template is not done
@@ -1622,9 +1913,15 @@ pub fn setup_done(corpus_home: Option<&Path>, project: bool) -> bool {
 /// than one. Asked once at install time it wrote a single ~/.prs_memory/project.md that every repo
 /// bound to no team then read: one product's brief in every review of every other, which is the exact
 /// failure brief() was rewritten to stop. Binding already scopes it; `gitdashy setup` still asks.
-pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Option<&Path>, project: bool) -> Vec<String> {
+pub fn setup(
+    ask: &mut dyn FnMut(&str, &str) -> Option<String>,
+    corpus_home: Option<&Path>,
+    project: bool,
+) -> Vec<String> {
     let mut out = Vec::new();
-    let home = corpus_home.map(Path::to_path_buf).unwrap_or_else(|| config::get().corpus_home);
+    let home = corpus_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| config::get().corpus_home);
     let user = home.join("identity").join("USER.md");
     // ponytail: a marker only compose() writes. Sniffing for the words "gitdashy setup" matched the
     // shipped TEMPLATE, which says them in prose, so the file install --full seeds looked like one
@@ -1638,7 +1935,10 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
     if user.exists() && !text.trim().is_empty() && !seeded && !text.contains(SETUP_MARK) {
         // ponytail: the brief refuses when it exists; this file must too, or re-running to change one
         // line destroys the rest. Only a file setup itself wrote is safe to rewrite.
-        out.push(format!("ok     {} is yours already: edit it directly to change it", tilde(&user)));
+        out.push(format!(
+            "ok     {} is yours already: edit it directly to change it",
+            tilde(&user)
+        ));
     } else if home.join("identity").is_dir() {
         // ponytail: blank means KEEP, not erase. compose() rewrites the whole file, so a run that only
         // answered one question used to delete every other section, including ones added by hand, while
@@ -1646,7 +1946,11 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
         let have = sections(&text);
         let mut said: Vec<(String, String)> = Vec::new();
         for (k, hint) in ASK_YOU {
-            let now = have.iter().find(|(h, _)| h == k).map(|(_, v)| v.as_str()).unwrap_or("");
+            let now = have
+                .iter()
+                .find(|(h, _)| h == k)
+                .map(|(_, v)| v.as_str())
+                .unwrap_or("");
             let current: String = now.lines().next().unwrap_or("").chars().take(60).collect();
             let answer = ask(&format!("{k}: {hint}"), &current).filter(|a| !a.is_empty());
             said.push((k.to_string(), answer.unwrap_or_else(|| now.to_string())));
@@ -1654,7 +1958,12 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
         // ponytail: the file's own order, then anything new. Appending the unasked ones moved a section
         // written above ## Name to the bottom on every single run: the file never settled.
         let mut order: Vec<String> = have.iter().map(|(k, _)| k.clone()).collect();
-        order.extend(ASK_YOU.iter().map(|(k, _)| k.to_string()).filter(|k| !order.contains(k)));
+        let extra: Vec<String> = ASK_YOU
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .filter(|k| !order.contains(k))
+            .collect();
+        order.extend(extra);
         let answers: Vec<(String, String)> = order
             .iter()
             .map(|k| {
@@ -1667,9 +1976,17 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
                 (k.clone(), v)
             })
             .collect();
-        let text = compose("Who you are", "Written by `gitdashy setup`. Edit it freely; it is yours.", &answers, &[]);
+        let text = compose(
+            "Who you are",
+            "Written by `gitdashy setup`. Edit it freely; it is yours.",
+            &answers,
+            &[],
+        );
         if text.is_empty() {
-            out.push(format!("ok     {} left as it was: nothing answered", tilde(&user)));
+            out.push(format!(
+                "ok     {} left as it was: nothing answered",
+                tilde(&user)
+            ));
         } else {
             match write_text(&user, &text) {
                 Ok(()) => out.push(format!("wrote  {}", tilde(&user))),
@@ -1677,7 +1994,10 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
             }
         }
     } else {
-        out.push(format!("SKIP   no corpus at {}: run `gitdashy install --full` first", tilde(&home)));
+        out.push(format!(
+            "SKIP   no corpus at {}: run `gitdashy install --full` first",
+            tilde(&home)
+        ));
     }
     if !project {
         // ponytail: BEFORE anything that works out which brief would be written. Below this the code
@@ -1685,8 +2005,12 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
         // asked for, printed to someone who just declined to be asked. The pointer matters more than the
         // skip: they will look for the question they are used to, so this says where it went.
         out.push(String::new());
-        out.push("note   no project brief asked for here: what the work is for belongs to a repo, not".into());
-        out.push("       to this machine. `gitdashy setup` writes one; `gitdashy teams --new NAME` and".into());
+        out.push(
+            "note   no project brief asked for here: what the work is for belongs to a repo, not".into(),
+        );
+        out.push(
+            "       to this machine. `gitdashy setup` writes one; `gitdashy teams --new NAME` and".into(),
+        );
         out.push("       `gitdashy bind --owner OWNER --team NAME` give each project its own.".into());
         return out;
     }
@@ -1700,14 +2024,20 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
     // inside a bound repo whenever two were: which file this wrote was decided by how many teams you were
     // in, not by where you were. Every note names a command that exists; setup parses no arguments.
     let here = team::origin_slug(Path::new("."));
-    let mut slug = if here.is_empty() { String::new() } else { bind::of(&here) };
+    let mut slug = if here.is_empty() {
+        String::new()
+    } else {
+        bind::of(&here)
+    };
     if here.is_empty() {
         out.push(
             "note   no git origin here: writing your own brief; run this inside a repo bound to a team to write that team's"
                 .into(),
         );
     } else if slug.is_empty() {
-        out.push(format!("note   {here} is bound to no team: writing your own brief; `gitdashy bind` binds it to one"));
+        out.push(format!(
+            "note   {here} is bound to no team: writing your own brief; `gitdashy bind` binds it to one"
+        ));
     } else if bind::team_dir(&slug).is_none() {
         out.push(format!("note   {here} is bound to team {slug}, which this machine has not joined: writing your own brief"));
         slug.clear();
@@ -1729,15 +2059,29 @@ pub fn setup(ask: &mut dyn FnMut(&str, &str) -> Option<String>, corpus_home: Opt
         )
     };
     if dest.exists() {
-        out.push(format!("ok     {} already written: edit it directly to change it", tilde(&dest)));
+        out.push(format!(
+            "ok     {} already written: edit it directly to change it",
+            tilde(&dest)
+        ));
         return out;
     }
     out.push(String::new());
     out.push(format!("Now what the work is for. This brief is {whose}."));
-    let got: Vec<(String, String)> =
-        ASK_PROJECT.iter().map(|(k, hint)| (k.to_string(), ask(&format!("{k}: {hint}"), "").unwrap_or_default())).collect();
-    let text =
-        compose("What is being built", "Written by `gitdashy setup`. Reviews of the repos it covers read this.", &got, &[]);
+    let got: Vec<(String, String)> = ASK_PROJECT
+        .iter()
+        .map(|(k, hint)| {
+            (
+                k.to_string(),
+                ask(&format!("{k}: {hint}"), "").unwrap_or_default(),
+            )
+        })
+        .collect();
+    let text = compose(
+        "What is being built",
+        "Written by `gitdashy setup`. Reviews of the repos it covers read this.",
+        &got,
+        &[],
+    );
     if text.is_empty() {
         out.push("ok     no brief written: `gitdashy setup` again whenever you want one".into());
         return out;
@@ -1841,7 +2185,10 @@ mod tests {
         let into = t.path().join("repo").join(".agent").join("team");
         assert!(register(&into, "o/r", t.path(), Path::new("")));
         assert!(!register(&into, "o/r", t.path(), Path::new("")));
-        assert_eq!(registered(), vec![(into.clone(), s("o/r"), t.path().to_path_buf(), PathBuf::new())]);
+        assert_eq!(
+            registered(),
+            vec![(into.clone(), s("o/r"), t.path().to_path_buf(), PathBuf::new())]
+        );
         assert!(unregister(&into));
         assert!(!unregister(&into));
         assert!(registered().is_empty());
@@ -1854,9 +2201,16 @@ mod tests {
         text.push_str("/old/mirror\told/repo\nnot json at all\n");
         fs::write(&reg, text).unwrap();
         assert!(register(&tabbed, "x/y", Path::new(""), Path::new("")));
-        assert!(register(Path::new("/forget"), "z/z", Path::new(""), Path::new("")));
+        assert!(register(
+            Path::new("/forget"),
+            "z/z",
+            Path::new(""),
+            Path::new("")
+        ));
         let known = registered();
-        assert!(known.iter().any(|e| e.0 == Path::new("/old/mirror") && e.1 == "old/repo"));
+        assert!(known
+            .iter()
+            .any(|e| e.0 == Path::new("/old/mirror") && e.1 == "old/repo"));
         assert!(known.iter().any(|e| e.0 == tabbed && e.1 == "x/y"));
         assert!(known.iter().any(|e| e.0 == Path::new("/forget")));
         assert_eq!(known.len(), 4);
@@ -1898,17 +2252,37 @@ mod tests {
         assert_eq!(sections(&forged).len(), 1);
         assert_eq!(sections(&forged)[0].1, "x\n## Role\n\nCTO");
         // a repeated heading appends
-        assert_eq!(sections("## A\n\none\n\n## A\n\ntwo\n"), vec![(s("A"), s("one\n\ntwo"))]);
+        assert_eq!(
+            sections("## A\n\none\n\n## A\n\ntwo\n"),
+            vec![(s("A"), s("one\n\ntwo"))]
+        );
         // tilde fences, info strings, longer fences
-        assert_eq!(sections("## A\n\n~~~\n## B\n~~~\n"), vec![(s("A"), s("~~~\n## B\n~~~"))]);
-        assert_eq!(sections("## A\n\n```\n```python\n```\n"), vec![(s("A"), s("```\n```python\n```"))]);
-        assert_eq!(sections("## A\n\n````\n```\n## B\n````\n"), vec![(s("A"), s("````\n```\n## B\n````"))]);
+        assert_eq!(
+            sections("## A\n\n~~~\n## B\n~~~\n"),
+            vec![(s("A"), s("~~~\n## B\n~~~"))]
+        );
+        assert_eq!(
+            sections("## A\n\n```\n```python\n```\n"),
+            vec![(s("A"), s("```\n```python\n```"))]
+        );
+        assert_eq!(
+            sections("## A\n\n````\n```\n## B\n````\n"),
+            vec![(s("A"), s("````\n```\n## B\n````"))]
+        );
         // an unclosed fence in an answer is closed by the writer
         let text = compose("W", "l", &[(s("Name"), s("```")), (s("Role"), s("CTO"))], &[]);
         assert!(sections(&text).iter().any(|(k, v)| k == "Role" && v == "CTO"));
         // empty answers are dropped, extra sections kept, nothing at all is ""
-        let text = compose("t", "l", &[(s("A"), s("")), (s("B"), s("b"))], &[(s("Hand added"), s("mine"))]);
-        assert_eq!(sections(&text), vec![(s("B"), s("b")), (s("Hand added"), s("mine"))]);
+        let text = compose(
+            "t",
+            "l",
+            &[(s("A"), s("")), (s("B"), s("b"))],
+            &[(s("Hand added"), s("mine"))],
+        );
+        assert_eq!(
+            sections(&text),
+            vec![(s("B"), s("b")), (s("Hand added"), s("mine"))]
+        );
         assert_eq!(compose("t", "l", &[(s("A"), s(""))], &[]), "");
     }
 
@@ -1923,7 +2297,9 @@ mod tests {
         let out = setup(&mut ask, Some(&home), false);
         let text = fs::read_to_string(&user).unwrap();
         assert!(text.contains("## Name\n\nNils") && text.contains("## How you work\n\nask first"));
-        assert!(out.iter().any(|l| l.starts_with("wrote") && l.contains("USER.md")));
+        assert!(out
+            .iter()
+            .any(|l| l.starts_with("wrote") && l.contains("USER.md")));
         assert!(out.iter().any(|l| l.contains("no project brief asked for here")));
         // hand-added sections stay, blank keeps, the order holds, and the current value is shown
         fs::write(&user, text + "\n## Hand added\n\nsomething I wrote\n").unwrap();
@@ -1954,7 +2330,11 @@ mod tests {
         assert!(out[0].starts_with("wrote"));
         assert!(setup_done(Some(&home), false));
         // no corpus at all
-        let out = setup(&mut |_q: &str, _c: &str| Some(s("N")), Some(&t.path().join("nope")), false);
+        let out = setup(
+            &mut |_q: &str, _c: &str| Some(s("N")),
+            Some(&t.path().join("nope")),
+            false,
+        );
         assert!(out[0].starts_with("SKIP"));
     }
 
@@ -1986,13 +2366,21 @@ mod tests {
         assert!(!corpus_home.exists() && !cfg.join("hooks").exists());
 
         let out = full_apply(Path::new(""), "", false);
-        assert!(!out.iter().any(|l| l.starts_with("FAIL") || l.starts_with("SKIP")), "{out:?}");
+        assert!(
+            !out.iter().any(|l| l.starts_with("FAIL") || l.starts_with("SKIP")),
+            "{out:?}"
+        );
         assert!(corpus_home.join("identity").join("AGENT.md").is_file());
         assert!(corpus_home.join("identity").join("USER.md").is_file()); // seeded
         assert!(ours(&cfg.join("identity"), &corpus_home.join("identity")));
         assert!(ours(&cfg.join("prs-memory"), &t.path().join("mem")));
         let md = fs::read_to_string(cfg.join("CLAUDE.md")).unwrap();
-        assert!(md.contains("keep me") && md.contains(CBEGIN) && md.contains(BEGIN) && md.contains("@identity/AGENT.md"));
+        assert!(
+            md.contains("keep me")
+                && md.contains(CBEGIN)
+                && md.contains(BEGIN)
+                && md.contains("@identity/AGENT.md")
+        );
         let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
         for h in &HOOK_TABLE {
             let script = hook_path(h.name);
@@ -2000,30 +2388,50 @@ mod tests {
             let text = fs::read_to_string(&script).unwrap();
             assert!(!text.contains(PLACEHOLDER) && text.contains(&exe));
         }
-        let got: Value = serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
+        let got: Value =
+            serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
         assert_eq!(got["model"], "opus");
         assert_eq!(got["hooks"]["Stop"][0]["hooks"][0]["command"], "mine");
         assert_eq!(count(&got, "Stop"), 2);
         assert_eq!(count(&got, "SessionStart"), 1);
-        let start = got["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap();
-        assert!(start.contains("claude-session-start.sh") && start.ends_with(&quote(&corpus_home.to_string_lossy())));
+        let start = got["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(
+            start.contains("claude-session-start.sh")
+                && start.ends_with(&quote(&corpus_home.to_string_lossy()))
+        );
         let stop = got["hooks"]["Stop"][1]["hooks"][0]["command"].as_str().unwrap();
         assert_eq!(stop, quote(&hook_path("claude-stop.sh").to_string_lossy()));
 
         // again: nothing doubled
         let out = full_apply(Path::new(""), "", false);
-        assert!(out.iter().filter(|l| l.contains("already registered")).count() == 2, "{out:?}");
-        let got: Value = serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
+        assert!(
+            out.iter().filter(|l| l.contains("already registered")).count() == 2,
+            "{out:?}"
+        );
+        let got: Value =
+            serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
         assert_eq!(count(&got, "Stop"), 2);
         assert_eq!(count(&got, "SessionStart"), 1);
-        assert_eq!(fs::read_to_string(cfg.join("CLAUDE.md")).unwrap().matches(CBEGIN).count(), 1);
+        assert_eq!(
+            fs::read_to_string(cfg.join("CLAUDE.md"))
+                .unwrap()
+                .matches(CBEGIN)
+                .count(),
+            1
+        );
 
         let out = full_remove(false);
         assert!(!out.iter().any(|l| l.starts_with("FAIL")), "{out:?}");
-        assert_eq!(fs::read_to_string(cfg.join("CLAUDE.md")).unwrap(), "# my own rules\n\nkeep me\n");
+        assert_eq!(
+            fs::read_to_string(cfg.join("CLAUDE.md")).unwrap(),
+            "# my own rules\n\nkeep me\n"
+        );
         assert!(!lexists(&cfg.join("identity")) && !lexists(&cfg.join("prs-memory")));
         assert!(!lexists(&hook_path("claude-stop.sh")) && !lexists(&hook_path("claude-session-start.sh")));
-        let got: Value = serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
+        let got: Value =
+            serde_json::from_str(&fs::read_to_string(cfg.join("settings.json")).unwrap()).unwrap();
         assert_eq!(got["hooks"]["Stop"][0]["hooks"][0]["command"], "mine");
         assert!(got["hooks"].get("SessionStart").is_none());
         assert!(corpus_home.is_dir()); // you may have edited it
@@ -2032,10 +2440,17 @@ mod tests {
         fs::remove_dir_all(&corpus_home).unwrap();
         fs::write(cfg.join("settings.json"), "{not json").unwrap();
         let out = full_apply(Path::new(""), "", false);
-        assert!(out.iter().any(|l| l.starts_with("FAIL") && l.contains("valid JSON")), "{out:?}");
+        assert!(
+            out.iter()
+                .any(|l| l.starts_with("FAIL") && l.contains("valid JSON")),
+            "{out:?}"
+        );
         assert!(out.iter().any(|l| l.contains("undone:")), "{out:?}");
         assert!(!lexists(&cfg.join("identity")) && !corpus_home.exists());
-        assert_eq!(fs::read_to_string(cfg.join("CLAUDE.md")).unwrap(), "# my own rules\n\nkeep me\n");
+        assert_eq!(
+            fs::read_to_string(cfg.join("CLAUDE.md")).unwrap(),
+            "# my own rules\n\nkeep me\n"
+        );
         std::env::remove_var("CLAUDE_CONFIG_DIR");
     }
 
@@ -2043,7 +2458,10 @@ mod tests {
     fn relpath_and_quote_match_python() {
         assert_eq!(relpath(Path::new("/a/b/c"), Path::new("/a/x")), "../b/c");
         assert_eq!(relpath(Path::new("/a/b"), Path::new("/a/b")), ".");
-        assert_eq!(relpath(Path::new("/a/b/.agent/team"), Path::new("/a/b")), ".agent/team");
+        assert_eq!(
+            relpath(Path::new("/a/b/.agent/team"), Path::new("/a/b")),
+            ".agent/team"
+        );
         assert_eq!(quote("/plain/path-1.sh"), "/plain/path-1.sh");
         assert_eq!(quote("has space"), "'has space'");
         assert_eq!(quote("it's"), "'it'\"'\"'s'");

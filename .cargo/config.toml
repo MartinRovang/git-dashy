@@ -1,0 +1,6 @@
+# The crate keeps its paths and settings in one process-global `config` (config.rs), which the UI and
+# every module read. Tests that point it at a tempdir therefore cannot run beside each other, and the
+# per-module test mutexes do not serialize across modules. Run the test harness single-threaded so a
+# test sees one stable config for its whole body, on CI and locally alike.
+[env]
+RUST_TEST_THREADS = "1"

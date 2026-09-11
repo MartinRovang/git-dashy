@@ -1,0 +1,132 @@
+gitdashy 2.0.0 — desktop dashboard of open PRs: mine, review-requested, assigned.
+
+Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
+       gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
+       gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy self-review N [--repo owner/name] [--model NAME]
+       gitdashy setup
+       gitdashy self-check [--model NAME]
+       gitdashy api PATH [--diff]
+       gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
+       gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
+       gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
+       gitdashy drafts [--repo owner/name] [--count]
+       gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
+       gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
+                      [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
+                      [--team KEY --agents-again]
+                      [--team KEY --agents-again]
+
+  --interval N   seconds between refreshes (default 300); i picks 1/2/5/10/15m
+  --browser      open the dashboard in your browser instead of the desktop app (downloaded on first use)
+  --no-open      serve only, no window — what the desktop app runs behind its splash
+  --port N       with --no-open: bind this port instead of a free one (the app picks it)
+  --auto         Claude reviews every review-requested PR that appears from now on
+  --model NAME   review model (default opus, or $PRS_MODEL); m picks at runtime
+  --effort LEVEL claude effort: low, medium, high, xhigh, max (default medium, or $PRS_EFFORT); e picks
+  --depth LEVEL  review depth: low, medium, high, adaptive (default adaptive, or $PRS_DEPTH); d picks
+  --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
+  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, humanizer (or $PRS_HUNTER); h toggles
+  --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
+  --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
+  --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
+
+sync-memory copies this repo's review memory into PATH as a read-only mirror, so an agent session there
+  reads what the reviews learned. --repo defaults to this directory's origin. Cross-repo facts are left out:
+  put `@prs-memory/general.md` in ~/.claude/CLAUDE.md (via a symlink) and they load everywhere, live, with
+  nothing to sync. --general mirrors them in here as well, for anyone not doing that.
+  Refuses to write anywhere git would commit it. --no-pull skips the team fetch, for callers on a
+  timeout: it mirrors whatever the last refresh pulled.
+
+remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
+  review and a coding session found independently is confirmed by their agreement. --repo defaults to this
+  directory's origin; --general is for something true of every repo.
+
+self-review runs the reviewer over one of your OWN PRs and posts nothing — a pass before you ask a
+  person, not a substitute for one. The review is written to ~/.prs_reviews/ and its findings wait in a
+  separate pool that never confirms a fact by itself: the pre-review and the real one are the same model
+  on the same diff, so only a later real review landing on the same fact independently promotes it.
+
+install wires this machine so every session reads the cross-repo facts: one symlink in the agent config
+  directory and one import. It explains itself and asks before writing anything (--yes to skip the ask,
+  --dry-run to see it and stop). Idempotent, and --uninstall reverses exactly what it wrote. --full ends
+  by offering to say who you are; --yes, --no-setup or a non-terminal stdin all skip that. Reviews need
+  none of this — they read memory through the prompt and always have.
+
+install --full also puts an agent corpus on this machine, so coding sessions work to a stated discipline:
+  it installs the small one gitdashy ships (or --corpus URL for your own), imports it, seeds a USER.md for
+  you to fill in, and registers one SessionStart hook that seeds a repo's local notes. It says what that
+  costs in tokens and asks separately, because it is a much bigger commitment than the line above. See
+  docs/install.md.
+
+init wires one repo, so a session there also reads that repo's own facts: it excludes the mirror from git
+  (via .git/info/exclude, never the tracked .gitignore), adds the import to --loader, and registers the
+  path so the running dashboard re-mirrors it on every refresh. No hooks. --into DIR --forget stops
+  refreshing one; the files stay, they just go still.
+
+bind says which team a repo belongs to, and that decides everything the team knows about it: which
+  project brief its reviews are told (one, never two), which facts they read, and whether a fact about it
+  may be shared. A repo bound to nothing is private — your own memory and nothing else. --owner OWNER
+  binds a whole org in one line, and a repo binding or --forget still overrides it, so the one repo that
+  is not the project can be left out. Joining a team binds the repos already named in its shared review
+  log, once, so nothing you had yesterday disappears; after that it is yours to change and --forget
+  sticks. Defaults to this directory's origin; --list shows every rule. A bare `bind` reports and changes
+  no binding of its own — though joining a team seeds from its log on any command, including this one.
+
+drafts shows what a review proposed and no second review has confirmed — the store nothing else can
+  show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,
+  because a pre-review and the real review are one model on one diff. Read-only here: W in the dashboard
+  promotes one by hand or drops it.
+
+friction answers one question — did this session hit something worth remembering? — and is how a
+  coding session gets ASKED to file a fact instead of being told to remember. Two human signals only:
+  how often you interrupted, and how often you refused a tool call. Tool errors are ignored on purpose
+  (most are a benign non-zero exit), and neither signal grows with session length, so a long routine
+  session stays silent. It prints the ask, or nothing at all, which is the usual answer. Claude Code is
+  wired by the Stop hook gitdashy ships; any other agent counts its own signals and passes them in.
+
+teams lists the teams this machine has joined, what each calls itself, and what it covers.
+  A team is a git repo — or just a directory — that pools what reviews learn. Whoever can reach it is
+  on the team; there is no service and no account. Its name and description live in team.json inside
+  it, so everyone who clones it sees the same ones.
+  --new starts one right here with no remote at all: a name, a description, and files. --at DIR keeps
+  it somewhere else and links to it — an EMPTY directory, or one that does not exist yet; one that
+  already holds something is refused rather than adopted. When you have a repo for it, --team KEY
+  --connect URL points it there and pushes; the key does not change, so every binding still holds. A
+  remote that already has history that is not this team's is refused: that is a team to join.
+  --join clones one that exists, from any git URL or a path (a bare owner/name is expanded to GitHub
+  as a convenience, nothing more). It takes its key from the team's own name, and writes one in when
+  the repo has none, so the next person lands on the same key. A path must be a BARE repo — git
+  refuses pushes into a checkout — so a team on a shared drive is `git init --bare` there, then --connect.
+  --cover TARGET declares, in the team, that it covers an owner ("acme", "acme/*") or an owner/name,
+  and binds it here. Someone JOINING the team gets what it declares seeded into their own bindings
+  once, the way the review log is — visible in `bind --list`, and a --forget still sticks. A claim
+  added after they joined is NOT bound on their machine on its own: it is listed here, and taken with
+  `bind --owner`, because what a repo's reviews read and where its facts may be pooled is not something
+  a push to the team repo gets to decide for someone else. --uncover withdraws the declaration; rows it
+  already seeded stay each person's to change. --leave drops one checkout, refusing while it holds
+  unpushed work. Several teams at once; which one applies to a repo is `gitdashy bind`.
+
+setup asks for the two things a corpus cannot work out for itself: who you are, and what the work is
+  for. It writes USER.md and a project brief — yours when you are on your own, the team's when you are in
+  one. Which repos read it is decided by `gitdashy bind`. Re-runnable: a blank answer KEEPS what is already there rather
+  than clearing it, the prompt shows you what that is, and sections you added by hand are left alone.
+  `install --full` asks only the first of the two: who you are is a property of this machine, and what
+  the work is for is a property of a repo. YOUR brief covers every repo bound to no team — one file for
+  all of them — so give each project its own team (`gitdashy teams --new`, then `gitdashy bind`) rather
+  than letting one product's brief reach the reviews of another.
+
+self-check makes one real claude call and proves the three things every review depends on: that the
+  appended review lens arrives, that --safe-mode hides the machine's CLAUDE.md, and that tools still run
+  under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
+
+Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
+v read the full review of the selected PR (any row that has one), Y open the pre-review, o open, y copy the URL,
+␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
+(each opens a picker: j/k moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default), ? show each setting's key,
+L local memory dir, C where all team checkouts live, n repo memory, g general memory (edited in the app),
+1/2 or Tab switch the pane between the review summary and the code it is about,
+  in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
++ request a review from a collaborator (MINE), b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
+P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
+T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, esc menu (theme, notify, refresh, quit), q quit.

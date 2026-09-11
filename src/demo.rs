@@ -303,7 +303,7 @@ pub fn detail(repo: &str, number: u64) -> Option<Detail> {
 }
 
 /// The fake dream: (summary, before, after), with the duplicate lines of each file folded.
-pub fn dream() -> (String, Vec<(String, String)>, Vec<(String, String)>) {
+pub fn dream() -> crate::memory::Dream {
     pause(4);
     let before = crate::memory::files();
     let after = before

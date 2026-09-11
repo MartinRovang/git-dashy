@@ -2149,7 +2149,10 @@ mod tests {
         assert!(msg.contains("has no origin to name it by"), "{msg}");
         assert!(old.is_dir());
         sh(&old, &["remote", "add", "origin", "git@github.com:org/mem.git"]);
-        // knowledge::unpushed cannot tell yet, so the move is refused rather than risked
+        // knowledge::unpushed cannot tell once the tree is dirty, so the move is refused rather than
+        // risked. A remote with no upstream is 0, not -1: with nothing to compare against there is
+        // nothing unpushed (see unpushed() and test_knowledge.py). Uncommitted work is the real -1.
+        std::fs::write(old.join("uncommitted.md"), "unpushed work\n").unwrap();
         let msg = migrate();
         assert!(msg.contains("possibly unpushed reviews"), "{msg}");
         assert!(old.is_dir());

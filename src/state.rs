@@ -15,7 +15,7 @@ use crate::{
 
 /// The desktop popup's icon. Python pointed notify-send at dashy/notify.png on disk; the binary
 /// carries it and writes it out once, beside the other temp files.
-pub const NOTIFY_ICON: &[u8] = include_bytes!("../dashy/notify.png");
+pub const NOTIFY_ICON: &[u8] = include_bytes!("../ui/notify.png");
 
 /// Seconds since the epoch, as Python's time.time().
 pub fn now() -> f64 {
@@ -29,6 +29,8 @@ pub fn now() -> f64 {
 pub type DetailKey = (String, String);
 /// The diff cache key: (repo, number, head, findings signature, diff generation).
 pub type DiffKey = (String, u64, String, Vec<(String, String, String)>, u64);
+/// One PR's parsed diff and the marks anchored onto it.
+pub type DiffCache = (Vec<DiffFile>, Vec<Mark>);
 
 /// An event the refresh loop sleeps on: `set` wakes it, `wait` returns true when it was set.
 #[derive(Default)]
@@ -86,7 +88,7 @@ pub struct Inner {
     pub arrived: HashMap<String, usize>,
     pub details: HashMap<DetailKey, Option<Detail>>,
     pub detailing: HashSet<DetailKey>,
-    pub diffs: HashMap<DiffKey, Option<(Vec<DiffFile>, Vec<Mark>)>>,
+    pub diffs: HashMap<DiffKey, Option<DiffCache>>,
     pub diffing: HashSet<DiffKey>,
     /// RR urls present when auto was switched on; None while auto is off.
     pub auto_baseline: Option<HashSet<String>>,

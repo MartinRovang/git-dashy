@@ -11,7 +11,9 @@ use serde_json::Value;
 
 use crate::config::{self, VERSION};
 use crate::types::{Pr, Repository};
-use crate::{bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge, memory};
+use crate::{
+    bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge, memory,
+};
 use crate::{mirror, review as review_mod, team};
 
 pub const USAGE: &str = include_str!("usage.txt");
@@ -295,15 +297,27 @@ fn install(full: bool, url: Option<String>, dry: bool, yes: bool, no_setup: bool
     let corpus = corpus_dir();
     let url = nonempty(url);
     if uninstall {
-        let lines = if full { install_mod::full_remove(dry) } else { install_mod::remove(dry) };
+        let lines = if full {
+            install_mod::full_remove(dry)
+        } else {
+            install_mod::remove(dry)
+        };
         println!("{}", lines.join("\n"));
         return 0;
     }
-    let explain = if full { install_mod::full_explain(&corpus, &url) } else { install_mod::explain() };
+    let explain = if full {
+        install_mod::full_explain(&corpus, &url)
+    } else {
+        install_mod::explain()
+    };
     println!("{}", explain.join("\n"));
     if dry {
         println!();
-        let lines = if full { install_mod::full_apply(&corpus, &url, true) } else { install_mod::apply(true) };
+        let lines = if full {
+            install_mod::full_apply(&corpus, &url, true)
+        } else {
+            install_mod::apply(true)
+        };
         println!("{}", lines.join("\n"));
         println!("\n--dry-run, so nothing was changed. Without it you are asked first.");
         return 0;
@@ -326,7 +340,11 @@ fn install(full: bool, url: Option<String>, dry: bool, yes: bool, no_setup: bool
         }
     }
     println!();
-    let out = if full { install_mod::full_apply(&corpus, &url, false) } else { install_mod::apply(false) };
+    let out = if full {
+        install_mod::full_apply(&corpus, &url, false)
+    } else {
+        install_mod::apply(false)
+    };
     println!("{}", out.join("\n"));
     // ponytail: --full ONLY. Plain install puts no corpus on the machine, so there is no USER.md to
     // fill in, and its whole promise is that it stays out of the way: no corpus, no hooks, no
@@ -384,7 +402,10 @@ fn self_review(number: Option<u64>, repo: Option<String>, model: Option<String>)
     let pr = Pr {
         number: n,
         url: format!("https://github.com/{repo}/pull/{n}"),
-        repository: Repository { name_with_owner: repo.clone(), name: repo.split('/').nth(1).unwrap_or("").into() },
+        repository: Repository {
+            name_with_owner: repo.clone(),
+            name: repo.split('/').nth(1).unwrap_or("").into(),
+        },
         ..Default::default()
     };
     println!("pre-reviewing {repo}#{n} — nothing will be posted…");
@@ -424,7 +445,14 @@ fn setup(project: bool) -> i32 {
         }
         let now = current.lines().next().unwrap_or("");
         let now: String = now.chars().take(60).collect();
-        let prompt = format!("  {question}{}\n  > ", if now.is_empty() { String::new() } else { format!("\n  [now: {now}]") });
+        let prompt = format!(
+            "  {question}{}\n  > ",
+            if now.is_empty() {
+                String::new()
+            } else {
+                format!("\n  [now: {now}]")
+            }
+        );
         let got = ask_line(&prompt);
         eof = got.is_none();
         got
@@ -445,7 +473,14 @@ fn init(into: Option<String>, loader: Option<String>, repo: Option<String>, forg
     if !into.is_empty() && forget {
         // ponytail: the registry grows on its own, so it needs a way out
         let was = install_mod::unregister(Path::new(&into));
-        println!("gitdashy: {} {into}", if was { "no longer refreshing" } else { "was not refreshing" });
+        println!(
+            "gitdashy: {} {into}",
+            if was {
+                "no longer refreshing"
+            } else {
+                "was not refreshing"
+            }
+        );
         return 0;
     }
     if into.is_empty() || loader.is_empty() {
@@ -477,22 +512,38 @@ fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
     }
     team::activate(); // so memory.sources() sees the team as a second source
     let named = repo.filter(|r| !r.is_empty());
-    let repo = if general { String::new() } else { named.clone().unwrap_or_else(here) };
+    let repo = if general {
+        String::new()
+    } else {
+        named.clone().unwrap_or_else(here)
+    };
     if !general && repo.is_empty() {
         return fail("gitdashy: no git origin here — pass --repo owner/name, or --general");
     }
-    let where_ = if repo.is_empty() { "general".to_string() } else { repo.clone() };
+    let where_ = if repo.is_empty() {
+        "general".to_string()
+    } else {
+        repo.clone()
+    };
     // ponytail: --general threw away the repo you are standing in, which is the only thing that says
     // WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all:
     // neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
     // general fact means "true across this project", and the project is that repo's team.
-    let about = if general { named.unwrap_or_else(here) } else { String::new() };
+    let about = if general {
+        named.unwrap_or_else(here)
+    } else {
+        String::new()
+    };
     if memory::already_known(&repo, &fact) {
         println!("gitdashy: {where_} already knows that");
         return 0;
     }
     let promoted = memory::append(&repo, &fact, &about);
-    team::push_dir(&config::get().memory_dir, &format!("memory: remembered for {where_}"), "mine");
+    team::push_dir(
+        &config::get().memory_dir,
+        &format!("memory: remembered for {where_}"),
+        "mine",
+    );
     team::push(&format!("memory: evidence for {where_}")); // ponytail: a promotion writes the pool, which lives over there
     if let Some(first) = promoted.first() {
         // ponytail: the counter counts observations; it does not know which surface each came from
@@ -543,28 +594,50 @@ fn team_of(typed: Option<&str>) -> Result<String, String> {
 /// "reviews of it read: <whose>" and whether there is anything to read.
 fn reads(repo: &str, label: &str) -> String {
     let (text, whose) = memory::brief(Some(repo), None);
-    format!("  reviews of {label} read: {whose}{}", if text.is_empty() { " (nothing to read)" } else { "" })
+    format!(
+        "  reviews of {label} read: {whose}{}",
+        if text.is_empty() { " (nothing to read)" } else { "" }
+    )
 }
 
 /// Bind a repo to a team, so reviews of it are told that team's brief and no other.
-fn bind(positional: Option<String>, team_flag: Option<String>, forget: bool, owner: Option<String>, list: bool) -> i32 {
+fn bind(
+    positional: Option<String>,
+    team_flag: Option<String>,
+    forget: bool,
+    owner: Option<String>,
+    list: bool,
+) -> i32 {
     team::activate(); // ponytail: names the team, and seeds bindings from the shared log the first time
-    // ponytail: BEFORE the positional guard. --list is a read-only question, and gating it behind a check
-    // on the thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
+                      // ponytail: BEFORE the positional guard. --list is a read-only question, and gating it behind a check
+                      // on the thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
     if list {
-        let mut owners: Vec<(String, String)> = bind_mod::owners().into_iter().map(|(o, t)| (o + "/*", t)).collect();
+        let mut owners: Vec<(String, String)> = bind_mod::owners()
+            .into_iter()
+            .map(|(o, t)| (o + "/*", t))
+            .collect();
         owners.sort();
         let mut bound: Vec<(String, String)> = bind_mod::bindings().into_iter().collect();
         bound.sort();
         let rows: Vec<(String, String)> = owners
             .into_iter()
             .chain(bound)
-            .chain(bind_mod::excluded().into_iter().map(|r| (r, "excluded — kept out of the rule above".to_string())))
+            .chain(
+                bind_mod::excluded()
+                    .into_iter()
+                    .map(|r| (r, "excluded — kept out of the rule above".to_string())),
+            )
             .collect();
         if rows.is_empty() {
             println!("  no repo is bound to a team");
         } else {
-            println!("{}", rows.iter().map(|(r, t)| format!("  {r:<36}  →  {t}")).collect::<Vec<_>>().join("\n"));
+            println!(
+                "{}",
+                rows.iter()
+                    .map(|(r, t)| format!("  {r:<36}  →  {t}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
         }
         return 0;
     }
@@ -575,7 +648,10 @@ fn bind(positional: Option<String>, team_flag: Option<String>, forget: bool, own
     // reporting success with the wrong name.
     if named.is_empty() {
         if let Some(typo) = positional {
-            return fail(format!("gitdashy: {} is not owner/name — bind takes a full slug, or --owner OWNER", pyrepr(&typo)));
+            return fail(format!(
+                "gitdashy: {} is not owner/name — bind takes a full slug, or --owner OWNER",
+                pyrepr(&typo)
+            ));
         }
     }
     let repo = if named.is_empty() { here() } else { named.clone() };
@@ -599,7 +675,10 @@ fn bind(positional: Option<String>, team_flag: Option<String>, forget: bool, own
         if !err.is_empty() {
             return fail(format!("gitdashy: {err}"));
         }
-        println!("gitdashy: {}/* → {to}  (a repo binding still overrides it)", bind_mod::owner_key(&owner));
+        println!(
+            "gitdashy: {}/* → {to}  (a repo binding still overrides it)",
+            bind_mod::owner_key(&owner)
+        );
         return 0;
     }
     if repo.is_empty() {
@@ -613,7 +692,11 @@ fn bind(positional: Option<String>, team_flag: Option<String>, forget: bool, own
     let team_typed = team_flag.as_deref().is_some_and(|t| !t.is_empty());
     if named.is_empty() && !team_typed && !forget {
         let of = bind_mod::of(&repo);
-        println!("gitdashy: {} → {}", bind_mod::key(&repo), if of.is_empty() { "no team".to_string() } else { of });
+        println!(
+            "gitdashy: {} → {}",
+            bind_mod::key(&repo),
+            if of.is_empty() { "no team".to_string() } else { of }
+        );
         println!("{}", reads(&repo, "it"));
         return 0;
     }
@@ -626,7 +709,11 @@ fn bind(positional: Option<String>, team_flag: Option<String>, forget: bool, own
         println!(
             "gitdashy: {} {}",
             bind_mod::key(&repo),
-            if was.is_empty() { "was not bound to anything".to_string() } else { format!("unbound from {was}") }
+            if was.is_empty() {
+                "was not bound to anything".to_string()
+            } else {
+                format!("unbound from {was}")
+            }
         );
     } else {
         let to = match team_of(team_flag.as_deref()) {
@@ -670,8 +757,16 @@ fn api(path: Option<String>, diff: bool) -> i32 {
         Ok(p) => p,
         Err(e) => return fail(format!("gitdashy: {e}")),
     };
-    let accept = if diff { "application/vnd.github.v3.diff" } else { "application/vnd.github+json" };
-    let full = if path.starts_with('/') { path } else { format!("/{path}") };
+    let accept = if diff {
+        "application/vnd.github.v3.diff"
+    } else {
+        "application/vnd.github+json"
+    };
+    let full = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
     let raw = match github::call(&full, "GET", None, accept, 60) {
         Ok(r) => r,
         Err(e) => return fail(format!("gitdashy: {e}")),
@@ -686,8 +781,13 @@ fn api(path: Option<String>, diff: bool) -> i32 {
         }
     };
     if d.get("encoding").and_then(Value::as_str) == Some("base64") {
-        let content: String =
-            d.get("content").and_then(Value::as_str).unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
+        let content: String = d
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         return match base64::engine::general_purpose::STANDARD.decode(content) {
             Ok(bytes) => {
                 let _ = writeln!(out, "{}", String::from_utf8_lossy(&bytes));
@@ -705,7 +805,9 @@ fn drafts(repo: Option<String>, count: bool) -> i32 {
     team::activate();
     // ponytail: --count is for a session hook, so it defaults to the repo you are standing in and reads
     // only the local store: no network, and nothing printed when there is nothing to say.
-    let only = repo.filter(|r| !r.is_empty()).unwrap_or_else(|| if count { here() } else { String::new() });
+    let only = repo
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| if count { here() } else { String::new() });
     if count && only.is_empty() {
         // ponytail: a repo we cannot name has nothing waiting FOR IT. Without this a local-only repo,
         // a git repo, which is all the hook requires, was told every draft on the machine was its own.
@@ -730,11 +832,16 @@ fn drafts(repo: Option<String>, count: bool) -> i32 {
         return 0;
     }
     rows.sort_by(|a, b| {
-        (a.0.clone().unwrap_or_default(), a.3 == "self", std::cmp::Reverse(a.1)).cmp(&(
-            b.0.clone().unwrap_or_default(),
-            b.3 == "self",
-            std::cmp::Reverse(b.1),
-        ))
+        (
+            a.0.clone().unwrap_or_default(),
+            a.3 == "self",
+            std::cmp::Reverse(a.1),
+        )
+            .cmp(&(
+                b.0.clone().unwrap_or_default(),
+                b.3 == "self",
+                std::cmp::Reverse(b.1),
+            ))
     });
     // ponytail: grouped by repo with a heading per group, general included. A `where = None` sentinel
     // collided with the repo of the GENERAL file, which is also None, so its rows printed under no
@@ -747,12 +854,20 @@ fn drafts(repo: Option<String>, count: bool) -> i32 {
             println!(
                 "\n  {}{}",
                 repo.as_deref().unwrap_or("general"),
-                if team_of.is_empty() { String::new() } else { format!("  ({team_of})") }
+                if team_of.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({team_of})")
+                }
             );
         }
         // ponytail: the count is the whole point of the line: it says how close this is to being a
         // fact, and a pre-review finding has no count because one opinion twice is still one opinion.
-        let tag = if kind == "self" { "pre-review".to_string() } else { format!("seen {n}×") };
+        let tag = if kind == "self" {
+            "pre-review".to_string()
+        } else {
+            format!("seen {n}×")
+        };
         println!("    [{tag:>10}]  {fact}");
     }
     println!(
@@ -802,7 +917,10 @@ fn teams(
             return fail(format!("gitdashy: {err}"));
         }
         let key = team::key_of(&new);
-        println!("gitdashy: started {new} ({key}) at {}", team::dir_of(&key).unwrap_or_default().display());
+        println!(
+            "gitdashy: started {new} ({key}) at {}",
+            team::dir_of(&key).unwrap_or_default().display()
+        );
         println!("  bind repos to it: gitdashy bind --owner OWNER --team {key}");
         println!("  give it a remote when you have one: gitdashy teams --team {key} --connect URL");
     } else if let Some(url) = some(connect) {
@@ -862,9 +980,16 @@ fn teams(
         if !err.is_empty() {
             return fail(format!("gitdashy: {err}"));
         }
-        let mut fresh: Vec<String> = team::joined().into_iter().filter(|k| !before.contains(k)).collect();
+        let mut fresh: Vec<String> = team::joined()
+            .into_iter()
+            .filter(|k| !before.contains(k))
+            .collect();
         fresh.sort();
-        println!("gitdashy: joined {}{}", fresh.first().cloned().unwrap_or(join), team_error_suffix());
+        println!(
+            "gitdashy: joined {}{}",
+            fresh.first().cloned().unwrap_or(join),
+            team_error_suffix()
+        );
     } else if agents_again {
         let key = match key_or_fail() {
             Ok(k) => k,
@@ -891,22 +1016,45 @@ fn teams(
     let owners = bind_mod::owners();
     for key in got {
         let it = team::info(&key);
-        let mut bound: Vec<String> = bindings.iter().filter(|(_, t)| **t == key).map(|(r, _)| r.clone()).collect();
+        let mut bound: Vec<String> = bindings
+            .iter()
+            .filter(|(_, t)| **t == key)
+            .map(|(r, _)| r.clone())
+            .collect();
         bound.sort();
-        let mut own: Vec<String> = owners.iter().filter(|(_, t)| **t == key).map(|(o, _)| o.clone() + "/*").collect();
+        let mut own: Vec<String> = owners
+            .iter()
+            .filter(|(_, t)| **t == key)
+            .map(|(o, _)| o.clone() + "/*")
+            .collect();
         own.sort();
         let d = team::dir_of(&key).unwrap_or_default();
         println!("  {}  ({key})", it.name);
         if !it.description.is_empty() {
             println!("      {}", it.description);
         }
-        println!("      {}{}", d.display(), if team::has_remote(&d) { "" } else { "   · no remote yet" });
+        println!(
+            "      {}{}",
+            d.display(),
+            if team::has_remote(&d) {
+                ""
+            } else {
+                "   · no remote yet"
+            }
+        );
         let declared = team::covers(&key);
         if !declared.is_empty() {
             println!("      declares: {}", declared.join(", "));
         }
         own.extend(bound);
-        println!("      {}", if own.is_empty() { "no repos bound to it yet".to_string() } else { own.join(", ") });
+        println!(
+            "      {}",
+            if own.is_empty() {
+                "no repos bound to it yet".to_string()
+            } else {
+                own.join(", ")
+            }
+        );
     }
     0
 }
@@ -917,7 +1065,11 @@ fn teams(
 ///
 /// ponytail: stop_hook_active means WE already blocked this stop once. Blocking again is a loop the
 /// user cannot leave except by killing the session, so the second ask is never made.
-pub fn hook_decision(hook: &Value, signals: (u32, u32), reason: impl Fn(u32, u32) -> String) -> Option<String> {
+pub fn hook_decision(
+    hook: &Value,
+    signals: (u32, u32),
+    reason: impl Fn(u32, u32) -> String,
+) -> Option<String> {
     let active = match hook.get("stop_hook_active") {
         Some(Value::Bool(b)) => *b,
         Some(Value::Null) | None => false,
@@ -926,22 +1078,33 @@ pub fn hook_decision(hook: &Value, signals: (u32, u32), reason: impl Fn(u32, u32
         Some(Value::Array(a)) => !a.is_empty(),
         Some(Value::Object(o)) => !o.is_empty(),
     };
-    if active || hook.get("transcript_path").and_then(Value::as_str).unwrap_or("").is_empty() {
+    if active
+        || hook
+            .get("transcript_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .is_empty()
+    {
         return None;
     }
     let said = reason(signals.0, signals.1);
     if said.is_empty() {
         return None;
     }
-    Some(format!("{{\"decision\": \"block\", \"reason\": {}}}", json_str(&said)))
+    Some(format!(
+        "{{\"decision\": \"block\", \"reason\": {}}}",
+        json_str(&said)
+    ))
 }
 
 /// Ask, when a session hit something worth remembering. The contract every agent is wired against.
 ///
 /// Two ways in, one policy behind both:
 ///
-///     gitdashy friction --interrupts N --denials N     any agent that can count its own signals
-///     gitdashy friction --claude-hook                  Claude's Stop hook JSON on stdin, its JSON out
+/// ```text
+/// gitdashy friction --interrupts N --denials N     any agent that can count its own signals
+/// gitdashy friction --claude-hook                  Claude's Stop hook JSON on stdin, its JSON out
+/// ```
 ///
 /// Prints the reason and exits 0 when there is one; prints nothing when there is not. Silence is the
 /// normal answer: most sessions are routine, and one that fires every time is a prompt nobody reads.
@@ -960,7 +1123,11 @@ fn friction(claude_hook: bool, repo: Option<String>, interrupts: u32, denials: u
         Err(_) => return 0, // ponytail: a hook that cannot parse its own input says nothing, never blocks a stop
     };
     let path = PathBuf::from(hook.get("transcript_path").and_then(Value::as_str).unwrap_or(""));
-    let signals = if path.as_os_str().is_empty() { (0, 0) } else { friction_mod::claude_signals(&path) };
+    let signals = if path.as_os_str().is_empty() {
+        (0, 0)
+    } else {
+        friction_mod::claude_signals(&path)
+    };
     let Some(answer) = hook_decision(&hook, signals, friction_mod::reason) else {
         return 0;
     };
@@ -969,7 +1136,9 @@ fn friction(claude_hook: bool, repo: Option<String>, interrupts: u32, denials: u
     // session and then discarded the answer, which is ~99% of them.
     let repo = repo.filter(|r| !r.is_empty()).unwrap_or_else(here);
     // ponytail: a session that cannot be dated does NOT veto: 0.0 is a real instant every drafts file postdates.
-    let filed = friction_mod::started_at(&path).map(|w| friction_mod::filed_since(&repo, w)).unwrap_or(false);
+    let filed = friction_mod::started_at(&path)
+        .map(|w| friction_mod::filed_since(&repo, w))
+        .unwrap_or(false);
     if !filed {
         println!("{answer}");
     }
@@ -984,7 +1153,11 @@ fn self_check(model: Option<String>) -> i32 {
             "{}  {}{}",
             if r.ok { "ok  " } else { "FAIL" },
             r.name,
-            if r.ok { String::new() } else { format!("  ({})", r.detail) }
+            if r.ok {
+                String::new()
+            } else {
+                format!("  ({})", r.detail)
+            }
         );
     }
     if rows.iter().all(|r| r.ok) {
@@ -1001,16 +1174,22 @@ fn debug(args: &[String]) {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)); // every PR url lands here
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            // every PR url lands here
         }
-        let cfg = simplelog::ConfigBuilder::new().set_thread_level(::log::LevelFilter::Debug).build();
+        let cfg = simplelog::ConfigBuilder::new()
+            .set_thread_level(::log::LevelFilter::Debug)
+            .build();
         let _ = simplelog::WriteLogger::init(::log::LevelFilter::Debug, cfg, f);
     }
     config::update(|c| c.debug = true);
     // Log, then hand over to the default hook: a crash still prints to the terminal.
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        ::log::error!("uncaught in thread {}: {info}", std::thread::current().name().unwrap_or("?"));
+        ::log::error!(
+            "uncaught in thread {}: {info}",
+            std::thread::current().name().unwrap_or("?")
+        );
         default(info);
     }));
     ::log::info!("gitdashy {VERSION} starting: {args:?}");
@@ -1033,7 +1212,10 @@ fn dashboard(cli: Cli) -> i32 {
     });
     let depth = config::get().depth;
     if !config::DEPTHS.contains(&depth.as_str()) {
-        println!("gitdashy: --depth must be low, medium, high or adaptive, not {}", pyrepr(&depth));
+        println!(
+            "gitdashy: --depth must be low, medium, high or adaptive, not {}",
+            pyrepr(&depth)
+        );
         return 0;
     }
     if let Some(v) = cli.voice {
@@ -1041,7 +1223,11 @@ fn dashboard(cli: Cli) -> i32 {
     }
     let voice = config::get().voice;
     if voice.iter().any(|v| !config::VOICES.contains(&v.as_str())) {
-        println!("gitdashy: --voice must be from {}, not {}", config::VOICES.join(", "), pyrepr_list(&voice));
+        println!(
+            "gitdashy: --voice must be from {}, not {}",
+            config::VOICES.join(", "),
+            pyrepr_list(&voice)
+        );
         return 0;
     }
     if let Some(h) = cli.hunter {
@@ -1049,7 +1235,11 @@ fn dashboard(cli: Cli) -> i32 {
     }
     let hunter = config::get().hunter;
     if hunter.iter().any(|h| !config::HUNTERS.contains(&h.as_str())) {
-        println!("gitdashy: --hunter must be from {}, not {}", config::HUNTERS.join(", "), pyrepr_list(&hunter));
+        println!(
+            "gitdashy: --hunter must be from {}, not {}",
+            config::HUNTERS.join(", "),
+            pyrepr_list(&hunter)
+        );
         return 0;
     }
     config::update(|c| {
@@ -1081,7 +1271,10 @@ fn dashboard(cli: Cli) -> i32 {
             *team::ERROR.lock().unwrap_or_else(|e| e.into_inner()) = line.chars().take(60).collect();
         }
     }
-    if let Some(done) = install_mod::retire(false).into_iter().find(|l| !l.starts_with("NOTE")) {
+    if let Some(done) = install_mod::retire(false)
+        .into_iter()
+        .find(|l| !l.starts_with("NOTE"))
+    {
         println!("gitdashy: {done}");
     }
     team::activate();
@@ -1090,10 +1283,16 @@ fn dashboard(cli: Cli) -> i32 {
         state.set_auto(true, false);
     }
     let looper = state.clone();
-    std::thread::Builder::new().name("refresh".into()).spawn(move || looper.run_loop()).expect("refresh thread");
+    std::thread::Builder::new()
+        .name("refresh".into())
+        .spawn(move || looper.run_loop())
+        .expect("refresh thread");
     // ponytail: the token arrives in the ENVIRONMENT, not argv: argv is world-readable in ps, and this
     // token starts paid review runs. Removed so it does not ride along into the Claude subprocesses.
-    let token = std::env::var("GITDASHY_GUI_TOKEN").ok().filter(|t| !t.is_empty()).unwrap_or_else(crate::web::new_token);
+    let token = std::env::var("GITDASHY_GUI_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(crate::web::new_token);
     std::env::remove_var("GITDASHY_GUI_TOKEN");
     let port = match crate::web::serve(state.clone(), cli.port.unwrap_or(0), token.clone()) {
         Ok(p) => p,
@@ -1132,7 +1331,10 @@ pub fn run(args: Vec<String>) -> i32 {
     // being told the command was not there.
     if let Some(first) = args.first() {
         if !first.starts_with('-') && !COMMANDS.contains(&first.as_str()) {
-            return fail(format!("gitdashy: no command {} in {VERSION} — see gitdashy --help", pyrepr(first)));
+            return fail(format!(
+                "gitdashy: no command {} in {VERSION} — see gitdashy --help",
+                pyrepr(first)
+            ));
         }
     }
     let cli = match Cli::try_parse_from(std::iter::once("gitdashy".to_string()).chain(args)) {
@@ -1143,18 +1345,42 @@ pub fn run(args: Vec<String>) -> i32 {
         }
     };
     match cli.command {
-        Some(Command::SyncMemory { into, repo, no_pull, general }) => sync_memory(into, repo, no_pull, general),
+        Some(Command::SyncMemory {
+            into,
+            repo,
+            no_pull,
+            general,
+        }) => sync_memory(into, repo, no_pull, general),
         Some(Command::Remember { repo, general, fact }) => remember(repo, general, fact),
-        Some(Command::Install { full, corpus, dry_run, yes, no_setup, uninstall }) => {
-            install(full, corpus, dry_run, yes, no_setup, uninstall)
-        }
+        Some(Command::Install {
+            full,
+            corpus,
+            dry_run,
+            yes,
+            no_setup,
+            uninstall,
+        }) => install(full, corpus, dry_run, yes, no_setup, uninstall),
         Some(Command::SelfReview { number, repo, model }) => self_review(number, repo, model),
         Some(Command::Setup) => setup(true),
-        Some(Command::Init { into, loader, repo, forget }) => init(into, loader, repo, forget),
-        Some(Command::Bind { repo, team, forget, owner, list }) => bind(repo, team, forget, owner, list),
-        Some(Command::Friction { claude_hook, repo, interrupts, denials }) => {
-            friction(claude_hook, repo, interrupts, denials)
-        }
+        Some(Command::Init {
+            into,
+            loader,
+            repo,
+            forget,
+        }) => init(into, loader, repo, forget),
+        Some(Command::Bind {
+            repo,
+            team,
+            forget,
+            owner,
+            list,
+        }) => bind(repo, team, forget, owner, list),
+        Some(Command::Friction {
+            claude_hook,
+            repo,
+            interrupts,
+            denials,
+        }) => friction(claude_hook, repo, interrupts, denials),
         Some(Command::Api { path, diff }) => api(path, diff),
         Some(Command::Drafts { repo, count }) => drafts(repo, count),
         Some(Command::Teams {
@@ -1169,7 +1395,19 @@ pub fn run(args: Vec<String>) -> i32 {
             uncover,
             leave,
             agents_again,
-        }) => teams(new, desc, at, join, name, team, connect, cover, uncover, leave, agents_again),
+        }) => teams(
+            new,
+            desc,
+            at,
+            join,
+            name,
+            team,
+            connect,
+            cover,
+            uncover,
+            leave,
+            agents_again,
+        ),
         Some(Command::SelfCheck { model }) => self_check(model),
         None => dashboard(cli),
     }
@@ -1186,9 +1424,27 @@ mod tests {
     #[test]
     fn top_level_flags_parse() {
         let c = parse(&[
-            "--interval", "60", "--auto", "--model", "sonnet", "--effort", "high", "--depth", "low", "--voice",
-            "review,caveman", "--hunter", "ponytail", "--instructions", "f.txt", "--demo", "--debug", "--browser",
-            "--no-open", "--port", "8080",
+            "--interval",
+            "60",
+            "--auto",
+            "--model",
+            "sonnet",
+            "--effort",
+            "high",
+            "--depth",
+            "low",
+            "--voice",
+            "review,caveman",
+            "--hunter",
+            "ponytail",
+            "--instructions",
+            "f.txt",
+            "--demo",
+            "--debug",
+            "--browser",
+            "--no-open",
+            "--port",
+            "8080",
         ]);
         assert_eq!(c.interval, Some(60));
         assert!(c.auto && c.demo && c.debug && c.browser && c.no_open);
@@ -1205,25 +1461,61 @@ mod tests {
     #[test]
     fn every_subcommand_parses() {
         assert!(matches!(
-            parse(&["sync-memory", "--into", "~/mem", "--repo", "a/b", "--no-pull", "--general"]).command,
-            Some(Command::SyncMemory { no_pull: true, general: true, .. })
+            parse(&[
+                "sync-memory",
+                "--into",
+                "~/mem",
+                "--repo",
+                "a/b",
+                "--no-pull",
+                "--general"
+            ])
+            .command,
+            Some(Command::SyncMemory {
+                no_pull: true,
+                general: true,
+                ..
+            })
         ));
         let Some(Command::Remember { repo, general, fact }) =
             parse(&["remember", "--repo", "other/thing", "migrations", "run", "first"]).command
         else {
             panic!()
         };
-        assert_eq!((repo.as_deref(), general, fact.join(" ").as_str()), (Some("other/thing"), false, "migrations run first"));
-        let Some(Command::Remember { fact, general, .. }) = parse(&["remember", "--general", "PHI reaches the frontend"]).command
+        assert_eq!(
+            (repo.as_deref(), general, fact.join(" ").as_str()),
+            (Some("other/thing"), false, "migrations run first")
+        );
+        let Some(Command::Remember { fact, general, .. }) =
+            parse(&["remember", "--general", "PHI reaches the frontend"]).command
         else {
             panic!()
         };
         assert!(general && fact == vec!["PHI reaches the frontend"]);
         assert!(matches!(
-            parse(&["install", "--full", "--corpus", "http://x", "--dry-run", "--yes", "--no-setup"]).command,
-            Some(Command::Install { full: true, dry_run: true, yes: true, no_setup: true, uninstall: false, .. })
+            parse(&[
+                "install",
+                "--full",
+                "--corpus",
+                "http://x",
+                "--dry-run",
+                "--yes",
+                "--no-setup"
+            ])
+            .command,
+            Some(Command::Install {
+                full: true,
+                dry_run: true,
+                yes: true,
+                no_setup: true,
+                uninstall: false,
+                ..
+            })
         ));
-        assert!(matches!(parse(&["install", "--uninstall"]).command, Some(Command::Install { uninstall: true, .. })));
+        assert!(matches!(
+            parse(&["install", "--uninstall"]).command,
+            Some(Command::Install { uninstall: true, .. })
+        ));
         assert!(matches!(
             parse(&["self-review", "12", "--repo", "a/b", "--model", "opus"]).command,
             Some(Command::SelfReview { number: Some(12), .. })
@@ -1233,8 +1525,14 @@ mod tests {
             parse(&["init", "--into", "d", "--loader", "f", "--repo", "a/b"]).command,
             Some(Command::Init { forget: false, .. })
         ));
-        assert!(matches!(parse(&["init", "--into", "d", "--forget"]).command, Some(Command::Init { forget: true, .. })));
-        let Some(Command::Bind { repo, team, list, .. }) = parse(&["bind", "not-a-slug", "--list"]).command else { panic!() };
+        assert!(matches!(
+            parse(&["init", "--into", "d", "--forget"]).command,
+            Some(Command::Init { forget: true, .. })
+        ));
+        let Some(Command::Bind { repo, team, list, .. }) = parse(&["bind", "not-a-slug", "--list"]).command
+        else {
+            panic!()
+        };
         assert!(repo.as_deref() == Some("not-a-slug") && team.is_none() && list);
         assert!(matches!(
             parse(&["bind", "--owner", "acme", "--team", "org-mem", "--forget"]).command,
@@ -1242,24 +1540,56 @@ mod tests {
         ));
         assert!(matches!(
             parse(&["friction", "--interrupts", "4", "--denials", "1"]).command,
-            Some(Command::Friction { claude_hook: false, interrupts: 4, denials: 1, .. })
+            Some(Command::Friction {
+                claude_hook: false,
+                interrupts: 4,
+                denials: 1,
+                ..
+            })
         ));
         assert!(matches!(
             parse(&["friction", "--claude-hook", "--repo", "a/b"]).command,
-            Some(Command::Friction { claude_hook: true, .. })
+            Some(Command::Friction {
+                claude_hook: true,
+                ..
+            })
         ));
-        let Some(Command::Api { path, diff }) = parse(&["api", "/repos/a/b/compare/x...y", "--diff"]).command else { panic!() };
+        let Some(Command::Api { path, diff }) = parse(&["api", "/repos/a/b/compare/x...y", "--diff"]).command
+        else {
+            panic!()
+        };
         assert!(path.as_deref() == Some("/repos/a/b/compare/x...y") && diff);
-        assert!(matches!(parse(&["drafts", "--count", "--repo", "a/b"]).command, Some(Command::Drafts { count: true, .. })));
+        assert!(matches!(
+            parse(&["drafts", "--count", "--repo", "a/b"]).command,
+            Some(Command::Drafts { count: true, .. })
+        ));
         assert!(matches!(
             parse(&["teams", "--team", "k", "--cover", "acme/*"]).command,
             Some(Command::Teams { cover: Some(_), .. })
         ));
-        assert!(matches!(parse(&["teams", "--new", "n", "--desc", "d", "--at", "dir"]).command, Some(Command::Teams { .. })));
-        assert!(matches!(parse(&["teams", "--join", "x/y", "--name", "n"]).command, Some(Command::Teams { .. })));
-        assert!(matches!(parse(&["teams", "--team", "k", "--agents-again"]).command, Some(Command::Teams { agents_again: true, .. })));
-        assert!(matches!(parse(&["teams", "--leave", "k"]).command, Some(Command::Teams { leave: Some(_), .. })));
-        assert!(matches!(parse(&["self-check", "--model", "opus"]).command, Some(Command::SelfCheck { .. })));
+        assert!(matches!(
+            parse(&["teams", "--new", "n", "--desc", "d", "--at", "dir"]).command,
+            Some(Command::Teams { .. })
+        ));
+        assert!(matches!(
+            parse(&["teams", "--join", "x/y", "--name", "n"]).command,
+            Some(Command::Teams { .. })
+        ));
+        assert!(matches!(
+            parse(&["teams", "--team", "k", "--agents-again"]).command,
+            Some(Command::Teams {
+                agents_again: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(&["teams", "--leave", "k"]).command,
+            Some(Command::Teams { leave: Some(_), .. })
+        ));
+        assert!(matches!(
+            parse(&["self-check", "--model", "opus"]).command,
+            Some(Command::SelfCheck { .. })
+        ));
     }
 
     #[test]
@@ -1282,20 +1612,32 @@ mod tests {
         assert_eq!(run(vec!["sync-memory".into()]), 1);
         assert_eq!(run(vec!["remember".into()]), 1);
         assert_eq!(run(vec!["api".into()]), 1);
-        assert_eq!(run(vec!["api".into(), "https://evil.example.com/collect?t=".into()]), 1);
+        assert_eq!(
+            run(vec!["api".into(), "https://evil.example.com/collect?t=".into()]),
+            1
+        );
         assert_eq!(run(vec!["api".into(), "//evil.example.com/x".into()]), 1);
     }
 
     #[test]
     fn hook_decision_blocks_only_a_first_stop_with_friction() {
-        let reason = |i: u32, d: u32| if i >= 3 || d >= 2 { "you interrupted a lot".to_string() } else { String::new() };
-        let hook: Value = serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": false}"#).unwrap();
+        let reason = |i: u32, d: u32| {
+            if i >= 3 || d >= 2 {
+                "you interrupted a lot".to_string()
+            } else {
+                String::new()
+            }
+        };
+        let hook: Value =
+            serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": false}"#)
+                .unwrap();
         assert_eq!(
             hook_decision(&hook, (4, 0), reason).as_deref(),
             Some(r#"{"decision": "block", "reason": "you interrupted a lot"}"#)
         );
         assert_eq!(hook_decision(&hook, (0, 0), reason), None);
-        let again: Value = serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": true}"#).unwrap();
+        let again: Value =
+            serde_json::from_str(r#"{"transcript_path": "/tmp/t.jsonl", "stop_hook_active": true}"#).unwrap();
         assert_eq!(hook_decision(&again, (4, 0), reason), None);
         let none: Value = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(hook_decision(&none, (4, 0), reason), None);

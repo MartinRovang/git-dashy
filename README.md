@@ -594,7 +594,7 @@ src/
   update.rs       release check and self-update
   demo.rs         canned PRs and a fake reviewer
 ui/               gui.html (the page: list, pane, settings, every modal; polls /api/state),
-                  splashscreen.html, head.png
+                  splashscreen.html, head.png, notify.png
 hooks/            the Claude Code hooks `gitdashy install --full` registers
 corpus/           the agent corpus a full install copies to ~/.agent-corpus
 ```

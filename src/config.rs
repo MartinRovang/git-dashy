@@ -360,9 +360,11 @@ mod tests {
 
     #[test]
     fn normalise_drops_unknown_boxes_and_keeps_a_voice() {
-        let mut c = Config::default();
-        c.voice = vec!["ponytail".into()];
-        c.hunter = vec!["ponytail".into(), "nope".into()];
+        let mut c = Config {
+            voice: vec!["ponytail".into()],
+            hunter: vec!["ponytail".into(), "nope".into()],
+            ..Default::default()
+        };
         normalise(&mut c);
         assert_eq!(c.voice, vec!["review"]);
         assert_eq!(c.hunter, vec!["ponytail"]);

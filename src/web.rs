@@ -6,7 +6,6 @@
 //! at this same URL, so there is one UI to maintain and it works in a browser too.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,7 +17,9 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::state::{in_flight, last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
-use crate::{bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update};
+use crate::{
+    bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update,
+};
 
 pub const PAGE: &str = include_str!("../ui/gui.html");
 pub const LOGO: &[u8] = include_bytes!("../ui/head.png");
@@ -63,7 +64,21 @@ fn team_error() -> String {
 
 /// Everything one frame of the GUI needs, as plain JSON.
 pub fn payload(state: &State) -> Value {
-    let (sections, reviews, busy, since, error, arrived, fetched_at, fetching, auto, pending, update, asks, notices) = {
+    let (
+        sections,
+        reviews,
+        busy,
+        since,
+        error,
+        arrived,
+        fetched_at,
+        fetching,
+        auto,
+        pending,
+        update,
+        asks,
+        notices,
+    ) = {
         let inner = state.lock();
         (
             inner.sections.clone(),
@@ -94,7 +109,11 @@ pub fn payload(state: &State) -> Value {
         let mut rows = Vec::new();
         for p in s.prs.iter().flatten() {
             let url = p.url.as_str();
-            let pre = if s.name == "MINE" { review::self_review_state(p) } else { (0.0, false) };
+            let pre = if s.name == "MINE" {
+                review::self_review_state(p)
+            } else {
+                (0.0, false)
+            };
             let (summary, review_at) = match (&s.name[..], &p.review) {
                 ("REVIEWED", Some(r)) => (r.summary.as_str(), r.at.as_str()),
                 ("REVIEWED", None) => ("", ""),
@@ -162,14 +181,21 @@ fn pre_json((at, moved): (f64, bool)) -> Value {
 
 /// The newest review of this PR: the row's own on a REVIEWED row, else the log's.
 fn last_review(pr: &Pr) -> Option<LogEntry> {
-    pr.review.as_deref().cloned().or_else(|| review_log::last(&pr.url))
+    pr.review
+        .as_deref()
+        .cloned()
+        .or_else(|| review_log::last(&pr.url))
 }
 
 /// The checked findings of a log entry, through the same filter a verdict gets.
 fn entry_findings(rev: &LogEntry) -> Vec<Finding> {
     let v = Verdict {
         verdict: rev.verdict.clone(),
-        findings: rev.findings.iter().map(|f| serde_json::to_value(f).unwrap_or_default()).collect(),
+        findings: rev
+            .findings
+            .iter()
+            .map(|f| serde_json::to_value(f).unwrap_or_default())
+            .collect(),
         ..Default::default()
     };
     review_log::findings(&v)
@@ -184,7 +210,11 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
     let rev = last_review(pr);
     let repo = pr.repo();
     let (text, whose) = memory::brief(Some(repo), Some(&bind::of(repo)));
-    let pre = if section == "MINE" { review::self_review_state(pr) } else { (0.0, false) };
+    let pre = if section == "MINE" {
+        review::self_review_state(pr)
+    } else {
+        (0.0, false)
+    };
     json!({
         "url": pr.url,
         "pending": d.is_none(),
@@ -224,8 +254,10 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
         for hunk in &f.hunks {
             rows.push(json!({"kind": "hunk", "header": hunk.header}));
             for l in &hunk.lines {
-                rows.push(json!({"kind": "line", "n": l.n, "sign": l.sign, "text": l.text, "del": l.del,
-                                 "mark": diff::worst(l)}));
+                rows.push(
+                    json!({"kind": "line", "n": l.n, "sign": l.sign, "text": l.text, "del": l.del,
+                                 "mark": diff::worst(l)}),
+                );
                 if !scoped {
                     continue;
                 }
@@ -245,7 +277,11 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
                 continue;
             }
             // ponytail: `file` past the list is how a mark says the diff does not touch that file
-            let why = if m.file >= files.len() { "not in this diff" } else { "line not in this diff" };
+            let why = if m.file >= files.len() {
+                "not in this diff"
+            } else {
+                "line not in this diff"
+            };
             rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
         }
     }
@@ -266,7 +302,11 @@ pub fn code(state: &State, pr: &Pr, scope: &str, context: usize) -> Value {
                       "empty": "no diff to show — GitHub could not read it, or nothing changed"});
     }
     let scoped = scope == "marks";
-    let rows = if scoped { code_rows(&diff::narrow(&files, context), &marks, true) } else { code_rows(&files, &marks, false) };
+    let rows = if scoped {
+        code_rows(&diff::narrow(&files, context), &marks, true)
+    } else {
+        code_rows(&files, &marks, false)
+    };
     if scoped && rows.is_empty() {
         return json!({"url": pr.url, "pending": false, "rows": [],
                       "empty": "the review marked nothing — D shows the whole diff"});
@@ -277,10 +317,13 @@ pub fn code(state: &State, pr: &Pr, scope: &str, context: usize) -> Value {
 /// The PR on the board with this url, and the section it is in.
 pub fn find_pr(state: &State, url: &str) -> Option<(Pr, String)> {
     let inner = state.lock();
-    inner
-        .sections
-        .iter()
-        .find_map(|s| s.prs.iter().flatten().find(|p| p.url == url).map(|p| (p.clone(), s.name.clone())))
+    inner.sections.iter().find_map(|s| {
+        s.prs
+            .iter()
+            .flatten()
+            .find(|p| p.url == url)
+            .map(|p| (p.clone(), s.name.clone()))
+    })
 }
 
 fn need_pr(state: &State, url: &str) -> Result<(Pr, String), Fail> {
@@ -299,7 +342,7 @@ struct Job {
 }
 
 type Jobs = Mutex<HashMap<String, Arc<Mutex<Job>>>>;
-static JOBS: Jobs = Mutex::new(HashMap::new());
+static JOBS: std::sync::LazyLock<Jobs> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn jobs() -> std::sync::MutexGuard<'static, HashMap<String, Arc<Mutex<Job>>>> {
     JOBS.lock().unwrap_or_else(|e| e.into_inner())
@@ -317,7 +360,12 @@ pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 
             return;
         }
     }
-    let j = Arc::new(Mutex::new(Job { t0: now(), running: true, result: None, error: String::new() }));
+    let j = Arc::new(Mutex::new(Job {
+        t0: now(),
+        running: true,
+        result: None,
+        error: String::new(),
+    }));
     all.insert(name.to_string(), j.clone());
     drop(all);
     let name = name.to_string();
@@ -331,7 +379,10 @@ pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 
                 j.error = last_line(&format!("{e:#}"), 120, "?");
             }
             Err(e) => {
-                let text = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+                let text = e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
                 j.error = last_line(text.as_deref().unwrap_or("?"), 120, "?");
             }
         }
@@ -354,7 +405,11 @@ fn dream_name(n: &str) -> String {
 }
 
 fn lookup<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
-    pairs.iter().find(|(n, _)| n == name).map(|(_, t)| t.as_str()).unwrap_or("")
+    pairs
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t.as_str())
+        .unwrap_or("")
 }
 
 /// Summary plus a unified diff per changed file.
@@ -378,9 +433,12 @@ pub fn dream_detail(summary: &str, before: &[(String, String)], new: &[(String, 
     }
 }
 
-pub fn dream_result((summary, before, new): (String, Vec<(String, String)>, Vec<(String, String)>)) -> Value {
-    let mut gone: Vec<&str> =
-        new.iter().filter(|(n, t)| t.trim().is_empty() && !lookup(&before, n).trim().is_empty()).map(|(n, _)| n.as_str()).collect();
+pub fn dream_result((summary, before, new): memory::Dream) -> Value {
+    let mut gone: Vec<&str> = new
+        .iter()
+        .filter(|(n, t)| t.trim().is_empty() && !lookup(&before, n).trim().is_empty())
+        .map(|(n, _)| n.as_str())
+        .collect();
     gone.sort();
     let mut names: Vec<&str> = new.iter().map(|(n, _)| n.as_str()).collect();
     names.sort_by_key(|n| (!gone.contains(n), n.to_string()));
@@ -392,7 +450,10 @@ pub fn dream_result((summary, before, new): (String, Vec<(String, String)>, Vec<
         })
         .collect();
     let lost: usize = gone.iter().map(|n| lookup(&before, n).lines().count()).sum();
-    let new_obj: Map<String, Value> = new.iter().map(|(n, t)| (n.clone(), Value::String(t.clone()))).collect();
+    let new_obj: Map<String, Value> = new
+        .iter()
+        .map(|(n, t)| (n.clone(), Value::String(t.clone())))
+        .collect();
     json!({"summary": summary, "files": files, "lost": lost, "detail": dream_detail(&summary, &before, &new), "new": new_obj})
 }
 
@@ -414,7 +475,11 @@ fn get_pr(state: &State, query: &Query) -> Out {
 fn get_diff(state: &State, query: &Query) -> Out {
     let context = q(query, "context").parse().unwrap_or(diff::CONTEXTS[0]);
     let (pr, _) = need_pr(state, q(query, "url"))?;
-    let scope = if q(query, "scope").is_empty() { "marks" } else { q(query, "scope") };
+    let scope = if q(query, "scope").is_empty() {
+        "marks"
+    } else {
+        q(query, "scope")
+    };
     Ok(code(state, &pr, scope, context))
 }
 
@@ -444,8 +509,16 @@ fn get_memory(_state: &State, query: &Query) -> Out {
 fn get_drafts(_state: &State, _q: &Query) -> Out {
     let mut items = memory::waiting();
     items.sort_by(|a, b| {
-        (a.0.clone().unwrap_or_default(), a.3 == "self", std::cmp::Reverse(a.1))
-            .cmp(&(b.0.clone().unwrap_or_default(), b.3 == "self", std::cmp::Reverse(b.1)))
+        (
+            a.0.clone().unwrap_or_default(),
+            a.3 == "self",
+            std::cmp::Reverse(a.1),
+        )
+            .cmp(&(
+                b.0.clone().unwrap_or_default(),
+                b.3 == "self",
+                std::cmp::Reverse(b.1),
+            ))
     });
     let items: Vec<Value> = items
         .iter()
@@ -463,11 +536,19 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
 fn pair(repo: Option<&str>, a: &str, b: &str) -> Option<Value> {
     let live = memory::drafts(repo);
     let find = |fact: &str| {
-        live.iter().find(|(_, f)| f == fact).map(|(count, f)| crate::types::Draft { count: *count, ids: vec![], fact: f.clone() })
+        live.iter()
+            .find(|(_, f)| f == fact)
+            .map(|(count, f)| crate::types::Draft {
+                count: *count,
+                ids: vec![],
+                fact: f.clone(),
+            })
     };
     let (a, b) = (find(a)?, find(b)?);
     let (would, says) = memory::would_merge(&a, &b);
-    Some(json!({"repo": repo, "a": a.fact, "b": b.fact, "would": would, "says": says, "promotes": would >= memory::PROMOTE_AT}))
+    Some(
+        json!({"repo": repo, "a": a.fact, "b": b.fact, "would": would, "says": says, "promotes": would >= memory::PROMOTE_AT}),
+    )
 }
 
 /// The scan's state. The model reads the candidates on a thread; pairs are re-read live on each poll.
@@ -494,10 +575,18 @@ fn get_overlaps(_state: &State, _q: &Query) -> Out {
 }
 
 /// Who has accepted this fact, from a pools() index. Two names is two people's reviewers agreeing.
-fn backers(index: &HashMap<String, Vec<(Option<String>, String)>>, repo: Option<&str>, fact: &str) -> Vec<String> {
+fn backers(
+    index: &HashMap<String, Vec<(Option<String>, String)>>,
+    repo: Option<&str>,
+    fact: &str,
+) -> Vec<String> {
     let mut out: Vec<String> = index
         .iter()
-        .filter(|(_, items)| items.iter().any(|(r, f)| r.as_deref() == repo && memory::same(f, fact)))
+        .filter(|(_, items)| {
+            items
+                .iter()
+                .any(|(r, f)| r.as_deref() == repo && memory::same(f, fact))
+        })
         .map(|(u, _)| u.clone())
         .collect();
     out.sort();
@@ -508,7 +597,12 @@ fn get_share(_state: &State, query: &Query) -> Out {
     let about = q(query, "about");
     let mut items = memory::in_team(about);
     let index = memory::pools();
-    items.sort_by_key(|(repo, fact, sent)| (*sent, std::cmp::Reverse(backers(&index, repo.as_deref(), fact).len())));
+    items.sort_by_key(|(repo, fact, sent)| {
+        (
+            *sent,
+            std::cmp::Reverse(backers(&index, repo.as_deref(), fact).len()),
+        )
+    });
     let items: Vec<Value> = items
         .iter()
         .map(|(repo, fact, sent)| {
@@ -521,15 +615,30 @@ fn get_share(_state: &State, query: &Query) -> Out {
 
 fn used_for(key: &str) -> String {
     let key = key.to_lowercase();
-    let mut owners: Vec<String> = bind::owners().iter().filter(|(_, t)| t.to_lowercase() == key).map(|(o, _)| format!("{o}/*")).collect();
+    let mut owners: Vec<String> = bind::owners()
+        .iter()
+        .filter(|(_, t)| t.to_lowercase() == key)
+        .map(|(o, _)| format!("{o}/*"))
+        .collect();
     owners.sort();
-    let repos = bind::bindings().values().filter(|t| t.to_lowercase() == key).count();
+    let repos = bind::bindings()
+        .values()
+        .filter(|t| t.to_lowercase() == key)
+        .count();
     let mut head = owners.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
     if owners.len() > 3 {
         head += &format!(" +{}", owners.len() - 3);
     }
-    let tail = if repos > 0 { format!("{repos} repo{}", if repos == 1 { "" } else { "s" }) } else { String::new() };
-    [head, tail].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · ")
+    let tail = if repos > 0 {
+        format!("{repos} repo{}", if repos == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
+    [head, tail]
+        .into_iter()
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 fn brief_path(key: &str) -> Result<std::path::PathBuf, Fail> {
@@ -557,7 +666,9 @@ fn get_teams(state: &State, query: &Query) -> Out {
         let it = team::info(&key);
         let url = team::origin_url(&d);
         let real = std::fs::canonicalize(&d).unwrap_or_else(|_| d.clone());
-        let linked = std::fs::symlink_metadata(&d).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+        let linked = std::fs::symlink_metadata(&d)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
         out.push(json!({"key": key, "name": it.name, "description": it.description,
                         "checkout": knowledge::tilde(&real), "linked": linked,
                         "remote": if url.is_empty() { String::new() } else { team::redacted(&url) },
@@ -577,7 +688,10 @@ fn get_bind(_state: &State, query: &Query) -> Out {
         return Err(Fail::new(400, "no row selected"));
     }
     let (kind, to) = bind::why(repo);
-    let teams: Vec<Value> = team::joined().iter().map(|k| json!({"key": k, "name": team::info(k).name})).collect();
+    let teams: Vec<Value> = team::joined()
+        .iter()
+        .map(|k| json!({"key": k, "name": team::info(k).name}))
+        .collect();
     Ok(json!({"repo": repo, "kind": kind, "to": to, "owner": owner_of(repo), "teams": teams}))
 }
 
@@ -592,7 +706,10 @@ fn get_dream(_state: &State, _q: &Query) -> Out {
 fn get_collaborators(state: &State, query: &Query) -> Out {
     let (pr, _) = need_pr(state, q(query, "url"))?;
     let me = pr.author().to_string();
-    let logins: Vec<String> = github::collaborators(pr.repo()).into_iter().filter(|c| *c != me).collect();
+    let logins: Vec<String> = github::collaborators(pr.repo())
+        .into_iter()
+        .filter(|c| *c != me)
+        .collect();
     Ok(json!({"logins": logins}))
 }
 
@@ -683,7 +800,11 @@ fn post_memory(_state: &State, body: &Body) -> Out {
     team::pull_dir(&dir, "mine");
     memory::history(); // the state before the edit is the version you want back if you regret it
     std::fs::write(&path, text(body, "text"))?;
-    let err = team::push_dir(&dir, &format!("memory: {} edited", repo.as_deref().unwrap_or("general")), "mine");
+    let err = team::push_dir(
+        &dir,
+        &format!("memory: {} edited", repo.as_deref().unwrap_or("general")),
+        "mine",
+    );
     Ok(json!({"ok": true, "error": err}))
 }
 
@@ -725,7 +846,11 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
             let repo = repo_of(body);
             let label = repo.as_deref().unwrap_or("general").to_string();
             let n = memory::merge(repo.as_deref(), &text(body, "keep"), &text(body, "drop"));
-            team::push_dir(&config::get().memory_dir, &format!("memory: folded two drafts for {label}"), "mine");
+            team::push_dir(
+                &config::get().memory_dir,
+                &format!("memory: folded two drafts for {label}"),
+                "mine",
+            );
             team::push(&format!("memory: evidence for {label}"));
             Ok(json!({"ok": true, "count": n}))
         }
@@ -743,7 +868,11 @@ fn post_share(_state: &State, body: &Body) -> Out {
         }
         "forget" => {
             memory::forget(repo.as_deref(), &fact, &about);
-            team::push_dir(&config::get().memory_dir, &format!("memory: forget {label}"), "mine");
+            team::push_dir(
+                &config::get().memory_dir,
+                &format!("memory: forget {label}"),
+                "mine",
+            );
             team::push(&format!("memory: withdraw {label}"));
         }
         _ => return Err(Fail::new(400, "op must be send or forget")),
@@ -796,12 +925,23 @@ fn post_teams(state: &State, body: &Body) -> Out {
         let before = team::joined();
         fail_if(team::setup(text(body, "repo").trim(), ""))?;
         state.wake();
-        let mut fresh: Vec<String> = team::joined().into_iter().filter(|k| !before.contains(k)).collect();
+        let mut fresh: Vec<String> = team::joined()
+            .into_iter()
+            .filter(|k| !before.contains(k))
+            .collect();
         fresh.sort();
         let err = team_error();
-        let warning =
-            if err.is_empty() { String::new() } else { format!("joined, but could not publish: {}", err.chars().take(70).collect::<String>()) };
-        return Ok(json!({"ok": true, "key": fresh.first().cloned().unwrap_or_default(), "warning": warning}));
+        let warning = if err.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "joined, but could not publish: {}",
+                err.chars().take(70).collect::<String>()
+            )
+        };
+        return Ok(
+            json!({"ok": true, "key": fresh.first().cloned().unwrap_or_default(), "warning": warning}),
+        );
     }
     let Some(dir) = team::dir_of(&key) else {
         return Err(Fail(404, format!("not in team {key:?}")));
@@ -813,7 +953,12 @@ fn post_teams(state: &State, body: &Body) -> Out {
             Ok(json!({"ok": true, "remote": team::redacted(&url)}))
         }
         "describe" => {
-            fail_if(team::write_info(&key, &team::info(&key).name, &text(body, "desc"), None))?;
+            fail_if(team::write_info(
+                &key,
+                &team::info(&key).name,
+                &text(body, "desc"),
+                None,
+            ))?;
             team::push_dir(&dir, &format!("team: describe {key}"), "sync");
             Ok(json!({"ok": true}))
         }
@@ -882,7 +1027,11 @@ fn post_dream(_state: &State, body: &Body) -> Out {
             if j.running {
                 return None;
             }
-            j.result.as_ref().and_then(|r| r.get("new")).and_then(Value::as_object).cloned()
+            j.result
+                .as_ref()
+                .and_then(|r| r.get("new"))
+                .and_then(Value::as_object)
+                .cloned()
         });
         let Some(new) = new else {
             return Err(Fail::new(409, "no dream to apply"));
@@ -890,15 +1039,21 @@ fn post_dream(_state: &State, body: &Body) -> Out {
         let dir = config::get().memory_dir;
         team::pull_dir(&dir, "mine"); // a dream rewrites both sources, so both are pulled
         team::pull();
-        let new: Vec<(String, String)> = new.iter().map(|(n, t)| (n.clone(), t.as_str().unwrap_or("").to_string())).collect();
+        let new: Vec<(String, String)> = new
+            .iter()
+            .map(|(n, t)| (n.clone(), t.as_str().unwrap_or("").to_string()))
+            .collect();
         memory::write(&new)?;
         jobs().remove("dream");
         let mut err = team::push_dir(&dir, "memory: dream cleanup", "mine");
         if err.is_empty() {
             err = team::push("memory: dream cleanup");
         }
-        let error =
-            if err.is_empty() { String::new() } else { format!("memory rewritten, but NOT committed: {err} — a backup is in ~/.prs_backups") };
+        let error = if err.is_empty() {
+            String::new()
+        } else {
+            format!("memory rewritten, but NOT committed: {err} — a backup is in ~/.prs_backups")
+        };
         return Ok(json!({"ok": true, "error": error}));
     }
     Err(Fail::new(400, "op must be start, apply or discard"))
@@ -923,14 +1078,21 @@ fn post_consent(state: &State, body: &Body) -> Out {
         "agents" => memory::allow_agents(&key, &text(body, "text"), yes), // what was SHOWN is what gets recorded
         _ => return Err(Fail::new(400, "kind must be publishing or agents")),
     }
-    state.lock().asks.retain(|a| !(a["kind"] == kind && a["key"] == key));
+    state
+        .lock()
+        .asks
+        .retain(|a| !(a["kind"] == kind && a["key"] == key));
     state.wake();
     Ok(json!({"ok": true}))
 }
 
 /// Point Memory (L) or Store (C) somewhere else. Answers {confirm} first when the move needs a yes.
 fn post_path(_state: &State, body: &Body) -> Out {
-    let (which, new, force) = (text(body, "which"), text(body, "path").trim().to_string(), truthy(body, "force"));
+    let (which, new, force) = (
+        text(body, "which"),
+        text(body, "path").trim().to_string(),
+        truthy(body, "force"),
+    );
     if (which != "L" && which != "C") || new.is_empty() {
         return Err(Fail::new(400, "which must be L or C, with a path"));
     }
@@ -938,14 +1100,21 @@ fn post_path(_state: &State, body: &Body) -> Out {
     let cur = if which == "L" { cfg.local_memory } else { cfg.teams };
     let err = if knowledge::is_remote(&new) {
         if which != "L" {
-            return Err(Fail::new(400, "Store is a local directory — T is what clones a team repo"));
+            return Err(Fail::new(
+                400,
+                "Store is a local directory — T is what clones a team repo",
+            ));
         }
         if !force {
-            return Ok(json!({"confirm": format!("clone {new} into {}, keeping the facts already there?", knowledge::tilde(&cur))}));
+            return Ok(
+                json!({"confirm": format!("clone {new} into {}, keeping the facts already there?", knowledge::tilde(&cur))}),
+            );
         }
         knowledge::adopt(&new, None)
     } else if knowledge::inside_git(Path::new(&new)) && !force {
-        return Ok(json!({"confirm": format!("{new} sits in a git repo that does not ignore it — memory could be committed. continue?")}));
+        return Ok(
+            json!({"confirm": format!("{new} sits in a git repo that does not ignore it — memory could be committed. continue?")}),
+        );
     } else if which == "L" {
         knowledge::set_local(Path::new(&new))
     } else {
@@ -1028,10 +1197,18 @@ fn post_settings(state: &State, body: &Body) -> Out {
         }
         c.model = name;
     }
-    for (key, options) in [("depth", config::DEPTHS), ("effort", config::EFFORTS), ("theme", THEMES)] {
+    for (key, options) in [
+        ("depth", config::DEPTHS),
+        ("effort", config::EFFORTS),
+        ("theme", THEMES),
+    ] {
         if let Some(v) = body.get(key) {
             let Some(got) = pick(v, options) else {
-                let list = options.iter().map(|o| if o.is_empty() { "default" } else { o }).collect::<Vec<_>>().join(", ");
+                let list = options
+                    .iter()
+                    .map(|o| if o.is_empty() { "default" } else { o })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Err(Fail(400, format!("{key} must be one of {list}")));
             };
             match key {
@@ -1043,14 +1220,27 @@ fn post_settings(state: &State, body: &Body) -> Out {
     }
     for (key, options) in [("voice", config::VOICES), ("hunter", config::HUNTERS)] {
         if let Some(v) = body.get(key) {
-            let got: Vec<&str> = v.as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-            let odd = v.as_array().map(|a| a.iter().any(|x| !x.is_string())).unwrap_or(false);
+            let got: Vec<&str> = v
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let odd = v
+                .as_array()
+                .map(|a| a.iter().any(|x| !x.is_string()))
+                .unwrap_or(false);
             if odd || got.iter().any(|g| !options.contains(g)) {
                 return Err(Fail(400, format!("{key} must be from {}", options.join(", "))));
             }
-            let new: Vec<String> = options.iter().filter(|o| got.contains(o)).map(|o| o.to_string()).collect(); // ponytail: rebuilt in option order
+            let new: Vec<String> = options
+                .iter()
+                .filter(|o| got.contains(o))
+                .map(|o| o.to_string())
+                .collect(); // ponytail: rebuilt in option order
             if key == "voice" && new.is_empty() {
-                return Err(Fail::new(400, "at least one voice stays on, or nothing gets posted"));
+                return Err(Fail::new(
+                    400,
+                    "at least one voice stays on, or nothing gets posted",
+                ));
             }
             if key == "voice" {
                 c.voice = new;
@@ -1061,7 +1251,10 @@ fn post_settings(state: &State, body: &Body) -> Out {
     }
     if let Some(v) = body.get("subs") {
         let Some(got) = pick(v, config::SUBS) else {
-            return Err(Fail(400, format!("subs must be one of {}", config::SUBS.join(", "))));
+            return Err(Fail(
+                400,
+                format!("subs must be one of {}", config::SUBS.join(", ")),
+            ));
         };
         c.sub = got.into();
     }
@@ -1073,7 +1266,12 @@ fn post_settings(state: &State, body: &Body) -> Out {
         };
         match got {
             Some(w) if config::WINDOWS.contains(&w) => c.window = w,
-            _ => return Err(Fail::new(400, "window must be one of the offered hours, or null for all")),
+            _ => {
+                return Err(Fail::new(
+                    400,
+                    "window must be one of the offered hours, or null for all",
+                ))
+            }
         }
     }
     if body.contains_key("drafts") {
@@ -1144,9 +1342,21 @@ fn post_route(path: &str) -> Option<Post> {
 pub fn launch_asks() -> Vec<Value> {
     let mut asks = Vec::new();
     for (key, drafts, facts) in memory::unasked() {
-        let plural = |n: usize, what: &str| if n > 0 { format!("{n} {what}{}", if n == 1 { "" } else { "s" }) } else { String::new() };
-        let waiting = [plural(drafts, "draft"), plural(facts, "fact")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · ");
-        asks.push(json!({"kind": "publishing", "key": key, "name": team::info(&key).name, "waiting": waiting}));
+        let plural = |n: usize, what: &str| {
+            if n > 0 {
+                format!("{n} {what}{}", if n == 1 { "" } else { "s" })
+            } else {
+                String::new()
+            }
+        };
+        let waiting = [plural(drafts, "draft"), plural(facts, "fact")]
+            .into_iter()
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        asks.push(
+            json!({"kind": "publishing", "key": key, "name": team::info(&key).name, "waiting": waiting}),
+        );
     }
     for (key, text) in memory::unacked_agents() {
         let path = bind::team_dir(&key).unwrap_or_default().join(memory::AGENTS);
@@ -1160,21 +1370,35 @@ pub fn launch_asks() -> Vec<Value> {
 /// ponytail: inlined, not served. An <img src> carries no token, so a route for it would have to be
 /// a hole in the guard, and the mark is 3 KB. One substitution beats an exempted endpoint.
 pub fn page() -> String {
-    PAGE.replace("{{LOGO}}", &format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(LOGO)))
+    PAGE.replace(
+        "{{LOGO}}",
+        &format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(LOGO)
+        ),
+    )
 }
 
 fn parse_query(raw: &str) -> Query {
     let mut out = Query::new();
     for part in raw.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = part.split_once('=').unwrap_or((part, ""));
-        let decode = |s: &str| urlencoding::decode(&s.replace('+', " ")).map(|c| c.into_owned()).unwrap_or_else(|_| s.to_string());
+        let decode = |s: &str| {
+            urlencoding::decode(&s.replace('+', " "))
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| s.to_string())
+        };
         out.entry(decode(k)).or_insert_with(|| decode(v));
     }
     out
 }
 
 fn header(req: &Request, name: &'static str) -> String {
-    req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string()).unwrap_or_default()
+    req.headers()
+        .iter()
+        .find(|h| h.field.equiv(name))
+        .map(|h| h.value.as_str().to_string())
+        .unwrap_or_default()
 }
 
 fn send(req: Request, code: u16, body: String, ctype: &str) {
@@ -1221,7 +1445,11 @@ fn guard(req: &Request, query: &Query, token: &str) -> Result<(), (u16, &'static
         return Err((403, "bad host"));
     }
     let got = header(req, "X-Dashy-Token");
-    let got = if got.is_empty() { q(query, "token").to_string() } else { got };
+    let got = if got.is_empty() {
+        q(query, "token").to_string()
+    } else {
+        got
+    };
     if !same_token(&got, token) {
         return Err((401, "bad token"));
     }
@@ -1263,7 +1491,13 @@ fn handle(state: &State, token: &str, page: &str, mut req: Request) {
                 .as_reader()
                 .read_to_end(&mut raw)
                 .ok()
-                .and_then(|_| if raw.is_empty() { Some(Value::Object(Body::new())) } else { serde_json::from_slice(&raw).ok() })
+                .and_then(|_| {
+                    if raw.is_empty() {
+                        Some(Value::Object(Body::new()))
+                    } else {
+                        serde_json::from_slice(&raw).ok()
+                    }
+                })
                 .and_then(|v: Value| if let Value::Object(o) = v { Some(o) } else { None });
             match body {
                 Some(body) => answer(req, f(state, &body)),
@@ -1311,7 +1545,10 @@ mod tests {
             url: "u".into(),
             updated_at: "2020-01-01T00:00:00Z".into(),
             author: Some(Login { login: "me".into() }),
-            repository: Repository { name_with_owner: "a/b".into(), name: "b".into() },
+            repository: Repository {
+                name_with_owner: "a/b".into(),
+                name: "b".into(),
+            },
             status: "· awaiting review".into(),
             ..Default::default()
         }
@@ -1321,8 +1558,16 @@ mod tests {
     fn served() -> (String, String, State) {
         let state = State::new();
         state.lock().sections = vec![
-            Section { name: "MINE".into(), prs: Some(vec![pr()]), err: None },
-            Section { name: "ASSIGNED".into(), prs: None, err: Some("boom\nsecond line".into()) },
+            Section {
+                name: "MINE".into(),
+                prs: Some(vec![pr()]),
+                err: None,
+            },
+            Section {
+                name: "ASSIGNED".into(),
+                prs: None,
+                err: Some("boom\nsecond line".into()),
+            },
         ];
         let token = "t0ken".to_string();
         let port = serve(state.clone(), 0, token.clone()).unwrap();
@@ -1330,7 +1575,10 @@ mod tests {
     }
 
     fn agent() -> ureq::Agent {
-        ureq::Agent::config_builder().http_status_as_error(false).build().new_agent()
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .new_agent()
     }
 
     fn get(url: &str, token: Option<&str>) -> (u16, Value) {
@@ -1340,13 +1588,23 @@ mod tests {
         }
         let mut resp = req.call().unwrap();
         let text = resp.body_mut().read_to_string().unwrap();
-        (resp.status().as_u16(), serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        (
+            resp.status().as_u16(),
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        )
     }
 
     fn post(url: &str, body: Value, token: &str) -> (u16, Value) {
-        let mut resp = agent().post(url).header("X-Dashy-Token", token).send_json(body).unwrap();
+        let mut resp = agent()
+            .post(url)
+            .header("X-Dashy-Token", token)
+            .send_json(body)
+            .unwrap();
         let text = resp.body_mut().read_to_string().unwrap();
-        (resp.status().as_u16(), serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        (
+            resp.status().as_u16(),
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        )
     }
 
     #[test]
@@ -1359,13 +1617,23 @@ mod tests {
         assert_eq!(d["version"], config::VERSION);
         assert_eq!(d["sections"][0]["name"], "MINE");
         let row = &d["sections"][0]["prs"][0];
-        assert_eq!((row["number"].as_u64(), row["repo"].as_str(), row["author"].as_str()), (Some(7), Some("a/b"), Some("me")));
+        assert_eq!(
+            (
+                row["number"].as_u64(),
+                row["repo"].as_str(),
+                row["author"].as_str()
+            ),
+            (Some(7), Some("a/b"), Some("me"))
+        );
         assert_eq!(row["status"], "· awaiting review");
         assert_eq!(row["busy"], false);
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it
-        assert_eq!(get(&format!("{base}/api/state?token={token}"), None).1["running"], 0);
+        assert_eq!(
+            get(&format!("{base}/api/state?token={token}"), None).1["running"],
+            0
+        );
         assert_eq!(get(&format!("{base}/api/nope"), Some(&token)).0, 404);
     }
 
@@ -1390,8 +1658,19 @@ mod tests {
         assert_eq!(d["sections"][0]["prs"][0]["review"], "3 findings");
         assert_eq!(d["running"], 1);
         // and a review of a row in flight is refused; one off the board is not something to pay for
-        assert_eq!(post(&format!("{base}/api/review"), json!({"url": "u"}), &token).0, 409);
-        assert_eq!(post(&format!("{base}/api/review"), json!({"url": "https://elsewhere/1"}), &token).0, 404);
+        assert_eq!(
+            post(&format!("{base}/api/review"), json!({"url": "u"}), &token).0,
+            409
+        );
+        assert_eq!(
+            post(
+                &format!("{base}/api/review"),
+                json!({"url": "https://elsewhere/1"}),
+                &token
+            )
+            .0,
+            404
+        );
     }
 
     #[test]
@@ -1403,13 +1682,25 @@ mod tests {
         let (code, d) = post(&format!("{base}/api/open"), json!({"url": "/etc/passwd"}), &token);
         assert_eq!((code, d["error"].as_str()), (404, Some("no such pr")));
         // no pre-review file yet, so nothing to hand to the desktop either
-        assert_eq!(post(&format!("{base}/api/open"), json!({"url": "u", "pre": true}), &token).0, 404);
+        assert_eq!(
+            post(
+                &format!("{base}/api/open"),
+                json!({"url": "u", "pre": true}),
+                &token
+            )
+            .0,
+            404
+        );
     }
 
     #[test]
     fn a_bad_body_is_a_400() {
         let (base, token, _state) = served();
-        let mut resp = agent().post(format!("{base}/api/auto")).header("X-Dashy-Token", &token).send("[1,2]").unwrap();
+        let mut resp = agent()
+            .post(format!("{base}/api/auto"))
+            .header("X-Dashy-Token", &token)
+            .send("[1,2]")
+            .unwrap();
         assert_eq!(resp.status().as_u16(), 400);
         assert!(resp.body_mut().read_to_string().unwrap().contains("bad body"));
         assert_eq!(post(&format!("{base}/api/nope"), json!({}), &token).0, 404);
@@ -1426,16 +1717,30 @@ mod tests {
             c.interval = 300;
         });
         let (base, token, state) = served();
-        let (code, d) = post(&format!("{base}/api/settings"), json!({"theme": "nord", "interval": 60, "voice": ["bot", "review"]}), &token);
+        let (code, d) = post(
+            &format!("{base}/api/settings"),
+            json!({"theme": "nord", "interval": 60, "voice": ["bot", "review"]}),
+            &token,
+        );
         assert_eq!((code, d["ok"].as_bool()), (200, Some(true)));
         let c = config::get();
         assert_eq!((c.theme.as_str(), c.interval), ("nord", 60));
         assert_eq!(c.voice, vec!["review", "bot"]); // ponytail: rebuilt in option order
         assert!(state.lock().wake.is_set()); // a shorter interval must not wait out the longer one
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-        assert_eq!((saved["theme"].as_str(), saved["interval"].as_u64()), (Some("nord"), Some(60)));
+        assert_eq!(
+            (saved["theme"].as_str(), saved["interval"].as_u64()),
+            (Some("nord"), Some(60))
+        );
         // junk off the wire never lands
-        for body in [json!({"interval": 0}), json!({"interval": "soon"}), json!({"model": ""}), json!({"theme": "neon"}), json!({"voice": []}), json!({"window": 5})] {
+        for body in [
+            json!({"interval": 0}),
+            json!({"interval": "soon"}),
+            json!({"model": ""}),
+            json!({"theme": "neon"}),
+            json!({"voice": []}),
+            json!({"window": 5}),
+        ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }
         assert_eq!(config::get().theme, "nord");
@@ -1447,45 +1752,130 @@ mod tests {
     #[test]
     fn consent_answers_one_ask_and_drops_it() {
         let (base, token, state) = served();
-        state.lock().asks = vec![json!({"kind": "publishing", "key": "t1"}), json!({"kind": "agents", "key": "t1", "text": "do x"})];
-        post(&format!("{base}/api/consent"), json!({"kind": "publishing", "key": "t1", "yes": false}), &token);
+        state.lock().asks = vec![
+            json!({"kind": "publishing", "key": "t1"}),
+            json!({"kind": "agents", "key": "t1", "text": "do x"}),
+        ];
+        post(
+            &format!("{base}/api/consent"),
+            json!({"kind": "publishing", "key": "t1", "yes": false}),
+            &token,
+        );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
-        assert_eq!(d["asks"], json!([{"kind": "agents", "key": "t1", "text": "do x"}]));
-        assert_eq!(post(&format!("{base}/api/consent"), json!({"kind": "odd", "key": "t1"}), &token).0, 400);
+        assert_eq!(
+            d["asks"],
+            json!([{"kind": "agents", "key": "t1", "text": "do x"}])
+        );
+        assert_eq!(
+            post(
+                &format!("{base}/api/consent"),
+                json!({"kind": "odd", "key": "t1"}),
+                &token
+            )
+            .0,
+            400
+        );
     }
 
     #[test]
     fn code_rows_keep_every_mark_on_a_line_or_as_an_orphan() {
-        let line = |n: u32, sign: &str, text: &str| Line { n: Some(n), sign: sign.into(), text: text.into(), del: None, marks: vec![] };
+        let line = |n: u32, sign: &str, text: &str| Line {
+            n: Some(n),
+            sign: sign.into(),
+            text: text.into(),
+            del: None,
+            marks: vec![],
+        };
         let files = vec![DiffFile {
             path: "x.py".into(),
             add: 1,
             dele: 0,
-            hunks: vec![Hunk { header: "@@ -1,2 +1,3 @@".into(), start: 1, lines: vec![line(1, " ", "a"), line(2, "+", "b"), line(3, " ", "c")] }],
+            hunks: vec![Hunk {
+                header: "@@ -1,2 +1,3 @@".into(),
+                start: 1,
+                lines: vec![line(1, " ", "a"), line(2, "+", "b"), line(3, " ", "c")],
+            }],
         }];
         let marks = vec![
-            Mark { kind: "note".into(), loc: "x.py:2".into(), text: "on b".into(), path: "x.py".into(), n: 2, file: 0 },
-            Mark { kind: "nit".into(), loc: "y.py:1".into(), text: "elsewhere".into(), path: "y.py".into(), n: 1, file: usize::MAX },
+            Mark {
+                kind: "note".into(),
+                loc: "x.py:2".into(),
+                text: "on b".into(),
+                path: "x.py".into(),
+                n: 2,
+                file: 0,
+            },
+            Mark {
+                kind: "nit".into(),
+                loc: "y.py:1".into(),
+                text: "elsewhere".into(),
+                path: "y.py".into(),
+                n: 1,
+                file: usize::MAX,
+            },
         ];
-        let kinds: Vec<&str> = code_rows(&files, &marks, true).iter().map(|r| r["kind"].as_str().unwrap().to_string()).collect::<Vec<_>>().leak().iter().map(String::as_str).collect();
-        assert_eq!(kinds, ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]);
+        let kinds: Vec<&str> = code_rows(&files, &marks, true)
+            .iter()
+            .map(|r| r["kind"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+            .leak()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            kinds,
+            ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]
+        );
         let rows = code_rows(&files, &marks, true);
         assert_eq!(rows[7]["why"], "not in this diff");
-        let plain: Vec<String> = code_rows(&files, &marks, false).iter().map(|r| r["kind"].as_str().unwrap().to_string()).collect();
+        let plain: Vec<String> = code_rows(&files, &marks, false)
+            .iter()
+            .map(|r| r["kind"].as_str().unwrap().to_string())
+            .collect();
         assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
     }
 
     #[test]
     fn dream_result_counts_what_is_lost_and_hides_the_bodies_from_the_page() {
-        let before = vec![("mine/a.md".to_string(), "x\ny\n".to_string()), ("mine/general.md".to_string(), "g\n".to_string())];
-        let new = vec![("mine/a.md".to_string(), "x\n".to_string()), ("mine/general.md".to_string(), String::new())];
+        let before = vec![
+            ("mine/a.md".to_string(), "x\ny\n".to_string()),
+            ("mine/general.md".to_string(), "g\n".to_string()),
+        ];
+        let new = vec![
+            ("mine/a.md".to_string(), "x\n".to_string()),
+            ("mine/general.md".to_string(), String::new()),
+        ];
         let r = dream_result(("tidy".into(), before, new));
-        assert_eq!((r["summary"].as_str(), r["lost"].as_u64()), (Some("tidy"), Some(1)));
-        let files: Vec<(String, bool)> = r["files"].as_array().unwrap().iter().map(|f| (f["name"].as_str().unwrap().into(), f["deleted"].as_bool().unwrap())).collect();
-        assert_eq!(files, [("mine/general".to_string(), true), ("mine/a".to_string(), false)]);
+        assert_eq!(
+            (r["summary"].as_str(), r["lost"].as_u64()),
+            (Some("tidy"), Some(1))
+        );
+        let files: Vec<(String, bool)> = r["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["name"].as_str().unwrap().into(),
+                    f["deleted"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            files,
+            [("mine/general".to_string(), true), ("mine/a".to_string(), false)]
+        );
         assert!(r["detail"].as_str().unwrap().contains("-y"));
         assert!(r["new"].is_object());
-        assert_eq!(dream_detail("s", &[("a.md".into(), "x\n".into())], &[("a.md".into(), "x\n".into())]).trim(), "s");
+        assert_eq!(
+            dream_detail(
+                "s",
+                &[("a.md".into(), "x\n".into())],
+                &[("a.md".into(), "x\n".into())]
+            )
+            .trim(),
+            "s"
+        );
     }
 
     #[test]
@@ -1498,7 +1888,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         let j = job("test-fail");
-        assert_eq!((j["running"].as_bool(), j["error"].as_str()), (Some(false), Some("last line")));
+        assert_eq!(
+            (j["running"].as_bool(), j["error"].as_str()),
+            (Some(false), Some("last line"))
+        );
         assert_eq!(job("never")["idle"], true);
         start_job("test-ok", || Ok(json!({"n": 1})));
         for _ in 0..200 {
@@ -1517,6 +1910,9 @@ mod tests {
         assert_eq!(host_of("[::1]:80"), "::1");
         assert_eq!(host_of("evil.example.com:80"), "evil.example.com");
         let qs = parse_query("url=https%3A%2F%2Fx%2F1&scope=marks&a=b+c");
-        assert_eq!((q(&qs, "url"), q(&qs, "scope"), q(&qs, "a"), q(&qs, "none")), ("https://x/1", "marks", "b c", ""));
+        assert_eq!(
+            (q(&qs, "url"), q(&qs, "scope"), q(&qs, "a"), q(&qs, "none")),
+            ("https://x/1", "marks", "b c", "")
+        );
     }
 }

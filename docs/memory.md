@@ -1,7 +1,7 @@
 # gitdashy memory — full specification
 
 How review memory works, and why it is shaped this way. If you are changing
-anything under `dashy/core/memory.py`, read this first.
+anything under `src/memory.rs`, read this first.
 
 ---
 
