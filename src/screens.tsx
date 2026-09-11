@@ -3,7 +3,7 @@
 import { api, errorText, post } from './api'
 import type { Foot } from './modals'
 import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
-import type { Row, StateData } from './types'
+import type { Ask, Row, StateData } from './types'
 
 export type Ctx = {
   getData: () => StateData | null
@@ -291,6 +291,7 @@ export async function teamsScreen(ctx: Ctx, p: Row | null) {
     )
     if (out) await teamScreen(ctx, out.key, p)
     await reload()
+    await askConsents(ctx)
   }
   async function joinTeam() {
     const repo = await prompt('Existing team (a git URL, owner/name on GitHub, or a path to a bare repo):')
@@ -299,6 +300,7 @@ export async function teamsScreen(ctx: Ctx, p: Row | null) {
     if (out?.warning) await notice(out.warning)
     if (out?.key) await teamScreen(ctx, out.key, p)
     await reload()
+    await askConsents(ctx)
   }
   refresh()
 }
@@ -541,10 +543,17 @@ export async function setPath(ctx: Ctx, which: 'L' | 'C') {
   ctx.flash(`${what} is now ${path}`)
 }
 
-export async function askConsents(ctx: Ctx) {
-  const asks = ctx.getData()?.asks || []
-  if (!asks.length) return
-  const a = asks[0]
+export async function askConsents(ctx: Ctx, asks?: Ask[]) {
+  let list = asks
+  if (!list) {
+    try {
+      list = ((await (await api('/api/asks')).json()).asks as Ask[]) || []
+    } catch {
+      return // server gone; the next poll retries
+    }
+  }
+  if (!list.length) return
+  const a = list[0]
   if (a.kind === 'publishing') {
     const m = open({
       title: `${a.name}  (${a.key})`,

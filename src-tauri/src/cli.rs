@@ -1282,6 +1282,9 @@ fn dashboard(cli: Cli) -> i32 {
     if cli.auto {
         state.set_auto(true, false);
     }
+    // ponytail: web::launch_asks was never called, so the desk asked nothing at launch and the
+    // Knowledge row sat on "restart to be asked" for ever — restarting asked nothing either.
+    state.lock().asks = crate::web::launch_asks();
     let looper = state.clone();
     std::thread::Builder::new()
         .name("refresh".into())

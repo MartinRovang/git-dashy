@@ -1298,6 +1298,7 @@ type Post = fn(&State, &Body) -> Out;
 fn get_route(path: &str) -> Option<Get> {
     Some(match path {
         "/api/state" => get_state,
+        "/api/asks" => get_asks,
         "/api/pr" => get_pr,
         "/api/diff" => get_diff,
         "/api/prereview" => get_prereview,
@@ -1363,6 +1364,12 @@ pub fn launch_asks() -> Vec<Value> {
         asks.push(json!({"kind": "agents", "key": key, "name": team::info(&key).name, "text": text, "path": knowledge::tilde(&path)}));
     }
     asks
+}
+
+/// The launch-time consent questions the page still shows, recomputed on demand. The inline flows
+/// (a team just started or joined) ask again without waiting for a restart.
+fn get_asks(_state: &State, _query: &Query) -> Out {
+    Ok(json!({"asks": launch_asks()}))
 }
 
 /// The built app's index shell. Vite emits one; a binary with no dist is a build mistake, not a crash.
