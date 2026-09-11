@@ -69,7 +69,7 @@
   .body { flex: 1; min-height: 0; display: flex; }
 
   /* sidebar */
-  .side { width: 236px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--line);
+  .side { width: var(--side-w, 236px); flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--line);
           display: flex; flex-direction: column; padding: 14px 10px; overflow-y: auto; gap: 0; }
   .cap { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--dim3); padding: 0 8px 8px; }
   .nav { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 10px; border-radius: 7px; cursor: pointer; }
@@ -171,9 +171,14 @@
   .splash .logo img { width: 50px; }
 
   /* side pane */
-  .pane { width: 420px; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--bg2);
+  .pane { width: var(--pane-w, 420px); flex-shrink: 0; border-left: 1px solid var(--line); background: var(--bg2);
           display: flex; flex-direction: column; }
   .pane .bar { padding: 0 14px; gap: 6px; }
+  /* ponytail: a 6px strip on the inner edge of each sidebar, dragged with three pointer events. No splitter lib. */
+  .side, .pane { position: relative; }
+  .grip { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+  .side .grip { right: -3px; } .pane .grip { left: -3px; }
+  .grip:hover, .grip.on { background: var(--dim3); }
   .tab { height: 26px; padding: 0 10px; border-radius: 6px; display: flex; align-items: center; gap: 6px; cursor: pointer;
          font-family: var(--mono); font-size: 11px; color: var(--dim2); border: 1px solid transparent; }
   .tab.on { color: var(--ink); background: var(--bg4); border-color: var(--edge); }
@@ -628,6 +633,7 @@ function render() {
   const app = $("#app");
   const scroll = app.querySelector(".list")?.scrollTop || 0;
   const pscroll = app.querySelector(".pane .in")?.scrollTop || 0;
+  const sscroll = app.querySelector(".side")?.scrollTop || 0;
   const caret = document.activeElement?.id === "q" ? document.activeElement.selectionStart : null;
   const refresh = d?.error ? `<div class="pill err" title="${esc(d.error)}">✗ refresh failed: ${esc(d.error).slice(0, 40)}</div>`
     : `<div class="mono" style="font-size:11px;color:var(--dim2)">${!d?.fetchedAt ? "fetching…" : d?.fetching ? "refreshing…" : `refresh in ${left}s`}</div>`;
@@ -654,7 +660,7 @@ function render() {
   ${(d?.notices || []).map((n) => `<div class="notice">${esc(n)}<span class="x" data-dismiss="1">✕ dismiss</span></div>`).join("")}
 
   <div class="body">
-    <div class="side scroll">
+    <div class="side scroll"><div class="grip" data-grip="side"></div>
       <div class="cap">WORKSPACE</div>
       <div style="display:flex;flex-direction:column;gap:2px">
         ${vis.map((sec) => `<div class="nav" data-jumpsec="${esc(sec.name)}">
@@ -710,7 +716,7 @@ function render() {
           </div>
           <div class="list scroll">${listHTML()}</div>
         </div>
-        ${state.pane ? `<div class="pane">${paneHTML(sel)}</div>` : ""}
+        ${state.pane ? `<div class="pane"><div class="grip" data-grip="pane"></div>${paneHTML(sel)}</div>` : ""}
       </div>
       <div class="hints">
         <div class="g"><b>NAV</b><span>j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold · / filter</span></div>
@@ -725,6 +731,8 @@ function render() {
   if (list) list.scrollTop = scroll;
   const pin = app.querySelector(".pane .in");
   if (pin) pin.scrollTop = pscroll;
+  const side = app.querySelector(".side");
+  if (side) side.scrollTop = sscroll;
   if (caret !== null) { const q = $("#q"); q.focus(); q.setSelectionRange(caret, caret); }
 }
 
@@ -1223,6 +1231,17 @@ document.addEventListener("click", async (e) => {
   if ((x = t("[data-fold]"))) { state.folded[x.dataset.fold] = !state.folded[x.dataset.fold]; return render(); }
   if ((x = t("[data-uid]"))) return select(x.dataset.uid);
 });
+document.addEventListener("pointerdown", (e) => {
+  const grip = e.target.closest("[data-grip]");
+  if (!grip) return;
+  const which = grip.dataset.grip, box = grip.parentElement, start = e.clientX, w0 = box.offsetWidth, root = document.documentElement;
+  grip.classList.add("on"); grip.setPointerCapture(e.pointerId);
+  const move = (ev) => root.style.setProperty(`--${which}-w`, Math.max(160, Math.min(window.innerWidth / 2, w0 + (which === "side" ? 1 : -1) * (ev.clientX - start))) + "px");
+  const up = () => { grip.classList.remove("on"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
+    try { localStorage.setItem("dashy-widths", JSON.stringify({ side: root.style.getPropertyValue("--side-w"), pane: root.style.getPropertyValue("--pane-w") })); } catch {} };
+  grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+});
+try { const w = JSON.parse(localStorage.getItem("dashy-widths") || "{}"); for (const k of ["side", "pane"]) if (w[k]) document.documentElement.style.setProperty(`--${k}-w`, w[k]); } catch {}
 document.addEventListener("dblclick", (e) => {
   const row = e.target.closest("[data-uid]");
   if (row) { state.sel = row.dataset.uid; state.pane = true; render(); pull(); }
