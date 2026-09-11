@@ -70,6 +70,26 @@ export function confirm(text: string, { yes = 'yes', no = 'no', title = 'gitdash
   })
 }
 
+/** A spinner for work with no other view. Opens after a beat so a fast call never flashes. */
+export function busy<T>(title: string, text: string, run: () => Promise<T>): Promise<T> {
+  let shown: Modal | null = null
+  const timer = window.setTimeout(() => {
+    shown = open({
+      title,
+      dismiss: false,
+      body: () => (
+        <div>
+          <span className="spinner" /> {text}
+        </div>
+      ),
+    })
+  }, 250)
+  return run().finally(() => {
+    clearTimeout(timer)
+    if (shown) close(shown)
+  })
+}
+
 /** One message. Any dismiss closes it. */
 export function notice(text: string, title = 'gitdashy'): Promise<void> {
   return new Promise((res) => {

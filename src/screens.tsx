@@ -2,7 +2,7 @@
 // and mutates its modal in place, then repaint()s — the same shape as the vanilla openModal/paint pair.
 import { api, errorText, post } from './api'
 import type { Foot } from './modals'
-import { close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
+import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Row, StateData } from './types'
 
 export type Ctx = {
@@ -286,15 +286,16 @@ export async function teamsScreen(ctx: Ctx, p: Row | null) {
     const desc = await prompt('One line: what is this team for? (shared with everyone who joins)')
     const owner = p ? p.repo.split('/')[0] : ''
     const cover = owner && (await confirm(`${name.slice(0, 24)} covers ${owner}/*, for everyone who joins?`))
-    const out = await ctx.call('/api/teams', { op: 'new', name, desc, owner: cover ? owner : '' }, `started ${name}`)
+    const out = await busy('starting team', `creating ${name}…`, () =>
+      ctx.call('/api/teams', { op: 'new', name, desc, owner: cover ? owner : '' }, `started ${name}`),
+    )
     if (out) await teamScreen(ctx, out.key, p)
     await reload()
   }
   async function joinTeam() {
     const repo = await prompt('Existing team (a git URL, owner/name on GitHub, or a path to a bare repo):')
     if (!repo) return
-    ctx.flash('joining…')
-    const out = await ctx.call('/api/teams', { op: 'join', repo }, 'joined')
+    const out = await busy('joining team', `cloning ${repo}…`, () => ctx.call('/api/teams', { op: 'join', repo }, 'joined'))
     if (out?.warning) await notice(out.warning)
     if (out?.key) await teamScreen(ctx, out.key, p)
     await reload()
