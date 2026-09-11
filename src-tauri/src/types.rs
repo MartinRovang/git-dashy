@@ -1,5 +1,5 @@
 //! The data shapes every module shares. JSON names match what the Python version wrote to disk and
-//! what ui/gui.html reads, so old logs and the page keep working unchanged.
+//! what the frontend reads, so old logs and the page keep working unchanged.
 
 use serde::{Deserialize, Serialize};
 

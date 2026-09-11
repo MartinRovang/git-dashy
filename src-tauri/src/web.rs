@@ -1,5 +1,5 @@
-//! The HTTP server ui/gui.html talks to. Port of dashy/ui/web.py. Serves the page, /api/* JSON, and
-//! guards everything with the X-Dashy-Token header (or ?token= on the page load).
+//! The HTTP server the React frontend talks to. Port of dashy/ui/web.py. Serves the embedded
+//! Vite bundle, /api/* JSON, and guards the API with the X-Dashy-Token header (or ?token= on the page).
 //!
 //! ponytail: tiny_http, no framework. One State, one refresh thread, and one JSON route per thing
 //! the dashboard can do: the page polls /api/state and posts back. The desktop window is pointed
