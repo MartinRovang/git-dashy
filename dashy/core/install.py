@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 from .. import HERE, config
-from . import knowledge, mirror, team
+from . import knowledge, memory, mirror, team
 
 BEGIN, END = "<!-- gitdashy:begin -->", "<!-- gitdashy:end -->"
 CBEGIN, CEND = "<!-- gitdashy:corpus:begin -->", "<!-- gitdashy:corpus:end -->"  # a separate block: one can go without the other
@@ -171,7 +171,12 @@ def _notes_key():
 		names = sorted(n for n in os.listdir(ident) if n.endswith(".md"))
 	except OSError:
 		names = []
-	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")))
+	# ponytail: the team's agents.md files are in the key too, because a note below depends on them and
+	# on the answers file beside them. Without this the row would be right once and then keep saying it
+	# after the file was accepted — a standing note that has stopped being true is worse than none.
+	agents = tuple((t, stamp(os.path.join(t, "memory", "agents.md"))) for t in sorted(team.dirs()))
+	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")),
+	        agents, stamp(os.path.join(config.MEMORY_DIR, ".agents-ok")))
 
 
 def session_notes():
@@ -189,6 +194,11 @@ def session_notes():
 			out.append("corpus never says `gitdashy remember`")
 		if hand_wired_team_import():
 			out.append("CLAUDE.md imports @prs-team by hand")
+		# ponytail: the launch prompt asks ONCE, at startup. After a `n`, or on a machine that only ever
+		# runs the session hook, a team's instruction to your sessions is withheld for ever with nothing
+		# saying so — and this row exists for exactly that: what a session here is NOT being told.
+		if waiting := [k for k, _t in memory.unacked_agents()]:
+			out.append(f"{', '.join(waiting)}: agents.md not read — restart to be asked")
 		_NOTES = (key, out)
 	return _NOTES[1]
 

@@ -365,10 +365,14 @@ def session_context(repo, general_mirrored=False):
 	text, source = brief(repo)
 	if text:
 		parts.append(f"### brief — {source}\n{text}")
+	# ponytail: asked ONCE, above the loop. sources() resolved this binding on the line before and its
+	# own ponytail says why that matters — every bind.of() is a read of the store, and this runs on
+	# every mirror write, which is every registered repo on every refresh.
+	slug = bind.of(repo)
 	for label, base in sources(repo)[1:]:
 		if not general_mirrored and (t := _read(path(None, base))):
 			parts.append(f"### {label} — true of every repo it covers\n{t}")
-		if t := agents_text(bind.of(repo), base):
+		if t := agents_text(slug, base):
 			parts.append(f"### how {label} works — for this session, not for a review\n{t}")
 	return "\n\n".join(parts)
 
@@ -865,6 +869,25 @@ def _agents_seen():
 	return out
 
 
+def _agents_key(key):
+	"""One spelling for the answers file, because it is written under one name and read under another.
+
+	ponytail: consent is recorded under `team.joined()`'s spelling — a directory name — and looked up
+	under `bind.of()`'s, which is lowercased because a binding is typed. Every seam around this already
+	folds for the same reason (`bind.team_dir`, `team.dir_of`). Nothing today makes an unfolded
+	checkout, since `start()` and `setup()` both go through `key_of()`; what makes it worth a function
+	rather than four `.lower()` calls is the failure if anything ever does — accepted, never delivered,
+	and never asked about again, with no surface saying which of those happened.
+	ponytail: ONE fold, on the way into the file and on the way into every lookup. Folding on read as
+	well made either half sufficient, so neither could be shown to matter and both could rot.
+	ponytail: two of the three call sites can be shown failing without this; agents_text's cannot,
+	because its only caller hands it `bind.of()`'s answer, which is already folded. It folds anyway so
+	that the rule is "every lookup folds" rather than "every lookup except the one whose caller happens
+	to have done it" — but nothing proves that line, and a reader should not assume something does.
+	"""
+	return key.lower()
+
+
 def _agents_sha(base):
 	""""" when the team has no agents.md, else a digest of exactly the bytes a session would be given."""
 	t = _read(os.path.join(base, AGENTS))
@@ -884,7 +907,7 @@ def agents_text(key, base):
 	that file says next month is the same hole with a slower fuse — the acknowledgement is of the
 	wording that was read, so an edit asks again.
 	"""
-	return _read(os.path.join(base, AGENTS)) if key and _agents_seen().get(key) == _agents_sha(base) else ""
+	return _read(os.path.join(base, AGENTS)) if key and _agents_seen().get(_agents_key(key)) == _agents_sha(base) else ""
 
 
 def unacked_agents():
@@ -896,7 +919,7 @@ def unacked_agents():
 		# ponytail: the stored value is compared with its refusal marker stripped. A no records "!<sha>",
 		# and asking again on every launch for a file somebody has already declined is how a prompt
 		# teaches people to dismiss it. The file has to CHANGE before it is offered again.
-		if (sha := _agents_sha(base)) and seen.get(key, "").lstrip("!") != sha:
+		if (sha := _agents_sha(base)) and seen.get(_agents_key(key), "").lstrip("!") != sha:
 			out.append((key, _read(os.path.join(base, AGENTS))))
 	return out
 
@@ -905,7 +928,7 @@ def allow_agents(key, base, yes=True):
 	"""Record that you have read this team's agents.md at its current wording. A no records the
 	refusal, so the file has to CHANGE before it is offered again rather than at every launch."""
 	seen = _agents_seen()
-	seen[key] = _agents_sha(base) if yes else "!" + _agents_sha(base)
+	seen[_agents_key(key)] = _agents_sha(base) if yes else "!" + _agents_sha(base)
 	try:
 		os.makedirs(config.MEMORY_DIR, exist_ok=True)
 		with open(os.path.join(config.MEMORY_DIR, AGENTS_OK), "w") as f:

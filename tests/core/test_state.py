@@ -9,9 +9,7 @@ from dashy import config
 from dashy.core import github, log, review as review_mod, state, team, update
 from dashy.core.state import State
 
-from conftest import a_team
-
-from conftest import PR, fake_http, gql_nodes
+from conftest import PR, a_team, fake_http, gql_nodes
 
 
 def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
@@ -647,9 +645,10 @@ def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path
 	st = state.State(60, "opus")
 
 	def one_tick():
-		# ponytail: cleared before each. start_sweep() sets it and the thread clears it, so whether the
-		# NEXT tick counts anything at all came down to which won — and a test whose subject is skipped
-		# by a race passes with the code removed, which is what this one did.
+		# ponytail: the event is cleared before each, and it no longer gates the count — the guard it
+		# used to skip was replaced by the "already yours" check in arrivals(). It stays because
+		# start_sweep() refuses to start a second sweep while one is set, and a tick that quietly did
+		# not sweep is not the tick this test means to drive.
 		st.sweeping.clear()
 		st.tick(time.time())
 

@@ -344,3 +344,26 @@ def test_the_dream_never_rewrites_what_people_wrote(monkeypatch, tmp_path):
 	(mem / "project.md").write_text("# What we are building\n")
 	(mem / "general.md").write_text("- the api holds no DDL\n")
 	assert [k for k in memory.files() if k.startswith("team")] == ["team:org-t/general.md"]
+
+
+def test_consent_is_recorded_and_read_under_one_spelling_of_the_key(monkeypatch, tmp_path):
+	"""It is written under team.joined()'s spelling — a directory name — and read under bind.of()'s,
+	which is lowercased because it is typed. Every other seam here folds for this reason. Nothing
+	today makes an unfolded checkout, since start() and setup() both go through key_of(); the point is
+	the failure mode if anything ever does: accepted, never delivered, and never asked about again."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	mem = tmp_path / "teams" / "Org-T" / "memory"
+	(tmp_path / "teams" / "Org-T" / ".git").mkdir(parents=True)
+	mem.mkdir(parents=True)
+	memory.allow_publishing("Org-T")
+	bind.bind("a/b", "Org-T")
+	(mem / "agents.md").write_text("File what you work out.\n")
+	seed("a/b", "uses tabs")
+	assert [k for k, _t in memory.unacked_agents()] == ["Org-T"]  # offered under the directory's name
+	assert bind.of("a/b") == "org-t"  # and looked up under the binding's, which is folded because typed
+	memory.allow_agents("Org-T", str(mem))
+	assert memory.unacked_agents() == []
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "File what you work out." in (tmp_path / "out" / "repo.md").read_text()
