@@ -30,6 +30,8 @@ Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
+                      [--team KEY --agents-again]
+                      [--team KEY --agents-again]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --gui          open the dashboard in the desktop app (downloaded on first use)
@@ -41,7 +43,7 @@ Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME]
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default {config.EFFORT}, or $PRS_EFFORT); e picks
   --depth LEVEL  review depth: low, medium, high, adaptive (default {config.DEPTH}, or $PRS_DEPTH); d picks
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
-  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests (or $PRS_HUNTER); h toggles
+  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, humanizer (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
   --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
@@ -144,7 +146,7 @@ L local memory dir, C where all team checkouts live, n repo memory, g general me
 1/2 or Tab switch the pane between the review summary and the code it is about,
   in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
 b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
-P share your facts with the team (t share, x forget), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
+P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
 T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, q quit."""
 
 
@@ -276,7 +278,12 @@ def init(argv):
 	repo = arg("--repo", "", str, argv) or team.origin_slug(".")
 	if not repo:
 		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name")
-	print("\n".join(install_mod.wire_repo(into, loader, repo)))
+	# ponytail: a REFUSAL exits non-zero. wire_repo reports in prose, so `init` printed "refused — git
+	# would commit …" and exited 0; the session hook reads that status to decide whether to start its
+	# background sync, and took the refusal for a success.
+	print("\n".join(lines := install_mod.wire_repo(into, loader, repo)))
+	if any("refused" in l for l in lines):
+		raise SystemExit(1)
 
 
 def remember(argv):
@@ -298,9 +305,14 @@ def remember(argv):
 	if not general and not repo:
 		raise SystemExit("gitdashy: no git origin here — pass --repo owner/name, or --general")
 	scope, where = repo or None, repo or "general"
+	# ponytail: --general threw away the repo you are standing in, which is the only thing that says
+	# WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all —
+	# neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
+	# general fact means "true across this project", and the project is that repo's team.
+	about = "" if not general else (arg("--repo", "", str, argv) or team.origin_slug("."))
 	if memory.already_known(scope, fact):
 		return print(f"gitdashy: {where} already knows that")
-	promoted = memory.append(scope, fact)
+	promoted = memory.append(scope, fact, about)
 	team.push_dir(config.MEMORY_DIR, f"memory: remembered for {where}", "mine")
 	team.push(f"memory: evidence for {where}")  # ponytail: a promotion writes the pool, which lives over there
 	if promoted:  # ponytail: the counter counts observations; it does not know which surface each came from
@@ -537,6 +549,10 @@ def teams(argv):
 		fresh = sorted(set(team.joined()) - before)
 		print(f"gitdashy: joined {fresh[0] if fresh else join}"
 		      + (f"  ({team.ERROR})" if team.ERROR else ""))
+	elif "--agents-again" in argv:
+		key = _team_of(argv)
+		print(f"gitdashy: {key} will be asked about again at the next launch" if memory.ask_agents_again(key)
+		      else f"gitdashy: nothing recorded for {key} — it is already asked about at launch")
 	elif leave := arg("--leave", "", str, argv):
 		if err := knowledge.leave(leave):
 			raise SystemExit("gitdashy: " + err)

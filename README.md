@@ -117,12 +117,12 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
-| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / humanizer |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
 | `n` | edit this repo's review memory in `$EDITOR` |
 | `g` | edit the general review memory in `$EDITOR` |
-| `P` | share: your facts the team does not have — `t` shares one, `x` forgets it |
-| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice |
+| `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
+| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
@@ -130,7 +130,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team) |
+| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
 
@@ -181,8 +181,10 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 `caveman` and `bot` restate the verdict in caveman speech and as a terse machine log. Any mix, at
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
-over-engineering, `security` only security, `tests` only missing or toothless tests. The hello
-comment names both so the author knows why the review reads that way. `x` and `h` tick them at runtime.
+over-engineering, `security` only security, `tests` only missing or toothless tests,
+`humanizer` only AI-sounding prose in the description, docs, comments and user-facing strings.
+The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
+them at runtime.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
@@ -292,24 +294,28 @@ union driver, so two people reviewing at once do not conflict. **Joining does no
 holds reviews of other teams' repos and of private work.
 
 **Your memory does not move there, and joining does not publish it.** Team memory is a separate, second
-source that reviews read *alongside* yours, and a fact only reaches it when you send it:
+source that reviews read *alongside* yours. What reaches it is what has crossed the gate — two reviews
+that did not know about each other, and a model that read both and called them the same claim — for a
+repo **bound to that team**. Binding is the decision; nothing else is a keypress.
+
+Your unconfirmed observations are pooled too, so a colleague's reviewer can be the second observation
+your own machine rarely produces:
 
 ```
-P  →  ★ 2 people found this
-      neo-api CI reports "skipping" for format-check
-      t  share this one       x  forget it       esc  leave it
+<team>/memory/drafts/<user>/<repo>.md    what their reviews proposed   (never read into a prompt)
+<team>/memory/pool/<user>/<repo>.md      what they have accepted        (never read into a prompt)
 ```
 
-Facts two people arrived at independently sort first and say so. That works without anyone's drafts
-leaving their machine: when a fact is promoted into your own memory it is also written to
-`memory/pool/<you>/`, a record of what you have already accepted — evidence only, never read into
-anyone's prompt, mirror or dream. Two people's pools agreeing is four independent reviews across two
-humans. It only covers repos already named in the shared review log, so it tells the team nothing that
-reviewing there had not already told them. Sharing or forgetting a fact withdraws it from the pool.
+Neither is read by a review, a session, the mirror or the dream — they are evidence, and the only thing
+they decide is whether two people saw the same thing. Two people's pools agreeing is four independent
+reviews across two humans, and `P` still says so with `★ 2 people found this`.
 
-Nothing reaches team memory automatically. A wrong fact in your own memory you meet again tomorrow and
-fix; a wrong fact in the team's lands in contexts where nobody who could correct it will ever see it
-happen. So promotion into your own memory is automatic, and promotion out of it is one keypress.
+**`P` is the way back out.** It lists your facts for repos bound to a team and says which the team has;
+`x` removes one from your memory, from theirs, and from the evidence. Nobody chose to publish it, so
+nobody has to know it was published in order to take it back.
+
+A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
+private however many teams you are in.
 
 If your own memory directory is itself a git repo, gitdashy pushes it too — so your facts and drafts follow
 you between machines without ever passing through the team. The header's `Knowledge` group shows
@@ -336,6 +342,22 @@ The whole model — every store, promotion rule and discard rule — is written 
 of the learned facts, so a reviewer knows what the code is *for* before judging whether a change serves
 it. It is declared, not learned — the promotion pipeline never touches it, the dream never rewrites it,
 and it is never offered for sharing.
+
+**`agents.md` is declared too, and it reaches agent sessions rather than reviews.** It reaches every *session*
+in every repo bound to the team, through that repo's mirror, and never reaches a review: it says how to
+work here, which is not something a reviewer should be told about the code it is judging. Starting or
+joining a team seeds one; a team that already exists gets it by adding `memory/agents.md` to its
+checkout. What belongs in it is whatever the team needs its members' sessions to do — above all,
+`gitdashy remember`, since a session that files nothing leaves every draft at one observation.
+
+**The dashboard shows it and asks before any session reads it**, and asks again if the wording changes;
+until then it stays out of the mirror and nothing else changes. The reason is that this file is
+imperative text handed to an agent that holds tools, where facts and a brief are evidence a reader
+weighs, and whoever can push to the team's repo writes it. This gate covers `agents.md` only:
+`project.md` and the team's `general.md` come out of the same repo and reach the same mirror ungated,
+and the brief reaches review prompts too. The Knowledge row says when a team's `agents.md` is being
+withheld, whether because nobody has read it yet or because somebody said no; `gitdashy teams
+--agents-again` forgets that answer so the next launch asks once more.
 
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its
@@ -416,7 +438,27 @@ gitdashy init --into .agent/team --loader CLAUDE.local.md
 which excludes the mirror from git (through `.git/info/exclude` — never the tracked `.gitignore`, which is
 the team's), adds the import to whichever instruction file you name, writes the mirror, and registers the
 path. The running dashboard then re-mirrors it on every refresh, so there are no hooks to install and
-nothing on a session-start timeout budget. It goes stale only while gitdashy is not running.
+nothing on a session-start timeout budget.
+
+**A mirror says how old it is.** Its header names, per team, when that team was last reached — and when
+nothing is keeping it current, says so in the file the session is reading rather than in a hook message
+that scrolls past:
+
+```
+> team org/review-team: last pulled 4 days ago — **this may be behind what the team has.** Nothing is
+> refreshing it: start `gitdashy`, or run `gitdashy sync-memory --into` this directory.
+```
+
+A pull that fetched and then failed to rebase leaves a fresh timestamp over a checkout that did not
+move, so a live error outranks the age and the line reads `— **the last sync did not land:** …`.
+
+The session hook also starts one `sync-memory` in the background, detached, so the next read is current
+on a machine where the dashboard is rarely open. A background sync does not pull while a dashboard is
+running, while another sync holds the lock, or when every team was reached in the last few minutes. Six
+repos opened in an editor is six session starts, and one fetch answers all of them. The dashboard's own
+refresh takes the same lock, so a refresh and a background sync never rebase one checkout against each
+other. A push that has to merge first still pulls outside it. Either way the report says why it did not
+pull, rather than looking like a fetch that found nothing.
 
 **Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:
@@ -453,8 +495,9 @@ from the shared log or because they hold memory for it — it also joins the evi
 you when someone else found the same thing. A repo the team has never seen keeps its name to itself; the
 fact still becomes yours. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
-cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled, which on
-the default interval is minutes old at most.
+cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled; the shipped hook
+then starts a pulling one in the background, so the file is current by the next read even when no
+dashboard has been open for days.
 
 It is a copy, not a link: Claude Code confines instruction-file imports to the project tree, so `~`,
 absolute and symlinked paths are all refused. The mirrors carry a header saying they are read-only,
@@ -553,7 +596,8 @@ dashy/
     team.py       git-backed sync of the log and memory
     mirror.py     read-only copies of the memory, for agent sessions
     update.py     release check and self-update
-tests/            mirrors dashy/: one test file per module
+tests/            mirrors dashy/: one test file per module, plus test_docs.py,
+                  which mirrors no module and pins the prose to the code
 ```
 
 Swappable seams, for adding things: `core.github.fetch`, `core.review.review` and

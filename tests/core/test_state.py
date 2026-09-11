@@ -1,14 +1,15 @@
 import os
 import sys
+import threading
 import time
 
 import pytest
 
 from dashy import config
-from dashy.core import github, log, review as review_mod, state, team, update
+from dashy.core import github, heartbeat, log, memory, review as review_mod, state, team, update
 from dashy.core.state import State
 
-from conftest import PR, fake_http, gql_nodes
+from conftest import PR, a_team, fake_http, gql_nodes
 
 
 def test_loop_forgets_stale_verdict_but_not_in_flight(monkeypatch):
@@ -192,7 +193,6 @@ def test_notify_off_stays_quiet(monkeypatch):
 
 def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
 	"""Memory is the one thing here that cannot be recreated, so a copy rides the normal refresh."""
-	from dashy.core import memory
 	order = []
 	monkeypatch.setattr(team, "pull", lambda: order.append("pull"))
 	monkeypatch.setattr(memory, "backup", lambda reason="tick": order.append(f"backup:{reason}"))
@@ -205,7 +205,6 @@ def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
 
 def test_a_failed_backup_leaves_no_orphan_part_file(monkeypatch, tmp_path):
 	"""prune only sees .tar.gz, so a stray .part would sit there forever."""
-	from dashy.core import memory
 	import tarfile
 	mem, backups = tmp_path / "mem", tmp_path / "backups"
 	mem.mkdir()
@@ -223,7 +222,6 @@ def test_a_failed_backup_leaves_no_orphan_part_file(monkeypatch, tmp_path):
 
 def test_an_empty_memory_dir_setting_does_not_tar_the_cwd(monkeypatch, tmp_path):
 	"""PRS_MEMORY= (set but empty) made os.walk(".") archive whatever directory you happened to be in."""
-	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", "")
 	monkeypatch.setattr(config, "TEAM", "")
 	monkeypatch.setattr(memory, "BACKUPS", str(tmp_path / "b"))
@@ -243,7 +241,7 @@ def test_pane_detail_is_refetched_when_the_pr_moves(monkeypatch):
 	      "repository": {"nameWithOwner": "acme/api"}}
 
 	assert st.want_detail(pr) is None                       # first ask starts a fetch
-    # the thread is the only async part; wait for it rather than sleeping a fixed time
+	# the thread is the only async part; wait for it rather than sleeping a fixed time
 	for _ in range(400):
 		if st.want_detail(pr):
 			break
@@ -610,3 +608,263 @@ def test_a_failed_tick_waits_a_full_interval_before_retrying(monkeypatch):
 	with pytest.raises(SystemExit):
 		st.loop()
 	assert len(tries) == 1 and st.error == "gh exploded"
+
+
+def _quiet_tick(monkeypatch):
+	monkeypatch.setattr(state.github, "fetch", lambda: [])
+	monkeypatch.setattr(state.log, "mark_rereviews", lambda data: [])
+	monkeypatch.setattr(state.update, "update_available", lambda: "")
+	monkeypatch.setattr(state, "refresh_mirrors", lambda: None)
+
+
+def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
+	"""The pull is what brings a teammate's pooled drafts down, so the sweep is started right after it."""
+	order, done = [], threading.Event()
+	monkeypatch.setattr(state.team, "pull", lambda: order.append("pull"))
+	monkeypatch.setattr(memory, "sweep", lambda model: (order.append(f"sweep:{model}"), done.set()) and [])
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert done.wait(5) and order == ["pull", "sweep:opus"]
+
+
+def test_the_tick_says_a_dashboard_is_running_before_it_does_anything(monkeypatch, tmp_path):
+	"""The beat is what lets a session hook fire a background sync off without racing this process for
+	the team checkout. Written at the TOP of the tick: anything that reads it while the tick is still
+	pulling must be told a dashboard is here, or it goes and pulls the same checkout itself."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seen = []
+	monkeypatch.setattr(state.team, "pull", lambda: seen.append(heartbeat.alive()))
+	_quiet_tick(monkeypatch)
+	assert not heartbeat.alive()
+	state.State(60, "opus").tick(time.time())
+	assert seen == [True] and heartbeat.alive()
+
+
+def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
+	"""It ran on the refresh thread, after the pull and BEFORE github.fetch, with a 300s model timeout —
+	so the first sweep after an upgrade held the whole list for as long as the model took. Catching the
+	exception was never the risk; the wait was."""
+	started, release = threading.Event(), threading.Event()
+	def slow(model):
+		started.set()
+		release.wait(5)
+		return []
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	monkeypatch.setattr(memory, "sweep", slow)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert started.wait(5)                    # it is running
+	assert st.fetched_at is not None          # and the list landed anyway
+	assert st.fetching is False
+	release.set()
+
+
+def test_only_one_sweep_runs_at_a_time(monkeypatch):
+	"""A slow sweep must not have a second started on top of it: both write the same pool files and
+	both push the same checkout."""
+	calls, release = [], threading.Event()
+	def slow(model):
+		calls.append(model)
+		release.wait(5)
+		return []
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	monkeypatch.setattr(memory, "sweep", slow)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	st.tick(time.time())
+	st.tick(time.time())
+	assert len(calls) == 1
+	release.set()
+
+
+def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
+	"""It calls a model. A refresh that dies because of it would take the PR list down with it."""
+	rang = threading.Event()
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	def boom(model):
+		rang.set()
+		raise ZeroDivisionError("boom")
+	monkeypatch.setattr(memory, "sweep", boom)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert rang.wait(5)
+	assert st.fetched_at is not None and st.error == ""
+	# ponytail: the flag clears in a `finally` AFTER the exception, so checking it the instant the body
+	# ran is a race with the thread's own cleanup — wait for it, with a deadline.
+	deadline = time.time() + 5
+	while st.sweeping.is_set() and time.time() < deadline:
+		time.sleep(0.01)
+	assert not st.sweeping.is_set(), "a sweep that threw left the guard set, so none can run again"
+
+
+def test_the_tick_holds_the_pull_lock_while_it_pulls(monkeypatch, tmp_path):
+	"""It used to beat and then pull unguarded. A hook sync that claimed the lock while no dashboard
+	was up keeps pulling once one starts, and the first tick rebased the same checkout beside it —
+	so "only one process ever pulls a given checkout" was in the README and was not true."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	# ponytail: asks the LOCK, not the file. flock leaves the file in place while it is held, so a
+	# path check answered True either way — and would have passed with the claim removed.
+	held = []
+	monkeypatch.setattr(state.team, "pull", lambda: held.append(heartbeat.claim()))
+	_quiet_tick(monkeypatch)
+	state.State(60, "opus").tick(time.time())
+	assert held == [False]                                      # the tick had it while it pulled
+	assert heartbeat.claim()                                    # and gave it back
+	heartbeat.unclaim()
+
+
+def test_a_tick_skips_the_pull_while_a_hook_sync_holds_the_lock(monkeypatch, tmp_path):
+	"""Not waited for: everything after the pull — the PR list, the mirrors — has nothing to do with
+	the team's git, and blocking the refresh thread to wait out somebody else's fetch is worse than
+	taking the next tick."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	pulls = []
+	monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+	_quiet_tick(monkeypatch)
+	assert heartbeat.claim()                                    # a background sync got there first
+	state.State(60, "opus").tick(time.time())
+	assert pulls == []
+	heartbeat.unclaim()
+
+
+def test_a_dashboard_still_reads_as_alive_after_a_tick_longer_than_the_grace(monkeypatch, tmp_path):
+	"""The beat is stamped at tick START and alive() allows one interval plus GRACE, but the next tick
+	begins at fetched_at + interval. So any tick longer than GRACE made a healthy dashboard read as
+	dead until it came round again, and one slow team pull is enough at a 120s git timeout."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	# ponytail: the CLOCK moves, which is what makes this a long tick. Counting beats alone passed with
+	# one beat, since `t0` only skips the splash — the question is whether the stamp is still good when
+	# the next tick is due, and that needs time to have passed between the two.
+	now = [1000.0]
+	monkeypatch.setattr(time, "time", lambda: now[0])
+	monkeypatch.setattr(state.time, "time", lambda: now[0])
+	monkeypatch.setattr(heartbeat.time, "time", lambda: now[0])
+	real = state.team.pull
+
+	def slow():
+		now[0] += 200  # one team on a slow remote, well past GRACE
+		return real()
+
+	monkeypatch.setattr(state.team, "pull", slow)
+	st.tick(now[0])
+	now[0] = st.fetched_at + st.interval - 1  # the moment the next tick is about to start
+	assert heartbeat.alive(), "a dashboard about to tick must not read as stopped"
+
+
+def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path):
+	"""team.pull() fast-forwards silently and the mirror is overwritten in place, so a fact arriving —
+	the moment to read it — passed with nothing on screen saying one had."""
+	from dashy.core import memory
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- and no DDL here\n- nor there\n"))
+	st = state.State(60, "opus")
+
+	def one_tick():
+		# ponytail: cleared first, or start_sweep skips and this is not the tick the test means to run.
+		st.sweeping.clear()
+		st.tick(time.time())
+
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+	one_tick()
+	assert st.arrived == {"org-t": 2}  # a second pull that brought nothing does not inflate it
+	# ponytail: a teammate rewriting the brief is not the team learning thirty things. project.md and
+	# agents.md are prose people wrote and change for reasons that have nothing to do with the reviews.
+	monkeypatch.setattr(state.team, "pull", lambda: [
+		(mem / "project.md").write_text("# What we are building\n\nA longer brief than before.\n"),
+		(mem / "agents.md").write_text("# For agent sessions\n\nFile what you work out.\n")])
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+
+
+def test_your_own_promoted_fact_is_never_reported_as_a_teammates(monkeypatch, tmp_path):
+	"""_pool() writes YOUR promoted facts into the team's files, and it is reached from three places —
+	the sweep, a review finishing on its own thread, and promote() on a keypress. A guard on
+	State.sweeping closed one door of the three; asking whether the line is already yours closes all of
+	them, because that is the real question. This drives the door the guard did not cover."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	os.makedirs(str(tmp_path / "mem"), exist_ok=True)
+	open(str(tmp_path / "mem" / "a__b.md"), "w").write("- one this machine promoted\n")
+	_quiet_tick(monkeypatch)
+	# ponytail: no sweep in flight — this is promote() on the UI thread, or a review's own thread.
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- one this machine promoted\n"))
+	st = state.State(60, "opus")
+	st.sweeping.clear()
+	st.tick(time.time())
+	assert st.arrived == {}
+
+
+def test_a_teammates_fact_survives_a_deletion_in_the_same_pull(monkeypatch, tmp_path):
+	"""The count was net, so a teammate who dropped three lines and added two produced no news at all.
+	Lines rather than totals: an arrival is an arrival whatever else moved."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- one\n- two\n- three\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull", lambda: (mem / "a__b.md").write_text("- four\n"))
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert st.arrived == {"org-t": 1}
+
+
+def test_an_unreadable_team_file_does_not_cost_the_tick_its_pull(monkeypatch, tmp_path):
+    """The badge's snapshot runs before team.pull(), and _read raises on anything but a missing file.
+    So one unreadable team file — a permission, a half-written merge — skipped that tick's git
+    entirely, for the sake of a counter. The counter is the optional half."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    a_team(monkeypatch, tmp_path)
+    pulls = []
+    monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(state.memory, "team_lines", lambda k: (_ for _ in ()).throw(OSError("EACCES")))
+    _quiet_tick(monkeypatch)
+    st = state.State(60, "opus")
+    st.tick(time.time())
+    assert pulls == [1] and st.arrived == {}
+
+
+def test_a_team_file_nobody_can_decode_does_not_stop_the_pr_list(monkeypatch, tmp_path):
+	"""A real non-UTF-8 file, not a stub that raises OSError. UnicodeDecodeError is a ValueError, so
+	`except OSError` missed exactly the case a team-pushed file produces — and the tick raises before
+	team.pull(), so the PR list froze on every refresh for the sake of a badge."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe not text\n")
+	fetched, pulls = [], []
+	monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert pulls == [1] and fetched == [1]
+
+
+def test_a_bad_team_file_arriving_with_the_pull_does_not_stop_the_rest(monkeypatch, tmp_path):
+	"""The pull is what brings the file in, so the read AFTER it is the likelier of the two to meet
+	one — and the sweep, the mirrors and the fetch all sit below it."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	fetched = []
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe\n"))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert fetched == [1] and st.arrived == {}

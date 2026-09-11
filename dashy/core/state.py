@@ -7,7 +7,7 @@ import threading
 import time
 
 from .. import config
-from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
+from . import diff, github, heartbeat, install, log, memory, mirror, review as review_mod, team, update
 
 LOG = logging.getLogger(__name__)
 
@@ -49,7 +49,14 @@ def refresh_mirrors():
 class State:
 	def __init__(self, interval=config.INTERVAL, model=config.DEFAULT_MODEL):
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
+		# ponytail: since this dashboard STARTED, and not persisted. The question a badge answers is
+		# "has anything landed that I have not looked at", and a dashboard the operator leaves running
+		# for days is exactly where that goes unnoticed. Persisting it would mean a file that changes
+		# whenever the team does, inside a directory push_dir commits, for a number that is only ever
+		# read by the header of the process that wrote it.
+		self.arrived = {}
 		self.model = model
+		self.sweeping = threading.Event()  # ponytail: one draft sweep at a time; see start_sweep
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
 		self.running = set()  # urls with a review or pre-review in flight — see in_flight()
 		self.started_at = {}  # url -> when it started, so a row in flight can say how long it has been
@@ -237,12 +244,86 @@ class State:
 				pass  # 1s slices, so a change to either side takes effect within the second
 			self.wake.clear()
 
+	def start_sweep(self):
+		"""Pool and cross-check drafts on a thread of their own. Returns at once; never raises.
+
+		ponytail: NOT on the refresh thread. It was, immediately after the pull and before
+		`github.fetch()`, with `fetching` already true and a 300s model timeout — so the first sweep
+		after an upgrade, with a whole backlog newly poolable, blocked the PR list for as long as the
+		model took. Catching the exception was never the risk; the wait was. The comment claimed the
+		list must not depend on a model and the code put one in front of it.
+		ponytail: one at a time. A slow sweep must not have a second one started on top of it by the
+		next tick, both writing the same pool files and both pushing the same checkout.
+		"""
+		if self.sweeping.is_set():
+			return
+		self.sweeping.set()
+		def run():
+			try:
+				memory.sweep(self.model)
+			except Exception:  # noqa: BLE001 — surfaced in the debug log, never on the header
+				LOG.exception("draft sweep failed")
+			finally:
+				self.sweeping.clear()
+		threading.Thread(target=run, daemon=True).start()
+
+	def take_arrivals(self):
+		"""What has arrived since anyone last looked, and forget it. Under the lock: the refresh thread
+		adds to this while the UI reads it, and an arrival landing between a copy and a clear was
+		silently dropped."""
+		with self.lock:
+			got = dict(self.arrived)
+			self.arrived.clear()
+			return got
+
 	def tick(self, t0):
 		"""One refresh: pull, mirror, fetch, sweep stale verdicts, start auto reviews, notify."""
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
-		team.pull()  # newest team log + memory before we read them
+		# ponytail: FIRST, and before the pull it is a claim about. Anything reading this while the tick
+		# runs should be told a dashboard is here, or it does the pull itself — which is the one thing
+		# the beat exists to prevent. Written every tick rather than once at startup, so a dashboard
+		# that stopped refreshing (suspended, wedged) stops counting as one.
+		heartbeat.beat(self.interval)
+		# ponytail: the lines around the pull, with your own facts excluded — see memory.arrivals.
+		# ponytail: the snapshot must not be able to cost the pull. _read raises on anything but a
+		# missing file, so one unreadable team file — a permission, a half-written merge, a non-UTF-8
+		# byte a teammate pushed — would have skipped that tick's git entirely, for the sake of a
+		# badge. The badge is the optional half.
+		# ponytail: ValueError as well as OSError. UnicodeDecodeError is a ValueError, so `except
+		# OSError` alone missed exactly the case a team-pushed file produces, which is the one that
+		# arrives without anybody on this machine doing anything.
+		try:
+			was = {k: memory.team_lines(k) for k in team.joined()}
+		except (OSError, ValueError):
+			LOG.exception("could not count team facts before the pull")
+			was = {}
+		# ponytail: the tick takes the LOCK too. It used to beat and then pull unguarded, on the
+		# argument that a beat is enough — but a hook sync that claimed the lock while no dashboard was
+		# up keeps pulling after one starts, and the first tick then rebased the same checkout beside
+		# it. "Only one process ever pulls a given checkout" was in the README and was not true.
+		# ponytail: the lock is not waited for. A tick that cannot have it skips the pull and takes the
+		# next one — the alternative is blocking the refresh thread, and everything after this line
+		# (the PR list, the mirrors) has nothing to do with the team's git.
+		if heartbeat.claim():
+			try:
+				team.pull()  # newest team log + memory before we read them
+			finally:
+				heartbeat.unclaim()
+		# ponytail: guarded on THIS side too. The pull is what brings in the unreadable file, so the
+		# read after it is the likelier of the two to meet one — and everything below here, the sweep,
+		# the mirrors and the PR list, was riding on a counter.
+		try:
+			grew = {key: n for key, before in was.items() if (n := memory.arrivals(key, before))}
+		except (OSError, ValueError):
+			LOG.exception("could not count what the pull brought")
+			grew = {}
+		if grew:
+			with self.lock:  # ponytail: read on the UI thread, like every other cross-thread field
+				for key, n in grew.items():
+					self.arrived[key] = self.arrived.get(key, 0) + n
+		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after
 		refresh_mirrors()  # ponytail: here, not in a session hook — no global config, no timeout budget
@@ -251,6 +332,11 @@ class State:
 		newer = update.update_available()
 		if self.fetched_at is None:
 			time.sleep(max(0, config.SPLASH_MIN - (time.time() - t0)))  # let the splash breathe on the first load
+		# ponytail: beaten AGAIN, at the end. The first beat is stamped at tick start and alive() allows
+		# one interval plus GRACE, but the next tick starts at fetched_at + interval — so any tick
+		# longer than GRACE made a healthy dashboard read as dead until it came round again, and one
+		# slow team pull is enough at a 120s git timeout. So the tick beats again at the end.
+		heartbeat.beat(self.interval)
 		with self.lock:
 			self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False
 			self.error = ""  # this tick landed, so whatever the last one said is over

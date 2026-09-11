@@ -1,11 +1,12 @@
 """Run Claude headless on a PR and post its verdict."""
 import datetime
 import json
+import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
-import subprocess
 
 from .. import HERE, config
 from . import bind, github, llm, log, memory, team
@@ -61,6 +62,11 @@ HUNTER = {  # a lens, not a style: each hunts one class of problem the main revi
 	"tests": "\n\nAppend a section `---\n**Tests**`: hunt ONLY test coverage. Changed logic with no test, tests that "
 	         "cannot fail, mocks that hide the seam under test. One line per finding, `file:L<n>: what is unproven. the test.` "
 	         "Nothing found: `Covered.`",
+	"humanizer": "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds: description, docs, "
+	             "comments, user-facing strings. Not-X-but-Y contrasts, one-line closers, staged run-ups, forced triads, "
+	             "dashes as the universal connector, inflated significance, sales language, stock AI words (delve, "
+	             "pivotal, seamless, robust), bold as decoration, chatbot residue. One line per finding, "
+	             "`file:L<n>: <tell>: the phrase. plain rewrite.` Never add a fact the text lacks. Nothing found: `Reads human.`",
 }
 EXPLORE = """
 
@@ -281,7 +287,7 @@ def _verdict(repo, n, model, prev=None):
 	# ponytail: the scope rides the environment, not the prompt or the argv — see github.scoped.
 	text, cost, ms = llm.ask(prompt, model, system=LENS, tools=tools, timeout=TIMEOUT,
 	                         env={github.SCOPE: repo, github.SCOPE_TEAM: team} if claude else None)
-	verdict = json.loads(text[text.index("{"):text.rindex("}") + 1])
+	verdict = llm.obj(text)
 	verdict["cost"], verdict["ms"] = cost, ms
 	if config.DEPTH == "adaptive" and verdict.get("depth_used"):
 		verdict["body"] += f"\n\n_Dashy reviewed at **{verdict['depth_used']}** depth: {verdict.get('depth_reason', '')}_"
@@ -347,6 +353,17 @@ def review(pr, model):
 		verdict = _verdict(repo, n, model, prev)
 		github.post_review(repo, n, verdict["verdict"], verdict["body"])
 		promoted = memory.append(repo, verdict.get("memory"))  # drafts, and whatever a second review confirmed
+		# ponytail: and whatever a TEAMMATE independently observed. This is where new observations arrive
+		# and it is already a background thread, so it is where the cross-person count belongs — the
+		# alternative was a tick, which would ask a model on a clock rather than when something changed.
+		# ponytail: before the pushes, so one push carries the drafts, the promotions and the pool.
+		# ponytail: NEVER fails the review. The verdict is posted by now; a model call that throws here
+		# would turn a finished review into an error on the row, over a promotion that can happen next
+		# time. Same contract team.push has two lines down.
+		try:
+			promoted += memory.cross_check(repo, model)
+		except Exception:  # noqa: BLE001 — surfaced in the debug log, never on the row
+			logging.getLogger(__name__).exception("cross-check failed for %s", repo)
 		status = log.log_review(pr, model, verdict)
 		team.push(f"review {repo}#{n}: {verdict['verdict']}")
 		team.push_dir(config.MEMORY_DIR, f"memory: {repo}#{n}" + (f", {len(promoted)} confirmed" if promoted else ""), "mine")

@@ -62,6 +62,60 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+FAILED = "dashy-pull-failed"  # under a checkout's .git: why its last pull did not land, "" when it did
+
+
+def _mark_pull(d, why):
+	"""Record on the CHECKOUT itself why its last pull did not land, or clear it when one does.
+
+	ponytail: on the checkout, not in a module global. `ERROR` is last-writer-wins across every git
+	call in one process, so one team's failure was pinned on every team's line and a later team's
+	success wiped it — and it is a process global, so a session hook rewriting the mirror in a fresh
+	process had ERROR == "" and reported "last pulled just now" over a pull that had failed elsewhere.
+	This is a file beside FETCH_HEAD, which every reader can stat and no other process can contradict.
+	ponytail: never raises. A checkout we cannot write a marker into is not a reason to fail the pull
+	that already happened; the age alone is what the header falls back to.
+	"""
+	p = os.path.join(d, ".git", FAILED)
+	try:
+		if why:
+			with open(p, "w") as f:
+				f.write(why[:200])
+		elif os.path.exists(p):
+			os.remove(p)
+	except OSError:
+		pass
+
+
+def pull_failed(d):
+	"""Why `d`'s last pull did not land, "" when it did or when nothing has tried."""
+	try:
+		with open(os.path.join(d, ".git", FAILED)) as f:
+			return f.read().strip()
+	except OSError:
+		return ""
+
+
+def fetched_at(d):
+	"""When `d` last reached its remote, as a unix time. None when it never has or has none to reach.
+
+	ponytail: FETCH_HEAD, not a commit date. It measures when the team was last reached; a pull that
+	found nothing new still rewrites it. A commit date measures when the team last said something, and
+	reads as weeks stale on a team that is simply quiet.
+	ponytail: a stat, not a subprocess, and the .git DIRECTORY is checked here rather than left to
+	has_remote — which falls back to spawning git when .git is a file. This is read on the mirror path,
+	which a SessionStart hook calls inside a ten-second budget, so "not a subprocess" has to be true of
+	every shape of checkout and not only the common one. A worktree reports no age, which is the same
+	answer a checkout that has never been pulled gives.
+	"""
+	if not os.path.isdir(os.path.join(d, ".git")) or not has_remote(d):
+		return None
+	try:
+		return os.stat(os.path.join(d, ".git", "FETCH_HEAD")).st_mtime
+	except OSError:
+		return None  # cloned and never pulled since, or a .git this cannot stat — no age to report
+
+
 def has_remote(d):
 	"""True when the checkout at `d` has an origin.
 
@@ -214,8 +268,10 @@ def _pull(d, label, *ref):
 	nothing is lost and the next tick starts from a state git can work with.
 	"""
 	if _note(_git("pull", "--rebase", "-q", *ref, cwd=d), label):
+		_mark_pull(d, "")
 		return True
 	_git("rebase", "--abort", cwd=d)  # ponytail: a no-op when none is in progress; ERROR keeps the pull's reason
+	_mark_pull(d, ERROR)
 	return False
 
 
@@ -755,6 +811,28 @@ def is_own_memory(repo):
 		return True
 	return is_repo(config.MEMORY_DIR) and same_remote(repo, _url(config.MEMORY_DIR))
 
+AGENTS_TEMPLATE = """# For agent sessions working in this team's repos
+
+This file is the team's, not one machine's. It reaches every session in every repo bound to this
+team, through that repo's `.agent/team/repo.md` mirror. Reviews never see it: it says how to work
+here, which is not something a reviewer should be told about the code it is judging.
+
+## File what you work out
+
+A session that establishes something about the code files it, and it costs one line:
+
+```sh
+gitdashy remember "the viewer owns mask state; the store only mirrors it"
+gitdashy remember --general "logic that can live in the API does"
+```
+
+It becomes a draft, never a fact. A draft is confirmed only when a review, or a teammate, arrives
+at the same thing independently — so file freely. What does not belong: what this task did, one
+bug, anything git already records.
+
+Without these, most drafts stay at one observation.
+"""
+
 PROJECT_TEMPLATE = """# What we are building
 
 Fill this in once, together. Everyone who joins this team reads it, and so does every review —
@@ -786,6 +864,20 @@ def seed_project(path):
 	if not os.path.exists(path):
 		with open(path, "w") as f:
 			f.write(PROJECT_TEMPLATE)
+
+
+def seed_agents(path):
+	"""Give a new team repo the instruction its members' agent sessions will read.
+
+	ponytail: shipped with the TEAM, not with the machine. The rule that makes a session file drafts
+	lived in one operator's own corpus, so a colleague's sessions never filed any and half the second
+	observers the recurrence gate needs did not exist. A team is the right scope for it: it is the team
+	that wants the drafts, and a team is already a git repo that everyone pulls.
+	ponytail: never overwrites, exactly like the brief. A team that has edited this owns it.
+	"""
+	if not os.path.exists(path):
+		with open(path, "w") as f:
+			f.write(AGENTS_TEMPLATE)
 
 
 def _undo(dest):
@@ -853,6 +945,7 @@ def start(name, description="", at=""):
 	union_attrs(dest)
 	write_info(key, name, description)
 	seed_project(os.path.join(dest, "memory", "project.md"))
+	seed_agents(os.path.join(dest, "memory", "agents.md"))
 	push_dir(dest, "gitdashy: new team " + name, "join")
 	return ""
 
@@ -1020,6 +1113,7 @@ def setup(repo, name=""):
 	union_attrs(dest)
 	os.makedirs(os.path.join(dest, "memory"), exist_ok=True)
 	seed_project(os.path.join(dest, "memory", "project.md"))
+	seed_agents(os.path.join(dest, "memory", "agents.md"))
 	# ponytail: a repo that predates team.json gets one NOW — the name you gave, or the key that was
 	# derived — and the push below carries it. Without it every joiner keyed the same repo by whatever
 	# they typed, so two people on one team held two keys, and a binding one of them made meant nothing

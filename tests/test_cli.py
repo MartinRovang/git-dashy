@@ -221,7 +221,7 @@ def test_voice_and_hunter_flags_are_checked(monkeypatch, capsys):
 	assert "--voice must be from review, caveman, bot" in capsys.readouterr().out
 	monkeypatch.setattr(config, "VOICE", ["review"])  # the refused value is not undone; a real run exits here
 	cli.run(["gitdashy", "--hunter", "tests,nope"])
-	assert "--hunter must be from ponytail, security, tests" in capsys.readouterr().out
+	assert "--hunter must be from ponytail, security, tests, humanizer" in capsys.readouterr().out
 
 
 def test_bind_refuses_a_positional_that_is_not_a_slug(monkeypatch, tmp_path):
@@ -540,3 +540,27 @@ def test_api_reaches_a_sibling_when_the_team_env_is_set(monkeypatch, tmp_path):
 	monkeypatch.delenv(github.SCOPE_TEAM)          # the same read, without the team
 	with pytest.raises(SystemExit, match="acme/api"):
 		cli.api(["gitdashy", "api", "/repos/acme/shared-lib/contents/x.py"])
+
+
+def test_remember_general_keeps_the_project_it_was_observed_in(monkeypatch, capsys, tmp_path):
+	"""--general threw away the one thing that says which project the fact is about: the repo you are
+	standing in. So with two teams joined it had nowhere to go and could never be shared."""
+	from dashy.core import bind
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	monkeypatch.setattr(team, "activate", lambda: None)
+	for key in ("nms", "dashy"):
+		(tmp_path / "teams" / key / ".git").mkdir(parents=True)
+		(tmp_path / "teams" / key / "memory").mkdir()
+	bind.bind_owner("neomedsys", "nms")
+	bind.bind("martin/git-dashy", "dashy")
+	# ponytail: a fixture that joins a team is one whose operator said yes to publishing
+	memory.allow_publishing("nms")
+	memory.allow_publishing("dashy")
+	monkeypatch.setattr(team, "origin_slug", lambda p: "neomedsys/neo-api")
+	monkeypatch.setattr(team, "push_dir", lambda d, m, l="sync": "")
+	monkeypatch.setattr(team, "push", lambda m: "")
+	cli.remember(["gitdashy", "remember", "--general", "releases go out through neogate"])
+	pooled = tmp_path / "teams" / "nms" / "memory" / memory.DRAFT_POOL / "tester" / "general.md"
+	assert pooled.exists(), "a general observation pooled to no project"
+	assert not (tmp_path / "teams" / "dashy" / "memory" / memory.DRAFT_POOL).exists()

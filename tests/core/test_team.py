@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 
 from dashy import config
@@ -9,6 +10,12 @@ from dashy.core import bind, knowledge, log, memory, team
 
 def git(*a, cwd):
 	return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+def _offered(about=""):
+	"""(repo, fact) for what P would list — the live query, so a disclosure test
+	cannot pass against a function nothing calls."""
+	return [(r, f) for r, f, _shared in memory.in_team(about)]
 
 
 def test_setup_seeds_and_pushes_then_pull_sees_teammate(monkeypatch, tmp_path):
@@ -202,7 +209,7 @@ def test_joining_also_binds_the_repos_only_the_mirror_registry_knows(monkeypatch
 	assert not memory.team_visible("me/weekend-thing")
 	memory.append("me/weekend-thing", "my side project uses bun")
 	memory.append("me/weekend-thing", "my side project uses bun")   # promoted for me
-	assert ("me/weekend-thing", "my side project uses bun") not in memory.shareable()
+	assert ("me/weekend-thing", "my side project uses bun") not in _offered()
 	assert not os.path.exists(memory.pool_path(memory.whoami(), "me/weekend-thing"))
 
 
@@ -993,3 +1000,97 @@ def test_a_team_we_are_not_in_reads_no_team_json_from_the_working_directory(monk
 	monkeypatch.chdir(here)
 	assert team.info("gone") == {"name": "gone", "description": ""}
 	assert team.covers("gone") == []
+
+
+def test_fetched_at_never_spawns_git_whatever_shape_the_checkout_is(monkeypatch, tmp_path):
+	"""This is read on the mirror path, which a SessionStart hook calls inside a ten-second budget.
+
+	has_remote falls back to RUNNING git when .git is a file, so "a stat, not a subprocess" held for a
+	clone and quietly stopped holding for a linked worktree — the one shape whose whole point is that
+	.git is a file. A worktree reports no age, which is the answer a never-pulled checkout gives.
+	"""
+	d = tmp_path / "t"
+	(d / ".git").mkdir(parents=True)
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	(d / ".git" / "FETCH_HEAD").write_text("abc\n")
+	assert team.fetched_at(str(d)) == os.stat(d / ".git" / "FETCH_HEAD").st_mtime
+
+	def no(*a, **k):
+		raise AssertionError("spawned git")
+
+	monkeypatch.setattr(team.subprocess, "run", no)
+	assert team.fetched_at(str(d)) is not None          # a plain clone still answers, without git
+	shutil.rmtree(d / ".git")
+	(d / ".git").write_text("gitdir: /elsewhere/.git/worktrees/t\n")
+	assert team.fetched_at(str(d)) is None              # and a worktree answers without git too
+
+
+def test_a_checkout_with_a_remote_but_no_fetch_yet_has_no_age(tmp_path):
+	"""Cloned and never pulled since. "last pulled never" would read as a fault; there is simply
+	nothing to report, and the header leaves the line out."""
+	d = tmp_path / "t"
+	(d / ".git").mkdir(parents=True)
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	assert team.fetched_at(str(d)) is None
+
+
+def test_a_pull_records_on_the_checkout_whether_it_landed(monkeypatch, tmp_path):
+	"""A real pull, both ways. Every other test sets the marker by hand, so nothing proved _pull
+	writes it — and the marker is what the mirror header and the background-sync floor both read."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	origin = tmp_path / "origin"
+	origin.mkdir()
+	git("init", "-q", "--bare", ".", cwd=str(origin))
+	seed = tmp_path / "seed"
+	seed.mkdir()
+	git("init", "-q", ".", cwd=str(seed))
+	(seed / "memory").mkdir()
+	(seed / "memory" / "general.md").write_text("- one\n")
+	git("add", "-A", cwd=str(seed))
+	git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init", cwd=str(seed))
+	git("remote", "add", "origin", str(origin), cwd=str(seed))
+	git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=str(seed))
+	assert team.setup(str(origin), "Org P") == ""
+	d = team.dir_of(team.joined()[0])
+	assert team.pull_failed(d) == ""                     # the clone's own pull landed
+
+	git("remote", "set-url", "origin", str(tmp_path / "gone"), cwd=d)
+	team.pull_dir(d)
+	assert team.pull_failed(d), "a pull that did not land has to say so on the checkout"
+
+	git("remote", "set-url", "origin", str(origin), cwd=d)
+	team.pull_dir(d)
+	assert team.pull_failed(d) == ""                     # and a later one clears it
+
+
+def test_starting_a_team_seeds_the_instruction_its_sessions_read(monkeypatch, tmp_path):
+	"""The rule that makes a session file drafts lived in one machine's own corpus, so a colleague's
+	sessions never filed any. A team is the right scope: it is the team that wants the drafts, and it
+	is already a git repo everyone pulls."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Org T") == ""
+	p = os.path.join(team.dir_of("org-t"), "memory", "agents.md")
+	assert "gitdashy remember" in open(p).read()
+	open(p, "w").write("ours, not yours\n")
+	team.seed_agents(p)
+	assert open(p).read() == "ours, not yours\n"  # never overwritten; a team that edited it owns it
+
+
+def test_joining_a_team_seeds_it_too(monkeypatch, tmp_path):
+	"""The leg the README promises and the one most people take: the first person starts the team, and
+	everyone after them joins it. Named for both and only the start half was driven."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	origin = tmp_path / "origin"
+	origin.mkdir()
+	git("init", "-q", "--bare", ".", cwd=str(origin))
+	seed = tmp_path / "seed"
+	seed.mkdir()
+	git("init", "-q", ".", cwd=str(seed))
+	(seed / "README.md").write_text("a team\n")
+	git("add", "-A", cwd=str(seed))
+	git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init", cwd=str(seed))
+	git("remote", "add", "origin", str(origin), cwd=str(seed))
+	git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=str(seed))
+	assert team.setup(str(origin), "Org J") == ""
+	key = team.joined()[0]
+	assert "gitdashy remember" in open(os.path.join(team.dir_of(key), "memory", "agents.md")).read()
