@@ -1,4 +1,4 @@
-"""Shared fixtures. ponytail: one fake screen, one temp log, no framework."""
+"""Shared fixtures. ponytail: one temp log, no framework."""
 import json
 import os
 import shutil
@@ -8,7 +8,6 @@ import pytest
 
 from dashy import demo, config
 from dashy.core import bind, github, install, log, memory, review, state, team, update
-from dashy.ui import screen as ui
 
 # ponytail: captured at import, BEFORE the autouse fixture stubs it. The two tests that are about
 # judging need the real thing; every other test must not reach a model at all.
@@ -180,35 +179,6 @@ class Result:
 
 def claude_out(**fields):
 	return Result(json.dumps({"result": "Sure:\n" + json.dumps(fields)}))
-
-
-class FakeScr:
-	def __init__(self, h=30, w=100):
-		self.h, self.w, self.cells = h, w, {}
-	def getmaxyx(self):
-		return self.h, self.w
-	def erase(self):
-		self.cells = {}
-	def refresh(self):
-		pass
-	noutrefresh = refresh
-	def addnstr(self, y, x, s, n, attr=0):
-		assert 0 <= y < self.h and 0 <= x < self.w and n >= 1, (y, x, n)
-		for i, ch in enumerate(s[:n]):
-			if x + i < self.w:
-				self.cells[(y, x + i)] = ch
-	def line(self, y):
-		return "".join(self.cells.get((y, x), " ") for x in range(self.w)).rstrip()
-	def text(self):
-		return "\n".join(self.line(y) for y in range(self.h))
-
-
-@pytest.fixture
-def screen(monkeypatch):
-	monkeypatch.setattr(ui, "C", lambda n: 0)
-	monkeypatch.setattr(ui.curses, "A_REVERSE", 1 << 18, raising=False)
-	monkeypatch.setattr(ui.curses, "A_ITALIC", 1 << 23, raising=False)
-	return FakeScr()
 
 
 @pytest.fixture

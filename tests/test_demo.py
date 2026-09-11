@@ -5,10 +5,8 @@ import time
 
 from dashy import demo
 from dashy.core import github, log, review as review_mod
-from dashy.ui import screen as ui
+from dashy.ui import web
 from dashy.core.state import State
-
-from conftest import FakeScr
 
 
 def test_demo_is_self_contained(monkeypatch, tmp_path):
@@ -23,7 +21,7 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	# ponytail: #180 (06:43) then #44 (04:43) — BY TIMESTAMP. reviewed() used to return reversed FILE
 	# order and call it newest-first, which is only the same thing when appends arrive in time order.
 	# The demo writes at=updatedAt, so it never did here; with logs from several teams it never will.
-	assert [p["more"] for k, p in ui.rows(secs) if k == "pr" and p["section"] == "REVIEWED"] == [1, 0]
+	assert [p["number"] for p in secs[3][1]] == [180, 44, 180]  # newest first; the page folds the older #180 under the newer
 	assert len(github.fetch()[1][1]) == 4 and len(github.fetch()[1][1]) == 5  # a new PR shows up on the 3rd refresh (+1 re-requested)
 	assert log.mark_rereviews(github.fetch()) == ["https://github.com/acme/infra/pull/44"]
 	p = secs[1][1][0]
@@ -32,8 +30,10 @@ def test_demo_is_self_contained(monkeypatch, tmp_path):
 	assert len(log.reviewed()) == 6
 	st = State(0)
 	st.sections = github.fetch()
-	ui.C = lambda n: 0
-	ui.draw(FakeScr(), st, 0)  # renders without raising
+	d = web.payload(st)  # the GUI's frame builds without raising, and serialises
+	assert [s["name"] for s in d["sections"]] == ["MINE", "REVIEW REQUESTED", "ASSIGNED", "REVIEWED"]
+	import json
+	json.dumps(d)
 
 
 def test_demo_swaps_every_call_out_including_the_pre_reviewer(monkeypatch, tmp_path):
@@ -82,7 +82,7 @@ def test_demo_puts_back_everything_it_swapped(monkeypatch, tmp_path):
 	assert demo.SWAPPED == {}
 
 
-def test_a_demo_launch_leaves_the_real_agent_config_alone(screen, monkeypatch, tmp_path):
+def test_a_demo_launch_leaves_the_real_agent_config_alone(monkeypatch, tmp_path):
 	"""--demo is documented as "nothing touches gh, claude or your real log", and demo.install()'s own
 	docstring says EVERY call-out is swapped here.
 
@@ -110,14 +110,15 @@ def test_a_demo_launch_leaves_the_real_agent_config_alone(screen, monkeypatch, t
 
 	demo.install()
 	monkeypatch.setattr(install, "_NOTES", (None, []))
-	said = []
-	monkeypatch.setattr(ui, "init_colors", lambda: None)
-	monkeypatch.setattr(ui, "confirm", lambda scr, s, sel, prompt: said.append(prompt) or True)
-	monkeypatch.setattr(ui.threading.Thread, "start", lambda self: None)
+	monkeypatch.setattr(web.threading.Thread, "start", lambda self: None)
 	monkeypatch.setattr(team, "activate", lambda: None)
 	monkeypatch.setattr(team, "migrate", lambda: "")
-	screen.getch, screen.timeout = iter([ord("q")]).__next__, lambda t: None
-	ui.main(screen, 60, False, "opus")
+	import http.server
+	class Stop(http.server.ThreadingHTTPServer):
+		def serve_forever(self, *a, **kw): raise KeyboardInterrupt
+		def shutdown(self): pass  # ponytail: the real one waits for a serve loop that never started
+	monkeypatch.setattr(http.server, "ThreadingHTTPServer", Stop)
+	web.main(60, False, "opus", open_browser=False)
 
 	assert md.read_bytes() == before                    # byte-identical: nothing rewrote it
 	assert os.path.islink(str(cfg / "prs-team"))        # and nothing unlinked it

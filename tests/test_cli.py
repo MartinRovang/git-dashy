@@ -63,7 +63,7 @@ def test_sync_memory_needs_a_destination():
 		cli.run(["gitdashy", "sync-memory"])
 
 
-def test_version_and_help_do_not_start_curses(capsys):
+def test_version_and_help_do_not_start_the_dashboard(capsys):
 	cli.run(["gitdashy", "--version"])
 	assert "gitdashy" in capsys.readouterr().out
 	cli.run(["gitdashy", "--help"])
@@ -290,14 +290,18 @@ def test_api_says_what_went_wrong_instead_of_a_traceback(monkeypatch, capsys):
 
 def test_no_token_says_so_instead_of_opening_the_dashboard(monkeypatch, capsys):
 	"""Every call needs one, so without it the dashboard is three rows of 401 under curses."""
-	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(cli.web, "main", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(cli.web, "desktop_binary", lambda: "")
+	monkeypatch.setattr(cli.web, "download_desktop", lambda: "")
 	monkeypatch.setattr(config, "SETTINGS", "")
 	cli.run(["gitdashy"])
 	out = capsys.readouterr().out
 	assert "no GitHub token" in out and "export GH_TOKEN" in out and "--demo" in out
 	monkeypatch.setenv("GH_TOKEN", "gho_x")
 	opened = []
-	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: opened.append(a))
+	monkeypatch.setattr(cli.web, "main", lambda *a, **kw: opened.append(a))
+	monkeypatch.setattr(cli.web, "desktop_binary", lambda: "")
+	monkeypatch.setattr(cli.web, "download_desktop", lambda: "")
 	cli.run(["gitdashy"])
 	assert opened  # with one, it starts
 
@@ -306,7 +310,9 @@ def test_an_unknown_command_is_an_error_not_the_dashboard(monkeypatch):
 	"""`gitdashy api …` against a build with no api command fell through into curses.wrapper, so a review
 	whose first tool call hit an older install crashed instead of being told the command was not there."""
 	from dashy import cli
-	monkeypatch.setattr(cli.curses, "wrapper", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(cli.web, "main", lambda *a, **kw: pytest.fail("opened the dashboard"))
+	monkeypatch.setattr(cli.web, "desktop_binary", lambda: "")
+	monkeypatch.setattr(cli.web, "download_desktop", lambda: "")
 	with pytest.raises(SystemExit, match="no command 'bogus'"):
 		cli.run(["gitdashy", "bogus"])
 	with pytest.raises(SystemExit, match="no command 'pr'"):  # a command from some other build, or a typo

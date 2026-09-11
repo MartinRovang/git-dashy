@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import cycle
 
 from . import config
-from .core import github, install as install_mod, log, memory, review, update
+from .core import diff, github, install as install_mod, log, memory, review, update
 
 
 def pr(n, title, repo="acme/api", author="alice", hours=1, draft=False, now=None):
@@ -56,6 +56,7 @@ def install():
 	_swap(install_mod, "retire", lambda dry=False: [])
 	log.LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"prs-demo-{os.getpid()}.jsonl")
 	config.MEMORY_DIR = log.LOG[:-6] + "-memory"  # Z dream must never rewrite the real memory
+	review.SELF_DIR = log.LOG[:-6] + "-reviews"  # and a demo pre-review lands where the pane looks for it, not in ~/.prs_reviews
 	memory.append(None, "run make lint before flagging style")
 	memory.append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore")
 	now = datetime.now(timezone.utc)
@@ -74,7 +75,9 @@ def install():
 	          "body": "- `api/auth.py:40` policy check runs before the token is validated"}),
 	        (pr(180, "Refactor auth middleware", "acme/api", "frank", 3, now=now),
 	         {"verdict": "approve", "summary": "Splits auth middleware into token parsing and policy checks.",
-	          "body": "LGTM. Clean split, existing tests still cover both paths."}),
+	          "body": "LGTM. Clean split, existing tests still cover both paths.",
+	          "findings": [{"kind": "note", "loc": "api/auth.py:40", "text": "policy.check now runs on the parsed user; the old order is gone"},
+	                       {"kind": "nit", "loc": "api/handlers.py:12", "text": "the retry helper is unused after this change"}]}),
 	        (pr(44, "Add S3 lifecycle rules", "acme/infra", "grace", 5, now=now),
 	         {"verdict": "request_changes", "summary": "Expires logs after 30 days, moves backups to Glacier.",
 	          "body": "- `infra/s3.tf:31` rule also matches the `backups/` prefix, would delete backups after 30d\n"
@@ -110,7 +113,8 @@ def install():
 		# attr, so swapping review.review alone left `p` on a demo row spawning a real `claude -p` against
 		# acme/api#101, which then calls the github api — against a README that promises no github and no claude.
 		time.sleep(4)
-		dest = log.LOG[:-6] + f"-selfreview-{p['number']}.md"
+		os.makedirs(review.SELF_DIR, exist_ok=True)
+		dest = review.self_review_path(p["repository"]["nameWithOwner"], p["number"])
 		with open(dest, "w") as f:
 			f.write(f"# Pre-review — {p['repository']['nameWithOwner']}#{p['number']}\n\n"
 			        "> **Not posted.** This is the demo reviewer: nothing ran, nothing was sent.\n\n"
@@ -131,8 +135,16 @@ def install():
 
 	def fake_dream(model):
 		time.sleep(4)
+		before = memory.files()
 		return ("merged 2 duplicate lines about tabs in acme/api\nmoved 'run make lint' to general\ndropped a stale note about the old CI",
-		        {n: "\n".join(dict.fromkeys(t.splitlines())) for n, t in memory.files().items()})
+		        before, {n: "\n".join(dict.fromkeys(t.splitlines())) for n, t in before.items()})
+
+	# ponytail: a canned diff, so the code tab has something to anchor the seeded findings on
+	DIFF = ("diff --git a/api/auth.py b/api/auth.py\n--- a/api/auth.py\n+++ b/api/auth.py\n@@ -36,8 +36,9 @@ def middleware(request):\n"
+	        "     token = request.headers.get('Authorization')\n-    policy.check(request.user)\n-    user = parse(token)\n"
+	        "+    user = parse(token)\n+    policy.check(user)\n+    request.user = user\n     return handle(request)\n"
+	        "diff --git a/infra/s3.tf b/infra/s3.tf\n--- a/infra/s3.tf\n+++ b/infra/s3.tf\n@@ -28,6 +28,9 @@ resource \"aws_s3_bucket\" \"logs\" {\n"
+	        "   bucket = var.name\n+  lifecycle_rule {\n+    prefix  = \"\"\n+    expiration { days = 30 }\n+  }\n }\n")
 
 	def fake_request_review(repo, number, login):
 		time.sleep(1)
@@ -150,5 +162,6 @@ def install():
 	                      (update, "update_available", lambda: ""),
 	                      (github, "collaborators", lambda repo: ["alice", "bob", "carol", "dave", "erin"]),
 	                      (github, "request_review", fake_request_review),
-	                      (github, "copy", lambda t: "demo"), (github, "detail", fake_detail)):
+	                      (github, "copy", lambda t: "demo"), (github, "detail", fake_detail),
+	                      (diff, "fetch", lambda repo, number, head="": DIFF)):
 		_swap(mod, name, fn)

@@ -1,7 +1,7 @@
-//! The desktop shell: a splash window, and a `gitdashy --gui` server behind it.
+//! The desktop shell: a splash window, and a `gitdashy --no-open` server behind it.
 //!
 //! ponytail: the shell owns no UI of its own beyond the splash. It starts the same server
-//! `gitdashy --gui` starts and points the window at it. One UI, in the browser and here.
+//! `gitdashy --browser` starts and points the window at it. One UI, in the browser and here.
 //!
 //! ponytail: the shell CHOOSES the port and token and hands them to the server, then polls until the
 //! server answers on them. It used to read the URL off the server's stdout, which made the handshake
@@ -76,7 +76,6 @@ fn start(extra: &[String]) -> Result<(Child, String), String> {
 	let port = free_port()?;
 	let token = token()?;
 	let mut child = Command::new(binary())
-		.arg("--gui")
 		.arg("--no-open")
 		.arg("--port")
 		.arg(port.to_string())
@@ -121,6 +120,20 @@ pub fn run() {
 				match start(&extra) {
 					Ok((child, url)) => {
 						*handle.state::<Server>().0.lock().unwrap() = Some(child);
+						// ponytail: the page's Quit stops the server; a window over a dead server is a
+						// blank pane nobody can close from inside, so the shell follows it out.
+						let watcher = handle.clone();
+						std::thread::spawn(move || loop {
+							std::thread::sleep(Duration::from_millis(500));
+							let gone = match watcher.state::<Server>().0.lock().unwrap().as_mut() {
+								Some(c) => matches!(c.try_wait(), Ok(Some(_))),
+								None => return,
+							};
+							if gone {
+								watcher.exit(0);
+								return;
+							}
+						});
 						if let Some(main) = handle.get_webview_window("main") {
 							match url.parse() {
 								Ok(parsed) => {

@@ -375,7 +375,7 @@ contested repo came down to the alphabetical order of team names. A target two j
 left alone rather than guessed at, exactly as a repo in two logs is.
 
 `T` in the dashboard does the same: a list, a number opens a team's own screen with its verbs (`e` brief,
-`d` describe, `c` connect, `o` cover an owner, `x` leave), `n` starts one, `a` joins one. The TUI never asks
+`d` describe, `c` connect, `o` cover an owner, `x` leave), `n` starts one, `a` joins one. The dashboard never asks
 where a team should live; that is `--at`, in a shell.
 
 A team needs **no remote to be useful** — memory works local-only the same way. `connect` pushes what
@@ -647,7 +647,7 @@ way a second run of the same model is not.
 | `gitdashy remember` | the same drafts, and the pool on promotion | private + team repo |
 | `P` → `t` | the team memory file; the pool line stays | team repo |
 | `P` → `x` | removes from `mine`, from the team's file when no other backer remains, and from the pool | private + team repo |
-| `n` / `g` edit | `mine` only — team memory is not hand-editable from the TUI | private repo |
+| `n` / `g` edit | `mine` only — team memory is not hand-editable from the dashboard | private repo |
 | `Z` dream | `mine` and `team`, after you approve | both |
 | review verdict | `reviewed.jsonl` | team repo |
 | joining a team | seeds the **log** only | team repo |
@@ -785,7 +785,7 @@ for one you touch monthly. It should be revisited with real numbers.
    matcher could not see a rewording, and a dense architectural fact is stated once or not at
    all. Cross-person corroboration is the answer to the second; the number to watch now is how
    often two people's reviewers land on one fact.
-5. **Team memory has no hand-edit path** from the TUI any more — `n`/`g` now edit
+5. **Team memory has no hand-edit path** from the dashboard any more — `n`/`g` now edit
    yours. You can still edit the team checkout directly with git.
 6. **Nothing here has met a real review yet.** The whole path is test-verified
    only. Numbers from real use should settle issues 1-3.

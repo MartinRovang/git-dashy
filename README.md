@@ -4,19 +4,20 @@
 
 <h1 align="center">git-dashy</h1>
 
-<p align="center">Smarter reviews. Better code. — a terminal PR dashboard with a one-key Claude review.</p>
+<p align="center">Smarter reviews. Better code. — a desktop PR dashboard with a one-key Claude review.</p>
 
-A terminal dashboard for the PRs you actually care about — yours, the ones waiting on your
+A desktop dashboard for the PRs you actually care about — yours, the ones waiting on your
 review, the ones assigned to you — with a one-key Claude review that posts the verdict back to
 GitHub.
 
 <p align="center">
-  <img src="screenshot.png" alt="github-dashy running in a terminal" width="900">
+  <img src="screenshot.png" alt="github-dashy" width="900">
 </p>
 
 ## Requirements
 
-- Python 3.9+ (stdlib only — `curses`, no pip install)
+- Python 3.9+ (stdlib only, no pip install). The desktop shell is a small Tauri app, downloaded from the
+  latest release on first run; `--browser` opens the same dashboard in your browser instead
 - A GitHub token in `$GH_TOKEN` or `$GITHUB_TOKEN` (scope: `repo`). Nothing shells out to `gh` —
   gitdashy talks to the API itself. (`$GITHUB_API` points it at GitHub Enterprise.)
 - [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
@@ -46,7 +47,8 @@ ln -s ~/.github-dashy/prs.py ~/.local/bin/gitdashy
 ## Run
 
 ```sh
-gitdashy                  # 300s refresh
+gitdashy                  # opens the desktop app, 300s refresh
+gitdashy --browser        # the same dashboard in your browser
 gitdashy --interval 60
 gitdashy --auto           # review every review-requested PR that shows up from now on
 gitdashy --model sonnet
@@ -89,9 +91,8 @@ review that lands on the same fact by itself confirms one — the pre-review and
 same model on the same diff, so counting them as two would measure how often you pre-reviewed rather
 than whether the fact recurred.
 
-The key hints sit on **two rows** at the bottom, grouped by what they act on, with a rule between
-groups. Each group wraps within its own column; when the terminal is too narrow, keys drop whole rather
-than being cut — a truncated key name still reads as an instruction, which is worse than a missing one.
+The key hints sit on one row at the bottom, grouped by what they act on. `?` shows each setting's key
+beside it in the sidebar; every key below also has a button somewhere on the page.
 
 ## Keys
 
@@ -101,44 +102,43 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `o` | open the PR in your browser |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
-| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in `less`, and offers a fresh one once the PR has changed since |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
 | `Y` | open the selected PR's pre-review with whatever the desktop uses for `.md` |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
-| `v` | read the full review of the selected PR in `less` — any row that has one, not only REVIEWED |
+| `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |
 | `a` | toggle auto mode |
 | `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
-| `?` | show each setting's key next to it in the header |
+| `?` | show each setting's key next to it in the sidebar |
+| `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
 | `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / humanizer |
-| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header shows `next refresh Ns / Nm`) |
-| `n` | edit this repo's review memory in `$EDITOR` |
-| `g` | edit the general review memory in `$EDITOR` |
+| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header counts down to the next one) |
+| `n` | edit this repo's review memory in the app |
+| `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
-| `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
 | `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
+| `Esc` | the menu: theme, notifications, refresh, quit |
 | `q` | quit |
 
-`m` `d` `e` `s` `t` `i` open a dropdown under the setting: `j`/`k` or the same key moves, `Enter` picks, `Esc` (or `q`) keeps.
-`R`, `V` and `K` open the Reviewer, View and Knowledge groups as a menu: `Enter` on a row opens that setting, `Esc` (or `q`) steps back.
-`S` opens all three under one Settings menu. On a narrow terminal the header tightens, then folds the groups
-into menu chips (`☰ Reviewer`), then nests them under one `☰ Settings` chip; the same keys work from any of them.
-Knowledge folds first, being the group you touch least.
+`m` `d` `e` `s` `t` `i` open a picker: `j`/`k` moves, `Enter` picks, `Esc` keeps. `x` and `h` open a checklist
+that stays open while you toggle. The sidebar's AGENT, VIEW and KNOWLEDGE cards hold the same settings as
+dropdowns and chips, so nothing needs a key.
 
 ## Installing
 
@@ -165,10 +165,10 @@ copy, and how to undo it.
 
 ## The review
 
-`Enter` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
+`r` on a review-requested PR runs `claude` headless against `<repo>#<number>`, then posts the
 result as an **approve**, **request changes**, or **comment**. Reviews are
 appended to `~/.prs_reviewed.jsonl` (one JSON object per line) and show up in the REVIEWED section,
-where `Enter` opens the summary and full review. A PR whose head commit moved since the verdict
+where the pane shows the summary and `v` the full review. A PR whose head commit moved since the verdict
 is flagged `↻ re-review · was <verdict>` and can be reviewed again — a new comment alone does not count.
 
 `--depth LEVEL` sets how hard the reviewer looks: `low` skims for obvious defects, `medium` reads the
@@ -223,12 +223,12 @@ evidence and agree with itself, and the count would measure repetition instead o
 is rediscovery, so the reviewer has to arrive at it again blind.
 
 `~/.prs_memory/general.md` goes into every review regardless of repo. All of these are plain markdown
-bullet lists — `n` opens the selected PR's repo memory and `g` the general one in `$EDITOR`, so you can add,
+bullet lists — `n` opens the selected PR's repo memory and `g` the general one in an editor pane, so you can add,
 prune or correct freely.
 `Z` dreams: Claude reads every memory file — yours and the team's, each labelled — merges duplicates, drops
 stale or contradictory lines and moves repo-independent facts to that source's general file. It is told never
 to move a line from yours into the team's; sharing is your call, not its. It shows a summary and per-file line
-counts; `v` opens the full summary and diff in `less`. Nothing is
+counts; `v` opens the full summary and diff. Nothing is
 written until you press `y`.
 
 ### Team
@@ -580,13 +580,13 @@ Then `m` cycles them like any other model.
 ```
 prs.py            entry point — a shim onto the package
 dashy/
-  cli.py          argv, --help, curses.wrapper
+  cli.py          argv, --help, hands over to the desktop shell or serves the page
   config.py       tunables and env overrides
   demo.py         canned PRs and a fake reviewer
   ui/             what draws
-    screen.py     colours, draw(), the key loop
-    art.py        splash: name, spinner, logo
-    rows.py       sections -> flat draw rows, age()
+    web.py        the localhost API: one JSON route per thing the dashboard can do
+    gui.html      the page — list, pane, settings, every modal; polls /api/state
+desktop/          the Tauri shell: a window over the server web.py starts (Rust, built by CI per OS)
   core/           what talks to the outside world
     state.py      background refresh loop, shared state
     github.py     everything that talks to the GitHub API (urllib, no gh)

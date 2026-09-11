@@ -1,6 +1,5 @@
-"""Argument parsing and the curses entry point. ponytail: sys.argv scan, argparse would be more code than this."""
+"""Argument parsing and the entry point. ponytail: sys.argv scan, argparse would be more code than this."""
 import base64
-import curses
 import itertools
 import json
 import logging
@@ -12,11 +11,11 @@ import threading
 from . import HERE, VERSION, config, demo
 from .core import (bind as bind_mod, friction as friction_mod, github, install as install_mod, knowledge,
                    memory, mirror, review as review_mod, team)
-from .ui import screen, web
+from .ui import web
 
-USAGE = f"""gitdashy {VERSION} — terminal dashboard of open PRs: mine, review-requested, assigned.
+USAGE = f"""gitdashy {VERSION} — desktop dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
+Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
@@ -34,10 +33,9 @@ Usage: gitdashy [--gui [--browser]] [--interval SECONDS] [--auto] [--model NAME]
                       [--team KEY --agents-again]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
-  --gui          open the dashboard in the desktop app (downloaded on first use)
-  --browser      with --gui: use the browser even when the desktop app is available
-  --no-open      with --gui: serve only, no browser — what the desktop app runs behind its splash
-  --port N       with --gui --no-open: bind this port instead of a free one (the app picks it)
+  --browser      open the dashboard in your browser instead of the desktop app (downloaded on first use)
+  --no-open      serve only, no window — what the desktop app runs behind its splash
+  --port N       with --no-open: bind this port instead of a free one (the app picks it)
   --auto         Claude reviews every review-requested PR that appears from now on
   --model NAME   review model (default {config.DEFAULT_MODEL}, or $PRS_MODEL); m picks at runtime
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default {config.EFFORT}, or $PRS_EFFORT); e picks
@@ -138,16 +136,15 @@ self-check makes one real claude call and proves the three things every review d
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
 Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
-v read the full review of the selected PR (any row that has one), Y open the pre-review, o open,
+v read the full review of the selected PR (any row that has one), Y open the pre-review, o open, y copy the URL,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
-(each opens a dropdown under the setting: j/k or the same key moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default),
-S/R/V/K settings menus (all / Reviewer / View / Knowledge), ? show each setting's key in the header,
-L local memory dir, C where all team checkouts live, n repo memory, g general memory ($EDITOR),
+(each opens a picker: j/k moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default), ? show each setting's key,
+L local memory dir, C where all team checkouts live, n repo memory, g general memory (edited in the app),
 1/2 or Tab switch the pane between the review summary and the code it is about,
   in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
-b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
++ request a review from a collaborator (MINE), b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
-T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, q quit."""
+T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, esc menu (theme, notify, refresh, quit), q quit."""
 
 
 def arg(flag, default=None, cast=str, argv=None):
@@ -684,22 +681,16 @@ def run(argv=None):
 		return print(NO_TOKEN)
 	interval, auto = arg("--interval", config.INTERVAL, int, argv), "--auto" in argv
 	model = arg("--model", config.DEFAULT_MODEL, str, argv)
-	# ponytail: same State, same flags, one branch. The GUI is a second front end over the core, not a
-	# second app — everything above this line is shared, so a flag added there works in both.
-	if "--gui" in argv:
-		# ponytail: three ways in, one branch. --no-open means the desktop shell spawned us and wants the
-		# server only; otherwise --gui IS the app: built locally, else downloaded from the latest release,
-		# else the browser when the download fails.
-		# No recursion: the shell always adds --no-open to the command it runs.
-		if "--no-open" in argv:
-			# ponytail: the token arrives in the ENVIRONMENT, not argv — argv is world-readable in ps,
-			# and this token starts paid review runs. Popped so it does not ride along into the Claude
-			# subprocesses a review spawns.
-			return web.main(interval, auto, model, open_browser=False, orphan_exit=True,
-			                port=arg("--port", 0, int, argv),
-			                token=os.environ.pop("GITDASHY_GUI_TOKEN", ""))
-		if "--browser" not in argv:
-			if exe := web.desktop_binary() or web.download_desktop():
-				return web.launch_desktop(exe, argv)
-		return web.main(interval, auto, model, open_browser=True)
-	curses.wrapper(screen.main, interval, auto, model)
+	# ponytail: three ways in, one app. --no-open means the desktop shell spawned us and wants the server
+	# only; otherwise the desktop shell IS the app: built locally, else downloaded from the latest release,
+	# else the browser when the download fails or --browser asks for it.
+	# No recursion: the shell always adds --no-open to the command it runs.
+	if "--no-open" in argv:
+		# ponytail: the token arrives in the ENVIRONMENT, not argv — argv is world-readable in ps, and this
+		# token starts paid review runs. Popped so it does not ride along into the Claude subprocesses.
+		return web.main(interval, auto, model, open_browser=False, orphan_exit=True,
+		                port=arg("--port", 0, int, argv), token=os.environ.pop("GITDASHY_GUI_TOKEN", ""))
+	if "--browser" not in argv:
+		if exe := web.desktop_binary() or web.download_desktop():
+			return web.launch_desktop(exe, argv)
+	web.main(interval, auto, model, open_browser=True)

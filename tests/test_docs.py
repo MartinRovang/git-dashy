@@ -19,23 +19,19 @@ def read(*parts):
 
 
 def handled():
-	"""Every single-character key the dashboard acts on: the main loop's, plus the settings table's.
+	"""Every single-character key the dashboard acts on: the page's global keydown handler, plus the
+	settings pickers it dispatches by letter.
 
-	ponytail: the MAIN loop, deliberately. Keys that only work inside a screen the main loop opened —
-	`t`/`x` in share, `t`/`x`/`s` in drafts, `o`/`x` in bind, `n`/`a` in teams — are out of scope here
-	and are described in the second cell of a Keys row rather than given one. Widening this to the
-	screen functions means parsing which of them the README's prose is talking about, and a parity test
-	that guesses at its own subject is worse than one with a stated edge.
-
-	ponytail: the eight settings keys are dispatched by one `chr(k) in settings(state)` branch, so the
-	table is the key list and reading only ord() would report them as undocumented.
+	ponytail: the GLOBAL handler, deliberately. Keys that only work inside a modal — `t`/`x` in share,
+	`t`/`x`/`s` in drafts, `o`/`x` in bind, `n`/`a` in teams — are out of scope here and are described
+	in the second cell of a Keys row rather than given one.
 	"""
-	src = read("dashy", "ui", "screen.py")
-	loop = src[src.index("\ndef main("):]
-	table = src[src.index("def settings(state)"):src.index("def set_theme")]
-	named = {"↑": "KEY_UP", "↓": "KEY_DOWN"}  # by name, not ord(); Enter is spelled as a word
-	return (set(re.findall(r'ord\("(\S)"\)', loop)) | set(re.findall(r'"(\w)": \(', table))
-	        | {k for k, name in named.items() if f"curses.{name}" in loop})
+	src = read("dashy", "ui", "gui.html")
+	loop = src[src.index('document.addEventListener("keydown"'):src.index("/* ---------------------------------------------------------------- polling")]
+	loop = loop[loop.index("const p = selected();"):]  # below the modal branch: the dashboard's own keys
+	keys = set(re.findall(r'k === "(\S)"', loop)) | set(re.findall(r'"(\S)"(?=[,\]])', "".join(re.findall(r'\[("\S"(?:, "\S")*)\]', loop))))
+	table = re.search(r'if \("(\w+)"\.includes\(k\)', loop).group(1)  # the settings pickers, one letter each
+	return keys | set(table) | {"↑", "↓"}
 
 
 def keys_section():

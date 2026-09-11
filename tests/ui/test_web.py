@@ -200,7 +200,7 @@ def test_launch_desktop_forwards_flags_but_not_gui_or_browser(monkeypatch):
 
 def test_launch_desktop_pins_the_running_checkout(monkeypatch):
 	"""ponytail: without this the shell runs `gitdashy` from PATH — a different, possibly older build.
-	That build has no --gui, so it opens curses with no terminal and dies on cbreak()."""
+	That build may not speak --no-open at all, and would open something else with no terminal."""
 	seen, env = [], {}
 	monkeypatch.setattr(web.os, "execv", lambda exe, args: seen.append(args))
 	monkeypatch.setattr(web.os, "environ", env)
@@ -231,7 +231,7 @@ def test_url_line_reaches_a_pipe_promptly():
 	import sys
 
 	repo = os.getcwd()
-	p = subprocess.Popen([sys.executable, os.path.join(repo, "prs.py"), "--gui", "--no-open", "--demo"],
+	p = subprocess.Popen([sys.executable, os.path.join(repo, "prs.py"), "--no-open", "--demo"],
 	                     stdout=subprocess.PIPE, cwd=repo)
 	try:
 		# communicate() with a timeout is the only way to bound a blocking read portably
@@ -264,8 +264,10 @@ def test_auto_toggles_without_reviewing_the_backlog(served, monkeypatch):
 	monkeypatch.setattr(state, "set_auto", lambda on, **kw: seen.append((on, kw)))
 	assert json.load(post(f"{base}/api/auto", {"on": True}, token))["ok"]
 	post(f"{base}/api/auto", {"on": False}, token)
-	# include_existing is never passed, so it keeps its False default — a toggle cannot start a bill
-	assert seen == [(True, {}), (False, {})]
+	# ponytail: include_existing only when the page says so — it asks first, with the count, as `a` did
+	assert seen == [(True, {"include_existing": False}), (False, {"include_existing": False})]
+	post(f"{base}/api/auto", {"on": True, "includeExisting": True}, token)
+	assert seen[-1] == (True, {"include_existing": True})
 
 
 def test_detail_carries_checks_and_the_last_review(served, monkeypatch):
@@ -316,7 +318,8 @@ def test_settings_refuse_junk(served, monkeypatch, body):
 
 def test_payload_offers_the_pickers_their_options():
 	d = web.payload(State(interval=999, model="m"))
-	assert d["intervals"] == web.config.INTERVALS and d["models"] == web.config.MODELS
+	assert d["options"]["interval"] == web.config.INTERVALS and d["options"]["model"] == web.config.MODELS
+	assert d["settings"]["theme"] in d["options"]["theme"]
 
 
 def test_download_desktop_fetches_once_then_reuses(tmp_path, monkeypatch, capsys):
@@ -350,3 +353,97 @@ def test_asset_name_matches_ci_naming(monkeypatch):
 	monkeypatch.setattr(web.platform, "system", lambda: "Windows")
 	monkeypatch.setattr(web.platform, "machine", lambda: "AMD64")
 	assert web.asset_name() == "gitdashy-desktop-windows-x86_64.exe"
+
+
+@pytest.mark.parametrize("body", [{"voice": []}, {"voice": ["opera"]}, {"theme": "neon"}, {"depth": "deep"}, {"window": 5}, {"subs": "some"}])
+def test_settings_refuse_values_off_the_menu(served, monkeypatch, body):
+	base, token, state = served
+	monkeypatch.setattr(web.config, "save", lambda v: None)
+	with pytest.raises(urllib.error.HTTPError) as e:
+		post(f"{base}/api/settings", body, token)
+	assert e.value.code == 400
+
+
+def test_settings_cover_every_key_the_curses_screen_had(served, monkeypatch):
+	base, token, state = served
+	saved = []
+	monkeypatch.setattr(web.config, "save", saved.append)
+	body = {"depth": "high", "effort": "low", "voice": ["bot", "review"], "hunter": ["tests"], "subs": "off",
+	        "window": None, "drafts": True, "notify": False, "theme": "nord"}
+	assert json.load(post(f"{base}/api/settings", body, token))["ok"]
+	got = saved[-1]
+	assert (got["depth"], got["effort"], got["voice"], got["hunter"]) == ("high", "low", ["review", "bot"], ["tests"])
+	assert (got["subs"], got["window"], got["drafts"], got["notify"], got["theme"]) == ("off", None, True, False, "nord")
+	assert state.subs == "off" and state.window is None and state.drafts
+
+
+def test_code_rows_keep_every_mark_on_a_line_or_as_an_orphan():
+	from dashy.core import diff
+	text = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,3 @@\n a\n+b\n c\n"
+	files = diff.parse(text)
+	marks = diff.anchor(files, [{"kind": "note", "loc": "x.py:2", "text": "on b"}, {"kind": "nit", "loc": "y.py:1", "text": "elsewhere"}])
+	kinds = [r["kind"] for r in web.code_rows(files, marks, scoped=True)]
+	assert kinds == ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]
+	assert [r["kind"] for r in web.code_rows(files, marks, scoped=False)] == ["file", "hunk", "line", "line", "line", "gap"]
+
+
+def test_the_page_only_reviews_and_opens_what_is_on_the_board(served, monkeypatch):
+	base, token, state = served
+	opened = []
+	monkeypatch.setattr(web.github, "open_in_browser", opened.append)
+	assert json.load(post(f"{base}/api/open", {"url": "u"}, token))["opened"] == "u"
+	with pytest.raises(urllib.error.HTTPError) as e:
+		post(f"{base}/api/open", {"url": "/etc/passwd"}, token)
+	assert e.value.code == 404 and opened == ["u"]
+	# no pre-review file yet, so Y has nothing to hand to the desktop
+	with pytest.raises(urllib.error.HTTPError) as e:
+		post(f"{base}/api/open", {"url": "u", "pre": True}, token)
+	assert e.value.code == 404
+
+
+def test_consent_answers_one_ask_and_drops_it(served, monkeypatch):
+	base, token, state = served
+	said = []
+	monkeypatch.setattr(web.memory, "allow_publishing", lambda key, yes: said.append(("pub", key, yes)))
+	monkeypatch.setattr(web.memory, "allow_agents", lambda key, text, yes: said.append(("agents", key, text, yes)))
+	state.asks = [{"kind": "publishing", "key": "t1"}, {"kind": "agents", "key": "t1", "text": "do x"}]
+	post(f"{base}/api/consent", {"kind": "publishing", "key": "t1", "yes": False}, token)
+	assert said == [("pub", "t1", False)] and json.load(get(f"{base}/api/state", token))["asks"] == [{"kind": "agents", "key": "t1", "text": "do x"}]
+	post(f"{base}/api/consent", {"kind": "agents", "key": "t1", "yes": True, "text": "do x"}, token)
+	assert said[-1] == ("agents", "t1", "do x", True) and json.load(get(f"{base}/api/state", token))["asks"] == []
+
+
+def test_dream_runs_on_a_thread_and_only_applies_what_it_showed(served, monkeypatch):
+	import time
+	base, token, state = served
+	monkeypatch.setattr(web.memory, "dream", lambda model: ("tidy", {"mine/a.md": "x\ny\n", "mine/general.md": "g\n"}, {"mine/a.md": "x\n", "mine/general.md": ""}))
+	written = []
+	monkeypatch.setattr(web.memory, "write", written.append)
+	monkeypatch.setattr(web.team, "pull_dir", lambda *a: "")
+	monkeypatch.setattr(web.team, "pull", lambda: "")
+	monkeypatch.setattr(web.team, "push_dir", lambda *a: "")
+	monkeypatch.setattr(web.team, "push", lambda *a: "")
+	web.JOBS.clear()
+	post(f"{base}/api/dream", {"op": "start"}, token)
+	for _ in range(50):
+		d = json.load(get(f"{base}/api/dream", token))
+		if not d["running"]:
+			break
+		time.sleep(0.05)
+	assert d["result"]["summary"] == "tidy" and d["result"]["lost"] == 1
+	assert [(f["name"], f["deleted"]) for f in d["result"]["files"]] == [("mine/general", True), ("mine/a", False)]
+	assert "new" not in d["result"]  # the page never sees the file bodies; apply uses what the server held
+	assert json.load(post(f"{base}/api/dream", {"op": "apply"}, token))["ok"]
+	assert written == [{"mine/a.md": "x\n", "mine/general.md": ""}]
+	with pytest.raises(urllib.error.HTTPError) as e:
+		post(f"{base}/api/dream", {"op": "apply"}, token)  # a dream applies once
+	assert e.value.code == 409
+
+
+def test_a_broken_route_is_a_status_not_a_dead_poll(served, monkeypatch):
+	base, token, state = served
+	monkeypatch.setattr(web, "get_drafts", lambda state, q: (_ for _ in ()).throw(RuntimeError("boom\nlast line")))
+	monkeypatch.setitem(web.GETS, "/api/drafts", web.get_drafts)
+	with pytest.raises(urllib.error.HTTPError) as e:
+		get(f"{base}/api/drafts", token)
+	assert e.value.code == 500 and json.load(e.value)["error"] == "last line"
