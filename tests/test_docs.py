@@ -8,6 +8,8 @@ these fail the moment the two sides drift, which is the only moment anyone would
 import re
 import os
 
+from dashy.core import memory
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -18,6 +20,12 @@ def read(*parts):
 
 def handled():
 	"""Every single-character key the dashboard acts on: the main loop's, plus the settings table's.
+
+	ponytail: the MAIN loop, deliberately. Keys that only work inside a screen the main loop opened —
+	`t`/`x` in share, `t`/`x`/`s` in drafts, `o`/`x` in bind, `n`/`a` in teams — are out of scope here
+	and are described in the second cell of a Keys row rather than given one. Widening this to the
+	screen functions means parsing which of them the README's prose is talking about, and a parity test
+	that guesses at its own subject is worse than one with a stated edge.
 
 	ponytail: the settings keys are NOT in the main loop as ord() calls — one `chr(k) in settings(state)`
 	branch dispatches all eight, which is the shape that makes the table the key list. Reading only the
@@ -62,21 +70,21 @@ def table_rows():
 
 
 def test_every_dashboard_key_is_named_in_the_keys_section():
-	named = set(re.findall(r"`(\S)`", keys_section()))
-	assert not (handled() - named), "keys the dashboard acts on that the Keys section never names"
+	missing = handled() - set(re.findall(r"`(\S)`", keys_section()))
+	assert not missing, f"the dashboard acts on {sorted(missing)}; the Keys section never names them"
 
 
 def test_every_key_the_readme_table_promises_still_exists():
-	assert not (table_rows() - handled()), "README rows for keys the dashboard no longer acts on"
+	gone = table_rows() - handled()
+	assert not gone, f"the Keys table promises {sorted(gone)}; nothing in the dashboard acts on them"
 
 
 def test_the_numbers_the_spec_quotes_are_the_numbers_the_code_uses():
 	"""§3.1 said NEAR was 0.82 while it had been 0.88 for weeks, and §7 said 0.88 two hundred lines
 	away. A number written into prose drifts the moment the constant moves, and this is the drift the
 	rest of this PR exists to repair — so it gets an oracle rather than another proofread."""
-	from dashy.core import memory
 	spec = read("docs", "memory.md")
-	assert f"`NEAR` (0.88)".replace("0.88", str(memory.NEAR)) in spec
+	assert f"`NEAR` ({memory.NEAR})" in spec
 	assert f"| `NEAR` | {memory.NEAR} |" in spec
 	assert f"| `PROMOTE_AT` | {memory.PROMOTE_AT} |" in spec
 	assert f"`PROMOTE_AT = {memory.PROMOTE_AT}` is a guess" in spec

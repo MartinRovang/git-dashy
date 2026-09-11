@@ -37,10 +37,12 @@ and correct. A wrong fact in the team's memory lands in contexts where nobody wh
 could correct it will ever see it happen.
 
 The keypresses that asymmetry buys are **binding** and **consent**, taken once
-per repo and once per team, and they are what makes the promotion itself safe to
-automate: what crosses into the team's file has recurred across two reviews that
-did not know about each other, and a model has read both and called them one
-claim. Nothing decides a single fact by hand — §3.3.
+per repo and once per team, and what makes the promotion itself safe to automate
+is unchanged: nothing crosses into the team's file until two reviews that did not
+know about each other landed on the same claim, folded by the token matcher of
+§3.1. A model is asked about near-misses that matcher *refused*, across two
+people, and never about a fold it already made (§4b-3). Nothing decides a single
+fact by hand — §3.3.
 
 ---
 
@@ -174,9 +176,11 @@ keypress. Two things gate it, and neither is a decision made per fact:
 
 This was one keypress until v1.43.0, and the argument for the keypress was that a
 wrong fact in the team's memory lands where nobody who could correct it will see
-it happen. What changed is what a promotion means: two reviews that did not know
-about each other, usually two people, and a model that read both and called them
-the same claim. §4b-3 has the full account, including what a *no* to consent does.
+it happen. What changed is who the two observations come from: they used to be two
+runs of one model on one machine, and cross-person pooling made them two people's
+reviews that did not know about each other. The gate itself is the same one §3.2
+describes. §4b-3 has the full account, including what a *no* to consent does and
+where a model does get asked.
 
 **`P` is the view and the way back out, not the gate.** It lists your facts for
 repos bound to a team, one at a time (a fact is a sentence you must read to judge;
