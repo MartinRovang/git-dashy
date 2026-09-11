@@ -1,9 +1,11 @@
 import os
 import shutil
 import subprocess
+import threading
+import time
 
 from dashy import config
-from dashy.core import bind, memory, mirror, team
+from dashy.core import bind, heartbeat, memory, mirror, team
 
 from conftest import a_team
 
@@ -281,6 +283,322 @@ def test_general_on_a_bound_repo_says_the_teams_general_facts_once(monkeypatch, 
 	assert both.count("verify the pushed head") == 1
 	mirror.sync(str(into), "a/b", pull=False)                          # without --general it moves to repo.md
 	assert "verify the pushed head" in (into / "repo.md").read_text()
+
+
+def with_remote(d, fetched_ago=None):
+	"""Make a team checkout look like one that was cloned, and optionally pulled `fetched_ago` seconds ago."""
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	if fetched_ago is not None:
+		f = d / ".git" / "FETCH_HEAD"
+		f.write_text("abc123\t\tbranch 'main' of git@example.com:org/t.git\n")
+		at = time.time() - fetched_ago
+		os.utime(f, (at, at))
+
+
+def test_the_header_says_when_the_team_was_last_reached(monkeypatch, tmp_path):
+	"""The one place a session actually reads. An age nobody can see is an age nobody acts on."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=600)
+	seed("a/b", "uses tabs")
+	heartbeat.beat(300)
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "> team org-t: last pulled 10 minutes ago" in got
+	assert "may be behind" not in got  # inside STALE, so the age is reported and not warned about
+	# ponytail: the blank line the header used to end with. It was lost when {age} took its place, and
+	# the body renders by luck today because it always starts with a heading, which closes the
+	# blockquote — a body starting with a bullet would be folded into the quote.
+	assert got.split("## a/b")[0].endswith("ago\n\n")
+
+
+def test_the_header_warns_when_nothing_is_refreshing_it(monkeypatch, tmp_path):
+	"""A mirror is only as fresh as the dashboard that pulls for it, and a session started in a repo
+	nobody has the dashboard open for reads days-old team memory with no way to tell."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	seed("a/b", "uses tabs")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "> team org-t: last pulled 4 days ago — **this may be behind what the team has.**" in got
+	assert "Nothing is refreshing it: start `gitdashy`" in got
+
+
+def test_the_header_warns_when_the_dashboard_is_running_but_not_reaching_the_team(monkeypatch, tmp_path):
+	"""The case that most needs telling, and the one that read as fine. An expired credential or a VPN
+	that is off leaves a dashboard ticking happily while every pull fails, and `stale = not running and
+	...` printed the age with no call to action."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	seed("a/b", "uses tabs")
+	heartbeat.beat(300)  # ticking, and four days behind
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled 4 days ago — **this may be behind what the team has.**" in got
+	assert "running but is not reaching the team" in got
+	assert "Nothing is refreshing it" not in got  # the remedy differs; something IS trying
+
+
+def test_a_team_with_no_remote_has_no_age_to_report(monkeypatch, tmp_path):
+	"""There is nothing to be behind. A local-only team saying "last pulled never" would read as a
+	fault, and the operator has one of these.
+
+	ponytail: the checkout is given a FETCH_HEAD and NO origin, which is a remote that was removed
+	after a fetch. Without it the test passed whatever the remote check did, because a team that never
+	had a remote has no FETCH_HEAD to stat either and the age came back empty for the other reason.
+	"""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	(mem.parent / ".git" / "config").write_text("[core]\n\tbare = false\n")  # origin removed since
+	seed("a/b", "uses tabs")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled" not in got
+
+
+def test_sync_does_not_pull_while_a_dashboard_is_running(monkeypatch, tmp_path):
+	"""Two processes running pull --rebase in one checkout race for index.lock, and the loser can
+	leave a rebase behind. The session hook fires sync off in the background without knowing whether
+	a dashboard is up, so the skip has to live here."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	heartbeat.beat(300)
+	mirror.sync(str(tmp_path / "out"), "a/b")
+	assert pulls == []
+	# ponytail: and it SAYS so. Someone typing `gitdashy sync-memory` asked for the team's newest, and
+	# a silent skip is indistinguishable from a fetch that found nothing — one of those is a reason to
+	# go looking and the other is not.
+	assert "not pulled: a dashboard is refreshing this" in mirror.sync(str(tmp_path / "out"), "a/b")
+	os.remove(tmp_path / ".prs_dashboard")
+	report = mirror.sync(str(tmp_path / "out"), "a/b")
+	assert pulls == [1]  # nothing else is going to, so this caller does it
+	assert "not pulled" not in report
+
+def test_a_write_that_fails_leaves_the_previous_mirror_whole(monkeypatch, tmp_path):
+	"""Two writers now, and a plain open() truncates before it writes: a session reading at the wrong
+	moment imported an empty mirror and was told the team knows nothing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	before = (into / "repo.md").read_text()
+	seed("a/b", "and spaces nowhere")
+
+	def no(*a):
+		raise OSError("no space left on device")
+
+	monkeypatch.setattr(mirror.os, "replace", no)  # the write lands, the move into place does not
+	assert "refused" in mirror.sync(str(into), "a/b", pull=False)
+	assert (into / "repo.md").read_text() == before  # the old mirror, not an empty file
+	# ponytail: listdir, not a guess at the temp name. `assert not (into / "repo.md.part").exists()`
+	# stood here and could not fail: mkstemp names it repo.md.XXXXXX.part, so the path never existed
+	# whatever the code did.
+	assert os.listdir(into) == ["repo.md"], os.listdir(into)
+
+
+def test_two_writers_never_leave_a_mirror_a_reader_can_half_see(monkeypatch, tmp_path):
+	"""The seam the rename exists for, with nothing mocked.
+
+	A fixed `dst + ".part"` passes every test that mocks os.replace and fails here: both writers open
+	the same temp file, the second truncates the first mid-write, and whoever renames first moves an
+	interleaved file into place. That is worse than a short file, because a whole-looking corrupt
+	mirror invites no second look — and the failure path removed the OTHER writer's temp file.
+	"""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs " + "x" * 4000)  # big enough that a write is not one atomic syscall
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	dst, seen, stop = into / "repo.md", [], threading.Event()
+
+	def read():
+		while not stop.is_set():
+			try:
+				seen.append(dst.read_text())
+			except OSError:
+				seen.append("")  # a missing file is a failure too; assert on it below
+
+	def write():
+		for _ in range(40):
+			mirror.sync(str(into), "a/b", pull=False)
+
+	reader = threading.Thread(target=read)
+	reader.start()
+	writers = [threading.Thread(target=write) for _ in range(3)]
+	for w in writers:
+		w.start()
+	for w in writers:
+		w.join()
+	stop.set()
+	reader.join()
+	assert seen, "the reader never got a look in"
+	for got in seen:
+		assert got.startswith("> **Shared team memory"), repr(got[:80])
+		assert got.endswith("x" * 100 + "\n"), repr(got[-80:])
+	assert os.listdir(into) == ["repo.md"], os.listdir(into)  # no temp file survives either
+
+
+def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
+	"""Two sessions opened at once — a terminal and an editor is the ordinary case — both run the
+	hook's background sync. Neither writes a beat, so alive() is false for both, and before the lock
+	both ran `pull --rebase` in the same checkout: the loser's `rebase --abort` fires into a checkout
+	the winner may still be rebasing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	inside, reports = threading.Semaphore(0), []
+	release = threading.Event()
+
+	def slow_pull():
+		inside.release()
+		release.wait(5)
+
+	monkeypatch.setattr(team, "pull", slow_pull)
+	first = threading.Thread(target=lambda: reports.append(mirror.sync(str(tmp_path / "out"), "a/b")))
+	first.start()
+	assert inside.acquire(timeout=5)  # the first is inside team.pull, holding the lock
+	reports.append(mirror.sync(str(tmp_path / "out2"), "a/b"))
+	release.set()
+	first.join(5)
+	assert not first.is_alive()
+	assert sum("not pulled: another sync is already pulling" in r for r in reports) == 1
+	assert heartbeat.claim() and not heartbeat.unclaim()  # and it is given back
+
+
+def test_a_team_reached_moments_ago_is_not_fetched_again(monkeypatch, tmp_path):
+	"""The session hook fires one of these at every session start, on every machine. Open six repos in
+	an editor and that is six fetches in a second, all asking the question the first one answered —
+	and nothing throttled it, because alive() is false exactly when the hook runs."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	with_remote(mem.parent, fetched_ago=5)
+	assert "not pulled: every team was reached in the last few minutes" in mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == []
+	with_remote(mem.parent, fetched_ago=mirror.FRESH + 1)
+	mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == [1]  # past the floor, it goes
+
+
+def test_a_team_with_no_remote_is_not_a_reason_to_skip_the_others(monkeypatch, tmp_path):
+	"""A local-only team is never "reached", so treating it as stale would make every sync pull for a
+	team that has nowhere to pull from — and treating it as fresh would hold back the ones that do."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	mirror.sync(str(tmp_path / "o"), "a/b")  # the only team has no remote at all
+	assert pulls == [1]
+
+
+def test_the_header_says_when_the_last_sync_did_not_land(monkeypatch, tmp_path):
+	"""`git pull --rebase` rewrites FETCH_HEAD during the FETCH, before the rebase. A pull that
+	fetched and then failed to rebase leaves a fresh timestamp over a checkout that did not move, so
+	the header read "last pulled just now" for exactly the case it exists to report — and _all_fresh
+	then held retries off on the strength of it. A live error outranks any age."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=2)
+	seed("a/b", "uses tabs")
+	team._mark_pull(str(mem.parent), "sync: could not apply 3f2a1b… CONFLICT in memory/general.md")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled just now — **the last sync did not land:**" in got
+	assert "CONFLICT in memory/general.md" in got
+
+
+def test_a_refused_mirror_path_never_reaches_the_network(monkeypatch, tmp_path):
+	"""The refusal used to sit under the pull, so a repo whose mirror path git tracks fetched every
+	joined team before being told no — and the session hook fires this in the background, so that was
+	a pull per session start in a repo that can never have a mirror."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	monkeypatch.setattr(mirror, "tracked", lambda *a: True)
+	into = tmp_path / "tracked-path"
+	assert "refused" in mirror.sync(str(into), "a/b")
+	assert pulls == []
+	assert not into.exists()  # and a refusal leaves no tree behind it either
+
+
+def test_a_team_whose_last_pull_failed_is_never_counted_as_fresh(monkeypatch, tmp_path):
+	"""The fetch half of `pull --rebase` rewrites FETCH_HEAD before the rebase runs, so a failing
+	checkout held its own retries off for FRESH seconds at a time, for ever."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	with_remote(mem.parent, fetched_ago=5)
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	assert "every team was reached" in mirror.sync(str(tmp_path / "o"), "a/b")
+	team._mark_pull(str(mem.parent), "sync: CONFLICT")
+	mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == [1]  # the stamp is fresh and it still goes, because the last one did not land
+
+
+def test_the_failure_warning_survives_a_mirror_written_by_another_process(monkeypatch, tmp_path):
+	"""The hook rewrites this file with --no-pull in a FRESH process, where team.ERROR is "". Reading
+	the error off that global meant every session start quietly overwrote the warning, which is the
+	main path this feature exists for."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	with_remote(mem.parent, fetched_ago=5)
+	team._mark_pull(str(mem.parent), "sync: CONFLICT in memory/general.md")
+	monkeypatch.setattr(team, "ERROR", "")  # a process that did no git at all, like the hook's
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "the last sync did not land:" in (tmp_path / "out" / "repo.md").read_text()
+
+
+def test_one_teams_failure_is_not_pinned_on_another(monkeypatch, tmp_path):
+	"""team.ERROR is last-writer-wins across every git call in the process, so one team's rebase
+	conflict was attached to every team's line — and the next team's successful pull wiped it."""
+	one = a_team(monkeypatch, tmp_path, "org-one")
+	two = tmp_path / "teams" / "org-two" / "memory"
+	(tmp_path / "teams" / "org-two" / ".git").mkdir(parents=True)
+	two.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	for d in (one.parent, two.parent):
+		with_remote(d, fetched_ago=5)
+	bind.bind("a/b", "org-one")
+	bind.bind("c/d", "org-two")
+	seed("a/b", "uses tabs")
+	seed("c/d", "uses spaces")
+	team._mark_pull(str(two.parent), "sync: CONFLICT")
+	mirror.sync(str(tmp_path / "one"), "a/b", pull=False)
+	mirror.sync(str(tmp_path / "two"), "c/d", pull=False)
+	assert "did not land" not in (tmp_path / "one" / "repo.md").read_text()
+	assert "did not land" in (tmp_path / "two" / "repo.md").read_text()
 
 
 def test_the_teams_instruction_to_sessions_is_mirrored_but_never_reviewed(monkeypatch, tmp_path):

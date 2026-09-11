@@ -1184,7 +1184,7 @@ def ask(scr, state, sel, question):
 
 
 def share_screen(scr, state, sel, current=None):
-	"""Facts of yours the team does not have yet: t shares one, x forgets it.
+	"""Your facts for repos bound to a team, and whether the team has each: t sends one, x forgets it.
 
 	ponytail: `current` is the row you are on, and it is what gives a GENERAL fact a project. Without it
 	the general file is skipped once you are in more than one team — `_the_one_team()` refuses to guess
