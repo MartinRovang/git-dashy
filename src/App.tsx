@@ -1,122 +1,112 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useMemo, useState } from 'react'
+import { errorText, post } from './api'
+import { flat, selected, visible } from './board'
+import { Queue } from './components/Queue'
+import { Sidebar } from './components/Sidebar'
+import { TopBar } from './components/TopBar'
+import { useNow, useStatePoll } from './usePoll'
 
-function App() {
-  const [count, setCount] = useState(0)
+/** The dashboard: one poll of /api/state, and the queue derived from it. */
+export default function App() {
+  const [data, reload] = useStatePoll(2000)
+  const now = useNow(1000)
+  const [sel, setSel] = useState('')
+  const [query, setQuery] = useState('')
+  const [failing, setFailing] = useState(false)
+  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [flash, setFlash] = useState('')
+
+  const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
+  const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
+  const total = secs.reduce((n, s) => n + s.prs.length, 0)
+  const running = data?.running || 0
+
+  useEffect(() => {
+    if (!flash) return
+    const id = setTimeout(() => setFlash(''), 4000)
+    return () => clearTimeout(id)
+  }, [flash])
+
+  async function call(path: string, body?: unknown, okMsg?: string) {
+    const r = await post(path, body)
+    if (!r.ok) {
+      setFlash(`✗ ${await errorText(r)}`)
+      return null
+    }
+    const out = await r.json().catch(() => null)
+    if (okMsg) setFlash(okMsg)
+    reload()
+    return out
+  }
+
+  const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
+  const onAuto = () => {
+    const on = !data?.auto
+    const includeExisting = on && data?.pending ? confirm(`Auto on. Also review the ${data.pending} already listed?`) : false
+    call('/api/auto', { on, includeExisting }, on ? 'auto on' : 'auto off')
+  }
+  const onJump = (name: string) => {
+    document.querySelector(`[data-fold="${name}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+
+  const current = selected(rows, sel)
+  const selUid = current?.uid || ''
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div id="app">
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} />
+      {(data?.notices || []).map((n) => (
+        <div className="notice" key={n}>
+          {n}
+          <span className="x" onClick={() => call('/api/notices')}>
+            ✕ dismiss
+          </span>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
+      ))}
+      <div className="body">
+        <Sidebar data={data} secs={secs} onJump={onJump} />
+        <div className="main">
+          <div className="queue">
+            <Queue
+              data={data}
+              secs={secs}
+              now={now}
+              sel={selUid}
+              query={query}
+              onQuery={setQuery}
+              failing={failing}
+              onFailing={() => setFailing((v) => !v)}
+              folded={folded}
+              expanded={expanded}
+              onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
+              onExpand={(url) => setExpanded((e) => ({ ...e, [url]: !e[url] }))}
+              onSelect={setSel}
+            />
+          </div>
+          <div className="hints">
+            <div className="g">
+              <b>NAV</b>
+              <span>j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold · / filter</span>
+            </div>
+            <div className="g">
+              <b>RUN</b>
+              <span>r review · p pre-review · Y open pre-review · a auto</span>
+            </div>
+            <div className="g">
+              <b>CONFIG</b>
+              <span>m model · d depth · e effort · x voices · h hunters · i interval</span>
+            </div>
+            <div className="g">
+              <b>APP</b>
+              <span>Z dream · f refresh · v view · T team · u update · esc menu · q quit</span>
+            </div>
+            <div className={`status${flash ? ' flash' : ''}`}>
+              {flash || (running ? `${running} running` : `${total} PRs in view`)}
+            </div>
+          </div>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      </div>
+    </div>
   )
 }
-
-export default App
