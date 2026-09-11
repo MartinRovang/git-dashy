@@ -58,7 +58,7 @@ if command -v gitdashy >/dev/null 2>&1; then
   # ponytail: it does NOT pull when a dashboard is running, when another sync holds the lock, or when
   # every team was reached minutes ago. mirror.sync decides all three, so the hook does not have to.
   # ponytail: fully detached — stdin closed, both streams discarded, disowned. A background job that
-  # still holds the hook's stdout keeps the session waiting on it whatever the ampersand promised.
+  # keeps the hook's stdout makes the session wait for it.
   # ponytail: only when step 4 actually mirrored. `init` refuses a repo with no origin, or a path git
   # would commit; firing the sync anyway pulled every joined team over the network and left an empty
   # .agent/team behind in a repo that had just been told it could not have one.

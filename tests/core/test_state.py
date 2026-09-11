@@ -241,7 +241,7 @@ def test_pane_detail_is_refetched_when_the_pr_moves(monkeypatch):
 	      "repository": {"nameWithOwner": "acme/api"}}
 
 	assert st.want_detail(pr) is None                       # first ask starts a fetch
-    # the thread is the only async part; wait for it rather than sleeping a fixed time
+	# the thread is the only async part; wait for it rather than sleeping a fixed time
 	for _ in range(400):
 		if st.want_detail(pr):
 			break
@@ -702,43 +702,57 @@ def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 
 
 def test_the_tick_holds_the_pull_lock_while_it_pulls(monkeypatch, tmp_path):
-    """It used to beat and then pull unguarded. A hook sync that claimed the lock while no dashboard
-    was up keeps pulling once one starts, and the first tick rebased the same checkout beside it —
-    so "only one process ever pulls a given checkout" was in the README and was not true."""
-    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
-    held = []
-    monkeypatch.setattr(state.team, "pull", lambda: held.append(os.path.exists(tmp_path / heartbeat.LOCK)))
-    _quiet_tick(monkeypatch)
-    state.State(60, "opus").tick(time.time())
-    assert held == [True]                                       # the lock was ours for the duration
-    assert not os.path.exists(tmp_path / heartbeat.LOCK)        # and given back
+	"""It used to beat and then pull unguarded. A hook sync that claimed the lock while no dashboard
+	was up keeps pulling once one starts, and the first tick rebased the same checkout beside it —
+	so "only one process ever pulls a given checkout" was in the README and was not true."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	# ponytail: asks the LOCK, not the file. flock leaves the file in place while it is held, so a
+	# path check answered True either way — and would have passed with the claim removed.
+	held = []
+	monkeypatch.setattr(state.team, "pull", lambda: held.append(heartbeat.claim()))
+	_quiet_tick(monkeypatch)
+	state.State(60, "opus").tick(time.time())
+	assert held == [False]                                      # the tick had it while it pulled
+	assert heartbeat.claim()                                    # and gave it back
+	heartbeat.unclaim()
 
 
 def test_a_tick_skips_the_pull_while_a_hook_sync_holds_the_lock(monkeypatch, tmp_path):
-    """Not waited for: everything after the pull — the PR list, the mirrors — has nothing to do with
-    the team's git, and blocking the refresh thread to wait out somebody else's fetch is worse than
-    taking the next tick."""
-    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
-    pulls = []
-    monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
-    _quiet_tick(monkeypatch)
-    assert heartbeat.claim()                                    # a background sync got there first
-    state.State(60, "opus").tick(time.time())
-    assert pulls == []
-    heartbeat.unclaim()
+	"""Not waited for: everything after the pull — the PR list, the mirrors — has nothing to do with
+	the team's git, and blocking the refresh thread to wait out somebody else's fetch is worse than
+	taking the next tick."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	pulls = []
+	monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+	_quiet_tick(monkeypatch)
+	assert heartbeat.claim()                                    # a background sync got there first
+	state.State(60, "opus").tick(time.time())
+	assert pulls == []
+	heartbeat.unclaim()
 
 
 def test_a_dashboard_still_reads_as_alive_after_a_tick_longer_than_the_grace(monkeypatch, tmp_path):
-    """The beat is stamped at tick START and alive() allows one interval plus GRACE, but the next tick
-    begins at fetched_at + interval. So any tick longer than GRACE made a healthy dashboard read as
-    dead until it came round again, and one slow team pull is enough at a 120s git timeout."""
-    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
-    monkeypatch.setattr(state.team, "pull", lambda: None)
-    _quiet_tick(monkeypatch)
-    st = state.State(60, "opus")
-    beats = []
-    real = heartbeat.beat
-    monkeypatch.setattr(heartbeat, "beat", lambda i: (beats.append(time.time()), real(i))[0])
-    st.tick(time.time() - 200)  # a tick that took a while to get here
-    assert len(beats) == 2, "the end of the tick must beat too, or the stamp is as old as its start"
-    assert heartbeat.alive()
+	"""The beat is stamped at tick START and alive() allows one interval plus GRACE, but the next tick
+	begins at fetched_at + interval. So any tick longer than GRACE made a healthy dashboard read as
+	dead until it came round again, and one slow team pull is enough at a 120s git timeout."""
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(state.team, "pull", lambda: None)
+	_quiet_tick(monkeypatch)
+	st = state.State(60, "opus")
+	# ponytail: the CLOCK moves, which is what makes this a long tick. Counting beats alone passed with
+	# one beat, since `t0` only skips the splash — the question is whether the stamp is still good when
+	# the next tick is due, and that needs time to have passed between the two.
+	now = [1000.0]
+	monkeypatch.setattr(time, "time", lambda: now[0])
+	monkeypatch.setattr(state.time, "time", lambda: now[0])
+	monkeypatch.setattr(heartbeat.time, "time", lambda: now[0])
+	real = state.team.pull
+
+	def slow():
+		now[0] += 200  # one team on a slow remote, well past GRACE
+		return real()
+
+	monkeypatch.setattr(state.team, "pull", slow)
+	st.tick(now[0])
+	now[0] = st.fetched_at + st.interval - 1  # the moment the next tick is about to start
+	assert heartbeat.alive(), "a dashboard about to tick must not read as stopped"

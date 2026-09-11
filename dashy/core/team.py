@@ -62,6 +62,40 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+FAILED = "dashy-pull-failed"  # under a checkout's .git: why its last pull did not land, "" when it did
+
+
+def _mark_pull(d, why):
+	"""Record on the CHECKOUT itself why its last pull did not land, or clear it when one does.
+
+	ponytail: on the checkout, not in a module global. `ERROR` is last-writer-wins across every git
+	call in one process, so one team's failure was pinned on every team's line and a later team's
+	success wiped it — and it is a process global, so a session hook rewriting the mirror in a fresh
+	process had ERROR == "" and reported "last pulled just now" over a pull that had failed elsewhere.
+	This is a file beside FETCH_HEAD, which every reader can stat and no other process can contradict.
+	ponytail: never raises. A checkout we cannot write a marker into is not a reason to fail the pull
+	that already happened; the age alone is what the header falls back to.
+	"""
+	p = os.path.join(d, ".git", FAILED)
+	try:
+		if why:
+			with open(p, "w") as f:
+				f.write(why[:200])
+		elif os.path.exists(p):
+			os.remove(p)
+	except OSError:
+		pass
+
+
+def pull_failed(d):
+	"""Why `d`'s last pull did not land, "" when it did or when nothing has tried."""
+	try:
+		with open(os.path.join(d, ".git", FAILED)) as f:
+			return f.read().strip()
+	except OSError:
+		return ""
+
+
 def fetched_at(d):
 	"""When `d` last reached its remote, as a unix time. None when it never has or has none to reach.
 
@@ -234,8 +268,10 @@ def _pull(d, label, *ref):
 	nothing is lost and the next tick starts from a state git can work with.
 	"""
 	if _note(_git("pull", "--rebase", "-q", *ref, cwd=d), label):
+		_mark_pull(d, "")
 		return True
 	_git("rebase", "--abort", cwd=d)  # ponytail: a no-op when none is in progress; ERROR keeps the pull's reason
+	_mark_pull(d, ERROR)
 	return False
 
 

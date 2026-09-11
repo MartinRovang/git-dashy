@@ -295,7 +295,7 @@ class State:
 		# ponytail: beaten AGAIN, at the end. The first beat is stamped at tick start and alive() allows
 		# one interval plus GRACE, but the next tick starts at fetched_at + interval — so any tick
 		# longer than GRACE made a healthy dashboard read as dead until it came round again, and one
-		# slow team pull is enough at a 120s git timeout. Two beats cost two small writes and close it.
+		# slow team pull is enough at a 120s git timeout. So the tick beats again at the end.
 		heartbeat.beat(self.interval)
 		with self.lock:
 			self.sections, self.fetched_at, self.update, self.fetching = data, time.time(), newer, False

@@ -405,7 +405,10 @@ def test_a_write_that_fails_leaves_the_previous_mirror_whole(monkeypatch, tmp_pa
 	monkeypatch.setattr(mirror.os, "replace", no)  # the write lands, the move into place does not
 	assert "refused" in mirror.sync(str(into), "a/b", pull=False)
 	assert (into / "repo.md").read_text() == before  # the old mirror, not an empty file
-	assert not (into / "repo.md.part").exists()  # and nothing left in a directory the mirror owns
+	# ponytail: listdir, not a guess at the temp name. `assert not (into / "repo.md.part").exists()`
+	# stood here and could not fail: mkstemp names it repo.md.XXXXXX.part, so the path never existed
+	# whatever the code did.
+	assert os.listdir(into) == ["repo.md"], os.listdir(into)
 
 
 def test_two_writers_never_leave_a_mirror_a_reader_can_half_see(monkeypatch, tmp_path):
@@ -447,7 +450,7 @@ def test_two_writers_never_leave_a_mirror_a_reader_can_half_see(monkeypatch, tmp
 	for got in seen:
 		assert got.startswith("> **Shared team memory"), repr(got[:80])
 		assert got.endswith("x" * 100 + "\n"), repr(got[-80:])
-	assert not [p for p in os.listdir(into) if p not in mirror.NAMES], os.listdir(into)
+	assert os.listdir(into) == ["repo.md"], os.listdir(into)  # no temp file survives either
 
 
 def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
@@ -474,7 +477,7 @@ def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
 	first.join(5)
 	assert not first.is_alive()
 	assert sum("not pulled: another sync is already pulling" in r for r in reports) == 1
-	assert not os.path.exists(tmp_path / heartbeat.LOCK)  # and it is given back
+	assert heartbeat.claim() and not heartbeat.unclaim()  # and it is given back
 
 
 def test_a_team_reached_moments_ago_is_not_fetched_again(monkeypatch, tmp_path):
@@ -520,8 +523,79 @@ def test_the_header_says_when_the_last_sync_did_not_land(monkeypatch, tmp_path):
 	bind.bind("a/b", "org-t")
 	with_remote(mem.parent, fetched_ago=2)
 	seed("a/b", "uses tabs")
-	monkeypatch.setattr(team, "ERROR", "could not apply 3f2a1b… CONFLICT in memory/general.md")
+	team._mark_pull(str(mem.parent), "sync: could not apply 3f2a1b… CONFLICT in memory/general.md")
 	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
 	got = (tmp_path / "out" / "repo.md").read_text()
 	assert "last pulled just now — **the last sync did not land:**" in got
 	assert "CONFLICT in memory/general.md" in got
+
+
+def test_a_refused_mirror_path_never_reaches_the_network(monkeypatch, tmp_path):
+	"""The refusal used to sit under the pull, so a repo whose mirror path git tracks fetched every
+	joined team before being told no — and the session hook fires this in the background, so that was
+	a pull per session start in a repo that can never have a mirror."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	monkeypatch.setattr(mirror, "tracked", lambda *a: True)
+	into = tmp_path / "tracked-path"
+	assert "refused" in mirror.sync(str(into), "a/b")
+	assert pulls == []
+	assert not into.exists()  # and a refusal leaves no tree behind it either
+
+
+def test_a_team_whose_last_pull_failed_is_never_counted_as_fresh(monkeypatch, tmp_path):
+	"""The fetch half of `pull --rebase` rewrites FETCH_HEAD before the rebase runs, so a failing
+	checkout held its own retries off for FRESH seconds at a time, for ever."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	with_remote(mem.parent, fetched_ago=5)
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	assert "every team was reached" in mirror.sync(str(tmp_path / "o"), "a/b")
+	team._mark_pull(str(mem.parent), "sync: CONFLICT")
+	mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == [1]  # the stamp is fresh and it still goes, because the last one did not land
+
+
+def test_the_failure_warning_survives_a_mirror_written_by_another_process(monkeypatch, tmp_path):
+	"""The hook rewrites this file with --no-pull in a FRESH process, where team.ERROR is "". Reading
+	the error off that global meant every session start quietly overwrote the warning, which is the
+	main path this feature exists for."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	with_remote(mem.parent, fetched_ago=5)
+	team._mark_pull(str(mem.parent), "sync: CONFLICT in memory/general.md")
+	monkeypatch.setattr(team, "ERROR", "")  # a process that did no git at all, like the hook's
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	assert "the last sync did not land:" in (tmp_path / "out" / "repo.md").read_text()
+
+
+def test_one_teams_failure_is_not_pinned_on_another(monkeypatch, tmp_path):
+	"""team.ERROR is last-writer-wins across every git call in the process, so one team's rebase
+	conflict was attached to every team's line — and the next team's successful pull wiped it."""
+	one = a_team(monkeypatch, tmp_path, "org-one")
+	two = tmp_path / "teams" / "org-two" / "memory"
+	(tmp_path / "teams" / "org-two" / ".git").mkdir(parents=True)
+	two.mkdir(parents=True)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	for d in (one.parent, two.parent):
+		with_remote(d, fetched_ago=5)
+	bind.bind("a/b", "org-one")
+	bind.bind("c/d", "org-two")
+	seed("a/b", "uses tabs")
+	seed("c/d", "uses spaces")
+	team._mark_pull(str(two.parent), "sync: CONFLICT")
+	mirror.sync(str(tmp_path / "one"), "a/b", pull=False)
+	mirror.sync(str(tmp_path / "two"), "c/d", pull=False)
+	assert "did not land" not in (tmp_path / "one" / "repo.md").read_text()
+	assert "did not land" in (tmp_path / "two" / "repo.md").read_text()

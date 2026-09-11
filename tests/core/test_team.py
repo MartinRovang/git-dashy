@@ -1032,3 +1032,32 @@ def test_a_checkout_with_a_remote_but_no_fetch_yet_has_no_age(tmp_path):
 	(d / ".git").mkdir(parents=True)
 	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
 	assert team.fetched_at(str(d)) is None
+
+
+def test_a_pull_records_on_the_checkout_whether_it_landed(monkeypatch, tmp_path):
+	"""A real pull, both ways. Every other test sets the marker by hand, so nothing proved _pull
+	writes it — and the marker is what the mirror header and the background-sync floor both read."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	origin = tmp_path / "origin"
+	origin.mkdir()
+	git("init", "-q", "--bare", ".", cwd=str(origin))
+	seed = tmp_path / "seed"
+	seed.mkdir()
+	git("init", "-q", ".", cwd=str(seed))
+	(seed / "memory").mkdir()
+	(seed / "memory" / "general.md").write_text("- one\n")
+	git("add", "-A", cwd=str(seed))
+	git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init", cwd=str(seed))
+	git("remote", "add", "origin", str(origin), cwd=str(seed))
+	git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=str(seed))
+	assert team.setup(str(origin), "Org P") == ""
+	d = team.dir_of(team.joined()[0])
+	assert team.pull_failed(d) == ""                     # the clone's own pull landed
+
+	git("remote", "set-url", "origin", str(tmp_path / "gone"), cwd=d)
+	team.pull_dir(d)
+	assert team.pull_failed(d), "a pull that did not land has to say so on the checkout"
+
+	git("remote", "set-url", "origin", str(origin), cwd=d)
+	team.pull_dir(d)
+	assert team.pull_failed(d) == ""                     # and a later one clears it

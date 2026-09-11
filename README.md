@@ -440,8 +440,9 @@ The session hook also starts one `sync-memory` in the background, detached, so t
 on a machine where the dashboard is rarely open. A background sync does not pull while a dashboard is
 running, while another sync holds the lock, or when every team was reached in the last few minutes. Six
 repos opened in an editor is six session starts, and one fetch answers all of them. The dashboard's own
-refresh takes the same lock, so two processes do not rebase one checkout against each other. Either way
-the report says why it did not pull, rather than looking like a fetch that found nothing.
+refresh takes the same lock, so a refresh and a background sync never rebase one checkout against each
+other. A push that has to merge first still pulls outside it. Either way the report says why it did not
+pull, rather than looking like a fetch that found nothing.
 
 **Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:

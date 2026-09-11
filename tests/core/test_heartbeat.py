@@ -1,10 +1,14 @@
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 
 from dashy import config
 from dashy.core import heartbeat
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def beat_file(tmp_path, monkeypatch):
@@ -105,46 +109,6 @@ def test_a_beat_is_never_read_half_written(monkeypatch, tmp_path):
 	assert seen and all(seen), f"{seen.count(False)} of {len(seen)} reads saw no dashboard"
 
 
-def test_only_one_process_holds_the_pull_lock(monkeypatch, tmp_path):
-	"""The beat closes dashboard-versus-hook and not hook-versus-hook: a background sync writes no
-	beat, so two sessions opened at once both saw nothing running and both ran pull --rebase in one
-	checkout. team._lock is a threading.Lock and does not reach across processes."""
-	beat_file(tmp_path, monkeypatch)
-	assert heartbeat.claim()
-	assert not heartbeat.claim()          # the second caller is told, rather than joining in
-	heartbeat.unclaim()
-	assert heartbeat.claim()              # and it is a lock, not a one-shot
-	heartbeat.unclaim()
-
-
-def test_a_lock_left_by_a_dead_process_is_broken_rather_than_waited_on(monkeypatch, tmp_path):
-	"""A process killed while holding it would otherwise stop every later sync from pulling, for ever
-	and silently — a worse failure than the race the lock prevents, and one nobody would think to look
-	for. Breaking it reopens exactly the window that existed before the lock."""
-	beat_file(tmp_path, monkeypatch)
-	lock = tmp_path / heartbeat.LOCK
-	lock.write_text("9999999")
-	os.utime(lock, (time.time() - heartbeat.STUCK - 1,) * 2)
-	assert heartbeat.claim()
-	heartbeat.unclaim()
-	lock.write_text("9999999")            # and a fresh one is still respected
-	assert not heartbeat.claim()
-
-
-def test_unclaim_releases_only_a_lock_this_process_still_holds(monkeypatch, tmp_path):
-	"""team.pull() walks every joined team at a git timeout each, so a slow pull can outlive STUCK. A
-	second claimant then breaks the lock and takes its own — and this process finishing removed THAT
-	one's file and let a third in, so the lock stopped holding under exactly the slow pulls that make
-	it worth having."""
-	beat_file(tmp_path, monkeypatch)
-	lock = tmp_path / heartbeat.LOCK
-	assert heartbeat.claim()
-	lock.write_text("424242")          # a second claimant broke ours and took its own
-	heartbeat.unclaim()
-	assert lock.exists() and lock.read_text() == "424242"  # not ours to give back
-	assert not heartbeat.claim()       # and still held, as far as everyone else is concerned
-
-
 def test_unclaiming_a_lock_that_is_not_there_is_not_an_error(monkeypatch, tmp_path):
 	"""It runs in a finally. Raising there would replace a failed pull with a traceback out of a
 	SessionStart hook."""
@@ -152,38 +116,45 @@ def test_unclaiming_a_lock_that_is_not_there_is_not_an_error(monkeypatch, tmp_pa
 	heartbeat.unclaim()
 
 
+def test_only_one_holder_of_the_pull_lock_at_a_time(monkeypatch, tmp_path):
+	"""The beat closes dashboard-versus-hook and not hook-versus-hook: a background sync writes no
+	beat, so two sessions opened at once both see nothing running. team._lock is a threading.Lock and
+	does not reach across processes."""
+	beat_file(tmp_path, monkeypatch)
+	assert heartbeat.claim()
+	assert not heartbeat.claim()     # the second caller is told, rather than joining in
+	heartbeat.unclaim()
+	assert heartbeat.claim()         # and it is a lock, not a one-shot
+	heartbeat.unclaim()
+
+
+def test_two_processes_cannot_hold_the_pull_lock_together(monkeypatch, tmp_path):
+	"""The point of the whole thing, and the case a hand-rolled O_EXCL lock got wrong twice: a stale
+	break that stats an mtime and then renames is two steps, so two claimants that both read the old
+	mtime could both come away holding it. Real processes here, not threads, because that is what the
+	session hook starts and it is the only shape that can prove the kernel is doing this."""
+	beat_file(tmp_path, monkeypatch)
+	code = ("import sys, time; sys.path.insert(0, %r);"
+	        "from dashy import config; config.SETTINGS = %r;"
+	        "from dashy.core import heartbeat;"
+	        "got = heartbeat.claim(); print(int(got)); sys.stdout.flush();"
+	        "time.sleep(float(sys.argv[1]))") % (ROOT, config.SETTINGS)
+	first = subprocess.Popen([sys.executable, "-c", code, "3"], stdout=subprocess.PIPE, text=True)
+	assert first.stdout.readline().strip() == "1"        # it has the lock and is holding it
+	second = subprocess.run([sys.executable, "-c", code, "0"], capture_output=True, text=True)
+	assert second.stdout.strip() == "0", second.stderr   # and nobody else gets it meanwhile
+	first.kill()
+	first.wait(5)
+	# ponytail: the kernel releases a flock when the holder DIES, however it dies. The hand-rolled lock
+	# needed a stale timeout for this, which is what made it breakable and therefore racy.
+	assert heartbeat.claim()
+	heartbeat.unclaim()
+
+
 def test_demo_mode_takes_no_lock_and_leaves_no_file(monkeypatch, tmp_path):
-	"""Demo mode promises to touch nothing on the machine it runs on. It also pulls nothing, so there
-	is nobody to race: the claim succeeds and writes nowhere."""
+	"""Demo mode promises to touch nothing on the machine it runs on. It pulls nothing either, so
+	there is nobody to race: the claim succeeds and writes nowhere."""
 	monkeypatch.setattr(config, "SETTINGS", "")
 	assert heartbeat.claim()
 	heartbeat.unclaim()
 	assert list(tmp_path.iterdir()) == []
-
-
-def test_breaking_a_stale_lock_has_one_winner(monkeypatch, tmp_path):
-	"""Two claimants could both see the old mtime. With os.remove both then succeeded: the first
-	creates its lock, the second's remove deletes it, and two processes pull. rename is atomic and
-	single-winner — whoever loses gets ENOENT and keeps the answer it was given."""
-	beat_file(tmp_path, monkeypatch)
-	lock = tmp_path / heartbeat.LOCK
-	lock.write_text("9999999")
-	os.utime(lock, (time.time() - heartbeat.STUCK - 1,) * 2)
-	assert heartbeat.claim()
-	assert (tmp_path / (heartbeat.LOCK + ".stale")).exists()  # moved aside, not deleted under a racer
-	assert not heartbeat.claim()                              # and the fresh one is ours alone
-	heartbeat.unclaim()
-
-
-def test_a_lock_whose_write_fails_is_not_left_behind(monkeypatch, tmp_path):
-	"""os.write sat outside the try, so ENOSPC gave a traceback out of `gitdashy sync-memory` and left
-	an EMPTY lock — which unclaim refused to remove, since int("") raises, so it stuck for all of
-	STUCK. Failing to record the pid is not a reason to hold a lock nobody can release."""
-	beat_file(tmp_path, monkeypatch)
-
-	def no(*a):
-		raise OSError("no space left on device")
-
-	monkeypatch.setattr(heartbeat.os, "write", no)
-	assert heartbeat.claim()                       # nowhere to record it is not a reason to stop
-	assert not (tmp_path / heartbeat.LOCK).exists()  # and nothing is left for STUCK to time out

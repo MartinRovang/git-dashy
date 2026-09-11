@@ -31,8 +31,12 @@ FRESH = 300
 def _all_fresh(now):
 	"""True when every joined team with a remote was reached within FRESH. A team with none is not a
 	reason to go to the network, and no teams at all means there is nothing to pull."""
-	ages = [at for d in team.dirs() if (at := team.fetched_at(d)) is not None]
-	return bool(ages) and all(now - at < FRESH for at in ages)
+	# ponytail: a team whose last pull FAILED is never fresh, whatever FETCH_HEAD says. The fetch half
+	# of `pull --rebase` rewrites that stamp before the rebase runs, so a failing checkout otherwise
+	# held its own retries off for FRESH seconds at a time, for ever.
+	ages = [at for d in team.dirs() if not team.pull_failed(d) and (at := team.fetched_at(d)) is not None]
+	return bool(ages) and len(ages) == len([d for d in team.dirs() if team.has_remote(d)]) \
+	       and all(now - at < FRESH for at in ages)
 
 
 def _ago(secs):
@@ -69,8 +73,13 @@ def _freshness(got, now):
 		# the fetch, before the rebase, so a pull that fetched and then failed to rebase leaves a fresh
 		# timestamp over a checkout that did not move. The header said "last pulled just now" for
 		# exactly the case it exists to report, and _all_fresh then held off retries on the strength of
-		# it. team.ERROR is what knows; a live error outranks any age.
-		why = (f" — **the last sync did not land:** {team.ERROR[:80]}" if team.ERROR else
+		# it. A live failure outranks any age.
+		# ponytail: read off the CHECKOUT, not team.ERROR. That global is last-writer-wins across every
+		# git call in this process, so it pinned one team's failure on every team's line and a later
+		# success wiped it — and it is per-process, so the session hook's own --no-pull rewrite, in a
+		# fresh process with ERROR == "", quietly overwrote the warning at every session start.
+		why = (f" — **the last sync did not land:** {team.redacted(failed)[:80]}"
+		       if (failed := team.pull_failed(os.path.dirname(base))) else
 		       "" if now - at <= STALE else
 		       " — **this may be behind what the team has.** " + ("The dashboard is running but is not"
 		       " reaching the team; `T` in it shows the last error." if running else
@@ -109,6 +118,19 @@ def sync(into, repo="", pull=True, general=False):
 	ponytail: pull=False for callers on a clock (a SessionStart hook) — mirrors whatever the last
 	gitdashy refresh pulled, instead of risking a network round trip inside their timeout.
 	"""
+	# ponytail: the REFUSAL COMES FIRST, before anything touches the network. It used to sit under the
+	# pull, so a repo whose mirror path git tracks still fetched every joined team before being told no
+	# — and the session hook fires this in the background, so that was a pull per session start in a
+	# repo that can never have a mirror. Ask before creating anything, for the same reason: a refusal
+	# must not leave the tree it refused to write in.
+	# ponytail: a SessionStart hook calls this, so an exception is a broken hook — failures come back
+	# as the report rather than raising.
+	try:
+		if tracked(into, NAMES if general else NAMES[1:]):
+			return f"gitdashy: refused — git would commit {into}; ignore that path before mirroring team memory there"
+		os.makedirs(into, exist_ok=True)
+	except OSError as e:
+		return f"gitdashy: refused — {e}"
 	# ponytail: a RUNNING dashboard already pulled, less than one interval ago, and will again. Two
 	# processes running `pull --rebase` in one checkout race for git's index.lock, and the loser leaves
 	# a rebase behind for the winner to trip over. Skipping here is what lets the session hook fire this
@@ -126,14 +148,6 @@ def sync(into, repo="", pull=True, general=False):
 				heartbeat.unclaim()
 		else:
 			skipped = "another sync is already pulling"
-	# ponytail: ask BEFORE creating anything, or a refusal leaves the tree it refused to write in. And a
-	# SessionStart hook calls this: an exception there is a broken hook, so failures come back as the report.
-	try:
-		if tracked(into, NAMES if general else NAMES[1:]):
-			return f"gitdashy: refused — git would commit {into}; ignore that path before mirroring team memory there"
-		os.makedirs(into, exist_ok=True)
-	except OSError as e:
-		return f"gitdashy: refused — {e}"
 	at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 	try:
 		# ponytail: the skip is REPORTED. Someone typing `gitdashy sync-memory` has asked for the team's
@@ -169,11 +183,10 @@ def _write(into, repo, general, at):
 			# truncates first, so a session reading at the wrong moment imported an empty or half-written
 			# mirror and was told the team knows nothing. rename within one directory is atomic, so a
 			# reader sees the old file or the new one.
-			# ponytail: written whole under a UNIQUE name, then renamed into place. Two writers exist —
-			# the dashboard's refresh and the background one a session hook starts — and a plain
-			# open(dst, "w") truncates first, while a shared `dst + ".part"` is worse: both write at
-			# their own offsets and whoever renames first publishes an interleaved file that looks
-			# whole. mkstemp also keeps the mirror at 0600, which memory being team-private wants.
+			# ponytail: two writers exist — the dashboard's refresh and the background one a session hook
+			# starts. open(dst, "w") truncates first; a shared `dst + ".part"` is worse, because both
+			# write at their own offsets and whoever renames first publishes a file that looks whole.
+			# mkstemp also keeps the mirror at 0600, which memory being team-private wants.
 			fd, tmp = tempfile.mkstemp(dir=into, prefix=name + ".", suffix=".part")
 			try:
 				with os.fdopen(fd, "w") as f:

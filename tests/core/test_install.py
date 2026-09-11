@@ -6,7 +6,10 @@ import shutil
 import subprocess
 import time
 
+import pytest
+
 from dashy import config
+from dashy import cli as cli_mod
 from dashy.core import install, memory, mirror, state, team
 
 
@@ -1180,6 +1183,34 @@ def test_the_hook_does_not_sync_when_init_refused(tmp_path):
 	               capture_output=True, text=True, env=env)
 	time.sleep(0.5)  # the sync is detached; give it long enough to have written if it ran
 	assert not marker.exists()
+
+
+def test_the_hook_does_not_sync_when_init_refuses_a_tracked_path(tmp_path):
+	"""The gate was only right for the no-origin case, which raises SystemExit. A mirror path git
+	tracks is refused in PROSE — wire_repo reports it and init exited 0 — so the hook read the refusal
+	as a success and started a background sync that pulled every joined team anyway."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	marker = tmp_path / "synced"
+	env = stub_gitdashy(tmp_path, 'if [ "$1" = "init" ]; then echo "gitdashy: refused — git would commit"; exit 1; fi\n'
+	                              f'if [ "$1" = "sync-memory" ]; then echo ran > {marker}; fi\n'
+	                              'exit 0\n')
+	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	               capture_output=True, text=True, env=env)
+	time.sleep(0.5)
+	assert not marker.exists()
+
+
+def test_init_exits_non_zero_when_it_refuses(monkeypatch, tmp_path, capsys):
+	"""The status the hook reads. wire_repo reports in prose, so a refusal printed and exited 0."""
+	monkeypatch.setattr(install, "wire_repo",
+	                    lambda *a: ["gitdashy: refused — git would commit .agent/team"])
+	monkeypatch.setattr(cli_mod.team, "origin_slug", lambda p: "a/b")
+	with pytest.raises(SystemExit) as e:
+		cli_mod.run(["gitdashy", "init", "--into", str(tmp_path / "t"), "--loader", "CLAUDE.local.md"])
+	assert e.value.code == 1
+	assert "refused" in capsys.readouterr().out
 
 
 def test_the_hook_survives_a_gitdashy_that_is_not_there(tmp_path):
