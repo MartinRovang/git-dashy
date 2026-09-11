@@ -16,8 +16,8 @@ GitHub.
 
 ## Requirements
 
-- Python 3.9+ (stdlib only, no pip install). The desktop shell is a small Tauri app, downloaded from the
-  latest release on first run; `--browser` opens the same dashboard in your browser instead
+- Nothing to install but the binary: gitdashy is one Rust executable (the desktop window, the server
+  behind it and the CLI the hooks call). `--browser` opens the same dashboard in your browser instead
 - A GitHub token in `$GH_TOKEN` or `$GITHUB_TOKEN` (scope: `repo`). Nothing shells out to `gh` —
   gitdashy talks to the API itself. (`$GITHUB_API` points it at GitHub Enterprise.)
 - [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
@@ -28,20 +28,17 @@ GitHub.
 curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh
 ```
 
-Clones to `~/.github-dashy`, checks out the newest release tag, and links it as `gitdashy` in
-`~/.local/bin` (and `prs`, for older installs) (override with `DIR=` / `BIN=`). Re-running it updates in
-place — and always to the newest **tag**, whatever branch you happen to be standing in. To install a branch
-or an older release, name it:
+Downloads the newest release binary for your OS into `~/.local/bin/gitdashy` (override with `BIN=`).
+Re-running it updates in place. To install an older release, name its tag:
 
 ```sh
-REF=feat/drop-gh ./install.sh     # or REF=v1.31.1, or REF=main
+REF=v2.0.0 ./install.sh
 ```
 
-Or do it by hand:
+Or build it yourself (Rust stable; on Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev`):
 
 ```sh
-git clone https://github.com/MartinRovang/github-dashy.git ~/.github-dashy
-ln -s ~/.github-dashy/prs.py ~/.local/bin/gitdashy
+cargo install --git https://github.com/MartinRovang/github-dashy
 ```
 
 ## Run
@@ -509,13 +506,13 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 
 ## Versioning & self-update
 
-The version lives in one place — `VERSION` in `prs.py` — and shows in the header badge and via
-`gitdashy --version`. Releases are tagged `vX.Y.Z`.
+The version lives in one place, `version` in `Cargo.toml`, and shows in the header badge and via
+`gitdashy --version`. Releases are tagged `vX.Y.Z` and CI attaches one binary per OS to each.
 
-Each refresh also lists the release tags on `origin` (`git ls-remote`, so no `gh` auth and no API
-rate limit). If a tag is numerically newer than `VERSION`, the header shows `↑ v1.1.0 · u`; pressing
-`u` confirms, checks that tag out, and re-execs the script with the same arguments. You track
-releases, not `main`. Non-git installs, no origin, or no network: the badge just never appears.
+Each refresh also lists the release tags on GitHub (`git ls-remote`, so no API rate limit). If a tag is
+numerically newer than the running version, the header shows `↑ v2.1.0 · u`; pressing `u` confirms,
+downloads that release's binary over the running one, and re-execs it with the same arguments. No
+network: the badge just never appears.
 
 ## Other models
 
@@ -578,36 +575,37 @@ Then `m` cycles them like any other model.
 ## Layout
 
 ```
-prs.py            entry point — a shim onto the package
-dashy/
-  cli.py          argv, --help, hands over to the desktop shell or serves the page
-  config.py       tunables and env overrides
-  demo.py         canned PRs and a fake reviewer
-  ui/             what draws
-    web.py        the localhost API: one JSON route per thing the dashboard can do
-    gui.html      the page — list, pane, settings, every modal; polls /api/state
-desktop/          the Tauri shell: a window over the server web.py starts (Rust, built by CI per OS)
-  core/           what talks to the outside world
-    state.py      background refresh loop, shared state
-    github.py     everything that talks to the GitHub API (urllib, no gh)
-    review.py     runs Claude headless, posts the verdict
-    log.py        ~/.prs_reviewed.jsonl store + detail view
-    memory.py     ~/.prs_memory store, and the dream cleanup
-    team.py       git-backed sync of the log and memory
-    mirror.py     read-only copies of the memory, for agent sessions
-    update.py     release check and self-update
-tests/            mirrors dashy/: one test file per module, plus test_docs.py,
-                  which mirrors no module and pins the prose to the code
+src/
+  main.rs         entry point
+  cli.rs          argv, --help, the subcommands, opens the window or serves the page
+  shell.rs        the Tauri window: splash, then the dashboard
+  web.rs          the localhost API: one JSON route per thing the dashboard can do
+  state.rs        background refresh loop, shared state
+  config.rs       tunables, paths and env overrides
+  github.rs       everything that talks to the GitHub API (no gh)
+  llm.rs          which model answers a prompt: the claude CLI, or an OpenAI-compatible API
+  review.rs       runs Claude headless, posts the verdict
+  log.rs          ~/.prs_reviewed.jsonl store + detail view
+  memory.rs       ~/.prs_memory store, drafts, pools, and the dream cleanup
+  team.rs         git-backed sync of the log and memory
+  bind.rs         which team a repo belongs to
+  mirror.rs       read-only copies of the memory, for agent sessions
+  install.rs      wiring: CLAUDE.md imports, hooks, the corpus, setup briefs
+  update.rs       release check and self-update
+  demo.rs         canned PRs and a fake reviewer
+ui/               gui.html (the page: list, pane, settings, every modal; polls /api/state),
+                  splashscreen.html, head.png
+hooks/            the Claude Code hooks `gitdashy install --full` registers
+corpus/           the agent corpus a full install copies to ~/.agent-corpus
 ```
 
-Swappable seams, for adding things: `core.github.fetch`, `core.review.review` and
-`core.update.update_available` are looked up as module attributes at call time — that is how `--demo`
-replaces all three, and how the tests stay off the network.
+`--demo` flips `config.demo`, and the few functions that reach the network (fetch, detail, the model)
+answer from `demo.rs` instead. Unit tests live beside the code in each module.
 
 ## Tests
 
 ```sh
-python3 -m pytest -q
+cargo test
 ```
 
 Created by Martin Soria Røvang.

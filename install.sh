@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
-# Clone (or update) github-dashy and link it onto PATH as `gitdashy` (and `prs`).
-# ponytail: a clone, not a copied file — the in-app updater is just `git pull`.
+# Download the gitdashy binary for this machine onto PATH.
+# ponytail: one static binary from the GitHub release, no clone, no runtime. The in-app updater
+# does the same download over the running executable.
 set -e
-REPO=${REPO:-https://github.com/MartinRovang/github-dashy.git}
-DIR=${DIR:-$HOME/.github-dashy}
+REPO=${REPO:-MartinRovang/github-dashy}
 BIN=${BIN:-$HOME/.local/bin}
 NAME=${NAME:-gitdashy}
 
@@ -16,39 +16,43 @@ else
 	B= DIM= R= PINK= CYAN= GREEN= YELLOW=
 fi
 
-printf '\n  %s%sgithub-dashy%s %s— smarter reviews, better code%s\n\n' "$B" "$PINK" "$R" "$DIM" "$R"
+printf '\n  %s%sgithub-dashy%s %s: smarter reviews, better code%s\n\n' "$B" "$PINK" "$R" "$DIM" "$R"
 
-[ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
-git -C "$DIR" fetch --tags -q
-# ponytail: REF installs a branch or tag by name. Running this script from a checkout of a branch
-# installed the newest RELEASE instead, silently — which is how a machine ended up with a dashboard
-# and a `gitdashy` on PATH from two different builds.
+# the asset name update::asset_name() and ci.yml agree on
+case "$(uname -s)-$(uname -m)" in
+	Linux-x86_64) ASSET=gitdashy-linux-x86_64 ;;
+	Darwin-arm64) ASSET=gitdashy-macos-arm64 ;;
+	Darwin-x86_64) ASSET=gitdashy-macos-x86_64 ;;
+	*) printf '  no prebuilt binary for %s-%s; build with: cargo install --git https://github.com/%s\n' "$(uname -s)" "$(uname -m)" "$REPO"; exit 1 ;;
+esac
+
+# ponytail: REF installs a release by tag; default is the newest release.
 if [ -n "${REF:-}" ]; then
-	git -C "$DIR" fetch -q origin "$REF"
-	git -C "$DIR" checkout -q -B "$REF" FETCH_HEAD
-	TAG=$REF
+	URL="https://github.com/$REPO/releases/download/$REF/$ASSET"
 else
-	TAG=$(git -C "$DIR" tag -l 'v*' --sort=-v:refname | head -1)   # newest release, or main if untagged
-	git -C "$DIR" checkout -q "${TAG:-main}"
+	URL="https://github.com/$REPO/releases/latest/download/$ASSET"
 fi
 mkdir -p "$BIN"
-ln -sf "$DIR/prs.py" "$BIN/$NAME"
-ln -sf "$DIR/prs.py" "$BIN/prs"   # ponytail: keep the old name working for existing installs
-chmod +x "$DIR/prs.py"
+TMP="$BIN/.$NAME.download"
+curl -fsSL --retry 3 -o "$TMP" "$URL"
+chmod +x "$TMP"
+mv -f "$TMP" "$BIN/$NAME"
+TAG=$("$BIN/$NAME" --version 2>/dev/null | awk '{print $NF}')
 
 row() { printf '    %s%-22s%s %s%s%s\n' "$CYAN" "$1" "$R" "$DIM" "$2" "$R"; }
 warn() { printf '\n    %s⚠%s  %s\n' "$YELLOW" "$R" "$1"; }
 
-printf '  %s✓%s installed %s%s%s  %s→ %s%s\n\n' "$GREEN" "$R" "$B" "${TAG:-main}" "$R" "$DIM" "$DIR" "$R"
+printf '  %s✓%s installed %s%s%s  %s: %s%s\n\n' "$GREEN" "$R" "$B" "${TAG:-latest}" "$R" "$DIM" "$BIN/$NAME" "$R"
 printf '  Run it with %s%s%s%s in your terminal:\n\n' "$B" "$PINK" "$NAME" "$R"
-row "$NAME"          "your PRs, review-requested, assigned"
+row "$NAME"          "the desktop dashboard: your PRs, review-requested, assigned"
+row "$NAME --browser" "the same dashboard in your browser"
 row "$NAME --demo"   "try it with canned data (no token, no claude)"
-row "$NAME --help"   "all flags and keys"
+row "$NAME --help"   "all flags and subcommands"
 
 case ":$PATH:" in
 	*":$BIN:"*) ;;
-	*) warn "$BIN is not on your PATH — add to your shell rc:"
+	*) warn "$BIN is not on your PATH: add to your shell rc:"
 	   printf '       %sexport PATH="%s:$PATH"%s\n' "$CYAN" "$BIN" "$R" ;;
 esac
-[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || warn "no github token — export GH_TOKEN=… (scope: repo)"
+[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || warn "no github token: export GH_TOKEN=... (scope: repo)"
 printf '\n'

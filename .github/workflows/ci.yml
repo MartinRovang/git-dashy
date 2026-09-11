@@ -4,16 +4,24 @@ on:
   push:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+  # ponytail: the Linux build needs webkit for the window; the test job runs on Linux too.
+  APT_DEPS: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.x"
-      - run: pip install pytest
-      - run: python3 -m pytest -q
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
 
   version-bumped:
     if: github.event_name == 'pull_request'
@@ -21,12 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git fetch origin "$GITHUB_BASE_REF" --depth=1
-      - name: VERSION in dashy/__init__.py must differ from base branch
+      - name: version in Cargo.toml must differ from base branch
         run: |
-          base=$(git show "origin/$GITHUB_BASE_REF:dashy/__init__.py" | grep -m1 '^VERSION = ')
-          head=$(grep -m1 '^VERSION = ' dashy/__init__.py)
+          base=$(git show "origin/$GITHUB_BASE_REF:Cargo.toml" | grep -m1 '^version = ')
+          head=$(grep -m1 '^version = ' Cargo.toml)
           echo "base: $base"; echo "head: $head"
-          [ "$base" != "$head" ] || { echo "::error::Bump VERSION in dashy/__init__.py before merging"; exit 1; }
+          [ "$base" != "$head" ] || { echo "::error::Bump version in Cargo.toml before merging"; exit 1; }
 
   release:
     if: github.event_name == 'push'
@@ -40,26 +48,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: Release v$VERSION unless the tag already exists
         run: |
-          tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
+          tag=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
           gh release create "$tag" --generate-notes
 
-  # ponytail: the desktop shell as a release asset per OS, named the way web.asset_name() looks for it.
-  # Plain cargo build, no tauri-cli/npm — frontendDist is checked-in HTML, nothing to bundle.
-  desktop:
+  # ponytail: one binary per OS as a release asset, named the way update::asset_name() looks for it.
+  # Plain cargo build, no tauri-cli/npm: the frontend is checked-in HTML, nothing to bundle.
+  binaries:
     if: github.event_name == 'push'
     needs: release
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            asset: gitdashy-desktop-linux-x86_64
+            asset: gitdashy-linux-x86_64
           - os: macos-latest
-            asset: gitdashy-desktop-macos-arm64
+            asset: gitdashy-macos-arm64
           - os: macos-13
-            asset: gitdashy-desktop-macos-x86_64
+            asset: gitdashy-macos-x86_64
           - os: windows-latest
-            asset: gitdashy-desktop-windows-x86_64.exe
+            asset: gitdashy-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -68,12 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev
-      - run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+        run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - run: cargo build --release
       - shell: bash
         run: |
-          tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
+          tag=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           ext=; [ "$RUNNER_OS" = Windows ] && ext=.exe
-          cp "desktop/src-tauri/target/release/gitdashy-desktop$ext" "${{ matrix.asset }}"
+          cp "target/release/gitdashy$ext" "${{ matrix.asset }}"
           gh release upload "$tag" "${{ matrix.asset }}" --clobber

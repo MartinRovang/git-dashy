@@ -10,6 +10,10 @@
 set -uo pipefail
 
 CORPUS="${1:-$HOME/.agent-corpus}"   # where install --full puts it; only its repo-template/ is used
+# ponytail: the binary that installed this hook, written in place of the placeholder by
+# `gitdashy install --full`. PATH is only the fallback, for a hook copied by hand.
+GITDASHY="__GITDASHY__"
+[ -x "$GITDASHY" ] || GITDASHY="$(command -v gitdashy 2>/dev/null || true)"
 git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 0
 
@@ -40,9 +44,9 @@ if [ ! -e CLAUDE.local.md ]; then
 fi
 
 # 4. this repo's review memory, if gitdashy is around. --no-pull: a hook has seconds, not a network.
-if command -v gitdashy >/dev/null 2>&1; then
+if [ -n "$GITDASHY" ] && [ -x "$GITDASHY" ]; then
   MIRRORED=1
-  gitdashy init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || MIRRORED=
+  "$GITDASHY" init --into .agent/team --loader CLAUDE.local.md >/dev/null 2>&1 || MIRRORED=
   # drafts a review or a session filed for THIS repo that nothing has confirmed. Local store only, so
   # it fits the hook's budget; silent when there are none, or when the repo has no origin to be named
   # by. The count is the pull toward W that was missing.
@@ -50,7 +54,7 @@ if command -v gitdashy >/dev/null 2>&1; then
   # here is gitdashy itself at a version this hook did not ship with. A `gitdashy` that predates
   # --count does not reject the flag, it IGNORES it and prints the whole store: measured at 117 lines
   # and 99 drafts across every repo on this machine, into the context of every session, at every start.
-  gitdashy drafts --count 2>/dev/null | head -3 || true
+  "$GITDASHY" drafts --count 2>/dev/null | head -3 || true
   # THEN bring the team's side up to date, in the background, for the next read of that mirror. The
   # line above wrote it from whatever was already on disk, which is as old as the last dashboard
   # refresh — and on a machine where the dashboard is rarely open, that is days. This is the same
@@ -62,7 +66,7 @@ if command -v gitdashy >/dev/null 2>&1; then
   # ponytail: only when step 4 actually mirrored. `init` refuses a repo with no origin, or a path git
   # would commit; firing the sync anyway pulled every joined team over the network and left an empty
   # .agent/team behind in a repo that had just been told it could not have one.
-  [ -n "$MIRRORED" ] && ( gitdashy sync-memory --into .agent/team </dev/null >/dev/null 2>&1 & )
+  [ -n "$MIRRORED" ] && ( "$GITDASHY" sync-memory --into .agent/team </dev/null >/dev/null 2>&1 & )
 fi
 # 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
 #    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to

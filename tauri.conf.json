@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "gitdashy",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "identifier": "com.martinrovang.gitdashy",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "ui"
   },
   "app": {
     "withGlobalTauri": true,
