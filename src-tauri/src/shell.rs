@@ -20,6 +20,8 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_EVERY: Duration = Duration::from_millis(300);
 /// How long the splash stays up once the last step is ticked, so the fill is seen before the handover.
 const HANDOVER_BEAT: Duration = Duration::from_millis(500);
+/// The dashboard opens a touch larger than the splash, still windowed — never full screen.
+const DASHBOARD_SIZE: (f64, f64) = (1400.0, 900.0);
 
 /// True once the server has finished its first fetch, or given up on it.
 // ponytail: an error counts as done. A machine with no token or no network would otherwise sit on
@@ -61,11 +63,12 @@ pub fn run(state: State, port: u16, token: String) {
                 std::thread::sleep(HANDOVER_BEAT);
                 if let Some(main) = handle.get_webview_window("main") {
                     match url.parse() {
+                        // ponytail: the splash keeps the configured size; the dashboard opens a little
+                        // larger and re-centered. One window, so the growth happens here, at the
+                        // handoff, rather than at startup where it would blow up the splash too.
                         Ok(parsed) => {
-                            // ponytail: the splash keeps the configured size; the dashboard gets the
-                            // whole screen. One window, so the growth happens here, at the handoff,
-                            // rather than at startup where it would blow up the splash too.
-                            let _ = main.maximize();
+                            let _ = main.set_size(tauri::LogicalSize::new(DASHBOARD_SIZE.0, DASHBOARD_SIZE.1));
+                            let _ = main.center();
                             let _ = main.navigate(parsed);
                         }
                         // the splash page is what is showing, so a failure is said there
