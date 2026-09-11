@@ -21,6 +21,18 @@ HEADER = """> **Shared team memory — read-only mirror.** PR reviews write thes
 """
 
 STALE = 3600  # seconds since a team was last reached, past which the header warns rather than reports
+# ponytail: a floor between background pulls. The session hook fires one of these at every session
+# start, on every machine — open six repos in an editor and that is six fetches in a second, all of
+# them asking a question the first one answered. Nothing throttled it: alive() is false when no
+# dashboard is up, which is exactly when the hook runs. A team reached within this needs no second ask.
+FRESH = 300
+
+
+def _all_fresh(now):
+	"""True when every joined team with a remote was reached within FRESH. A team with none is not a
+	reason to go to the network, and no teams at all means there is nothing to pull."""
+	ages = [at for d in team.dirs() if (at := team.fetched_at(d)) is not None]
+	return bool(ages) and all(now - at < FRESH for at in ages)
 
 
 def _ago(secs):
@@ -97,6 +109,8 @@ def sync(into, repo="", pull=True, general=False):
 	# a rebase behind for the winner to trip over. Skipping here is what lets the session hook fire this
 	# off in the background without having to know whether anything else is doing the same job.
 	skipped = "a dashboard is refreshing this" if pull and heartbeat.alive() else ""
+	if pull and not skipped and _all_fresh(time.time()):
+		skipped = "every team was reached in the last few minutes"
 	if pull and not skipped:
 		# ponytail: and the lock covers the case the beat cannot — two background syncs, from two
 		# sessions opened at once. Neither writes a beat, so without this both see nothing running.
@@ -169,8 +183,10 @@ def _write(into, repo, general, at):
 				# ponytail: ours, and only ours. The exception carries on to sync()'s handler; leaving
 				# the file behind puts an unexplained repo.md.XXXX.part in someone's repo — inside a
 				# directory the mirror promises to own the contents of — for every failed write.
-				if os.path.exists(tmp):
+				try:
 					os.remove(tmp)
+				except OSError:
+					pass
 				raise
 			wrote.append(name)
 		elif os.path.exists(dst):

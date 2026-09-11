@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 
 from dashy import config
@@ -69,14 +70,39 @@ def test_demo_mode_writes_no_beat_anywhere(monkeypatch, tmp_path):
 	assert list(tmp_path.iterdir()) == []
 
 
-def test_a_beat_cannot_declare_an_interval_longer_than_the_dashboard_offers(monkeypatch, tmp_path):
-	"""alive() trusts a number out of a file. One that says a year makes a dashboard that stopped a
-	year ago still read as running, which suppresses every background pull and the staleness warning
-	with it. Local write access there is already game over, so this is hardening, not a boundary."""
+def test_an_interval_longer_than_the_dropdown_offers_is_honoured(monkeypatch, tmp_path):
+	"""`--interval` is a free int; `i` cycles config.INTERVALS but the flag is not limited to them. A
+	clamp to the longest of those made an honest `--interval 1800` read as dead 990 seconds into every
+	cycle — the header saying "nothing is refreshing it" with the dashboard on screen, and a hook's
+	sync claiming the lock underneath one that was about to pull."""
+	assert 1800 > max(config.INTERVALS)  # the case the clamp broke, and a legitimate one
 	p = beat_file(tmp_path, monkeypatch)
 	p.write_text(json.dumps({"pid": os.getpid(), "host": heartbeat.HOST,
-	                         "at": time.time() - 86400, "interval": 31536000}))
-	assert not heartbeat.alive()
+	                         "at": time.time() - 1000, "interval": 1800}))
+	assert heartbeat.alive()
+	p.write_text(json.dumps({"pid": os.getpid(), "host": heartbeat.HOST,
+	                         "at": time.time() - 1800 - heartbeat.GRACE - 1, "interval": 1800}))
+	assert not heartbeat.alive()  # and it still lapses, at the interval it actually declared
+
+
+def test_a_beat_is_never_read_half_written(monkeypatch, tmp_path):
+	"""A plain open(p, "w") truncates first, and a reader landing in that window reads "no dashboard"
+	and goes and pulls — in the one place the beat exists to stop that."""
+	beat_file(tmp_path, monkeypatch)
+	heartbeat.beat(300)
+	seen, stop = [], threading.Event()
+
+	def watch():
+		while not stop.is_set():
+			seen.append(heartbeat.alive())
+
+	t = threading.Thread(target=watch)
+	t.start()
+	for _ in range(400):
+		heartbeat.beat(300)
+	stop.set()
+	t.join(5)
+	assert seen and all(seen), f"{seen.count(False)} of {len(seen)} reads saw no dashboard"
 
 
 def test_only_one_process_holds_the_pull_lock(monkeypatch, tmp_path):
@@ -103,6 +129,20 @@ def test_a_lock_left_by_a_dead_process_is_broken_rather_than_waited_on(monkeypat
 	heartbeat.unclaim()
 	lock.write_text("9999999")            # and a fresh one is still respected
 	assert not heartbeat.claim()
+
+
+def test_unclaim_releases_only_a_lock_this_process_still_holds(monkeypatch, tmp_path):
+	"""team.pull() walks every joined team at a git timeout each, so a slow pull can outlive STUCK. A
+	second claimant then breaks the lock and takes its own — and this process finishing removed THAT
+	one's file and let a third in, so the lock stopped holding under exactly the slow pulls that make
+	it worth having."""
+	beat_file(tmp_path, monkeypatch)
+	lock = tmp_path / heartbeat.LOCK
+	assert heartbeat.claim()
+	lock.write_text("424242")          # a second claimant broke ours and took its own
+	heartbeat.unclaim()
+	assert lock.exists() and lock.read_text() == "424242"  # not ours to give back
+	assert not heartbeat.claim()       # and still held, as far as everyone else is concerned
 
 
 def test_unclaiming_a_lock_that_is_not_there_is_not_an_error(monkeypatch, tmp_path):

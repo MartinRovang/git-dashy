@@ -9,8 +9,6 @@ from dashy.core import bind, heartbeat, memory, mirror, team
 
 from conftest import a_team
 
-NAMES_SEEN = ("general.md", "repo.md")
-
 
 def seed(repo, text, base=None):
 	"""A confirmed fact, written the way two agreeing reviews would have left it."""
@@ -449,7 +447,7 @@ def test_two_writers_never_leave_a_mirror_a_reader_can_half_see(monkeypatch, tmp
 	for got in seen:
 		assert got.startswith("> **Shared team memory"), repr(got[:80])
 		assert got.endswith("x" * 100 + "\n"), repr(got[-80:])
-	assert not [p for p in os.listdir(into) if p not in NAMES_SEEN], os.listdir(into)
+	assert not [p for p in os.listdir(into) if p not in mirror.NAMES], os.listdir(into)
 
 
 def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
@@ -477,3 +475,35 @@ def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
 	assert not first.is_alive()
 	assert sum("not pulled: another sync is already pulling" in r for r in reports) == 1
 	assert not os.path.exists(tmp_path / heartbeat.LOCK)  # and it is given back
+
+
+def test_a_team_reached_moments_ago_is_not_fetched_again(monkeypatch, tmp_path):
+	"""The session hook fires one of these at every session start, on every machine. Open six repos in
+	an editor and that is six fetches in a second, all asking the question the first one answered —
+	and nothing throttled it, because alive() is false exactly when the hook runs."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	with_remote(mem.parent, fetched_ago=5)
+	assert "not pulled: every team was reached in the last few minutes" in mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == []
+	with_remote(mem.parent, fetched_ago=mirror.FRESH + 1)
+	mirror.sync(str(tmp_path / "o"), "a/b")
+	assert pulls == [1]  # past the floor, it goes
+
+
+def test_a_team_with_no_remote_is_not_a_reason_to_skip_the_others(monkeypatch, tmp_path):
+	"""A local-only team is never "reached", so treating it as stale would make every sync pull for a
+	team that has nowhere to pull from — and treating it as fresh would hold back the ones that do."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	mirror.sync(str(tmp_path / "o"), "a/b")  # the only team has no remote at all
+	assert pulls == [1]
