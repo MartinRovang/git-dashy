@@ -34,6 +34,9 @@ const snapshot = () => version
 
 export const topModal = () => stack[stack.length - 1]
 export const modalCount = () => stack.length
+export const isOpen = (m: Modal) => stack.includes(m)
+/** Force the host to re-read a modal whose title/body/foot were mutated in place. */
+export const repaint = bump
 
 export function open(m: Omit<Modal, 'id'>): Modal {
   const mm = { ...m, id: ++version }

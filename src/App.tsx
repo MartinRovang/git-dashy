@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
 import { flat, selected, visible } from './board'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
-import { confirm, editor, ModalHost, picker, prompt, viewer } from './modals'
+import { confirm, modalCount, ModalHost, picker, prompt, viewer } from './modals'
+import type { Ctx } from './screens'
+import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
-import type { Code, Detail, Row } from './types'
+import type { Code, Detail, Row, StateData } from './types'
 import { useNow, useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
@@ -27,6 +29,7 @@ export default function App() {
   const [scope, setScope] = useState('marks')
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
+  const [stopped, setStopped] = useState(false)
 
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
@@ -36,11 +39,18 @@ export default function App() {
   const selUid = current?.uid || ''
   const url = current?.url || ''
 
+  const dataRef = useRef<StateData | null>(null)
+  dataRef.current = data
+
   useEffect(() => {
     if (!flash) return
     const id = setTimeout(() => setFlash(''), 4000)
     return () => clearTimeout(id)
   }, [flash])
+
+  useEffect(() => {
+    document.body.dataset.theme = data?.settings.theme || 'dashy'
+  }, [data?.settings.theme])
 
   // The pane's detail: a second request per PR, re-asked while the server reports pending.
   useEffect(() => {
@@ -107,8 +117,6 @@ export default function App() {
     return out
   }
 
-  const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
-
   async function setting(name: string, value: unknown) {
     const shown = Array.isArray(value)
       ? value.join(', ') || 'off'
@@ -122,16 +130,40 @@ export default function App() {
     await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
   }
 
-  async function onAuto() {
+  async function quit() {
+    if (!(await confirm('Quit gitdashy?', { yes: 'quit', no: 'stay' }))) return
+    await post('/api/quit', {})
+    setStopped(true)
+  }
+
+  const ctx: Ctx = { getData: () => dataRef.current, current, call, setting, flash: setFlash, quit }
+
+  // Launch-time consent questions, one at a time and only when no other dialog is up.
+  useEffect(() => {
+    if (data?.asks?.length && modalCount() === 0) askConsents(ctx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.asks])
+
+  const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
+  const onAuto = async () => {
     const on = !data?.auto
     let includeExisting = false
     if (on && data?.pending) includeExisting = await confirm(`Auto on. Also review the ${data.pending} already listed?`)
     call('/api/auto', { on, includeExisting }, on ? 'auto on' : 'auto off')
   }
-
   const onJump = (name: string) => {
     document.querySelector(`[data-fold="${name}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
+  const onPath = (which: 'L' | 'C') => void setPath(ctx, which)
+  const onTeams = () => void teamsScreen(ctx, current)
+  const onModal = (name: string) => {
+    if (name === 'drafts') void draftsScreen(ctx)
+    else if (name === 'share') void shareScreen(ctx, current)
+    else if (name === 'dream') void dreamScreen(ctx)
+    else if (name === 'general') void memoryEditor(ctx, '')
+  }
+  const onMenu = () => escMenu(ctx)
+  const onUpdate = () => void updateScreen(ctx)
 
   async function review(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
@@ -189,26 +221,12 @@ export default function App() {
       return
     }
     const now = (b.kind === 'owner' ? `${b.to}  · via ${b.owner}/*` : b.to) || 'no team'
-    picker(`bind ${b.repo} — now: ${now}`, b.teams.map((t: { key: string }) => t.key), b.to, (k: string) => b.teams.find((t: { key: string }) => t.key === k)?.name || k, (key: string) =>
-      void call('/api/bind', { op: 'bind', repo: p.repo, team: key }, `bound to ${key}`),
-    )
-  }
-
-  async function memoryEditor(repo: string) {
-    const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}`)
-    if (!r.ok) {
-      setFlash(`✗ ${await errorText(r)}`)
-      return
-    }
-    const got = await r.json()
-    editor(
-      `memory · ${got.repo}`,
-      got.text,
-      async (text) => {
-        const out = await call('/api/memory', { repo: got.repo, text }, `${got.repo} memory saved`)
-        if (out?.error) setFlash(`saved, but not pushed: ${out.error}`)
-      },
-      got.path,
+    picker(
+      `bind ${b.repo} — now: ${now}`,
+      b.teams.map((t: { key: string }) => t.key),
+      b.to,
+      (k: string) => b.teams.find((t: { key: string }) => t.key === k)?.name || k,
+      (key: string) => void call('/api/bind', { op: 'bind', repo: p.repo, team: key }, `bound to ${key}`),
     )
   }
 
@@ -226,14 +244,16 @@ export default function App() {
       copy: () => void copyUrl(p),
       reviewer: () => void addReviewer(p),
       bind: () => void bindScreen(p),
-      memory: () => void memoryEditor(p.repo),
+      memory: () => void memoryEditor(ctx, p.repo),
     }
     fns[name]?.()
   }
 
+  if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
+
   return (
     <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -243,7 +263,7 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} />
+        <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
         <div className="main">
           <div className="body">
             <div className="queue">

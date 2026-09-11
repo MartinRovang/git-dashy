@@ -9,12 +9,16 @@ type Props = {
   secs: VisSection[]
   onJump: (name: string) => void
   setting: (name: string, value: unknown) => void
+  onPath: (which: 'L' | 'C') => void
+  onTeams: () => void
+  onModal: (name: string) => void
 }
 
-/** The left rail: sections to jump to, the session's counts, then the agent and view settings. */
-export function Sidebar({ data: d, secs, onJump, setting }: Props) {
+/** The left rail: sections to jump to, the session's counts, then the agent, view and knowledge cards. */
+export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onModal }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
+  const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   return (
     <div className="side scroll">
@@ -91,6 +95,48 @@ export function Sidebar({ data: d, secs, onJump, setting }: Props) {
         <Row k="a" label="auto">
           <b style={{ color: d?.auto ? 'var(--green)' : 'var(--dim2)' }}>{d?.auto ? 'on' : 'off'}</b>
         </Row>
+      </div>
+
+      <div className="card">
+        <div className="cap" style={{ padding: '0 0 7px' }}>
+          KNOWLEDGE
+        </div>
+        <Row k="L" label="memory">
+          <b className="link" title={k.memory} onClick={() => onPath('L')}>
+            {k.memory}
+          </b>
+        </Row>
+        <Row k="T" label="team">
+          <b className={`link${k.teamError ? ' err' : k.teams.length ? ' on' : ''}`} title={k.teamError} onClick={onTeams}>
+            {k.teamError ? k.teamError.slice(0, 40) : k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : '')).join(', ') || 'off'}
+          </b>
+        </Row>
+        {k.store ? (
+          <Row k="C" label="store">
+            <b className="link" onClick={() => onPath('C')}>
+              {k.store}
+            </b>
+          </Row>
+        ) : null}
+        {(k.notes || []).map((n, i) => (
+          <div className="note" key={i}>
+            ⚠ {n}
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+          <span className="btn" onClick={() => onModal('drafts')}>
+            <kbd className="hint">W</kbd>waiting
+          </span>
+          <span className="btn" onClick={() => onModal('share')}>
+            <kbd className="hint">P</kbd>shared
+          </span>
+          <span className="btn" onClick={() => onModal('dream')}>
+            <kbd className="hint">Z</kbd>dream
+          </span>
+          <span className="btn" onClick={() => onModal('general')}>
+            <kbd className="hint">g</kbd>general
+          </span>
+        </div>
       </div>
     </div>
   )

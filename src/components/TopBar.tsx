@@ -6,10 +6,12 @@ type Props = {
   total: number
   onRefresh: () => void
   onAuto: () => void
+  onMenu: () => void
+  onUpdate: () => void
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto }: Props) {
+export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate }: Props) {
   const running = d?.running || 0
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
@@ -31,7 +33,7 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto }: Props) {
       </div>
       <div style={{ flex: 1 }} />
       {d?.update ? (
-        <div className="pill up">
+        <div className="pill up" onClick={onUpdate}>
           <kbd className="hint">u</kbd> ↑ update to v{d.update}
         </div>
       ) : null}
@@ -56,6 +58,9 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto }: Props) {
         </div>
         <span>AUTO</span>
       </div>
+      <span className="ib" title="menu (esc)" onClick={onMenu}>
+        ☰
+      </span>
     </div>
   )
 }
