@@ -130,7 +130,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team) |
+| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
 | `q` | quit |
 
@@ -340,6 +340,13 @@ The whole model — every store, promotion rule and discard rule — is written 
 of the learned facts, so a reviewer knows what the code is *for* before judging whether a change serves
 it. It is declared, not learned — the promotion pipeline never touches it, the dream never rewrites it,
 and it is never offered for sharing.
+
+**`agents.md` is the other declared file, and it goes the other way.** It reaches every agent *session*
+in every repo bound to the team, through that repo's mirror, and never reaches a review: it says how to
+work here, which is not something a reviewer should be told about the code it is judging. Starting or
+joining a team seeds one; a team that already exists gets it by adding `memory/agents.md` to its
+checkout. What belongs in it is whatever the team needs its members' sessions to do — above all,
+`gitdashy remember`, since a session that files nothing leaves every draft at one observation.
 
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its

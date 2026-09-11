@@ -632,6 +632,55 @@ def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
 	assert done.wait(5) and order == ["pull", "sweep:opus"]
 
 
+def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path):
+	"""team.pull() fast-forwards silently and the mirror is overwritten in place, so a fact arriving —
+	the moment to read it — passed with nothing on screen saying one had."""
+	from dashy.core import memory
+	from conftest import a_team
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- and no DDL here\n- nor there\n"))
+	st = state.State(60, "opus")
+
+	def one_tick():
+		# ponytail: cleared before each. start_sweep() sets it and the thread clears it, so whether the
+		# NEXT tick counts anything at all came down to which won — and a test whose subject is skipped
+		# by a race passes with the code removed, which is what this one did.
+		st.sweeping.clear()
+		st.tick(time.time())
+
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+	one_tick()
+	assert st.arrived == {"org-t": 2}  # a second pull that brought nothing does not inflate it
+	# ponytail: a teammate rewriting the brief is not the team learning thirty things. project.md and
+	# agents.md are prose people wrote and change for reasons that have nothing to do with the reviews.
+	monkeypatch.setattr(state.team, "pull", lambda: [
+		(mem / "project.md").write_text("# What we are building\n\nA longer brief than before.\n"),
+		(mem / "agents.md").write_text("# For agent sessions\n\nFile what you work out.\n")])
+	one_tick()
+	assert st.arrived == {"org-t": 2}
+
+
+def test_a_promotion_landing_mid_sweep_is_not_reported_as_a_teammates(monkeypatch, tmp_path):
+	"""The sweep writes YOUR promoted facts into the team's files. Counted blind, one of those inside
+	the pull window reads as something a colleague sent you, which is the one thing the badge is for."""
+	from conftest import a_team
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_text("- uses tabs\n- one this machine promoted\n"))
+	st = state.State(60, "opus")
+	st.sweeping.set()  # an earlier tick's sweep is still running
+	st.tick(time.time())
+	assert st.arrived == {}
+
+
 def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
 	"""It ran on the refresh thread, after the pull and BEFORE github.fetch, with a 300s model timeout —
 	so the first sweep after an upgrade held the whole list for as long as the model took. Catching the

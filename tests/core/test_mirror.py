@@ -281,3 +281,31 @@ def test_general_on_a_bound_repo_says_the_teams_general_facts_once(monkeypatch, 
 	assert both.count("verify the pushed head") == 1
 	mirror.sync(str(into), "a/b", pull=False)                          # without --general it moves to repo.md
 	assert "verify the pushed head" in (into / "repo.md").read_text()
+
+
+def test_the_teams_instruction_to_sessions_is_mirrored_but_never_reviewed(monkeypatch, tmp_path):
+	"""The rule that makes a session file drafts lived in one operator's own corpus, so a colleague's
+	sessions never filed any. It ships with the team now — and it reaches SESSIONS only: a reviewer
+	told how to work in this team is being told something that is not about the diff it is judging."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	(mem / "agents.md").write_text("# For agent sessions\n\nRun `gitdashy remember` for what you work out.\n")
+	seed("a/b", "uses tabs")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "### how team org-t works — for this session, not for a review" in got
+	assert "Run `gitdashy remember`" in got
+	assert "gitdashy remember" not in memory.read("a/b")  # the review prompt, unchanged
+
+
+def test_the_dream_never_rewrites_what_people_wrote(monkeypatch, tmp_path):
+	"""project.md was already out; agents.md is the same kind of file and was not. Z applies model
+	output verbatim and an empty answer deletes — it emptied general.md once already."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "agents.md").write_text("# For agent sessions\n")
+	(mem / "project.md").write_text("# What we are building\n")
+	(mem / "general.md").write_text("- the api holds no DDL\n")
+	assert [k for k in memory.files() if k.startswith("team")] == ["team:org-t/general.md"]

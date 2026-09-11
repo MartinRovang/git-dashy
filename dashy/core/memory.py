@@ -38,6 +38,7 @@ _write = threading.RLock()
 SETUP_MARK = "<!-- written by gitdashy setup -->"  # install.SETUP_MARK; here to avoid importing it
 SELF = os.path.join(QUEUE, "self")  # drafts/self/<repo>.md — what a PRE-review of your own PR proposed
 PROJECT = "project.md"  # the team's DECLARED context: what we are building. Written by people, never learned.
+AGENTS = "agents.md"  # the team's instruction to its members' agent SESSIONS. People write it; reviews never see it.
 PROMOTE_AT = 2  # independent reviews that must land on a fact before it becomes one of yours
 NEAR = 0.88  # difflib ratio over TOKENS above which two wordings are the same fact; see _toks
 # ponytail: what overlaps() offers a person, and a DIFFERENT measure from the gate above on purpose.
@@ -354,6 +355,10 @@ def session_context(repo, general_mirrored=False):
 	repo nobody wired, and a brief for it would be a guess.
 	ponytail: general_mirrored — when the caller also writes general.md (which already carries the
 	team's general facts through scope_text), they are left out here rather than said twice.
+	ponytail: agents.md rides HERE and nowhere else. This function has one caller, the mirror, so the
+	team's instruction to its sessions reaches sessions and never a review prompt — a reviewer being
+	told how to work in this team is being told something about the diff it is judging that is not
+	true of the diff. It is last, because it is the only part that is an instruction rather than context.
 	"""
 	parts = []
 	text, source = brief(repo)
@@ -363,6 +368,9 @@ def session_context(repo, general_mirrored=False):
 		for label, base in sources(repo)[1:]:
 			if t := _read(path(None, base)):
 				parts.append(f"### {label} — true of every repo it covers\n{t}")
+	for label, base in sources(repo)[1:]:
+		if t := _read(os.path.join(base, AGENTS)):
+			parts.append(f"### how {label} works — for this session, not for a review\n{t}")
 	return "\n\n".join(parts)
 
 
@@ -812,6 +820,19 @@ def unasked():
 		f = sum(len(_facts(path(r))) for r in _fact_repos() if r and bind.of(r) == key)
 		out.append((key, d, f))
 	return out
+
+
+def team_facts(key):
+	"""How many facts the team `key` holds right now, across every repo and the general file.
+
+	ponytail: the BRIEF and the agents file are not facts and are excluded — they are prose people
+	wrote, they change for reasons that have nothing to do with what reviews learned, and an edit to
+	either would otherwise read as "the team learned 30 things".
+	"""
+	base = bind.team_dir(key)
+	names = sorted(os.listdir(base)) if base and os.path.isdir(base) else []
+	return sum(len(_facts(os.path.join(base, n)))
+	           for n in names if n.endswith(".md") and n not in (PROJECT, AGENTS))
 
 
 def _fact_repos():
@@ -1325,7 +1346,7 @@ def files():
 		# teams' general.md would collide on one key and the dream would write one over the other.
 		key = "mine" if label == "mine" else "team:" + label[5:]
 		for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-			if n.endswith(".md") and n != PROJECT:  # the dream tidies learned facts, not a stated brief
+			if n.endswith(".md") and n not in (PROJECT, AGENTS):  # the dream tidies learned facts, not what people wrote
 				out[f"{key}/{n}"] = open(os.path.join(base, n)).read()
 	return dict(sorted(out.items(), key=lambda kv: (not kv[0].endswith("general.md"), kv[0])))
 

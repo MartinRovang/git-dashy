@@ -132,8 +132,12 @@ def header_groups(state):
 	reviewer = [row("m"), row("d"), row("e"), row("x"), row("h")]
 	view = [row("s"), ("D", "Drafts", "shown" if state.drafts else "hidden", "on" if state.drafts else None), row("t")]
 	# Memory is your own dir, in a team or not; the team is a second source read alongside it, shown below
+	# ponytail: "+N" beside the team that sent them. A fact arriving is the moment to read it, and
+	# until now nothing said one had: team.pull() fast-forwards silently and the mirror is overwritten
+	# in place. Named per team rather than totalled, because which team learned it is half the news.
+	names = ", ".join(s + (f" +{n}" if (n := state.arrived.get(s)) else "") for s in team.joined())
 	know = [("L", "Memory", knowledge.show(knowledge.effective()) + knowledge.history_note(), None),
-	        ("T", "Team", team.ERROR[:40] if team.ERROR else (", ".join(team.joined()) or "off"),  # ponytail: clipped, T shows it whole
+	        ("T", "Team", team.ERROR[:40] if team.ERROR else (names or "off"),  # ponytail: clipped, T shows it whole
 	         "err" if team.ERROR else ("on" if team.on() else None))]
 	# ponytail: session_notes() are standing, not errors — what a session on this machine is NOT being
 	# told. A missing `remember` instruction starved the whole pipeline for weeks with nothing saying so.
@@ -1805,10 +1809,17 @@ def team_setup(scr, state, sel, current=None):
 	ceremony for the common case. With several, the list offers only numbers, so nothing here ever
 	asks "which team?" as typed text.
 	"""
+	# ponytail: cleared on the way IN, not on the way out. The badge means "something landed that you
+	# have not looked at", and this screen is where you look — leaving it up while the panel is open
+	# would have it still there after the only act that answers it.
+	arrived = dict(state.arrived)
+	state.arrived.clear()
 	while True:
 		joined = team.joined()
 		draw(scr, state, sel, prompt=" ")
-		rows = [(f"{i + 1}  {team.info(s)['name']}", _remote_label(u) if (u := team.origin_url(team.dir_of(s))) else "no remote yet")
+		rows = [(f"{i + 1}  {team.info(s)['name']}",
+		         (f"{n} new · " if (n := arrived.get(s)) else "")
+		         + (_remote_label(u) if (u := team.origin_url(team.dir_of(s))) else "no remote yet"))
 		        for i, s in enumerate(joined[:8])]
 		panel(scr, f"teams  ·  {len(joined)} joined" if joined else "teams  ·  none yet",
 		      rows or [("a team is a git repo of shared memory", ""), ("start one here, or join one that exists", "")],

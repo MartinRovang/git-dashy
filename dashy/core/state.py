@@ -49,6 +49,12 @@ def refresh_mirrors():
 class State:
 	def __init__(self, interval=config.INTERVAL, model=config.DEFAULT_MODEL):
 		self.interval, self.sections, self.fetched_at, self.lock = interval, [], None, threading.Lock()
+		# ponytail: since this dashboard STARTED, and not persisted. The question a badge answers is
+		# "has anything landed that I have not looked at", and a dashboard the operator leaves running
+		# for days is exactly where that goes unnoticed. Persisting it would mean a file that changes
+		# whenever the team does, inside a directory push_dir commits, for a number that is only ever
+		# read by the header of the process that wrote it.
+		self.arrived = {}
 		self.model = model
 		self.sweeping = threading.Event()  # ponytail: one draft sweep at a time; see start_sweep
 		self.wake, self.reviews = threading.Event(), {}  # reviews: url -> status string
@@ -266,7 +272,16 @@ class State:
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
+		# ponytail: counted around the pull, and skipped while a sweep from an earlier tick is still
+		# running. A sweep promotes YOUR facts into the team's files, and a promotion landing inside this
+		# window would be reported as something a teammate sent you. Undercounting during a sweep is the
+		# safe direction of being wrong: a badge that does not appear is a missed nudge, and a badge that
+		# claims a teammate found what you found yourself is a lie about the one thing it exists to say.
+		was = {} if self.sweeping.is_set() else {k: memory.team_facts(k) for k in team.joined()}
 		team.pull()  # newest team log + memory before we read them
+		for key, before in was.items():
+			if (grew := memory.team_facts(key) - before) > 0:
+				self.arrived[key] = self.arrived.get(key, 0) + grew
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —
 		memory.backup("tick")  # and so the Memory row can say "no history" before a write, not after

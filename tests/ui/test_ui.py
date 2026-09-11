@@ -2489,3 +2489,18 @@ def test_launch_asks_once_per_team_before_anything_publishes(screen, monkeypatch
 	# answered, so a later launch asks nothing at all
 	screen.getch = _keys()
 	ui.ask_publishing(screen, st, 0)
+
+
+def test_the_header_says_which_team_sent_new_facts_and_the_panel_clears_it(screen, monkeypatch, st, tmp_path):
+	"""A fact arriving is the moment to read it, and nothing said one had: the pull fast-forwards
+	silently and the mirror is overwritten in place. Named per team, because which team learned it is
+	half the news — and cleared by opening the panel, the act that answers the badge."""
+	a_team(monkeypatch, tmp_path, "org-one")
+	st.arrived = {"org-one": 3}
+	value = next(v for k, _n, v, _t in _know_rows(st) if k == "T")
+	assert value == "org-one +3"
+	screen.getch, screen.timeout = _keys(27), lambda t: None
+	ui.team_setup(screen, st, 0)
+	assert "3 new" in screen.text()                # said once more, where you went to look
+	assert st.arrived == {}                        # and not still waiting after you looked
+	assert next(v for k, _n, v, _t in _know_rows(st) if k == "T") == "org-one"

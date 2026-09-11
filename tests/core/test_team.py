@@ -999,3 +999,16 @@ def test_a_team_we_are_not_in_reads_no_team_json_from_the_working_directory(monk
 	monkeypatch.chdir(here)
 	assert team.info("gone") == {"name": "gone", "description": ""}
 	assert team.covers("gone") == []
+
+
+def test_starting_and_joining_a_team_seed_the_instruction_its_sessions_read(monkeypatch, tmp_path):
+	"""The rule that makes a session file drafts lived in one machine's own corpus, so a colleague's
+	sessions never filed any. A team is the right scope: it is the team that wants the drafts, and it
+	is already a git repo everyone pulls."""
+	monkeypatch.setattr(config, "TEAMS", str(tmp_path / "teams"))
+	assert team.start("Org T") == ""
+	p = os.path.join(team.dir_of("org-t"), "memory", "agents.md")
+	assert "gitdashy remember" in open(p).read()
+	open(p, "w").write("ours, not yours\n")
+	team.seed_agents(p)
+	assert open(p).read() == "ours, not yours\n"  # never overwritten; a team that edited it owns it
