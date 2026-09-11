@@ -5,6 +5,7 @@ import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { useNow, useStatePoll } from './usePoll'
+import { every } from './tokens'
 
 /** The dashboard: one poll of /api/state, and the queue derived from it. */
 export default function App() {
@@ -41,6 +42,20 @@ export default function App() {
   }
 
   const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
+
+  async function setting(name: string, value: unknown) {
+    const shown = Array.isArray(value)
+      ? value.join(', ') || 'off'
+      : name === 'interval'
+        ? every(Number(value))
+        : name === 'window'
+          ? value == null
+            ? 'all'
+            : `${value}h`
+          : String(value === '' ? 'default' : value)
+    await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+  }
+
   const onAuto = () => {
     const on = !data?.auto
     const includeExisting = on && data?.pending ? confirm(`Auto on. Also review the ${data.pending} already listed?`) : false
@@ -65,7 +80,7 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} secs={secs} onJump={onJump} />
+        <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} />
         <div className="main">
           <div className="queue">
             <Queue

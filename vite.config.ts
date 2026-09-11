@@ -10,5 +10,7 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: { ignored: ['**/src-tauri/**'] },
+    // dev: run `gitdashy --no-open --demo --port 7777` and open http://localhost:1420/?token=…
+    proxy: { '/api': 'http://127.0.0.1:7777' },
   },
 })
