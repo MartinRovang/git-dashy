@@ -6,17 +6,53 @@ absolute and symlinked paths are all refused — so a real file inside the repo 
 import datetime
 import os
 import subprocess
+import time
 
 from .. import config
-from . import memory, team
+from . import heartbeat, memory, team
 
 NAMES = ("general.md", "repo.md")  # the only names sync() ever writes or removes
 HEADER = """> **Shared team memory — read-only mirror.** PR reviews write these facts; `gitdashy sync-memory`
 > copies them here. Edits to this file are lost at the next sync — change the source, not the mirror.
 >
 > source: `{src}` · synced: {at}
+{age}"""
 
-"""
+STALE = 3600  # seconds since a team was last reached, past which the header warns rather than reports
+
+
+
+def _ago(secs):
+	"""A rough age, in the largest unit that is not a fraction. Exactness is not the point here — the
+	reader is deciding whether to trust a file, and "2 days" and "51 hours" lead to the same decision."""
+	for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+		if secs >= size:
+			n = int(secs // size)
+			return f"{n} {unit}{'s' if n > 1 else ''} ago"
+	return "just now"
+
+
+def _freshness(got, now):
+	"""The header's age lines: one per team source that has a remote, saying when it was last reached.
+
+	ponytail: in the FILE, not on the hook's stdout. This is what a session reads, it is imported on
+	every turn, and it costs one line. A hook message scrolls past once, at the moment nobody is
+	looking for it, and says nothing at all to a session started any other way.
+	ponytail: the warning names the dashboard rather than the age alone, because that is the thing the
+	reader can act on. "4 days ago" invites a shrug; "nothing is refreshing this" is an instruction.
+	"""
+	out, running = [], heartbeat.alive()
+	for label, base in got:
+		if label == "mine":
+			continue
+		at = team.fetched_at(os.path.dirname(base))
+		if at is None:
+			continue  # local-only team: there is no remote to be behind
+		stale = not running and now - at > STALE
+		out.append(f"> {label}: last pulled {_ago(now - at)}"
+		           + (" — **the dashboard is not running, so this may be behind what the team has.**"
+		              " Start `gitdashy`, or run `gitdashy sync-memory --into` this directory." if stale else ""))
+	return "".join(l + "\n" for l in out)
 
 
 def tracked(path, names=NAMES):
@@ -48,7 +84,11 @@ def sync(into, repo="", pull=True, general=False):
 	ponytail: pull=False for callers on a clock (a SessionStart hook) — mirrors whatever the last
 	gitdashy refresh pulled, instead of risking a network round trip inside their timeout.
 	"""
-	if pull:
+	# ponytail: a RUNNING dashboard already pulled, less than one interval ago, and will again. Two
+	# processes running `pull --rebase` in one checkout race for git's index.lock, and the loser leaves
+	# a rebase behind for the winner to trip over. Skipping here is what lets the session hook fire this
+	# off in the background without having to know whether anything else is doing the same job.
+	if pull and not heartbeat.alive():
 		team.pull()  # newest shared memory first; a no-op when team mode is off
 	# ponytail: ask BEFORE creating anything, or a refusal leaves the tree it refused to write in. And a
 	# SessionStart hook calls this: an exception there is a broken hook, so failures come back as the report.
@@ -72,6 +112,7 @@ def _write(into, repo, general, at):
 	# same write, which is the defect this line was changed to fix in the first place.
 	got = memory.sources(repo)
 	src = " + ".join(label for label, _ in got)
+	age = _freshness(got, time.time())
 	wrote = []
 	for name, scope in zip(NAMES, (None if general else "", repo if repo else "")):
 		dst = os.path.join(into, name)
@@ -83,8 +124,23 @@ def _write(into, repo, general, at):
 			text = "\n\n".join(t for t in (memory.session_context(repo, general_mirrored=general),
 			                                f"## {repo}\n{text}" if text else "") if t)
 		if text:
-			with open(dst, "w") as f:
-				f.write(HEADER.format(src=src, at=at) + text + "\n")
+			# ponytail: written whole, then moved into place. There are two writers of this file now —
+			# the dashboard's refresh and the background one a session hook starts — and a plain open()
+			# truncates first, so a session reading at the wrong moment imported an empty or half-written
+			# mirror and was told the team knows nothing. rename within one directory is atomic, so a
+			# reader sees the old file or the new one.
+			tmp = dst + ".part"
+			try:
+				with open(tmp, "w") as f:
+					f.write(HEADER.format(src=src, at=at, age=age) + text + "\n")
+				os.replace(tmp, dst)
+			except OSError:
+				# ponytail: the half-written file goes, and the exception carries on to sync()'s handler.
+				# Leaving it behind puts an unexplained repo.md.part in someone's repo — inside a
+				# directory the mirror promises to own the contents of — for every failed write.
+				if os.path.exists(tmp):
+					os.remove(tmp)
+				raise
 			wrote.append(name)
 		elif os.path.exists(dst):
 			os.remove(dst)  # ponytail: a mirror never outlives its source, or it becomes a rumour

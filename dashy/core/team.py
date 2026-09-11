@@ -62,6 +62,23 @@ def _note(r, label="sync"):
 	return r.returncode == 0
 
 
+def fetched_at(d):
+	"""When `d` last reached its remote, as a unix time. None when it never has or has none to reach.
+
+	ponytail: FETCH_HEAD, not a commit date. A pull that found nothing new still rewrites it, which is
+	the question being asked — "are we still in touch with the team", not "did the team say anything".
+	A commit date answers the second and reads as weeks stale on a team that is simply quiet.
+	ponytail: a stat, not a subprocess. This is read on the mirror path, which a SessionStart hook calls
+	inside a ten-second budget, and it is asked once per team per write.
+	"""
+	if not has_remote(d):
+		return None
+	try:
+		return os.stat(os.path.join(d, ".git", "FETCH_HEAD")).st_mtime
+	except OSError:
+		return None  # cloned and never pulled since, or a .git this cannot stat — no age to report
+
+
 def has_remote(d):
 	"""True when the checkout at `d` has an origin.
 

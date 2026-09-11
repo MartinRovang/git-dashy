@@ -7,7 +7,7 @@ import threading
 import time
 
 from .. import config
-from . import diff, github, install, log, memory, mirror, review as review_mod, team, update
+from . import diff, github, heartbeat, install, log, memory, mirror, review as review_mod, team, update
 
 LOG = logging.getLogger(__name__)
 
@@ -266,6 +266,11 @@ class State:
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
+		# ponytail: FIRST, and before the pull it is a claim about. Anything reading this while the tick
+		# runs should be told a dashboard is here, or it does the pull itself — which is the one thing
+		# the beat exists to prevent. Written every tick rather than once at startup, so a dashboard
+		# that stopped refreshing (suspended, wedged) stops counting as one.
+		heartbeat.beat(self.interval)
 		team.pull()  # newest team log + memory before we read them
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —

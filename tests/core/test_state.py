@@ -632,6 +632,20 @@ def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
 	assert done.wait(5) and order == ["pull", "sweep:opus"]
 
 
+def test_the_tick_says_a_dashboard_is_running_before_it_does_anything(monkeypatch, tmp_path):
+	"""The beat is what lets a session hook fire a background sync off without racing this process for
+	the team checkout. Written at the TOP of the tick: anything that reads it while the tick is still
+	pulling must be told a dashboard is here, or it goes and pulls the same checkout itself."""
+	from dashy.core import heartbeat
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seen = []
+	monkeypatch.setattr(state.team, "pull", lambda: seen.append(heartbeat.alive()))
+	_quiet_tick(monkeypatch)
+	assert not heartbeat.alive()
+	state.State(60, "opus").tick(time.time())
+	assert seen == [True] and heartbeat.alive()
+
+
 def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
 	"""It ran on the refresh thread, after the pull and BEFORE github.fetch, with a 300s model timeout —
 	so the first sweep after an upgrade held the whole list for as long as the model took. Catching the

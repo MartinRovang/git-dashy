@@ -420,7 +420,20 @@ gitdashy init --into .agent/team --loader CLAUDE.local.md
 which excludes the mirror from git (through `.git/info/exclude` — never the tracked `.gitignore`, which is
 the team's), adds the import to whichever instruction file you name, writes the mirror, and registers the
 path. The running dashboard then re-mirrors it on every refresh, so there are no hooks to install and
-nothing on a session-start timeout budget. It goes stale only while gitdashy is not running.
+nothing on a session-start timeout budget.
+
+**A mirror says how old it is.** Its header names, per team, when that team was last reached — and when
+nothing is keeping it current, says so in the file the session is reading rather than in a hook message
+that scrolls past:
+
+```
+> team org/review-team: last pulled 4 days ago — **the dashboard is not running, so this may be behind
+> what the team has.** Start `gitdashy`, or run `gitdashy sync-memory --into` this directory.
+```
+
+The session hook also starts one `sync-memory` in the background, detached, so the next read is current
+on a machine where the dashboard is rarely open. It pulls only when no dashboard is running: two
+processes rebasing one checkout race for git's index lock, so the running one is left to do the job.
 
 **Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:
@@ -457,8 +470,9 @@ from the shared log or because they hold memory for it — it also joins the evi
 you when someone else found the same thing. A repo the team has never seen keeps its name to itself; the
 fact still becomes yours. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
-cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled, which on
-the default interval is minutes old at most.
+cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled; the shipped hook
+then starts a pulling one in the background, so the file is current by the next read even when no
+dashboard has been open for days.
 
 It is a copy, not a link: Claude Code confines instruction-file imports to the project tree, so `~`,
 absolute and symlinked paths are all refused. The mirrors carry a header saying they are read-only,

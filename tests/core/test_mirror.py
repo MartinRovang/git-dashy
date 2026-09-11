@@ -1,9 +1,10 @@
 import os
 import shutil
 import subprocess
+import time
 
 from dashy import config
-from dashy.core import bind, memory, mirror, team
+from dashy.core import bind, heartbeat, memory, mirror, team
 
 from conftest import a_team
 
@@ -281,3 +282,99 @@ def test_general_on_a_bound_repo_says_the_teams_general_facts_once(monkeypatch, 
 	assert both.count("verify the pushed head") == 1
 	mirror.sync(str(into), "a/b", pull=False)                          # without --general it moves to repo.md
 	assert "verify the pushed head" in (into / "repo.md").read_text()
+
+
+def with_remote(d, fetched_ago=None):
+	"""Make a team checkout look like one that was cloned, and optionally pulled `fetched_ago` seconds ago."""
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	if fetched_ago is not None:
+		f = d / ".git" / "FETCH_HEAD"
+		f.write_text("abc123\t\tbranch 'main' of git@example.com:org/t.git\n")
+		at = time.time() - fetched_ago
+		os.utime(f, (at, at))
+
+
+def test_the_header_says_when_the_team_was_last_reached(monkeypatch, tmp_path):
+	"""The one place a session actually reads. An age nobody can see is an age nobody acts on."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=7200)
+	seed("a/b", "uses tabs")
+	heartbeat.beat(300)  # a dashboard is running, so the age is reported and not warned about
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "> team org-t: last pulled 2 hours ago" in got
+	assert "dashboard is not running" not in got
+
+
+def test_the_header_warns_when_nothing_is_refreshing_it(monkeypatch, tmp_path):
+	"""A mirror is only as fresh as the dashboard that pulls for it, and a session started in a repo
+	nobody has the dashboard open for reads days-old team memory with no way to tell."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	seed("a/b", "uses tabs")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "> team org-t: last pulled 4 days ago — **the dashboard is not running" in got
+
+
+def test_a_team_with_no_remote_has_no_age_to_report(monkeypatch, tmp_path):
+	"""There is nothing to be behind. A local-only team saying "last pulled never" would read as a
+	fault, and the operator has one of these.
+
+	ponytail: the checkout is given a FETCH_HEAD and NO origin, which is a remote that was removed
+	after a fetch. Without it the test passed whatever the remote check did, because a team that never
+	had a remote has no FETCH_HEAD to stat either and the age came back empty for the other reason.
+	"""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	(mem.parent / ".git" / "config").write_text("[core]\n\tbare = false\n")  # origin removed since
+	seed("a/b", "uses tabs")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled" not in got
+
+
+def test_sync_does_not_pull_while_a_dashboard_is_running(monkeypatch, tmp_path):
+	"""Two processes running pull --rebase in one checkout race for index.lock, and the loser can
+	leave a rebase behind. The session hook fires sync off in the background without knowing whether
+	a dashboard is up, so the skip has to live here."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	pulls = []
+	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
+	heartbeat.beat(300)
+	mirror.sync(str(tmp_path / "out"), "a/b")
+	assert pulls == []
+	os.remove(tmp_path / ".prs_dashboard")
+	mirror.sync(str(tmp_path / "out"), "a/b")
+	assert pulls == [1]  # nothing else is going to, so this caller does it
+
+
+def test_a_write_that_fails_leaves_the_previous_mirror_whole(monkeypatch, tmp_path):
+	"""Two writers now, and a plain open() truncates before it writes: a session reading at the wrong
+	moment imported an empty mirror and was told the team knows nothing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	before = (into / "repo.md").read_text()
+	seed("a/b", "and spaces nowhere")
+
+	def no(*a):
+		raise OSError("no space left on device")
+
+	monkeypatch.setattr(mirror.os, "replace", no)  # the write lands, the move into place does not
+	assert "refused" in mirror.sync(str(into), "a/b", pull=False)
+	assert (into / "repo.md").read_text() == before  # the old mirror, not an empty file
+	assert not (into / "repo.md.part").exists()  # and nothing left in a directory the mirror owns

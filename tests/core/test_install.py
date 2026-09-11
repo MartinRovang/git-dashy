@@ -4,6 +4,7 @@ import pathlib
 import shlex
 import shutil
 import subprocess
+import time
 
 from dashy import config
 from dashy.core import install, memory, mirror, state, team
@@ -209,6 +210,23 @@ def test_the_shipped_corpus_is_generic(monkeypatch, tmp_path):
 	assert install.corpus_files(corpus)  # and it actually has identity files to import
 
 
+def stub_gitdashy(tmp_path, body="exit 0\n"):
+	"""A `gitdashy` on PATH that does what the test says, and an env that finds it.
+
+	ponytail: EVERY test that runs the hook needs this. Without it the hook found the real gitdashy —
+	the developer's, on their PATH — and ran `init` against their live registry and memory dir. That is
+	where a registration for a pytest tmp_path came from on one machine, refreshed on every tick long
+	after the directory was gone. A test must not write to the store the machine is using.
+	"""
+	binp = tmp_path / "bin"
+	binp.mkdir(exist_ok=True)
+	stub = binp / "gitdashy"
+	stub.write_text("#!/usr/bin/env bash\n" + body)
+	stub.chmod(0o755)
+	return {**os.environ, "PATH": f"{binp}:{os.environ['PATH']}",
+	        "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+
+
 def worktree(tmp_path):
 	"""A linked worktree, where .git is a FILE rather than a directory."""
 	main = tmp_path / "main"
@@ -242,7 +260,7 @@ def test_the_session_hook_seeds_nothing_it_cannot_hide(tmp_path):
 	"""If the ignore cannot be written, the hook must stop rather than create visible files."""
 	wt = worktree(tmp_path)
 	hook = install.HOOK
-	subprocess.run(["bash", hook], cwd=str(wt), capture_output=True)
+	subprocess.run(["bash", hook], cwd=str(wt), capture_output=True, env=stub_gitdashy(tmp_path))
 	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
 	assert (wt / ".agent").is_dir() and (wt / "CLAUDE.local.md").exists()
 	assert seen.strip() == "", seen  # seeded, and invisible to git
@@ -285,7 +303,8 @@ def test_the_hook_seeds_nothing_when_a_corpus_has_no_templates(tmp_path):
 	wt = tmp_path / "repo"
 	wt.mkdir()
 	subprocess.run(["git", "init", "-q", str(wt)], check=True)
-	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt), capture_output=True)
+	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	               capture_output=True, env=stub_gitdashy(tmp_path))
 	assert (wt / "CLAUDE.local.md").exists() and (wt / ".agent").is_dir()
 	assert not (wt / ".agent" / "STATE.md").exists()  # nothing to copy, and that is fine
 	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
@@ -1113,17 +1132,37 @@ def test_the_hook_actually_runs_the_drafts_count_line(tmp_path):
 	wt = tmp_path / "repo"
 	wt.mkdir()
 	subprocess.run(["git", "init", "-q", str(wt)], check=True)
-	binp = tmp_path / "bin"
-	binp.mkdir()
-	stub = binp / "gitdashy"
-	stub.write_text('#!/usr/bin/env bash\n'
-	                'if [ "$1" = "drafts" ]; then echo "gitdashy: 2 drafts waiting for acme/web"; fi\n'
-	                'exit 0\n')
-	stub.chmod(0o755)
-	env = {**os.environ, "PATH": f"{binp}:{os.environ['PATH']}", "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+	env = stub_gitdashy(tmp_path, 'if [ "$1" = "drafts" ]; then echo "gitdashy: 2 drafts waiting for acme/web"; fi\n'
+	                              'exit 0\n')
 	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
 	                     capture_output=True, text=True, env=env).stdout
 	assert "2 drafts waiting for acme/web" in out, out
+
+
+def test_the_hook_refreshes_the_mirror_in_the_background(tmp_path):
+	"""The mirror the hook writes is only as fresh as the last dashboard refresh, and on a machine
+	where the dashboard is rarely open that is days. So the hook starts a real sync — with the pull
+	left on — and does not wait for it: a network round trip inside a ten-second budget is the reason
+	step 4 passes --no-pull in the first place.
+
+	ponytail: the assertion is the CLOCK, not the argv. A `&` that still holds the hook's stdout keeps
+	the session waiting on it whatever the ampersand promised, and an argv check passes either way.
+	"""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	marker = tmp_path / "synced"
+	env = stub_gitdashy(tmp_path, f'if [ "$1" = "sync-memory" ]; then sleep 5; echo "$@" > {marker}; fi\n'
+	                              'exit 0\n')
+	t0 = time.time()
+	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	               capture_output=True, text=True, env=env)
+	assert time.time() - t0 < 3, "the hook waited for the background sync"
+	for _ in range(80):  # and it really ran: let it land rather than leaving it behind
+		if marker.exists():
+			break
+		time.sleep(0.1)
+	assert marker.exists() and "--into .agent/team" in marker.read_text()
 
 
 def test_the_hook_survives_a_gitdashy_that_is_not_there(tmp_path):
@@ -1159,9 +1198,8 @@ def test_the_session_hook_says_what_it_is_loading(tmp_path):
 	cfg = tmp_path / "cfg"
 	(cfg / "identity").mkdir(parents=True)
 	(cfg / "identity" / "AGENT.md").write_text("one two three four five six seven eight nine ten\n")
-	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
 	out = subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
-	                     capture_output=True, text=True, env=env).stdout
+	                     capture_output=True, text=True, env=stub_gitdashy(tmp_path)).stdout
 	assert "[budget] identity ~13 tok" in out, out  # 10 words * 1.35, the estimate the corpus uses
 	assert "STATE.md" not in out  # none seeded from a corpus with no templates, so none reported
 	seen = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout
@@ -1180,7 +1218,8 @@ def test_a_corpus_that_ships_its_own_budget_check_runs_it_instead(tmp_path):
 	check = corpus / "bin" / "budget-check.sh"
 	check.write_text("#!/usr/bin/env bash\necho 'mine 1 / 2 tok'\n")
 	check.chmod(0o755)
-	out = subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt), capture_output=True, text=True).stdout
+	out = subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt), capture_output=True,
+	                     text=True, env=stub_gitdashy(tmp_path)).stdout
 	assert "[budget] mine 1 / 2 tok" in out, out
 	assert "identity ~" not in out  # the generic line yields to the corpus's own
 
@@ -1246,7 +1285,7 @@ def _hook_repo(tmp_path):
 
 
 def _run_hook(wt, cfg, corpus):
-	env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+	env = {**stub_gitdashy(cfg.parent), "CLAUDE_CONFIG_DIR": str(cfg)}
 	return subprocess.run(["bash", install.HOOK, str(corpus)], cwd=str(wt),
 	                      capture_output=True, text=True, env=env).stdout
 

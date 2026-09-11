@@ -50,6 +50,15 @@ if command -v gitdashy >/dev/null 2>&1; then
   # --count does not reject the flag, it IGNORES it and prints the whole store: measured at 117 lines
   # and 99 drafts across every repo on this machine, into the context of every session, at every start.
   gitdashy drafts --count 2>/dev/null | head -3 || true
+  # THEN bring the team's side up to date, in the background, for the next read of that mirror. The
+  # line above wrote it from whatever was already on disk, which is as old as the last dashboard
+  # refresh — and on a machine where the dashboard is rarely open, that is days. This is the same
+  # command with the pull left on, detached so the network cannot touch the hook's ten seconds.
+  # ponytail: it does NOT pull when a dashboard is running: mirror.sync asks heartbeat.alive() and
+  # skips, so two processes never race for the checkout's index.lock. The hook does not have to know.
+  # ponytail: fully detached — stdin closed, both streams discarded, disowned. A background job that
+  # still holds the hook's stdout keeps the session waiting on it whatever the ampersand promised.
+  ( gitdashy sync-memory --into .agent/team </dev/null >/dev/null 2>&1 & ) || true
 fi
 # 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
 #    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to
