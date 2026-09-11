@@ -51,6 +51,10 @@ pub fn run(state: State, port: u16, token: String) {
                 if let Some(main) = handle.get_webview_window("main") {
                     match url.parse() {
                         Ok(parsed) => {
+                            // ponytail: the splash keeps the configured size; the dashboard gets the
+                            // whole screen. One window, so the growth happens here, at the handoff,
+                            // rather than at startup where it would blow up the splash too.
+                            let _ = main.maximize();
                             let _ = main.navigate(parsed);
                         }
                         // the splash page is what is showing, so a failure is said there

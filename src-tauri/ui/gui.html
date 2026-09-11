@@ -176,9 +176,12 @@
   .pane .bar { padding: 0 14px; gap: 6px; }
   /* ponytail: a 6px strip on the inner edge of each sidebar, dragged with three pointer events. No splitter lib. */
   .side, .pane { position: relative; }
-  .grip { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+  .grip { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; touch-action: none; }
   .side .grip { right: -3px; } .pane .grip { left: -3px; }
   .grip:hover, .grip.on { background: var(--dim3); }
+  /* ponytail: a drag that runs over the sidebar is a text selection to the browser. Turn it off for
+     the duration of the drag so dragging a width never paints the sidebar blue. */
+  html.dragging, html.dragging * { user-select: none !important; -webkit-user-select: none !important; }
   .tab { height: 26px; padding: 0 10px; border-radius: 6px; display: flex; align-items: center; gap: 6px; cursor: pointer;
          font-family: var(--mono); font-size: 11px; color: var(--dim2); border: 1px solid transparent; }
   .tab.on { color: var(--ink); background: var(--bg4); border-color: var(--edge); }
@@ -215,7 +218,9 @@
   .act.off { opacity: 0.45; pointer-events: none; }
 
   /* code tab */
-  .code { font-family: var(--mono); font-size: 11.5px; line-height: 1.45; }
+  /* ponytail: one horizontal scroller for the whole diff, not one per line. A scroll container per line
+     is a layer each and made a long diff crawl; moving it up keeps long lines reachable and cheap. */
+  .code { font-family: var(--mono); font-size: 11.5px; line-height: 1.45; overflow-x: auto; }
   .code .file { display: flex; gap: 8px; color: var(--cyan); font-weight: 600; margin-top: 10px; padding: 2px 0; }
   .code .file em { font-style: normal; color: var(--dim2); font-weight: 400; margin-left: auto; }
   .code .hunk { color: var(--dim3); padding: 2px 0; }
@@ -225,7 +230,6 @@
   .code .ln.marked { background: var(--markbg); color: var(--ink); }
   .code .ln .n { width: 40px; text-align: right; color: var(--dim3); flex-shrink: 0; }
   .code .ln .m { width: 10px; flex-shrink: 0; font-weight: 700; }
-  .code .ln .t { overflow-x: auto; }
   .code .cnote { display: flex; gap: 8px; padding: 4px 8px 6px 56px; font-family: var(--sans); font-size: 12.5px; color: var(--ink2); white-space: normal; }
   .code .cnote b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; flex-shrink: 0; margin-top: 2px; }
   .code .orphan { padding: 6px 8px; font-family: var(--sans); font-size: 12.5px; color: var(--ink3); border-left: 2px solid var(--edge); margin-top: 8px; }
@@ -614,7 +618,13 @@ function counts() {
 }
 const row = (k, label, control) => `<div class="row"><span>${state.hints && k ? `<kbd class="hint">${esc(k)}</kbd>` : ""}${esc(label)}</span>${control}</div>`;
 
+// ponytail: a repaint during a drag or a scroll throws the DOM out from under the pointer. render()
+// rebuilds #app from innerHTML, so the dragged grip is destroyed and the drag dies; scrolling a long
+// diff stutters for the same reason. Hold repaints while the user is touching the page and flush once.
+let dragging = false, scrolling = false, pendingRender = false, scrollTimer = 0;
+function thaw() { if (pendingRender && !dragging && !scrolling) { pendingRender = false; render(); } }
 function render() {
+  if (dragging || scrolling) { pendingRender = true; return; }
   const d = state.data;
   const s = S(), o = d?.options || {};
   const vis = visible();
@@ -1242,13 +1252,38 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("pointerdown", (e) => {
   const grip = e.target.closest("[data-grip]");
   if (!grip) return;
-  const which = grip.dataset.grip, box = grip.parentElement, start = e.clientX, w0 = box.offsetWidth, root = document.documentElement;
+  const which = grip.dataset.grip, box = grip.parentElement, start = e.clientX, w0 = box.offsetWidth;
+  dragging = true;
+  e.preventDefault();
+  document.documentElement.classList.add("dragging");
   grip.classList.add("on"); grip.setPointerCapture(e.pointerId);
-  const move = (ev) => root.style.setProperty(`--${which}-w`, Math.max(160, Math.min(window.innerWidth / 2, w0 + (which === "side" ? 1 : -1) * (ev.clientX - start))) + "px");
-  const up = () => { grip.classList.remove("on"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
-    try { localStorage.setItem("dashy-widths", JSON.stringify({ side: root.style.getPropertyValue("--side-w"), pane: root.style.getPropertyValue("--pane-w") })); } catch {} };
-  grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+  // ponytail: pointermove fires far faster than the screen repaints, and every width change re-lays
+  // out the pane. Coalesce to one write per animation frame. The variable stays on :root, not the
+  // dragged element, because render() rebuilds the sidebars from innerHTML and an inline value would
+  // be dropped on the next tick.
+  let raf = 0, want = w0;
+  const apply = () => { raf = 0; document.documentElement.style.setProperty(`--${which}-w`, want + "px"); };
+  const move = (ev) => {
+    const limit = window.innerWidth / 2;
+    want = Math.max(160, Math.min(limit, w0 + (which === "side" ? 1 : -1) * (ev.clientX - start)));
+    if (!raf) raf = requestAnimationFrame(apply);
+  };
+  const up = () => {
+    if (raf) { cancelAnimationFrame(raf); apply(); }
+    grip.classList.remove("on"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up);
+    document.documentElement.classList.remove("dragging");
+    try { const w = JSON.parse(localStorage.getItem("dashy-widths") || "{}"); w[which] = want + "px"; localStorage.setItem("dashy-widths", JSON.stringify(w)); } catch {}
+    dragging = false; thaw();
+  };
+  grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
 });
+// ponytail: scroll does not bubble, so the listener sits in the capture phase to hear the sidebars and
+// the diff. Repaints resume shortly after the last scroll rather than fighting the scroll every 2s tick.
+document.addEventListener("scroll", () => {
+  scrolling = true;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => { scrolling = false; thaw(); }, 150);
+}, true);
 try { const w = JSON.parse(localStorage.getItem("dashy-widths") || "{}"); for (const k of ["side", "pane"]) if (w[k]) document.documentElement.style.setProperty(`--${k}-w`, w[k]); } catch {}
 document.addEventListener("change", (e) => {
   const set = e.target.closest("[data-set]");
@@ -1269,7 +1304,7 @@ async function copyUrl(p) {
   const out = await call("/api/copy", { url: p.url });
   if (out) flash(out.tool === "terminal" ? `sent ${p.url} to the terminal — if nothing landed, install wl-clipboard or xclip` : `✓ copied ${p.url} (via ${out.tool})`);
 }
-function scrollJump() { document.getElementById("jumpto")?.scrollIntoView({ block: "center" }); }
+function scrollJump() { if (dragging || scrolling) return; document.getElementById("jumpto")?.scrollIntoView({ block: "center" }); }
 
 document.addEventListener("keydown", (e) => {
   const top = modals[modals.length - 1];
