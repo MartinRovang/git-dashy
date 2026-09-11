@@ -138,8 +138,12 @@ A review returns up to three lines in its `memory` field. For each:
    meaning, not the phrasing.
 3. **Otherwise** add it as a new draft at count 1.
 
-Fuzzy match is `difflib.SequenceMatcher` on a normalised string (lowercased,
-backticks stripped, whitespace collapsed), ratio ≥ `NEAR` (0.82).
+Fuzzy match is `difflib.SequenceMatcher` over **tokens** — words, lowercased,
+backticks and punctuation dropped — at ratio ≥ `NEAR` (0.88). Before the ratio is
+taken at all, the two lines must carry the same count of each qualifier group
+(negation, exclusivity): a single inserted `not` moves a sequence ratio by about
+0.08, so without that guard two lines stating opposite things fold into one. §7
+has the numbers and why tokens rather than characters.
 
 ### 3.2 Promotion — automatic
 
@@ -151,18 +155,36 @@ reviewer would meet its own earlier guess as evidence and agree with itself. The
 count would measure repetition, not durability. Rediscovery is the entire signal,
 so the reviewer must arrive at the fact again *blind*.
 
-### 3.3 Promotion — manual
+### 3.3 Promotion — into the team, also automatic
 
-`P` lists facts of yours the team does not have, one at a time (a fact is a
-sentence you must read to judge; a column of clipped sentences is how something
-wrong gets waved through).
+A fact that becomes yours joins the team's file in the same call, with no
+keypress. Two things gate it, and neither is a decision made per fact:
 
-- `t` appends it to the team's file and pushes.
-- `x` forgets it from your own memory and pushes.
+| gate | what it is |
+|---|---|
+| `team_visible` | the team can already see the repo's name — the table below |
+| consent | that team answered yes, once, at launch (`~/.prs_memory/.publishing`) |
+
+This was one keypress until v1.43.0, and the argument for the keypress was that a
+wrong fact in the team's memory lands where nobody who could correct it will see
+it happen. What changed is what a promotion means: two reviews that did not know
+about each other, usually two people, and a model that read both and called them
+the same claim. §4b-3 has the full account, including what a *no* to consent does.
+
+**`P` is the view and the way back out, not the gate.** It lists your facts for
+repos bound to a team, one at a time (a fact is a sentence you must read to judge;
+a column of clipped sentences is how something wrong gets waved through), and says
+of each whether the team has it:
+
+- `t` sends one that never went — a fact older than consent, or promoted while the
+  repo was bound to nothing. It is the only thing `t` is for; a fact the team
+  already has does not offer it.
+- `x` forgets it from your memory, from the team's and from the evidence pool.
+  Nobody chose to publish it, so nobody has to know it was published to take it
+  back.
 - `esc` leaves it alone.
 
-There is no automatic path into team memory. But `P` is not a flat list: facts
-two people have independently accepted sort first and are marked
+Facts two people have independently accepted sort first and are marked
 **★ N people found this**, so the strongest evidence is what you see, not what
 you have to go looking for.
 
@@ -194,7 +216,7 @@ become yours.
 |---|---|
 | a proposed fact | on arrival, if already known in `mine` or `team` |
 | a draft | when it reaches the threshold (it becomes a fact) |
-| a fact of yours | `x` in the `P` screen |
+| a fact of yours | `x` in the `P` screen — from yours, the team's and the pool |
 | any fact, merged or dropped | `Z` dream, after you approve the diff |
 | a mirror file | when its source is empty or gone — a mirror never outlives its source |
 

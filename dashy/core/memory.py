@@ -1,9 +1,10 @@
 """Review memory. Two sources — your own and the team's — read together, written apart.
 
 A fact the model proposes is not a fact yet: it is a draft, and it becomes yours only once independent
-reviews land on it again. That promotion is automatic, because being wrong there costs only you. Reaching
-the team's memory is never automatic — that lands in contexts where nobody who could correct it will see
-it happen — so it takes one keypress from you.
+reviews land on it again — two runs that did not know about each other, whether both are yours or one is
+a teammate's. That promotion reaches the team's memory in the same call, gated on the repo being bound to
+that team and on that team having said yes once at launch. No fact is decided one keypress at a time;
+what a keypress decides is the binding, the consent, and taking a fact back out with `x`.
 """
 import difflib
 import threading
@@ -726,8 +727,8 @@ def cross_check(repo, model):
 	would_merge does — so "two observations" means two runs that did not know about each other, whoever
 	ran them. Two ids from one person is already two independent reviews; one each is two people.
 	ponytail: promotion goes through promote(), so it lands with the already_known guard, the evidence
-	pool and the pre-review queue cleared, exactly as every other promotion does. Reaching the TEAM's
-	memory is still `P`: this is automatic because being wrong costs only you.
+	pool and the pre-review queue cleared, exactly as every other promotion does — the team's file
+	included, since v1.43.0, under team_visible and that team's consent.
 	"""
 	# ponytail: the lock is taken to READ and taken again to WRITE, and is not held across judged().
 	# It was — cross_check was @_guarded, and judged() waits up to JUDGE_TIMEOUT on a model — so a sweep
