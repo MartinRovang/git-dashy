@@ -283,17 +283,29 @@ class State:
 			self.fetching = True
 		# ponytail: the lines around the pull, with your own facts excluded — see memory.arrivals.
 		# ponytail: the snapshot must not be able to cost the pull. _read raises on anything but a
-		# missing file, so one unreadable team file — a permission, a half-written merge — would have
-		# skipped that tick's git entirely, for the sake of a badge. The badge is the optional half.
+		# missing file, so one unreadable team file — a permission, a half-written merge, a non-UTF-8
+		# byte a teammate pushed — would have skipped that tick's git entirely, for the sake of a
+		# badge. The badge is the optional half.
+		# ponytail: ValueError as well as OSError. UnicodeDecodeError is a ValueError, so `except
+		# OSError` alone missed exactly the case a team-pushed file produces, which is the one that
+		# arrives without anybody on this machine doing anything.
 		try:
 			was = {k: memory.team_lines(k) for k in team.joined()}
-		except OSError:
+		except (OSError, ValueError):
 			LOG.exception("could not count team facts before the pull")
 			was = {}
 		team.pull()  # newest team log + memory before we read them
-		for key, before in was.items():
-			if n := memory.arrivals(key, before):
-				with self.lock:  # ponytail: read on the UI thread, like every other cross-thread field
+		# ponytail: guarded on THIS side too. The pull is what brings in the unreadable file, so the
+		# read after it is the likelier of the two to meet one — and everything below here, the sweep,
+		# the mirrors and the PR list, was riding on a counter.
+		try:
+			grew = {key: n for key, before in was.items() if (n := memory.arrivals(key, before))}
+		except (OSError, ValueError):
+			LOG.exception("could not count what the pull brought")
+			grew = {}
+		if grew:
+			with self.lock:  # ponytail: read on the UI thread, like every other cross-thread field
+				for key, n in grew.items():
 					self.arrived[key] = self.arrived.get(key, 0) + n
 		self.start_sweep()
 		memory.history()  # ponytail: before the backup, so the first commit is memory as it arrived —

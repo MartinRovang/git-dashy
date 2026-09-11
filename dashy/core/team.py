@@ -774,7 +774,7 @@ It becomes a draft, never a fact. A draft is confirmed only when a review, or a 
 at the same thing independently — so file freely. What does not belong: what this task did, one
 bug, anything git already records.
 
-Without these, most drafts stay at one observation. Reviews propose; something else has to agree.
+Without these, most drafts stay at one observation.
 """
 
 PROJECT_TEMPLATE = """# What we are building

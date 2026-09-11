@@ -771,3 +771,37 @@ def test_an_unreadable_team_file_does_not_cost_the_tick_its_pull(monkeypatch, tm
     st = state.State(60, "opus")
     st.tick(time.time())
     assert pulls == [1] and st.arrived == {}
+
+
+def test_a_team_file_nobody_can_decode_does_not_stop_the_pr_list(monkeypatch, tmp_path):
+	"""A real non-UTF-8 file, not a stub that raises OSError. UnicodeDecodeError is a ValueError, so
+	`except OSError` missed exactly the case a team-pushed file produces — and the tick raises before
+	team.pull(), so the PR list froze on every refresh for the sake of a badge."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe not text\n")
+	fetched, pulls = [], []
+	monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert pulls == [1] and fetched == [1]
+
+
+def test_a_bad_team_file_arriving_with_the_pull_does_not_stop_the_rest(monkeypatch, tmp_path):
+	"""The pull is what brings the file in, so the read AFTER it is the likelier of the two to meet
+	one — and the sweep, the mirrors and the fetch all sit below it."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	(mem / "a__b.md").write_text("- uses tabs\n")
+	fetched = []
+	monkeypatch.setattr(state.team, "pull",
+	                    lambda: (mem / "a__b.md").write_bytes(b"- uses tabs\n- \xff\xfe\n"))
+	_quiet_tick(monkeypatch)
+	monkeypatch.setattr(state.github, "fetch", lambda: fetched.append(1) or [])
+	st = state.State(60, "opus")
+	st.tick(time.time())
+	assert fetched == [1] and st.arrived == {}

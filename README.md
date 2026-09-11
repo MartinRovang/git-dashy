@@ -343,7 +343,7 @@ of the learned facts, so a reviewer knows what the code is *for* before judging 
 it. It is declared, not learned — the promotion pipeline never touches it, the dream never rewrites it,
 and it is never offered for sharing.
 
-**`agents.md` is the other declared file, and it goes the other way.** It reaches every agent *session*
+**`agents.md` is declared too, and it reaches agent sessions rather than reviews.** It reaches every *session*
 in every repo bound to the team, through that repo's mirror, and never reaches a review: it says how to
 work here, which is not something a reviewer should be told about the code it is judging. Starting or
 joining a team seeds one; a team that already exists gets it by adding `memory/agents.md` to its
@@ -356,7 +356,8 @@ imperative text handed to an agent that holds tools, where facts and a brief are
 weighs, and whoever can push to the team's repo writes it. This gate covers `agents.md` only:
 `project.md` and the team's `general.md` come out of the same repo and reach the same mirror ungated,
 and the brief reaches review prompts too. The Knowledge row says when a team's `agents.md` is being
-withheld, whether because nobody has read it yet or because somebody said no.
+withheld, whether because nobody has read it yet or because somebody said no; `gitdashy teams
+--agents-again` forgets that answer so the next launch asks once more.
 
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its

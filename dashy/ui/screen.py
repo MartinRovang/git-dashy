@@ -1126,7 +1126,7 @@ def yes_no(scr):
 	ask_publishing shipped with exactly that defect and nobody saw it, because its test stubs
 	scr.timeout and hands getch a key immediately.
 	ponytail: it LOOPS. Any other key — a stray arrow, a resize, the -1 from a timeout that something
-	else set — must not count as an answer to a question about publishing other people's data.
+	else set — must not count as an answer to a question that is recorded and not asked again.
 	"""
 	scr.timeout(-1)
 	try:
@@ -1679,16 +1679,19 @@ def ask_agents(scr, state, sel):
 	ponytail: the COUNT of what is not shown, and where to read it. Eight lines fit; the shipped
 	template alone is about fifteen, so a payload appended at the end was never on screen when y was
 	pressed — which makes the panel's argument for itself false exactly when it matters.
+	ponytail: CUT LINES count too, not only dropped ones. Each line is clipped at 60 characters, so a
+	single 300-character agents.md showed its first 60, reported nothing missing, and had 240
+	characters accepted unseen — the same hole as the dropped tail, through the other axis.
 	"""
 	for key, text in memory.unacked_agents():
 		it, lines = team.info(key)["name"][:28], [l for l in text.splitlines() if l.strip()]
 		body = [(l[:60], "") for l in lines[:8]]
-		more = len(lines) - len(body)
+		more = len(lines) - len(body) + sum(1 for l in lines[:8] if len(l) > 60)
 		draw(scr, state, sel, prompt=" ")
 		panel(scr, f"{it}  ({key})  ·  what it tells your sessions to do",
 		      [("this team's agents.md reaches every session in its repos.", ""),
 		       ("it is written by whoever can push to the team's repo.", ""), ("", ""), *body,
-		       (f"… {more} more line{'' if more == 1 else 's'} — read the file before you say yes:"
+		       (f"… {more} line{'' if more == 1 else 's'} hidden or cut — read the file first:"
 		        if more else "", ""),
 		       (knowledge.tilde(os.path.join(bind.team_dir(key), memory.AGENTS)) if more else "", ""),
 		       ("", ""), ("reviews never see it. nothing else on this machine changes.", "")],

@@ -849,7 +849,7 @@ def arrivals(key, before):
 	ponytail: yours are excluded rather than the sweep being skipped. The sweep is not the only writer
 	into the team's files — a review promoting on its own thread and `promote()` on a keypress both
 	reach `_pool()` — so a guard on `State.sweeping` closed one door of three. The badge must only
-	count teammates' facts, and a line matching one you hold got there because you published it.
+	count teammates' facts.
 	"""
 	# ponytail: your facts are read once per REPO, not once per candidate line. _facts(path(r)) inside
 	# the comprehension re-opened the same file for every arrival in it.
@@ -872,14 +872,26 @@ def _agents_seen():
 	return out
 
 
-def _agents_key(key):
-	"""Folded: the answers file is written under team.joined()'s spelling and read under bind.of()'s.
+def _agents_of(key):
+	"""A team's agents.md text, and "" when there is none or it cannot be read.
 
-	ponytail: one fold, here, on the way into the file and into every lookup. Folding on read as well
-	made either half sufficient, so neither could be shown to matter. agents_text's call cannot be
-	shown failing — its only caller passes bind.of()'s answer, already folded — and it folds anyway so
-	the rule has no exception to remember.
+	ponytail: THIS reader swallows what `_read` deliberately does not. _read raises on anything but a
+	missing file, which is right for your own memory — a permission error there means reviewing with
+	no memory at all and must be loud. This file arrives from a repo any teammate can push to, and it
+	is read on `draw()`, which curses does not catch: one non-UTF-8 byte, or one bad mode, unwound the
+	dashboard of every member of the team on every launch. Unreadable means withheld, which is the
+	direction this gate fails in anyway.
+	ponytail: UnicodeDecodeError is a ValueError, not an OSError, so `except OSError` around the caller
+	did not see it. That is what made the tick's guard miss the case it was written for.
 	"""
+	try:
+		return _read(os.path.join(bind.team_dir(key), AGENTS))
+	except (OSError, ValueError):
+		return ""
+
+
+def _agents_key(key):
+	"""Folded: the answers file is written under team.joined()'s spelling and read under bind.of()'s."""
 	return key.lower()
 
 
@@ -902,7 +914,10 @@ def agents_text(key, base):
 	ponytail: read ONCE. Hashing the file and then reading it again let a pull between the two deliver
 	text nobody accepted — the check and the use have to be the same bytes.
 	"""
-	text = _read(os.path.join(base, AGENTS))
+	try:
+		text = _read(os.path.join(base, AGENTS))
+	except (OSError, ValueError):
+		return ""  # ponytail: unreadable is withheld; see _agents_of, which this mirrors for a base path
 	return text if key and _agents_seen().get(_agents_key(key)) == _agents_sha(text) else ""
 
 
@@ -911,7 +926,7 @@ def unacked_agents():
 	seen = _agents_seen()
 	out = []
 	for key in team.joined():
-		text = _read(os.path.join(bind.team_dir(key), AGENTS))
+		text = _agents_of(key)
 		# ponytail: the stored value is compared with its refusal marker stripped. A no records "!<sha>",
 		# and asking again on every launch for a file somebody has already declined is how a prompt
 		# teaches people to dismiss it. The file has to CHANGE before it is offered again.
@@ -930,7 +945,7 @@ def refused_agents():
 	seen = _agents_seen()
 	out = []
 	for key in team.joined():
-		sha = _agents_sha(_read(os.path.join(bind.team_dir(key), AGENTS)))
+		sha = _agents_sha(_agents_of(key))
 		if sha and seen.get(_agents_key(key)) == "!" + sha:
 			out.append(key)
 	return out
@@ -952,6 +967,26 @@ def allow_agents(key, text, yes=True):
 			f.write("".join(f"{k} {v}\n" for k, v in sorted(seen.items())))
 	except OSError:
 		pass  # ponytail: unrecorded is unaccepted — the block stays out rather than going in unasked
+
+
+def ask_agents_again(key):
+	"""Forget your answer about `key`'s agents.md, so the next launch shows it again. True if there was
+	one to forget.
+
+	ponytail: the way back that a refusal had none of. Nothing cleared a `!` entry, so the note saying
+	"restart to be asked again" was false — a restart asked nothing, and the only route back was
+	editing .agents-ok by hand or waiting for the team to change the file.
+	"""
+	seen = _agents_seen()
+	if seen.pop(_agents_key(key), None) is None:
+		return False
+	try:
+		os.makedirs(config.MEMORY_DIR, exist_ok=True)
+		with open(os.path.join(config.MEMORY_DIR, AGENTS_OK), "w") as f:
+			f.write("".join(f"{k} {v}\n" for k, v in sorted(seen.items())))
+	except OSError:
+		return False
+	return True
 
 
 def _fact_repos():

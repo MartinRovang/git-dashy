@@ -197,14 +197,14 @@ def session_notes():
 		# ponytail: the launch prompt asks ONCE, at startup. After a `n`, or on a machine that only ever
 		# runs the session hook, a team's instruction to your sessions is withheld for ever with nothing
 		# saying so — and this row exists for exactly that: what a session here is NOT being told.
-		# ponytail: a REFUSAL is a note too, and it was the case this row was added for. unacked_agents
-		# stops listing a team once it has been answered either way, so reading only that left a `n`
-		# exactly as silent as the bug it was meant to report.
-		refused = memory.refused_agents()
+		# ponytail: a refusal is a note too, and unacked_agents forgets a team once it is answered.
 		if waiting := [k for k, _t in memory.unacked_agents()]:
 			out.append(f"{', '.join(waiting)}: agents.md not read — restart to be asked")
-		if refused:
-			out.append(f"{', '.join(refused)}: agents.md refused — restart to be asked again")
+		# ponytail: names the command that ACTUALLY re-asks. It said "restart to be asked again", and a
+		# restart asked nothing: ask_agents walks unacked_agents, which drops a team whose refusal
+		# matches the file it still has. Nothing cleared a `!` entry at all.
+		if refused := memory.refused_agents():
+			out.append(f"{', '.join(refused)}: agents.md refused — `gitdashy teams --agents-again`")
 		_NOTES = (key, out)
 	return _NOTES[1]
 
