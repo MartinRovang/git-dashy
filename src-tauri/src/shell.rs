@@ -7,15 +7,19 @@
 //! ponytail: the shell owns no UI of its own beyond the splash. It points the window at the same server
 //! `gitdashy --browser` serves. One UI, in the browser and here.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 use crate::state::State;
 
 /// How long the first fetch gets before the dashboard is shown anyway, still fetching.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL_EVERY: Duration = Duration::from_millis(300);
+/// How long the splash stays up once the last step is ticked, so the fill is seen before the handover.
+const HANDOVER_BEAT: Duration = Duration::from_millis(500);
 
 /// True once the server has finished its first fetch, or given up on it.
 // ponytail: an error counts as done. A machine with no token or no network would otherwise sit on
@@ -32,22 +36,29 @@ pub fn run(state: State, port: u16, token: String) {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+            // ponytail: the splash says when its listeners are up. Emitting the steps from setup raced
+            // the page — they all fired before it loaded, so only the first step ever spun.
+            let listening = Arc::new(AtomicBool::new(false));
+            let flag = listening.clone();
+            handle.listen("gitdashy-splash-ready", move |_| flag.store(true, Ordering::SeqCst));
             // ponytail: off the main thread. Waiting for the fetch in setup means the splash never paints.
             std::thread::spawn(move || {
-                let step = |name: &str| {
-                    let _ = handle.emit("gitdashy-step", name);
-                };
-                // ponytail: the same three names the splash page lists. The server is a thread now, so
-                // the first two are over before the window exists; they are told so the bar fills.
-                step("spawn_server");
-                step("await_socket");
-                step("fetch_pull_requests");
-                // ponytail: the first fetch happens behind the splash, so the dashboard opens populated.
+                // ponytail: the server and the socket are up before this window exists, so the splash
+                // starts with those two ticked. The first fetch is the only phase left to run.
                 // Past FETCH_TIMEOUT it opens anyway, still fetching: a slow GitHub is not a failure.
                 let until = Instant::now() + FETCH_TIMEOUT;
                 while Instant::now() < until && !fetched(&state) {
                     std::thread::sleep(POLL_EVERY);
                 }
+                // ponytail: hold the done signal until the splash is listening, so a first fetch that
+                // lands before the page does is not missed the way the old step events were.
+                let ready_until = Instant::now() + Duration::from_secs(5);
+                while !listening.load(Ordering::SeqCst) && Instant::now() < ready_until {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                // tick the last step, then a beat so it is seen before the dashboard replaces the page
+                let _ = handle.emit("gitdashy-done", ());
+                std::thread::sleep(HANDOVER_BEAT);
                 if let Some(main) = handle.get_webview_window("main") {
                     match url.parse() {
                         Ok(parsed) => {
