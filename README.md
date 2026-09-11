@@ -506,7 +506,7 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 
 ## Versioning & self-update
 
-The version lives in one place, `version` in `Cargo.toml`, and shows in the header badge and via
+The version lives in one place, `version` in `src-tauri/Cargo.toml`, and shows in the header badge and via
 `gitdashy --version`. Releases are tagged `vX.Y.Z` and CI attaches one binary per OS to each.
 
 Each refresh also lists the release tags on GitHub (`git ls-remote`, so no API rate limit). If a tag is
