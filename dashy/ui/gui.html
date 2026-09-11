@@ -30,7 +30,6 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
   a { color: var(--pink); text-decoration: none; }
   ::selection { background: rgba(245,107,176,0.3); }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }
   @keyframes spin { to { transform: rotate(360deg) } }
   .scroll::-webkit-scrollbar { width: 10px; }
   .scroll::-webkit-scrollbar-thumb { background: var(--edge); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
@@ -54,7 +53,6 @@
   .pill.busy { background: rgba(95,196,217,0.10); border-color: rgba(95,196,217,0.28); color: var(--cyan); }
   .pill.err { background: rgba(240,101,92,0.10); border-color: rgba(240,101,92,0.28); color: var(--red); }
   .pill.up { background: rgba(79,212,140,0.16); cursor: pointer; }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
   .toggle { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0 10px 0 8px; border-radius: 6px;
             border: 1px solid var(--edge); background: var(--bg4); cursor: pointer; }
   .toggle:hover { border-color: var(--dim3); }
@@ -98,6 +96,10 @@
   .card .row select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
                       border: 1px solid var(--edge); border-radius: 5px; padding: 1px 4px; cursor: pointer; max-width: 120px; }
   .card .row select:hover { border-color: var(--dim3); }
+  /* ponytail: the open list is the webview's own popup, painted white by default under the theme's pale
+     ink. color-scheme dark plus explicit option colours is what every engine honours; no custom popover. */
+  .card .row select { color-scheme: dark; }
+  .card .row select option { color: var(--ink); background: var(--bg4); }
   .chips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .chips i { font-family: var(--mono); font-style: normal; font-size: 10px; padding: 1px 6px; border-radius: 9px; cursor: pointer;
              border: 1px solid var(--edge); color: var(--dim2); background: var(--bg4); }
@@ -161,8 +163,6 @@
   .end { width: 170px; flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
   .state { height: 22px; padding: 0 9px; border-radius: 6px; display: flex; align-items: center;
            font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
-  .bar-run { width: 44px; height: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
-  .bar-run i { display: block; height: 4px; border-radius: 3px; background: var(--cyan); animation: pulse 1.2s ease-in-out infinite; }
   .ci { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .none { font-family: var(--mono); font-size: 12px; color: var(--dim3); padding: 4px 18px 10px 46px; }
   .none.err { color: var(--red); }
@@ -395,7 +395,7 @@ function rowHTML(p, child) {
     return `<div class="rev" style="background:${pal.bg};color:${pal.fg}">${esc(r.slice(1))}</div>`;
   }).join("");
   const end = p.busy
-    ? `<div class="bar-run"><i style="width:100%"></i></div><span class="mono" style="font-size:11px;color:var(--cyan)">${esc(st.label)}</span>`
+    ? `<i class="spinner"></i><span class="mono" style="font-size:11px;color:var(--cyan)">${esc(st.label)}</span>`
     : `${ci ? `<div class="ci" style="background:${PALETTE[ci].fg}" title="checks ${esc(p.checks)}"></div>` : ""}
        <div class="state" style="background:${pal.bg};border:1px solid ${pal.border};color:${pal.fg}">${esc(st.label).slice(0, 24)}</div>`;
   const n = p.older?.length || 0;
@@ -645,7 +645,7 @@ function render() {
     </div>
     <div style="flex:1"></div>
     ${d?.update ? `<div class="pill up" data-update="1"><kbd class="hint">u</kbd> ↑ update to v${esc(d.update)}</div>` : ""}
-    <div class="pill${running ? " busy" : ""}"><div class="dot"></div><span>${running ? `${running} agent${running > 1 ? "s" : ""} running` : "agents idle"}</span></div>
+    <div class="pill${running ? " busy" : ""}"><span>${running ? `${running} agent${running > 1 ? "s" : ""} running` : "agents idle"}</span></div>
     ${refresh}
     <span class="ib" data-refresh="1" title="refresh now (f)">⟳</span>
     <div class="toggle${d?.auto ? " on" : ""}" data-auto="1"><div class="track"><i></i></div><span>AUTO</span></div>
