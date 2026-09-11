@@ -645,10 +645,7 @@ def test_facts_arriving_with_the_pull_are_counted_per_team(monkeypatch, tmp_path
 	st = state.State(60, "opus")
 
 	def one_tick():
-		# ponytail: the event is cleared before each, and it no longer gates the count — the guard it
-		# used to skip was replaced by the "already yours" check in arrivals(). It stays because
-		# start_sweep() refuses to start a second sweep while one is set, and a tick that quietly did
-		# not sweep is not the tick this test means to drive.
+		# ponytail: cleared first, or start_sweep skips and this is not the tick the test means to run.
 		st.sweeping.clear()
 		st.tick(time.time())
 
@@ -759,3 +756,18 @@ def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 	while st.sweeping.is_set() and time.time() < deadline:
 		time.sleep(0.01)
 	assert not st.sweeping.is_set(), "a sweep that threw left the guard set, so none can run again"
+
+
+def test_an_unreadable_team_file_does_not_cost_the_tick_its_pull(monkeypatch, tmp_path):
+    """The badge's snapshot runs before team.pull(), and _read raises on anything but a missing file.
+    So one unreadable team file — a permission, a half-written merge — skipped that tick's git
+    entirely, for the sake of a counter. The counter is the optional half."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    a_team(monkeypatch, tmp_path)
+    pulls = []
+    monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+    monkeypatch.setattr(state.memory, "team_lines", lambda k: (_ for _ in ()).throw(OSError("EACCES")))
+    _quiet_tick(monkeypatch)
+    st = state.State(60, "opus")
+    st.tick(time.time())
+    assert pulls == [1] and st.arrived == {}

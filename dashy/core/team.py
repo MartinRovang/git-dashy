@@ -774,8 +774,7 @@ It becomes a draft, never a fact. A draft is confirmed only when a review, or a 
 at the same thing independently — so file freely. What does not belong: what this task did, one
 bug, anything git already records.
 
-This is the half of the loop that is usually missing. Reviews propose; without a second observer
-most drafts sit at one observation for ever, and nothing reaches the team.
+Without these, most drafts stay at one observation. Reviews propose; something else has to agree.
 """
 
 PROJECT_TEMPLATE = """# What we are building

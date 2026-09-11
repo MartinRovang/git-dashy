@@ -281,13 +281,15 @@ class State:
 		LOG.debug("tick")
 		with self.lock:  # ponytail: the failure path clears this under the lock; both sides now agree
 			self.fetching = True
-		# ponytail: the LINES around the pull, and arrivals that are already yours do not count. A sweep
-		# promotes your own facts into the team's files, and so does a review finishing on its own
-		# thread and `promote()` on a keypress — all three reach _pool(). A guard on `self.sweeping`
-		# closed one door of the three; asking whether a line is already yours closes all of them,
-		# because that is the real question. A badge claiming a teammate found what you found yourself
-		# is a lie about the one thing it exists to say.
-		was = {k: memory.team_lines(k) for k in team.joined()}
+		# ponytail: the lines around the pull, with your own facts excluded — see memory.arrivals.
+		# ponytail: the snapshot must not be able to cost the pull. _read raises on anything but a
+		# missing file, so one unreadable team file — a permission, a half-written merge — would have
+		# skipped that tick's git entirely, for the sake of a badge. The badge is the optional half.
+		try:
+			was = {k: memory.team_lines(k) for k in team.joined()}
+		except OSError:
+			LOG.exception("could not count team facts before the pull")
+			was = {}
 		team.pull()  # newest team log + memory before we read them
 		for key, before in was.items():
 			if n := memory.arrivals(key, before):

@@ -353,11 +353,10 @@ checkout. What belongs in it is whatever the team needs its members' sessions to
 **The dashboard shows it and asks before any session reads it**, and asks again if the wording changes;
 until then it stays out of the mirror and nothing else changes. The reason is that this file is
 imperative text handed to an agent that holds tools, where facts and a brief are evidence a reader
-weighs — and whoever can push to the team's repo writes it. That is a narrower guarantee than it may
-read: `project.md` and the team's `general.md` come out of the same repo and reach the same mirror with
-no gate, and the brief reaches review prompts too. Anyone who could put a payload in `agents.md` could
-put it in the brief instead. The gate is on the file whose whole purpose is to be obeyed; the rest of
-that surface is still open, and the Knowledge row says when a team's `agents.md` is being withheld.
+weighs, and whoever can push to the team's repo writes it. This gate covers `agents.md` only:
+`project.md` and the team's `general.md` come out of the same repo and reach the same mirror ungated,
+and the brief reaches review prompts too. The Knowledge row says when a team's `agents.md` is being
+withheld, whether because nobody has read it yet or because somebody said no.
 
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its

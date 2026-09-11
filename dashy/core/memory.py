@@ -848,12 +848,15 @@ def arrivals(key, before):
 
 	ponytail: yours are excluded rather than the sweep being skipped. The sweep is not the only writer
 	into the team's files — a review promoting on its own thread and `promote()` on a keypress both
-	reach `_pool()` — so a guard on `State.sweeping` closed one door of three. Asking "was this already
-	mine" closes all of them, because that is the actual question: a line that matches a fact you hold
-	arrived because you published it.
+	reach `_pool()` — so a guard on `State.sweeping` closed one door of three. The badge must only
+	count teammates' facts, and a line matching one you hold got there because you published it.
 	"""
-	return len([(r, f) for r, f in team_lines(key) - before
-	            if not any(_is(f, m) for m in _facts(path(r)))])
+	# ponytail: your facts are read once per REPO, not once per candidate line. _facts(path(r)) inside
+	# the comprehension re-opened the same file for every arrival in it.
+	gained, mine = team_lines(key) - before, {}
+	for r, _f in gained:
+		mine.setdefault(r, [_norm(m) for m in _facts(path(r))])
+	return sum(1 for r, f in gained if _norm(f) not in mine[r])
 
 
 def _agents_seen():
@@ -870,28 +873,19 @@ def _agents_seen():
 
 
 def _agents_key(key):
-	"""One spelling for the answers file, because it is written under one name and read under another.
+	"""Folded: the answers file is written under team.joined()'s spelling and read under bind.of()'s.
 
-	ponytail: consent is recorded under `team.joined()`'s spelling — a directory name — and looked up
-	under `bind.of()`'s, which is lowercased because a binding is typed. Every seam around this already
-	folds for the same reason (`bind.team_dir`, `team.dir_of`). Nothing today makes an unfolded
-	checkout, since `start()` and `setup()` both go through `key_of()`; what makes it worth a function
-	rather than four `.lower()` calls is the failure if anything ever does — accepted, never delivered,
-	and never asked about again, with no surface saying which of those happened.
-	ponytail: ONE fold, on the way into the file and on the way into every lookup. Folding on read as
-	well made either half sufficient, so neither could be shown to matter and both could rot.
-	ponytail: two of the three call sites can be shown failing without this; agents_text's cannot,
-	because its only caller hands it `bind.of()`'s answer, which is already folded. It folds anyway so
-	that the rule is "every lookup folds" rather than "every lookup except the one whose caller happens
-	to have done it" — but nothing proves that line, and a reader should not assume something does.
+	ponytail: one fold, here, on the way into the file and into every lookup. Folding on read as well
+	made either half sufficient, so neither could be shown to matter. agents_text's call cannot be
+	shown failing — its only caller passes bind.of()'s answer, already folded — and it folds anyway so
+	the rule has no exception to remember.
 	"""
 	return key.lower()
 
 
-def _agents_sha(base):
-	""""" when the team has no agents.md, else a digest of exactly the bytes a session would be given."""
-	t = _read(os.path.join(base, AGENTS))
-	return hashlib.sha256(t.encode()).hexdigest()[:16] if t.strip() else ""
+def _agents_sha(text):
+	""""" for nothing to accept, else a digest of exactly the bytes a session would be given."""
+	return hashlib.sha256(text.encode()).hexdigest()[:16] if text.strip() else ""
 
 
 def agents_text(key, base):
@@ -903,11 +897,13 @@ def agents_text(key, base):
 	once. Anyone with push access to the team's memory repo would otherwise steer everybody's sessions
 	with nothing on any screen. The house rule is the one in SPEC §1: automate where being wrong costs
 	only you, ask where it costs other people.
-	ponytail: keyed on the CONTENT, not on the team. Accepting a team once and then trusting whatever
-	that file says next month is the same hole with a slower fuse — the acknowledgement is of the
-	wording that was read, so an edit asks again.
+	ponytail: keyed on the CONTENT, not on the team, because accepting once would otherwise accept
+	every later edit too. The acknowledgement is of the wording that was read, so an edit asks again.
+	ponytail: read ONCE. Hashing the file and then reading it again let a pull between the two deliver
+	text nobody accepted — the check and the use have to be the same bytes.
 	"""
-	return _read(os.path.join(base, AGENTS)) if key and _agents_seen().get(_agents_key(key)) == _agents_sha(base) else ""
+	text = _read(os.path.join(base, AGENTS))
+	return text if key and _agents_seen().get(_agents_key(key)) == _agents_sha(text) else ""
 
 
 def unacked_agents():
@@ -915,20 +911,41 @@ def unacked_agents():
 	seen = _agents_seen()
 	out = []
 	for key in team.joined():
-		base = bind.team_dir(key)
+		text = _read(os.path.join(bind.team_dir(key), AGENTS))
 		# ponytail: the stored value is compared with its refusal marker stripped. A no records "!<sha>",
 		# and asking again on every launch for a file somebody has already declined is how a prompt
 		# teaches people to dismiss it. The file has to CHANGE before it is offered again.
-		if (sha := _agents_sha(base)) and seen.get(_agents_key(key), "").lstrip("!") != sha:
-			out.append((key, _read(os.path.join(base, AGENTS))))
+		if (sha := _agents_sha(text)) and seen.get(_agents_key(key), "").lstrip("!") != sha:
+			out.append((key, text))
 	return out
 
 
-def allow_agents(key, base, yes=True):
-	"""Record that you have read this team's agents.md at its current wording. A no records the
-	refusal, so the file has to CHANGE before it is offered again rather than at every launch."""
+def refused_agents():
+	"""Teams whose agents.md you said no to, at the wording it still has. What the standing note names.
+
+	ponytail: separate from unacked_agents, which is "what to ask about" and deliberately forgets a
+	team once it has been answered. A refusal is not a question any more; it is a state the Knowledge
+	row has to keep saying, or a `n` is exactly as silent as the launch-prompt bug it was added for.
+	"""
 	seen = _agents_seen()
-	seen[_agents_key(key)] = _agents_sha(base) if yes else "!" + _agents_sha(base)
+	out = []
+	for key in team.joined():
+		sha = _agents_sha(_read(os.path.join(bind.team_dir(key), AGENTS)))
+		if sha and seen.get(_agents_key(key)) == "!" + sha:
+			out.append(key)
+	return out
+
+
+def allow_agents(key, text, yes=True):
+	"""Record that you have read this team's agents.md at the wording in `text`. A no records the
+	refusal, so the file has to CHANGE before it is offered again rather than at every launch.
+
+	ponytail: the TEXT that was shown, not the file as it stands when the key lands. The prompt waits
+	on a person, which can be minutes, and a pull in that window — the session hook's own background
+	sync is one — would have had them accept wording they never saw.
+	"""
+	seen = _agents_seen()
+	seen[_agents_key(key)] = ("" if yes else "!") + _agents_sha(text)
 	try:
 		os.makedirs(config.MEMORY_DIR, exist_ok=True)
 		with open(os.path.join(config.MEMORY_DIR, AGENTS_OK), "w") as f:

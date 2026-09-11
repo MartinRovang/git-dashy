@@ -1116,14 +1116,41 @@ def asking(scr, text, keep=" [y/n]"):
 	return text + keep if len(text) + len(keep) <= room else text[:room - len(keep) - 1] + "…" + keep
 
 
+def yes_no(scr):
+	"""Block until the reader actually answers y or n. The ONE place that reads a consent keypress.
+
+	ponytail: main() leaves the screen on a 500 ms timeout so the header can animate, so a bare
+	getch() returns -1 half a second after a panel is drawn. Every consent prompt written without
+	timeout(-1) therefore answered ITSELF — `-1 == ord("y")` is False, so it recorded a refusal, on
+	every launch, with the panel visible for long enough to look like it had been shown and dismissed.
+	ask_publishing shipped with exactly that defect and nobody saw it, because its test stubs
+	scr.timeout and hands getch a key immediately.
+	ponytail: it LOOPS. Any other key — a stray arrow, a resize, the -1 from a timeout that something
+	else set — must not count as an answer to a question about publishing other people's data.
+	"""
+	scr.timeout(-1)
+	try:
+		while (k := scr.getch()) not in (ord("y"), ord("n"), ord("Y"), ord("N")):
+			pass
+		return k in (ord("y"), ord("Y"))
+	finally:
+		scr.timeout(500)
+
+
 def confirm(scr, state, sel, question):
-	"""Draw the question in the footer and block for y/n."""
+	"""Draw the question in the footer and block for one key; True only for y.
+
+	ponytail: ONE read, not yes_no's loop. Most callers here end in "[any key]" and ignore the answer,
+	so a loop that insists on y or n would hang them. A consent panel, where a stray key must not
+	count as an answer, uses yes_no instead.
+	"""
 	draw(scr, state, sel, prompt=question)
 	scr.refresh()
 	scr.timeout(-1)
-	yes = scr.getch() == ord("y")
-	scr.timeout(500)
-	return yes
+	try:
+		return scr.getch() == ord("y")
+	finally:
+		scr.timeout(500)
 
 
 def edit_memory(scr, state, sel, repo):
@@ -1639,34 +1666,35 @@ def ask_publishing(scr, state, sel):
 		       ("· what your reviews proposed, unconfirmed", ""), ("", ""),
 		       (f"{waiting} waiting to go" if waiting else "nothing waiting yet", "")],
 		      "[y] yes   [n] not this team", accent=6)
-		memory.allow_publishing(key, scr.getch() == ord("y"))
+		memory.allow_publishing(key, yes_no(scr))
 		state.wake.set()
 
 
 def ask_agents(scr, state, sel):
 	"""Ask before a team's instruction to your agent sessions is put in front of them.
 
-	ponytail: this one is not about what LEAVES the machine, it is about what arrives and then acts.
-	Everything else a team sends is evidence a reader weighs — facts, a brief, someone's drafts.
-	agents.md is imperative text handed to an agent holding tools, pulled on the refresh tick, reaching
-	every member at once; anyone with push access to the team's repo would otherwise steer everybody's
-	sessions with nothing on any screen. SPEC §1 is the rule: ask where being wrong costs other people.
-	ponytail: the first lines are SHOWN. "Do you trust this file" is not a question anybody can answer;
-	"here is what it will tell your sessions to do" is. Clipped to the panel, and the whole file is one
-	`less` away in the team checkout.
-	ponytail: asked again when the WORDING changes, not once per team. Accepting a team and then taking
-	whatever that file says next month is the same hole with a slower fuse.
+	ponytail: memory.agents_text says why this file is the one that gets a keypress. The screen's own
+	job is to make the question answerable: it shows what the file will tell your sessions to do, and
+	says how much of it is off the panel, because "do you trust this file" is not a question.
+	ponytail: the COUNT of what is not shown, and where to read it. Eight lines fit; the shipped
+	template alone is about fifteen, so a payload appended at the end was never on screen when y was
+	pressed — which makes the panel's argument for itself false exactly when it matters.
 	"""
 	for key, text in memory.unacked_agents():
-		it = team.info(key)["name"][:28]
-		body = [(l[:60], "") for l in text.splitlines() if l.strip()][:8]
+		it, lines = team.info(key)["name"][:28], [l for l in text.splitlines() if l.strip()]
+		body = [(l[:60], "") for l in lines[:8]]
+		more = len(lines) - len(body)
 		draw(scr, state, sel, prompt=" ")
 		panel(scr, f"{it}  ({key})  ·  what it tells your sessions to do",
 		      [("this team's agents.md reaches every session in its repos.", ""),
-		       ("it is written by whoever can push to the team's repo.", ""), ("", ""), *body, ("", ""),
-		       ("reviews never see it. nothing else on this machine changes.", "")],
+		       ("it is written by whoever can push to the team's repo.", ""), ("", ""), *body,
+		       (f"… {more} more line{'' if more == 1 else 's'} — read the file before you say yes:"
+		        if more else "", ""),
+		       (knowledge.tilde(os.path.join(bind.team_dir(key), memory.AGENTS)) if more else "", ""),
+		       ("", ""), ("reviews never see it. nothing else on this machine changes.", "")],
 		      "[y] let sessions read it   [n] keep it out", accent=6)
-		memory.allow_agents(key, bind.team_dir(key), scr.getch() == ord("y"))
+		# ponytail: the text that was SHOWN is what gets recorded, not the file re-read afterwards.
+		memory.allow_agents(key, text, yes_no(scr))
 		state.wake.set()
 
 
