@@ -1,11 +1,24 @@
-"""Self-update: track the newest vX.Y.Z tag on origin. ponytail: git is the package manager."""
+"""Self-update: track the newest vX.Y.Z tag on origin. ponytail: git is the package manager until v2,
+whose releases are prebuilt binaries — those are fetched over the legacy entrypoint, not checked out."""
 import logging
 import os
+import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 
 from .. import HERE, VERSION
+
+REPO = "MartinRovang/github-dashy"  # the release host install.sh and the v2 binary both name
+# ponytail: the same asset names ci.yml uploads and the Rust updater downloads.
+ASSETS = {
+	("Linux", "x86_64"): "gitdashy-linux-x86_64",
+	("Darwin", "arm64"): "gitdashy-macos-arm64",
+	("Darwin", "x86_64"): "gitdashy-macos-x86_64",
+}
 
 
 def vkey(v):
@@ -29,8 +42,44 @@ def update_available():
 	return tag if tag and vkey(tag) > vkey(VERSION) else ""
 
 
+def is_binary_release(version):
+	"""True for the v2+ app, whose releases are prebuilt binaries, not git tags."""
+	return vkey(version)[0] >= 2
+
+
+def asset_name():
+	"""The prebuilt binary for this machine, or "" where the release has none."""
+	return ASSETS.get((platform.system(), platform.machine()), "")
+
+
+def migrate(version):
+	"""Fetch the v2+ binary over the legacy entrypoint and re-exec. Returns an error string, or never returns."""
+	asset = asset_name()
+	if not asset:
+		return f"no binary for {platform.system()}-{platform.machine()}"
+	bin_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
+	os.makedirs(bin_dir, exist_ok=True)
+	target = os.path.join(bin_dir, "gitdashy")
+	url = f"https://github.com/{REPO}/releases/download/v{version}/{asset}"
+	try:
+		with urllib.request.urlopen(url, timeout=300) as resp:
+			# ponytail: written beside the target, so the replace is on one filesystem and atomic. It
+			# swaps the legacy symlink itself, leaving the prs.py it pointed at alone.
+			with tempfile.NamedTemporaryFile(dir=bin_dir, prefix=".gitdashy.", delete=False) as tmp:
+				shutil.copyfileobj(resp, tmp)
+				tmp_path = tmp.name
+		os.chmod(tmp_path, 0o755)
+		os.replace(tmp_path, target)
+	except Exception as e:
+		logging.getLogger(__name__).exception("migration to %s failed", version)
+		return str(e)[:60]
+	os.execv(target, [target, *sys.argv[1:]])
+
+
 def apply_update(version):
-	"""Check out the release tag, then re-exec so the new code keeps running. Returns an error string, or never returns."""
+	"""v2+ releases are the new app: migrate to the binary. Tags below are git checkouts, as before."""
+	if is_binary_release(version):
+		return migrate(version)
 	try:
 		for a in (["fetch", "--tags", "-q"], ["checkout", "-q", f"v{version}"]):
 			subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True, timeout=120)
