@@ -182,8 +182,9 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
 over-engineering, `security` only security, `tests` only missing or toothless tests,
-`humanizer` only AI-sounding prose in the description, docs and comments. The hello
-comment names both so the author knows why the review reads that way. `x` and `h` tick them at runtime.
+`humanizer` only AI-sounding prose in the description, docs, comments and user-facing strings.
+The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
+them at runtime.
 
 `--instructions FILE` (or `PRS_INSTRUCTIONS`) appends your own text file to the prompt — house
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it

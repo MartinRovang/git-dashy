@@ -384,6 +384,11 @@ def test_self_review_writes_where_the_lookup_looks(monkeypatch, tmp_path):
 	assert review_mod.self_review_at("acme/api", 7) > 0
 
 
+def test_every_voice_and_hunter_has_a_prompt_fragment():
+	assert set(review_mod.VOICE) == set(config.VOICES)  # tail() indexes these, a missing one is a KeyError mid-review
+	assert set(review_mod.HUNTER) == set(config.HUNTERS)
+
+
 def test_review_voices_follow_option_order_and_can_replace_the_review(monkeypatch, posted):
 	calls = []
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or claude_out(verdict="approve", body="b"))
