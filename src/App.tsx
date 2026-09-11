@@ -59,7 +59,6 @@ export default function App() {
         /* the next tick retries */
       }
     }
-    setDetail((d) => (d && d.url === url ? d : null))
     run()
     return () => {
       alive = false
@@ -84,17 +83,12 @@ export default function App() {
         /* the next tick retries */
       }
     }
-    setDiff((d) => (d && d.url === url ? d : null))
     run()
     return () => {
       alive = false
       if (timer) clearTimeout(timer)
     }
   }, [pane, url, tab, scope, context])
-
-  useEffect(() => {
-    setAt(0)
-  }, [url])
 
   useEffect(() => {
     if (tab !== 'code' || !diff || diff.pending) return
@@ -266,7 +260,10 @@ export default function App() {
                 expanded={expanded}
                 onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
-                onSelect={setSel}
+                onSelect={(uid) => {
+                  setSel(uid)
+                  setAt(0)
+                }}
               />
             </div>
             {pane ? (
