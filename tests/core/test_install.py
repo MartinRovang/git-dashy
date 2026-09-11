@@ -1165,6 +1165,23 @@ def test_the_hook_refreshes_the_mirror_in_the_background(tmp_path):
 	assert marker.exists() and "--into .agent/team" in marker.read_text()
 
 
+def test_the_hook_does_not_sync_when_init_refused(tmp_path):
+	"""init refuses a repo with no origin, and a path git would commit. Firing the sync anyway pulled
+	every joined team over the network and left an empty .agent/team in a repo that had just been told
+	it could not have one."""
+	wt = tmp_path / "repo"
+	wt.mkdir()
+	subprocess.run(["git", "init", "-q", str(wt)], check=True)
+	marker = tmp_path / "synced"
+	env = stub_gitdashy(tmp_path, 'if [ "$1" = "init" ]; then exit 1; fi\n'
+	                              f'if [ "$1" = "sync-memory" ]; then echo ran > {marker}; fi\n'
+	                              'exit 0\n')
+	subprocess.run(["bash", install.HOOK, str(tmp_path / "no-such-corpus")], cwd=str(wt),
+	               capture_output=True, text=True, env=env)
+	time.sleep(0.5)  # the sync is detached; give it long enough to have written if it ran
+	assert not marker.exists()
+
+
 def test_the_hook_survives_a_gitdashy_that_is_not_there(tmp_path):
 	"""command -v guards it; without that the hook fails at the end of every session on a machine
 	mid-uninstall, which is a hook the user removes.

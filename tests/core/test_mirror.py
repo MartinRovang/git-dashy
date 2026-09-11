@@ -507,3 +507,21 @@ def test_a_team_with_no_remote_is_not_a_reason_to_skip_the_others(monkeypatch, t
 	monkeypatch.setattr(team, "pull", lambda: pulls.append(1))
 	mirror.sync(str(tmp_path / "o"), "a/b")  # the only team has no remote at all
 	assert pulls == [1]
+
+
+def test_the_header_says_when_the_last_sync_did_not_land(monkeypatch, tmp_path):
+	"""`git pull --rebase` rewrites FETCH_HEAD during the FETCH, before the rebase. A pull that
+	fetched and then failed to rebase leaves a fresh timestamp over a checkout that did not move, so
+	the header read "last pulled just now" for exactly the case it exists to report — and _all_fresh
+	then held retries off on the strength of it. A live error outranks any age."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=2)
+	seed("a/b", "uses tabs")
+	monkeypatch.setattr(team, "ERROR", "could not apply 3f2a1b… CONFLICT in memory/general.md")
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled just now — **the last sync did not land:**" in got
+	assert "CONFLICT in memory/general.md" in got

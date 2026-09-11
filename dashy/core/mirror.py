@@ -51,8 +51,7 @@ def _freshness(got, now):
 	ponytail: in the FILE, not on the hook's stdout. This is what a session reads, it is imported on
 	every turn, and it costs one line. A hook message scrolls past once, at the moment nobody is
 	looking for it, and says nothing at all to a session started any other way.
-	ponytail: the warning names the dashboard rather than the age alone, because that is the thing the
-	reader can act on. "4 days ago" invites a shrug; "nothing is refreshing this" is an instruction.
+	ponytail: the warning names what the reader can fix, rather than the age alone.
 	"""
 	out, running = [], heartbeat.alive()
 	for label, base in got:
@@ -66,7 +65,13 @@ def _freshness(got, now):
 		# team.ERROR already knows — printed "last pulled 4 days ago" with no call to action. That is
 		# the case where the reader most needs telling and the one that read as fine. Only the remedy
 		# differs, because only the remedy depends on whether anything is trying.
-		why = ("" if now - at <= STALE else
+		# ponytail: and the AGE IS NOT THE WHOLE ANSWER. `git pull --rebase` rewrites FETCH_HEAD during
+		# the fetch, before the rebase, so a pull that fetched and then failed to rebase leaves a fresh
+		# timestamp over a checkout that did not move. The header said "last pulled just now" for
+		# exactly the case it exists to report, and _all_fresh then held off retries on the strength of
+		# it. team.ERROR is what knows; a live error outranks any age.
+		why = (f" — **the last sync did not land:** {team.ERROR[:80]}" if team.ERROR else
+		       "" if now - at <= STALE else
 		       " — **this may be behind what the team has.** " + ("The dashboard is running but is not"
 		       " reaching the team; `T` in it shows the last error." if running else
 		       "Nothing is refreshing it: start `gitdashy`, or run"
@@ -164,16 +169,11 @@ def _write(into, repo, general, at):
 			# truncates first, so a session reading at the wrong moment imported an empty or half-written
 			# mirror and was told the team knows nothing. rename within one directory is atomic, so a
 			# reader sees the old file or the new one.
-			# ponytail: a UNIQUE name, or the rename does not survive the concurrency it was added for.
-			# The premise is two writers — the dashboard's refresh and the background one a session hook
-			# starts — and both computing `dst + ".part"` means the second truncates the first's file
-			# mid-write, both write at their own offsets, and whoever renames first moves an interleaved
-			# file into place. A reader then sees a whole-looking corrupt mirror, which is worse than a
-			# short one because nothing about it invites a second look. The failure path was worse
-			# still: it removed the OTHER writer's temp file.
-			# ponytail: 0600, not the umask default the old open() gave it. Memory is often team-private
-			# — sync() refuses to write anywhere git would commit it for that reason — and the tighter
-			# mode is what mkstemp already does. Kept deliberately rather than widened back.
+			# ponytail: written whole under a UNIQUE name, then renamed into place. Two writers exist —
+			# the dashboard's refresh and the background one a session hook starts — and a plain
+			# open(dst, "w") truncates first, while a shared `dst + ".part"` is worse: both write at
+			# their own offsets and whoever renames first publishes an interleaved file that looks
+			# whole. mkstemp also keeps the mirror at 0600, which memory being team-private wants.
 			fd, tmp = tempfile.mkstemp(dir=into, prefix=name + ".", suffix=".part")
 			try:
 				with os.fdopen(fd, "w") as f:

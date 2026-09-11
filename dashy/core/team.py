@@ -65,9 +65,9 @@ def _note(r, label="sync"):
 def fetched_at(d):
 	"""When `d` last reached its remote, as a unix time. None when it never has or has none to reach.
 
-	ponytail: FETCH_HEAD, not a commit date. A pull that found nothing new still rewrites it, which is
-	the question being asked — "are we still in touch with the team", not "did the team say anything".
-	A commit date answers the second and reads as weeks stale on a team that is simply quiet.
+	ponytail: FETCH_HEAD, not a commit date. It measures when the team was last reached; a pull that
+	found nothing new still rewrites it. A commit date measures when the team last said something, and
+	reads as weeks stale on a team that is simply quiet.
 	ponytail: a stat, not a subprocess, and the .git DIRECTORY is checked here rather than left to
 	has_remote — which falls back to spawning git when .git is a file. This is read on the mirror path,
 	which a SessionStart hook calls inside a ten-second budget, so "not a subprocess" has to be true of

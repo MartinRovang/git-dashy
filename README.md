@@ -429,16 +429,19 @@ nothing is keeping it current, says so in the file the session is reading rather
 that scrolls past:
 
 ```
-> team org/review-team: last pulled 4 days ago — **the dashboard is not running, so this may be behind
-> what the team has.** Start `gitdashy`, or run `gitdashy sync-memory --into` this directory.
+> team org/review-team: last pulled 4 days ago — **this may be behind what the team has.** Nothing is
+> refreshing it: start `gitdashy`, or run `gitdashy sync-memory --into` this directory.
 ```
 
+A pull that fetched and then failed to rebase leaves a fresh timestamp over a checkout that did not
+move, so a live error outranks the age and the line reads `— **the last sync did not land:** …`.
+
 The session hook also starts one `sync-memory` in the background, detached, so the next read is current
-on a machine where the dashboard is rarely open. Only one process ever pulls a given checkout: it skips
-when a dashboard is running, takes a lock beside the settings file when one is not, and skips again when
-every team was reached in the last few minutes — six repos opened in an editor is six session starts, and
-one fetch answers all of them. Either way the report says why it did not pull, rather than looking like a
-fetch that found nothing.
+on a machine where the dashboard is rarely open. A background sync does not pull while a dashboard is
+running, while another sync holds the lock, or when every team was reached in the last few minutes. Six
+repos opened in an editor is six session starts, and one fetch answers all of them. The dashboard's own
+refresh takes the same lock, so two processes do not rebase one checkout against each other. Either way
+the report says why it did not pull, rather than looking like a fetch that found nothing.
 
 **Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:

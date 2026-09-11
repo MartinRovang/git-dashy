@@ -159,3 +159,31 @@ def test_demo_mode_takes_no_lock_and_leaves_no_file(monkeypatch, tmp_path):
 	assert heartbeat.claim()
 	heartbeat.unclaim()
 	assert list(tmp_path.iterdir()) == []
+
+
+def test_breaking_a_stale_lock_has_one_winner(monkeypatch, tmp_path):
+	"""Two claimants could both see the old mtime. With os.remove both then succeeded: the first
+	creates its lock, the second's remove deletes it, and two processes pull. rename is atomic and
+	single-winner — whoever loses gets ENOENT and keeps the answer it was given."""
+	beat_file(tmp_path, monkeypatch)
+	lock = tmp_path / heartbeat.LOCK
+	lock.write_text("9999999")
+	os.utime(lock, (time.time() - heartbeat.STUCK - 1,) * 2)
+	assert heartbeat.claim()
+	assert (tmp_path / (heartbeat.LOCK + ".stale")).exists()  # moved aside, not deleted under a racer
+	assert not heartbeat.claim()                              # and the fresh one is ours alone
+	heartbeat.unclaim()
+
+
+def test_a_lock_whose_write_fails_is_not_left_behind(monkeypatch, tmp_path):
+	"""os.write sat outside the try, so ENOSPC gave a traceback out of `gitdashy sync-memory` and left
+	an EMPTY lock — which unclaim refused to remove, since int("") raises, so it stuck for all of
+	STUCK. Failing to record the pid is not a reason to hold a lock nobody can release."""
+	beat_file(tmp_path, monkeypatch)
+
+	def no(*a):
+		raise OSError("no space left on device")
+
+	monkeypatch.setattr(heartbeat.os, "write", no)
+	assert heartbeat.claim()                       # nowhere to record it is not a reason to stop
+	assert not (tmp_path / heartbeat.LOCK).exists()  # and nothing is left for STUCK to time out

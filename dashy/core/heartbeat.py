@@ -23,14 +23,9 @@ from .. import config
 # the laptop can match a live unrelated process on the desktop and a dead dashboard reads as alive.
 HOST = socket.gethostname()
 GRACE = 90  # seconds past one interval before a beat counts as stopped, for a tick that ran long
-# ponytail: the interval is NOT clamped, and a clamp was tried and taken back out. `--interval` is read
-# as a free int — `i` cycles config.INTERVALS but the flag is not limited to them — so clamping to the
-# longest of those made an honest `--interval 1800` read as dead 990 seconds into every cycle: the
-# header would say "nothing is refreshing it" with the dashboard on screen, and a hook's sync would
-# claim the lock and pull underneath one that was about to. The threat it was aimed at is a beat file
-# claiming a year, and that needs a LIVE PID ON THIS HOST as well, which the two checks below require —
-# an attacker who can write this file can spawn a process, so the clamp bought almost nothing and cost
-# a real configuration. Being wrong here fails towards pulling too often, which is the safe direction.
+# ponytail: the declared interval is NOT clamped. A clamp to max(config.INTERVALS) was tried and made
+# an honest `--interval 1800` read as dead; the host and live-pid checks below are what bound a lying
+# beat, and being wrong here fails towards pulling too often.
 LOCK = ".prs_pulling"  # held for the length of one team.pull(), by whichever process got there first
 # ponytail: a ceiling on team.pull(), which is what the lock is held across: every joined team, each
 # bounded by team.CLONE. Eight is far more teams than anyone has and keeps this a constant rather than
@@ -39,12 +34,8 @@ STUCK = 8 * 300  # seconds after which a held lock is assumed to belong to a pro
 
 
 def _beside_settings(name):
-	"""Where a small cross-process file of ours lives, or "" in demo mode, which writes nothing anywhere.
-
-	ponytail: beside the SETTINGS file, never under the memory dir — push_dir commits that with
-	`git add -A`, and a file that changes every refresh there is one commit per refresh in that
-	history for ever.
-	"""
+	"""Where a small cross-process file of ours lives, or "" in demo mode, which writes nothing at all.
+	ponytail: see the module docstring for why it is not under the memory dir."""
 	if not config.SETTINGS:
 		return ""
 	return os.path.join(os.path.dirname(config.SETTINGS) or ".", name)
@@ -64,6 +55,7 @@ def beat(interval):
 	# plain open(p, "w") truncates first, and a reader landing in that window gets a short file, reads
 	# it as "no dashboard", and goes and pulls. That window sits exactly where the beat is supposed to
 	# be doing its work, and this is the one writer that can close it.
+	tmp = ""
 	try:
 		fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p) or ".", prefix=".prs_dashboard.")
 		with os.fdopen(fd, "w") as f:
@@ -72,7 +64,7 @@ def beat(interval):
 	except OSError:
 		try:
 			os.remove(tmp)
-		except (OSError, NameError, UnboundLocalError):
+		except OSError:
 			pass
 
 
@@ -117,16 +109,31 @@ def claim():
 		try:
 			fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
 		except FileExistsError:
+			# ponytail: the stale one is RENAMED aside, not removed. Two claimants could both see the
+			# old mtime, and with os.remove both would then succeed: the first creates its lock, the
+			# second's remove deletes it, and two processes pull. rename is atomic and single-winner —
+			# whoever loses it gets ENOENT and takes the answer it was given, which is "held".
 			try:
 				if attempt == 2 or time.time() - os.stat(p).st_mtime < STUCK:
 					return False
-				os.remove(p)
+				os.rename(p, p + ".stale")
 			except OSError:
 				return False
 			continue
 		except OSError:
 			return True  # nowhere to put a lock is not a reason to stop syncing
-		os.write(fd, str(os.getpid()).encode())
+		# ponytail: inside the try, and the file goes if it fails. ENOSPC here used to escape as a
+		# traceback out of `gitdashy sync-memory`, leaving an EMPTY lock — which unclaim then refused
+		# to remove, since int("") raises, so the lock stuck for the whole of STUCK.
+		try:
+			os.write(fd, str(os.getpid()).encode())
+		except OSError:
+			os.close(fd)
+			try:
+				os.remove(p)
+			except OSError:
+				pass
+			return True
 		os.close(fd)
 		return True
 	return False
@@ -135,10 +142,10 @@ def claim():
 def unclaim():
 	"""Give back the pull lock IF it is still ours. Never raises: one we cannot remove is broken by age.
 
-	ponytail: the pid is read back. Removing whatever file is there meant that once a slow pull ran past
-	STUCK and a second claimant broke the lock and took its own, this process finishing removed the
-	SECOND one's file and let a third in — so the lock stopped holding under exactly the slow pulls that
-	make it worth having. It is a lock, not a flag, and a lock releases what it took.
+	ponytail: the pid is read back, so it only removes the lock when the pid is its own. Removing
+	whatever file was there meant that once a slow pull ran past STUCK and a second claimant took its
+	own, this process finishing removed the SECOND one's file and let a third in — the lock stopped
+	holding under exactly the slow pulls that make it worth having.
 	"""
 	p = _beside_settings(LOCK)
 	try:

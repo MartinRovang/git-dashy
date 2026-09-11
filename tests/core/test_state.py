@@ -699,3 +699,46 @@ def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 	while st.sweeping.is_set() and time.time() < deadline:
 		time.sleep(0.01)
 	assert not st.sweeping.is_set(), "a sweep that threw left the guard set, so none can run again"
+
+
+def test_the_tick_holds_the_pull_lock_while_it_pulls(monkeypatch, tmp_path):
+    """It used to beat and then pull unguarded. A hook sync that claimed the lock while no dashboard
+    was up keeps pulling once one starts, and the first tick rebased the same checkout beside it —
+    so "only one process ever pulls a given checkout" was in the README and was not true."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    held = []
+    monkeypatch.setattr(state.team, "pull", lambda: held.append(os.path.exists(tmp_path / heartbeat.LOCK)))
+    _quiet_tick(monkeypatch)
+    state.State(60, "opus").tick(time.time())
+    assert held == [True]                                       # the lock was ours for the duration
+    assert not os.path.exists(tmp_path / heartbeat.LOCK)        # and given back
+
+
+def test_a_tick_skips_the_pull_while_a_hook_sync_holds_the_lock(monkeypatch, tmp_path):
+    """Not waited for: everything after the pull — the PR list, the mirrors — has nothing to do with
+    the team's git, and blocking the refresh thread to wait out somebody else's fetch is worse than
+    taking the next tick."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    pulls = []
+    monkeypatch.setattr(state.team, "pull", lambda: pulls.append(1))
+    _quiet_tick(monkeypatch)
+    assert heartbeat.claim()                                    # a background sync got there first
+    state.State(60, "opus").tick(time.time())
+    assert pulls == []
+    heartbeat.unclaim()
+
+
+def test_a_dashboard_still_reads_as_alive_after_a_tick_longer_than_the_grace(monkeypatch, tmp_path):
+    """The beat is stamped at tick START and alive() allows one interval plus GRACE, but the next tick
+    begins at fetched_at + interval. So any tick longer than GRACE made a healthy dashboard read as
+    dead until it came round again, and one slow team pull is enough at a 120s git timeout."""
+    monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(state.team, "pull", lambda: None)
+    _quiet_tick(monkeypatch)
+    st = state.State(60, "opus")
+    beats = []
+    real = heartbeat.beat
+    monkeypatch.setattr(heartbeat, "beat", lambda i: (beats.append(time.time()), real(i))[0])
+    st.tick(time.time() - 200)  # a tick that took a while to get here
+    assert len(beats) == 2, "the end of the tick must beat too, or the stamp is as old as its start"
+    assert heartbeat.alive()
