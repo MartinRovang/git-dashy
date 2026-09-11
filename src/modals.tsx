@@ -133,25 +133,43 @@ export function editor(title: string, text: string, onSave: (v: string) => void 
   m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2]() }
 }
 
-/** A list to pick from with j/k/Enter. */
-export function picker(title: string, options: string[], current: string, show: (v: string) => string, onPick: (v: string) => void) {
-  let idx = Math.max(0, options.indexOf(current))
+/** A list to pick from with j/k/Enter. `many` toggles a set of values instead of one. */
+export function picker(title: string, options: string[], current: string, show: (v: string) => string, onPick: (v: string) => void): void
+export function picker(title: string, options: string[], current: string[], show: (v: string) => string, onPick: (v: string[]) => void, many: true): void
+export function picker(
+  title: string,
+  options: string[],
+  current: string | string[],
+  show: (v: string) => string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onPick: (v: any) => void,
+  many = false,
+) {
+  const chosen = () => (Array.isArray(current) ? current : [current])
+  let idx = many ? 0 : Math.max(0, options.indexOf(current as string))
   const body = () =>
     options.map((o, i) => (
       <div key={o} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
-        <span className="tick">{o === current ? '✓' : ''}</span>
+        <span className="tick">{many ? (chosen().includes(o) ? '✓' : '') : o === current ? '✓' : ''}</span>
         <span>{show(o)}</span>
       </div>
     ))
   const m = open({
     title,
     body,
-    foot: [['⏎', 'pick', () => pick(idx), 'go'], ['Esc', 'keep', () => close(m)]],
+    foot: [['⏎', many ? 'toggle' : 'pick', () => pick(idx), 'go'], ['Esc', many ? 'close' : 'keep', () => close(m)]],
   })
   const pick = (i: number) => {
     idx = i
-    close(m)
-    onPick(options[i])
+    if (!many) {
+      close(m)
+      onPick(options[i])
+      return
+    }
+    const cur = chosen()
+    current = cur.includes(options[i]) ? cur.filter((v) => v !== options[i]) : options.filter((v) => cur.includes(v) || v === options[i])
+    onPick(current)
+    bump()
   }
   m.keys = {
     j: () => { idx = (idx + 1) % options.length; bump() },

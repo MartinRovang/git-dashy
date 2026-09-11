@@ -41,6 +41,7 @@ export default function App() {
 
   const dataRef = useRef<StateData | null>(null)
   dataRef.current = data
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
 
   useEffect(() => {
     if (!flash) return
@@ -51,6 +52,68 @@ export default function App() {
   useEffect(() => {
     document.body.dataset.theme = data?.settings.theme || 'dashy'
   }, [data?.settings.theme])
+
+  // Grip drags: restore the saved widths, then write one CSS var per animation frame while dragging.
+  useEffect(() => {
+    try {
+      const w = JSON.parse(localStorage.getItem('dashy-widths') || '{}')
+      for (const k of ['side', 'pane']) if (w[k]) document.documentElement.style.setProperty(`--${k}-w`, w[k])
+    } catch {
+      /* no saved widths */
+    }
+    const onDown = (e: PointerEvent) => {
+      const grip = (e.target as HTMLElement).closest<HTMLElement>('[data-grip]')
+      if (!grip) return
+      const which = grip.dataset.grip === 'pane' ? 'pane' : 'side'
+      const start = e.clientX
+      const w0 = grip.parentElement!.offsetWidth
+      e.preventDefault()
+      document.documentElement.classList.add('dragging')
+      grip.classList.add('on')
+      grip.setPointerCapture(e.pointerId)
+      let raf = 0
+      let want = w0
+      const apply = () => {
+        raf = 0
+        document.documentElement.style.setProperty(`--${which}-w`, `${want}px`)
+      }
+      const move = (ev: PointerEvent) => {
+        const limit = window.innerWidth / 2
+        want = Math.max(160, Math.min(limit, w0 + (which === 'side' ? 1 : -1) * (ev.clientX - start)))
+        if (!raf) raf = requestAnimationFrame(apply)
+      }
+      const up = () => {
+        if (raf) {
+          cancelAnimationFrame(raf)
+          apply()
+        }
+        grip.classList.remove('on')
+        grip.removeEventListener('pointermove', move)
+        grip.removeEventListener('pointerup', up)
+        grip.removeEventListener('pointercancel', up)
+        document.documentElement.classList.remove('dragging')
+        try {
+          const w = JSON.parse(localStorage.getItem('dashy-widths') || '{}')
+          w[which] = `${want}px`
+          localStorage.setItem('dashy-widths', JSON.stringify(w))
+        } catch {
+          /* storage unavailable */
+        }
+      }
+      grip.addEventListener('pointermove', move)
+      grip.addEventListener('pointerup', up)
+      grip.addEventListener('pointercancel', up)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [])
+
+  // The keyboard, gated on no modal being open (the ModalHost owns keys while it is).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyRef.current(e)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // The pane's detail: a second request per PR, re-asked while the server reports pending.
   useEffect(() => {
@@ -118,6 +181,7 @@ export default function App() {
   }
 
   async function setting(name: string, value: unknown) {
+    ;(document.activeElement as HTMLElement | null)?.blur()
     const shown = Array.isArray(value)
       ? value.join(', ') || 'off'
       : name === 'interval'
@@ -248,6 +312,91 @@ export default function App() {
     }
     fns[name]?.()
   }
+
+  function move(step: number) {
+    if (!rows.length) return
+    const i = rows.findIndex((r) => r.uid === selUid)
+    const next = rows[Math.min(rows.length - 1, Math.max(0, i + step))]
+    if (next) {
+      setSel(next.uid)
+      setAt(0)
+    }
+  }
+
+  function pickSetting(key: string) {
+    const s = data?.settings || {}
+    const o = data?.options
+    if (!o) return
+    const on = (name: string, v: unknown) => void setting(name, v)
+    if (key === 'm') picker('Model', o.model, s.model || '', String, (v) => on('model', v))
+    else if (key === 'd') picker('Depth', o.depth, s.depth || '', String, (v) => on('depth', v))
+    else if (key === 'e') picker('Effort', o.effort, s.effort || '', (v) => v || 'default', (v) => on('effort', v))
+    else if (key === 's') picker('Summaries', o.subs, s.subs || '', String, (v) => on('subs', v))
+    else if (key === 't')
+      picker('History', o.window.map((v) => (v == null ? 'all' : String(v))), s.window == null ? 'all' : String(s.window), (v) => (v === 'all' ? 'all' : `${v}h`), (v) => on('window', v === 'all' ? null : +v))
+    else if (key === 'i') picker('Refresh', o.interval.map(String), String(s.interval), (v) => every(+v), (v) => on('interval', +v))
+    else if (key === 'x') picker('Voices', o.voice, s.voice || [], String, (v) => on('voice', v), true)
+    else if (key === 'h') picker('Hunters', o.hunter, s.hunter || [], String, (v) => on('hunter', v), true)
+  }
+
+  function handleKey(e: KeyboardEvent) {
+    if (modalCount() > 0) return
+    const t = e.target as HTMLElement
+    if (/input|textarea|select/i.test(t.tagName)) {
+      if (e.key === 'Escape') {
+        if (t.id === 'q') setQuery('')
+        t.blur()
+      }
+      return
+    }
+    const k = e.ctrlKey && e.key === 's' ? 'ctrl+s' : e.key
+    const one = (fn: () => void) => {
+      e.preventDefault()
+      fn()
+    }
+    const p = current
+    const code = !!(pane && tab === 'code' && p && detail?.url === p.url && detail?.review)
+    if (k === 'j' || k === 'ArrowDown') return one(() => move(1))
+    if (k === 'k' || k === 'ArrowUp') return one(() => move(-1))
+    if (code && ['D', 'n', 'N', 'c'].includes(k))
+      return one(() => {
+        if (k === 'D') {
+          setScope((v) => (v === 'marks' ? 'diff' : 'marks'))
+          setDiff(null)
+        } else if (k === 'c') {
+          setContext((v) => CONTEXTS[(CONTEXTS.indexOf(v) + 1) % CONTEXTS.length])
+          setDiff(null)
+        } else setAt((v) => v + (k === 'n' ? 1 : -1))
+      })
+    if (k === 'f') return one(onRefresh)
+    if (k === 'a') return one(onAuto)
+    if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
+    if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
+    if ('mdexhsti'.includes(k)) return one(() => pickSetting(k))
+    if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
+    if (k === '+' && p) return one(() => void addReviewer(p))
+    if (k === 'p' && p) return one(() => void preReview(p))
+    if (k === 'Y' && p) return one(() => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'))
+    if (k === 'y' && p) return one(() => void copyUrl(p))
+    if (k === 'g') return one(() => void memoryEditor(ctx, ''))
+    if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))
+    if (k === 'Z') return one(() => void dreamScreen(ctx))
+    if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
+    if (k === 'W') return one(() => void draftsScreen(ctx))
+    if (k === 'b' && p) return one(() => void bindScreen(p))
+    if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
+    if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
+    if (k === 'T') return one(() => void teamsScreen(ctx, p))
+    if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
+    if (k === 'u') return one(onUpdate)
+    if (k === 'v') return one(() => doAct('view'))
+    if (k === 'r' && p) return one(() => void review(p))
+    if (k === 'Enter') return one(() => setPane((v) => !v))
+    if (k === 'Escape') return one(onMenu)
+    if (k === 'q') return one(() => void quit())
+    if (k === '/') return one(() => document.getElementById('q')?.focus())
+  }
+  keyRef.current = handleKey
 
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 

@@ -138,6 +138,7 @@ export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onMod
           </span>
         </div>
       </div>
+      <div className="grip" data-grip="side" />
     </div>
   )
 }

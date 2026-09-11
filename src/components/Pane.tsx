@@ -198,6 +198,7 @@ export function Pane({
   const pre = d?.pre || p.pre
   return (
     <div className="pane">
+      <div className="grip" data-grip="pane" />
       <div className="bar">
         <span className="lab">SELECTED PR</span>
         <span className={`tab${code ? '' : ' on'}`} onClick={() => onTab('summary')}>
