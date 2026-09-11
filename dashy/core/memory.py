@@ -3,8 +3,11 @@
 A fact the model proposes is not a fact yet: it is a draft, and it becomes yours only once independent
 reviews land on it again — two runs that did not know about each other, whether both are yours or one is
 a teammate's. That promotion reaches the team's memory in the same call, gated on the repo being bound to
-that team and on that team having said yes once at launch. No fact is decided one keypress at a time;
-what a keypress decides is the binding, the consent, and taking a fact back out with `x`.
+that team and on that team having said yes once at launch.
+
+A person can also promote one fact by hand, with `W` -> `t` or `P` -> `t`, and that takes one keypress
+and no recurrence: someone who has read the line is the second opinion the counter stands in for. See
+SPEC §1 for both rules and promote() below for what the hand path skips.
 """
 import difflib
 import threading

@@ -27,17 +27,13 @@ def handled():
 	screen functions means parsing which of them the README's prose is talking about, and a parity test
 	that guesses at its own subject is worse than one with a stated edge.
 
-	ponytail: the settings keys are NOT in the main loop as ord() calls — one `chr(k) in settings(state)`
-	branch dispatches all eight, which is the shape that makes the table the key list. Reading only the
-	ord() calls would report d/e/h/i/m/s/t/x as undocumented and the test would be noise.
+	ponytail: the eight settings keys are dispatched by one `chr(k) in settings(state)` branch, so the
+	table is the key list and reading only ord() would report them as undocumented.
 	"""
 	src = read("dashy", "ui", "screen.py")
 	loop = src[src.index("\ndef main("):]
 	table = src[src.index("def settings(state)"):src.index("def set_theme")]
-	# ponytail: the arrows are handled by name, so a regex over ord() misses them and the table check
-	# reported them as promises nothing keeps. Enter is by name too but the README spells it as a word,
-	# which a single-character regex cannot see, so it stays out rather than reading as missing.
-	named = {"↑": "KEY_UP", "↓": "KEY_DOWN"}
+	named = {"↑": "KEY_UP", "↓": "KEY_DOWN"}  # by name, not ord(); Enter is spelled as a word
 	return (set(re.findall(r'ord\("(\S)"\)', loop)) | set(re.findall(r'"(\w)": \(', table))
 	        | {k for k, name in named.items() if f"curses.{name}" in loop})
 
@@ -58,13 +54,9 @@ def keys_section():
 def table_rows():
 	"""Every single-char key the Keys table gives a row: the whole KEY CELL, not only its first entry.
 
-	ponytail: the key cell, because `N`, `D`, `c` and `2` share a row with another key rather than
-	having one of their own. Reading only the first entry let those handlers be deleted silently, and
-	they are precisely the keys a ponytail in screen.py records as having once done nothing at all.
-	ponytail: and NOT the description cell, which is the other half of the same mistake. Searching the
-	whole row — or the whole section — made `o` documented because it appears inside the `b` row's
-	prose, so deleting `o`'s own row passed. A key is documented when it has a row, or when the prose
-	under the table names it; being mentioned in someone else's description is neither.
+	ponytail: the key cell only. Its whole contents, because `N`, `D`, `c` and `2` share a row rather
+	than having one of their own; and not the description cell, or `o` counts as documented by the `b`
+	row's prose and deleting its own row passes.
 	"""
 	# ponytail: split on the pipe rather than matched. The key cell holds "`j` / `k`, `↑` / `↓`" and
 	# "`1` `2` `Tab`" as well as a bare "`e`", and a pattern that covers all of those is a pattern
@@ -75,11 +67,18 @@ def table_rows():
 
 
 def prose_keys():
-	"""Single-char keys the paragraphs under the table name — `R`, `S`, `V` and the dropdown letters,
-	which act on the header rather than on a row and are described there instead of given a row."""
-	body = keys_section()
-	prose = "\n".join(l for l in body.splitlines() if not l.startswith("|"))
-	return set(re.findall(r"`(\S)`", prose))
+	"""Keys the paragraphs under the table document: the run of backticked keys each line OPENS with.
+
+	ponytail: the line's SUBJECT, not every key it mentions. Reading the whole paragraph counted `q`
+	as documented because the dropdown line ends "`Esc` (or `q`) keeps", which is a different `q` from
+	the one that quits — so deleting the quit row passed. The same went for `t`, `s`, `m`, `d`, `e`,
+	`i`, `j` and `k`.
+	"""
+	out = set()
+	for line in keys_section().splitlines():
+		if line.startswith("`"):
+			out |= set(re.findall(r"`(\S)`", re.match(r"^((?:`\S`[,/ ]*)+)", line).group(1)))
+	return out
 
 
 def test_every_dashboard_key_is_named_in_the_keys_section():

@@ -1115,9 +1115,7 @@ def test_a_fact_reaches_the_team_without_anyone_sending_it(monkeypatch, tmp_path
 
 def test_a_hand_promotion_reaches_the_team_too(monkeypatch, tmp_path):
 	"""The oracle for SPEC §1's second rule: a hand promotion publishes on one keypress and no
-	recurrence. `W` -> `t` is this call, with no draft count behind it, and the team's file has the
-	fact when it returns. The spec said for a while that nothing crossed without two observations,
-	which was true of the automatic path and false of this one."""
+	recurrence. `W` -> `t` is this call, with no draft count behind it."""
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
 	shared = a_team(monkeypatch, tmp_path, "org-t")
 	bind.bind("a/b", "org-t")
@@ -1422,3 +1420,18 @@ def test_dream_reads_the_answer_when_the_model_signs_off_after_it(monkeypatch, t
 	monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Result(out))
 	summary, before, new = memory.dream("sonnet")
 	assert summary == "tidied" and new == before
+
+
+def test_sending_by_hand_reaches_a_team_that_said_no_to_automatic_publishing(monkeypatch, tmp_path):
+	"""SPEC §1 and §3.3 state this, so it gets an oracle. `_pool()` asks publishing() and holds a
+	promotion back from a team that declined; share() does not ask, because consent is about what
+	leaves WITHOUT anyone sending it and `t` is somebody sending it. The two paths diverging here is
+	the thing a reader has to be told, in either direction."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	memory.allow_publishing("org-t", False)          # this team answered no
+	bind.bind("a/b", "org-t")
+	memory.promote("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b", str(shared))) == []   # the automatic path respects it
+	memory.share("a/b", "the API owns all validation")
+	assert memory._facts(memory.path("a/b", str(shared))) == ["the API owns all validation"]

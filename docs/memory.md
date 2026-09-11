@@ -36,7 +36,7 @@ it costs other people.** A wrong fact in your own memory, you meet again tomorro
 and correct. A wrong fact in the team's memory lands in contexts where nobody who
 could correct it will ever see it happen.
 
-Two things follow from it, and they are different rules:
+It gives two rules:
 
 - **Automatic promotion needs two independent observations.** Nothing crosses on
   its own until two reviews that did not know about each other landed on the same
@@ -44,13 +44,15 @@ Two things follow from it, and they are different rules:
   that matcher *refused*, across two people, and never about a fold it already
   made (§4b-3).
 - **A hand promotion needs one keypress and no recurrence.** `W` → `t` accepts a
-  single draft, and `P` → `t` sends a fact the team has not got. Both publish
-  immediately, for a repo that is bound and a team that consented. A person who
-  has read the line is the second opinion the counter was standing in for, which
-  is why they are allowed to skip it — but the count is not what gates them.
+  single draft, and `P` → `t` sends a fact the team has not got. Someone who has
+  read the line is the second opinion the counter stands in for, so the count does
+  not apply to them. Both need the repo bound; `W` → `t` also needs the team's
+  consent, because it goes through the same `_pool()` the automatic path does.
+  **`P` → `t` does not, and sends to a team that answered no.** Consent is about
+  what leaves without anyone sending it; `t` is somebody sending it.
 
-`binding` and `consent` are the keypresses the asymmetry buys, taken once per repo
-and once per team. Nothing prompts about an individual fact — §3.3.
+The binding and the consent are each one keypress, once per repo and once per team.
+Nothing prompts about an individual fact. §3.3 has the detail.
 
 ---
 
@@ -184,8 +186,8 @@ keypress. Two things gate it, and neither is a decision made per fact:
 
 This was one keypress until v1.43.0, and the argument for the keypress was that a
 wrong fact in the team's memory lands where nobody who could correct it will see
-it happen. The two observations now come from two people's independent reviews;
-they used to be two runs of one model on one machine. The gate itself is the one
+it happen. The two observations now come from two people's independent reviews.
+The gate itself is the one
 §3.2 describes. §4b-3 has the full account, including what a *no* to consent does
 and where a model gets asked.
 
@@ -194,9 +196,10 @@ repos bound to a team, one at a time (a fact is a sentence you must read to judg
 a column of clipped sentences is how something wrong gets waved through), and says
 of each whether the team has it:
 
-- `t` sends one that never went — a fact older than consent, or promoted while the
-  repo was bound to nothing. It is the only thing `t` is for; a fact the team
-  already has does not offer it.
+- `t` sends one that never went — a fact older than consent, promoted while the
+  repo was bound to nothing, or held back because this team answered no to
+  automatic publishing. `t` overrides that no, for this one fact, because you are
+  the one sending it. A fact the team already has does not offer the key.
 - `x` forgets it from your memory, from the evidence pool, and from the team's
   file unless a teammate independently reached it too — §4b-3 says why theirs
   survives yours.
@@ -722,7 +725,7 @@ can walk back.
 
 ## 6. What is deliberately *not* done
 
-- **No per-fact decision, in either direction.** Promotion into the team is
+- **No prompt about one fact.** Promotion into the team is
   automatic as of v1.43.0 (§3.3); what is still deliberately absent is any prompt
   that asks about one fact. The keypresses are the binding and the consent, taken
   once each, so only one threshold (`PROMOTE_AT`) decides anything.
@@ -775,7 +778,7 @@ for one you touch monthly. It should be revisited with real numbers.
    observation would make it one.
 3. **Drafts never expire.** A fact proposed once, three months ago, sits forever.
    Wants either an age cap or inclusion in the dream (as drafts, clearly marked).
-   The pool self-prunes on share and forget, so only drafts grow unboundedly.
+   The pool self-prunes on forget, so only drafts grow unboundedly.
 4. **`PROMOTE_AT` has data now, and same-machine recurrence never fired.** On one real store:
    140 drafts, every one at `(1)`, one per-repo fact ever confirmed against eight general ones
    (which recur naturally, being about reviewer discipline). Two causes, since separated: the
