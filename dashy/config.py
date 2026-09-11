@@ -16,7 +16,7 @@ EFFORT = os.environ.get("PRS_EFFORT", "medium")  # claude --effort: low, medium,
 DEPTH = os.environ.get("PRS_DEPTH", "adaptive")  # review depth: low, medium, high, adaptive
 VOICES = ["review", "caveman", "bot"]  # how the posted body is phrased, in this order; x toggles any number, at least one
 VOICE = [v for v in os.environ.get("PRS_VOICE", "review").split(",") if v]  # ponytail: a list, json has no set; empty = review
-HUNTERS = ["ponytail", "security", "tests"]  # extra lenses, each appends a section of its own findings; h toggles
+HUNTERS = ["ponytail", "security", "tests", "humanizer"]  # extra lenses, each appends a section of its own findings; h toggles
 HUNTER = [v for v in os.environ.get("PRS_HUNTER", "").split(",") if v]
 INSTRUCTIONS = os.environ.get("PRS_INSTRUCTIONS", "")  # text file appended to the review prompt, --instructions overrides
 TEAM = os.environ.get("PRS_TEAM", os.path.expanduser("~/.prs_team"))  # the OLD single checkout; migrated into TEAMS
