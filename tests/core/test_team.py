@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 
 from dashy import config
@@ -999,3 +1000,35 @@ def test_a_team_we_are_not_in_reads_no_team_json_from_the_working_directory(monk
 	monkeypatch.chdir(here)
 	assert team.info("gone") == {"name": "gone", "description": ""}
 	assert team.covers("gone") == []
+
+
+def test_fetched_at_never_spawns_git_whatever_shape_the_checkout_is(monkeypatch, tmp_path):
+	"""This is read on the mirror path, which a SessionStart hook calls inside a ten-second budget.
+
+	has_remote falls back to RUNNING git when .git is a file, so "a stat, not a subprocess" held for a
+	clone and quietly stopped holding for a linked worktree — the one shape whose whole point is that
+	.git is a file. A worktree reports no age, which is the answer a never-pulled checkout gives.
+	"""
+	d = tmp_path / "t"
+	(d / ".git").mkdir(parents=True)
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	(d / ".git" / "FETCH_HEAD").write_text("abc\n")
+	assert team.fetched_at(str(d)) == os.stat(d / ".git" / "FETCH_HEAD").st_mtime
+
+	def no(*a, **k):
+		raise AssertionError("spawned git")
+
+	monkeypatch.setattr(team.subprocess, "run", no)
+	assert team.fetched_at(str(d)) is not None          # a plain clone still answers, without git
+	shutil.rmtree(d / ".git")
+	(d / ".git").write_text("gitdir: /elsewhere/.git/worktrees/t\n")
+	assert team.fetched_at(str(d)) is None              # and a worktree answers without git too
+
+
+def test_a_checkout_with_a_remote_but_no_fetch_yet_has_no_age(tmp_path):
+	"""Cloned and never pulled since. "last pulled never" would read as a fault; there is simply
+	nothing to report, and the header leaves the line out."""
+	d = tmp_path / "t"
+	(d / ".git").mkdir(parents=True)
+	(d / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:org/t.git\n')
+	assert team.fetched_at(str(d)) is None

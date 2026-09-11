@@ -88,7 +88,8 @@ def sync(into, repo="", pull=True, general=False):
 	# processes running `pull --rebase` in one checkout race for git's index.lock, and the loser leaves
 	# a rebase behind for the winner to trip over. Skipping here is what lets the session hook fire this
 	# off in the background without having to know whether anything else is doing the same job.
-	if pull and not heartbeat.alive():
+	skipped = pull and heartbeat.alive()
+	if pull and not skipped:
 		team.pull()  # newest shared memory first; a no-op when team mode is off
 	# ponytail: ask BEFORE creating anything, or a refusal leaves the tree it refused to write in. And a
 	# SessionStart hook calls this: an exception there is a broken hook, so failures come back as the report.
@@ -100,7 +101,11 @@ def sync(into, repo="", pull=True, general=False):
 		return f"gitdashy: refused — {e}"
 	at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 	try:
-		return _write(into, repo, general, at)
+		# ponytail: the skip is REPORTED. Someone typing `gitdashy sync-memory` has asked for the team's
+		# newest, and silently not fetching it is the same answer as fetching nothing — they cannot tell
+		# the two apart, and the second is a reason to go looking. The hook's copy discards stdout, so
+		# this costs the path it was added for nothing.
+		return _write(into, repo, general, at) + (" · not pulled: a dashboard is refreshing this" if skipped else "")
 	except OSError as e:
 		return f"gitdashy: refused — {e}"
 

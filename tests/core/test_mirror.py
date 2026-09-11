@@ -355,10 +355,14 @@ def test_sync_does_not_pull_while_a_dashboard_is_running(monkeypatch, tmp_path):
 	heartbeat.beat(300)
 	mirror.sync(str(tmp_path / "out"), "a/b")
 	assert pulls == []
+	# ponytail: and it SAYS so. Someone typing `gitdashy sync-memory` asked for the team's newest, and
+	# a silent skip is indistinguishable from a fetch that found nothing — one of those is a reason to
+	# go looking and the other is not.
+	assert "not pulled: a dashboard is refreshing this" in mirror.sync(str(tmp_path / "out"), "a/b")
 	os.remove(tmp_path / ".prs_dashboard")
-	mirror.sync(str(tmp_path / "out"), "a/b")
+	report = mirror.sync(str(tmp_path / "out"), "a/b")
 	assert pulls == [1]  # nothing else is going to, so this caller does it
-
+	assert "not pulled" not in report
 
 def test_a_write_that_fails_leaves_the_previous_mirror_whole(monkeypatch, tmp_path):
 	"""Two writers now, and a plain open() truncates before it writes: a session reading at the wrong

@@ -68,10 +68,13 @@ def fetched_at(d):
 	ponytail: FETCH_HEAD, not a commit date. A pull that found nothing new still rewrites it, which is
 	the question being asked — "are we still in touch with the team", not "did the team say anything".
 	A commit date answers the second and reads as weeks stale on a team that is simply quiet.
-	ponytail: a stat, not a subprocess. This is read on the mirror path, which a SessionStart hook calls
-	inside a ten-second budget, and it is asked once per team per write.
+	ponytail: a stat, not a subprocess, and the .git DIRECTORY is checked here rather than left to
+	has_remote — which falls back to spawning git when .git is a file. This is read on the mirror path,
+	which a SessionStart hook calls inside a ten-second budget, so "not a subprocess" has to be true of
+	every shape of checkout and not only the common one. A worktree reports no age, which is the same
+	answer a checkout that has never been pulled gives.
 	"""
-	if not has_remote(d):
+	if not os.path.isdir(os.path.join(d, ".git")) or not has_remote(d):
 		return None
 	try:
 		return os.stat(os.path.join(d, ".git", "FETCH_HEAD")).st_mtime
