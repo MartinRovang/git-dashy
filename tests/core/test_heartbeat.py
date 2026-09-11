@@ -67,3 +67,55 @@ def test_demo_mode_writes_no_beat_anywhere(monkeypatch, tmp_path):
 	heartbeat.beat(300)
 	assert not heartbeat.alive()
 	assert list(tmp_path.iterdir()) == []
+
+
+def test_a_beat_cannot_declare_an_interval_longer_than_the_dashboard_offers(monkeypatch, tmp_path):
+	"""alive() trusts a number out of a file. One that says a year makes a dashboard that stopped a
+	year ago still read as running, which suppresses every background pull and the staleness warning
+	with it. Local write access there is already game over, so this is hardening, not a boundary."""
+	p = beat_file(tmp_path, monkeypatch)
+	p.write_text(json.dumps({"pid": os.getpid(), "host": heartbeat.HOST,
+	                         "at": time.time() - 86400, "interval": 31536000}))
+	assert not heartbeat.alive()
+
+
+def test_only_one_process_holds_the_pull_lock(monkeypatch, tmp_path):
+	"""The beat closes dashboard-versus-hook and not hook-versus-hook: a background sync writes no
+	beat, so two sessions opened at once both saw nothing running and both ran pull --rebase in one
+	checkout. team._lock is a threading.Lock and does not reach across processes."""
+	beat_file(tmp_path, monkeypatch)
+	assert heartbeat.claim()
+	assert not heartbeat.claim()          # the second caller is told, rather than joining in
+	heartbeat.unclaim()
+	assert heartbeat.claim()              # and it is a lock, not a one-shot
+	heartbeat.unclaim()
+
+
+def test_a_lock_left_by_a_dead_process_is_broken_rather_than_waited_on(monkeypatch, tmp_path):
+	"""A process killed while holding it would otherwise stop every later sync from pulling, for ever
+	and silently — a worse failure than the race the lock prevents, and one nobody would think to look
+	for. Breaking it reopens exactly the window that existed before the lock."""
+	beat_file(tmp_path, monkeypatch)
+	lock = tmp_path / heartbeat.LOCK
+	lock.write_text("9999999")
+	os.utime(lock, (time.time() - heartbeat.STUCK - 1,) * 2)
+	assert heartbeat.claim()
+	heartbeat.unclaim()
+	lock.write_text("9999999")            # and a fresh one is still respected
+	assert not heartbeat.claim()
+
+
+def test_unclaiming_a_lock_that_is_not_there_is_not_an_error(monkeypatch, tmp_path):
+	"""It runs in a finally. Raising there would replace a failed pull with a traceback out of a
+	SessionStart hook."""
+	beat_file(tmp_path, monkeypatch)
+	heartbeat.unclaim()
+
+
+def test_demo_mode_takes_no_lock_and_leaves_no_file(monkeypatch, tmp_path):
+	"""Demo mode promises to touch nothing on the machine it runs on. It also pulls nothing, so there
+	is nobody to race: the claim succeeds and writes nowhere."""
+	monkeypatch.setattr(config, "SETTINGS", "")
+	assert heartbeat.claim()
+	heartbeat.unclaim()
+	assert list(tmp_path.iterdir()) == []

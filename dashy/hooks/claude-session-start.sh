@@ -58,7 +58,7 @@ if command -v gitdashy >/dev/null 2>&1; then
   # skips, so two processes never race for the checkout's index.lock. The hook does not have to know.
   # ponytail: fully detached — stdin closed, both streams discarded, disowned. A background job that
   # still holds the hook's stdout keeps the session waiting on it whatever the ampersand promised.
-  ( gitdashy sync-memory --into .agent/team </dev/null >/dev/null 2>&1 & ) || true
+  ( gitdashy sync-memory --into .agent/team </dev/null >/dev/null 2>&1 & )
 fi
 # 5. The one thing this hook says out loud. "Know what you are loading" was a sentence in a README,
 #    and a guard that has to be remembered is not a guard; the corpus that shipped this hook grew to

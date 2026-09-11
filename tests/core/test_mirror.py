@@ -1,12 +1,15 @@
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 from dashy import config
 from dashy.core import bind, heartbeat, memory, mirror, team
 
 from conftest import a_team
+
+NAMES_SEEN = ("general.md", "repo.md")
 
 
 def seed(repo, text, base=None):
@@ -300,13 +303,17 @@ def test_the_header_says_when_the_team_was_last_reached(monkeypatch, tmp_path):
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
 	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
 	bind.bind("a/b", "org-t")
-	with_remote(mem.parent, fetched_ago=7200)
+	with_remote(mem.parent, fetched_ago=600)
 	seed("a/b", "uses tabs")
-	heartbeat.beat(300)  # a dashboard is running, so the age is reported and not warned about
+	heartbeat.beat(300)
 	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
 	got = (tmp_path / "out" / "repo.md").read_text()
-	assert "> team org-t: last pulled 2 hours ago" in got
-	assert "dashboard is not running" not in got
+	assert "> team org-t: last pulled 10 minutes ago" in got
+	assert "may be behind" not in got  # inside STALE, so the age is reported and not warned about
+	# ponytail: the blank line the header used to end with. It was lost when {age} took its place, and
+	# the body renders by luck today because it always starts with a heading, which closes the
+	# blockquote — a body starting with a bullet would be folded into the quote.
+	assert got.split("## a/b")[0].endswith("ago\n\n")
 
 
 def test_the_header_warns_when_nothing_is_refreshing_it(monkeypatch, tmp_path):
@@ -320,7 +327,26 @@ def test_the_header_warns_when_nothing_is_refreshing_it(monkeypatch, tmp_path):
 	seed("a/b", "uses tabs")
 	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
 	got = (tmp_path / "out" / "repo.md").read_text()
-	assert "> team org-t: last pulled 4 days ago — **the dashboard is not running" in got
+	assert "> team org-t: last pulled 4 days ago — **this may be behind what the team has.**" in got
+	assert "Nothing is refreshing it: start `gitdashy`" in got
+
+
+def test_the_header_warns_when_the_dashboard_is_running_but_not_reaching_the_team(monkeypatch, tmp_path):
+	"""The case that most needs telling, and the one that read as fine. An expired credential or a VPN
+	that is off leaves a dashboard ticking happily while every pull fails, and `stale = not running and
+	...` printed the age with no call to action."""
+	mem = a_team(monkeypatch, tmp_path)
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	bind.bind("a/b", "org-t")
+	with_remote(mem.parent, fetched_ago=4 * 86400)
+	seed("a/b", "uses tabs")
+	heartbeat.beat(300)  # ticking, and four days behind
+	mirror.sync(str(tmp_path / "out"), "a/b", pull=False)
+	got = (tmp_path / "out" / "repo.md").read_text()
+	assert "last pulled 4 days ago — **this may be behind what the team has.**" in got
+	assert "running but is not reaching the team" in got
+	assert "Nothing is refreshing it" not in got  # the remedy differs; something IS trying
 
 
 def test_a_team_with_no_remote_has_no_age_to_report(monkeypatch, tmp_path):
@@ -382,3 +408,72 @@ def test_a_write_that_fails_leaves_the_previous_mirror_whole(monkeypatch, tmp_pa
 	assert "refused" in mirror.sync(str(into), "a/b", pull=False)
 	assert (into / "repo.md").read_text() == before  # the old mirror, not an empty file
 	assert not (into / "repo.md.part").exists()  # and nothing left in a directory the mirror owns
+
+
+def test_two_writers_never_leave_a_mirror_a_reader_can_half_see(monkeypatch, tmp_path):
+	"""The seam the rename exists for, with nothing mocked.
+
+	A fixed `dst + ".part"` passes every test that mocks os.replace and fails here: both writers open
+	the same temp file, the second truncates the first mid-write, and whoever renames first moves an
+	interleaved file into place. That is worse than a short file, because a whole-looking corrupt
+	mirror invites no second look — and the failure path removed the OTHER writer's temp file.
+	"""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs " + "x" * 4000)  # big enough that a write is not one atomic syscall
+	into = tmp_path / "out"
+	mirror.sync(str(into), "a/b", pull=False)
+	dst, seen, stop = into / "repo.md", [], threading.Event()
+
+	def read():
+		while not stop.is_set():
+			try:
+				seen.append(dst.read_text())
+			except OSError:
+				seen.append("")  # a missing file is a failure too; assert on it below
+
+	def write():
+		for _ in range(40):
+			mirror.sync(str(into), "a/b", pull=False)
+
+	reader = threading.Thread(target=read)
+	reader.start()
+	writers = [threading.Thread(target=write) for _ in range(3)]
+	for w in writers:
+		w.start()
+	for w in writers:
+		w.join()
+	stop.set()
+	reader.join()
+	assert seen, "the reader never got a look in"
+	for got in seen:
+		assert got.startswith("> **Shared team memory"), repr(got[:80])
+		assert got.endswith("x" * 100 + "\n"), repr(got[-80:])
+	assert not [p for p in os.listdir(into) if p not in NAMES_SEEN], os.listdir(into)
+
+
+def test_two_background_syncs_at_once_pull_once(monkeypatch, tmp_path):
+	"""Two sessions opened at once — a terminal and an editor is the ordinary case — both run the
+	hook's background sync. Neither writes a beat, so alive() is false for both, and before the lock
+	both ran `pull --rebase` in the same checkout: the loser's `rebase --abort` fires into a checkout
+	the winner may still be rebasing."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
+	seed("a/b", "uses tabs")
+	inside, reports = threading.Semaphore(0), []
+	release = threading.Event()
+
+	def slow_pull():
+		inside.release()
+		release.wait(5)
+
+	monkeypatch.setattr(team, "pull", slow_pull)
+	first = threading.Thread(target=lambda: reports.append(mirror.sync(str(tmp_path / "out"), "a/b")))
+	first.start()
+	assert inside.acquire(timeout=5)  # the first is inside team.pull, holding the lock
+	reports.append(mirror.sync(str(tmp_path / "out2"), "a/b"))
+	release.set()
+	first.join(5)
+	assert not first.is_alive()
+	assert sum("not pulled: another sync is already pulling" in r for r in reports) == 1
+	assert not os.path.exists(tmp_path / heartbeat.LOCK)  # and it is given back

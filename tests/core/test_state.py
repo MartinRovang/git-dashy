@@ -6,7 +6,7 @@ import time
 import pytest
 
 from dashy import config
-from dashy.core import github, log, review as review_mod, state, team, update
+from dashy.core import github, heartbeat, log, memory, review as review_mod, state, team, update
 from dashy.core.state import State
 
 from conftest import PR, fake_http, gql_nodes
@@ -193,7 +193,6 @@ def test_notify_off_stays_quiet(monkeypatch):
 
 def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
 	"""Memory is the one thing here that cannot be recreated, so a copy rides the normal refresh."""
-	from dashy.core import memory
 	order = []
 	monkeypatch.setattr(team, "pull", lambda: order.append("pull"))
 	monkeypatch.setattr(memory, "backup", lambda reason="tick": order.append(f"backup:{reason}"))
@@ -206,7 +205,6 @@ def test_the_tick_keeps_a_backup_of_memory(monkeypatch):
 
 def test_a_failed_backup_leaves_no_orphan_part_file(monkeypatch, tmp_path):
 	"""prune only sees .tar.gz, so a stray .part would sit there forever."""
-	from dashy.core import memory
 	import tarfile
 	mem, backups = tmp_path / "mem", tmp_path / "backups"
 	mem.mkdir()
@@ -224,7 +222,6 @@ def test_a_failed_backup_leaves_no_orphan_part_file(monkeypatch, tmp_path):
 
 def test_an_empty_memory_dir_setting_does_not_tar_the_cwd(monkeypatch, tmp_path):
 	"""PRS_MEMORY= (set but empty) made os.walk(".") archive whatever directory you happened to be in."""
-	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", "")
 	monkeypatch.setattr(config, "TEAM", "")
 	monkeypatch.setattr(memory, "BACKUPS", str(tmp_path / "b"))
@@ -622,7 +619,6 @@ def _quiet_tick(monkeypatch):
 
 def test_the_tick_sweeps_drafts_after_pulling(monkeypatch):
 	"""The pull is what brings a teammate's pooled drafts down, so the sweep is started right after it."""
-	from dashy.core import memory
 	order, done = [], threading.Event()
 	monkeypatch.setattr(state.team, "pull", lambda: order.append("pull"))
 	monkeypatch.setattr(memory, "sweep", lambda model: (order.append(f"sweep:{model}"), done.set()) and [])
@@ -636,7 +632,6 @@ def test_the_tick_says_a_dashboard_is_running_before_it_does_anything(monkeypatc
 	"""The beat is what lets a session hook fire a background sync off without racing this process for
 	the team checkout. Written at the TOP of the tick: anything that reads it while the tick is still
 	pulling must be told a dashboard is here, or it goes and pulls the same checkout itself."""
-	from dashy.core import heartbeat
 	monkeypatch.setattr(config, "SETTINGS", str(tmp_path / "settings.json"))
 	seen = []
 	monkeypatch.setattr(state.team, "pull", lambda: seen.append(heartbeat.alive()))
@@ -650,7 +645,6 @@ def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
 	"""It ran on the refresh thread, after the pull and BEFORE github.fetch, with a 300s model timeout —
 	so the first sweep after an upgrade held the whole list for as long as the model took. Catching the
 	exception was never the risk; the wait was."""
-	from dashy.core import memory
 	started, release = threading.Event(), threading.Event()
 	def slow(model):
 		started.set()
@@ -670,7 +664,6 @@ def test_a_slow_sweep_never_delays_the_pr_list(monkeypatch):
 def test_only_one_sweep_runs_at_a_time(monkeypatch):
 	"""A slow sweep must not have a second started on top of it: both write the same pool files and
 	both push the same checkout."""
-	from dashy.core import memory
 	calls, release = [], threading.Event()
 	def slow(model):
 		calls.append(model)
@@ -689,7 +682,6 @@ def test_only_one_sweep_runs_at_a_time(monkeypatch):
 
 def test_a_sweep_that_throws_never_stops_the_refresh(monkeypatch):
 	"""It calls a model. A refresh that dies because of it would take the PR list down with it."""
-	from dashy.core import memory
 	rang = threading.Event()
 	monkeypatch.setattr(state.team, "pull", lambda: None)
 	def boom(model):

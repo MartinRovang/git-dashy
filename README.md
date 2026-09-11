@@ -432,8 +432,10 @@ that scrolls past:
 ```
 
 The session hook also starts one `sync-memory` in the background, detached, so the next read is current
-on a machine where the dashboard is rarely open. It pulls only when no dashboard is running: two
-processes rebasing one checkout race for git's index lock, so the running one is left to do the job.
+on a machine where the dashboard is rarely open. Only one process ever pulls a given checkout: it skips
+when a dashboard is running, and takes a lock beside the settings file when one is not, so two sessions
+opened at once do not rebase the same checkout against each other. Either way the report says why it
+did not pull, rather than looking like a fetch that found nothing.
 
 **Cross-repo facts take a different route, and a better one.** A *user-level* `CLAUDE.md` import follows a
 symlink out of its own tree, where a project-level one refuses to — so one command wires it:

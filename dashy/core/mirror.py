@@ -6,6 +6,7 @@ absolute and symlinked paths are all refused — so a real file inside the repo 
 import datetime
 import os
 import subprocess
+import tempfile
 import time
 
 from .. import config
@@ -16,10 +17,10 @@ HEADER = """> **Shared team memory — read-only mirror.** PR reviews write thes
 > copies them here. Edits to this file are lost at the next sync — change the source, not the mirror.
 >
 > source: `{src}` · synced: {at}
-{age}"""
+{age}
+"""
 
 STALE = 3600  # seconds since a team was last reached, past which the header warns rather than reports
-
 
 
 def _ago(secs):
@@ -48,10 +49,17 @@ def _freshness(got, now):
 		at = team.fetched_at(os.path.dirname(base))
 		if at is None:
 			continue  # local-only team: there is no remote to be behind
-		stale = not running and now - at > STALE
-		out.append(f"> {label}: last pulled {_ago(now - at)}"
-		           + (" — **the dashboard is not running, so this may be behind what the team has.**"
-		              " Start `gitdashy`, or run `gitdashy sync-memory --into` this directory." if stale else ""))
+		# ponytail: the AGE decides, not whether something is running. `not running and ...` meant a
+		# dashboard whose pulls have been failing for four days — expired credential, VPN off, and
+		# team.ERROR already knows — printed "last pulled 4 days ago" with no call to action. That is
+		# the case where the reader most needs telling and the one that read as fine. Only the remedy
+		# differs, because only the remedy depends on whether anything is trying.
+		why = ("" if now - at <= STALE else
+		       " — **this may be behind what the team has.** " + ("The dashboard is running but is not"
+		       " reaching the team; `T` in it shows the last error." if running else
+		       "Nothing is refreshing it: start `gitdashy`, or run"
+		       " `gitdashy sync-memory --into` this directory."))
+		out.append(f"> {label}: last pulled {_ago(now - at)}{why}")
 	return "".join(l + "\n" for l in out)
 
 
@@ -88,9 +96,17 @@ def sync(into, repo="", pull=True, general=False):
 	# processes running `pull --rebase` in one checkout race for git's index.lock, and the loser leaves
 	# a rebase behind for the winner to trip over. Skipping here is what lets the session hook fire this
 	# off in the background without having to know whether anything else is doing the same job.
-	skipped = pull and heartbeat.alive()
+	skipped = "a dashboard is refreshing this" if pull and heartbeat.alive() else ""
 	if pull and not skipped:
-		team.pull()  # newest shared memory first; a no-op when team mode is off
+		# ponytail: and the lock covers the case the beat cannot — two background syncs, from two
+		# sessions opened at once. Neither writes a beat, so without this both see nothing running.
+		if heartbeat.claim():
+			try:
+				team.pull()  # newest shared memory first; a no-op when team mode is off
+			finally:
+				heartbeat.unclaim()
+		else:
+			skipped = "another sync is already pulling"
 	# ponytail: ask BEFORE creating anything, or a refusal leaves the tree it refused to write in. And a
 	# SessionStart hook calls this: an exception there is a broken hook, so failures come back as the report.
 	try:
@@ -105,7 +121,7 @@ def sync(into, repo="", pull=True, general=False):
 		# newest, and silently not fetching it is the same answer as fetching nothing — they cannot tell
 		# the two apart, and the second is a reason to go looking. The hook's copy discards stdout, so
 		# this costs the path it was added for nothing.
-		return _write(into, repo, general, at) + (" · not pulled: a dashboard is refreshing this" if skipped else "")
+		return _write(into, repo, general, at) + (f" · not pulled: {skipped}" if skipped else "")
 	except OSError as e:
 		return f"gitdashy: refused — {e}"
 
@@ -134,14 +150,24 @@ def _write(into, repo, general, at):
 			# truncates first, so a session reading at the wrong moment imported an empty or half-written
 			# mirror and was told the team knows nothing. rename within one directory is atomic, so a
 			# reader sees the old file or the new one.
-			tmp = dst + ".part"
+			# ponytail: a UNIQUE name, or the rename does not survive the concurrency it was added for.
+			# The premise is two writers — the dashboard's refresh and the background one a session hook
+			# starts — and both computing `dst + ".part"` means the second truncates the first's file
+			# mid-write, both write at their own offsets, and whoever renames first moves an interleaved
+			# file into place. A reader then sees a whole-looking corrupt mirror, which is worse than a
+			# short one because nothing about it invites a second look. The failure path was worse
+			# still: it removed the OTHER writer's temp file.
+			# ponytail: 0600, not the umask default the old open() gave it. Memory is often team-private
+			# — sync() refuses to write anywhere git would commit it for that reason — and the tighter
+			# mode is what mkstemp already does. Kept deliberately rather than widened back.
+			fd, tmp = tempfile.mkstemp(dir=into, prefix=name + ".", suffix=".part")
 			try:
-				with open(tmp, "w") as f:
+				with os.fdopen(fd, "w") as f:
 					f.write(HEADER.format(src=src, at=at, age=age) + text + "\n")
 				os.replace(tmp, dst)
 			except OSError:
-				# ponytail: the half-written file goes, and the exception carries on to sync()'s handler.
-				# Leaving it behind puts an unexplained repo.md.part in someone's repo — inside a
+				# ponytail: ours, and only ours. The exception carries on to sync()'s handler; leaving
+				# the file behind puts an unexplained repo.md.XXXX.part in someone's repo — inside a
 				# directory the mirror promises to own the contents of — for every failed write.
 				if os.path.exists(tmp):
 					os.remove(tmp)
