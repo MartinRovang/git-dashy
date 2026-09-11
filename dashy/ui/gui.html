@@ -1203,6 +1203,7 @@ async function setPath(which) {
 
 /* ---------------------------------------------------------------- events */
 
+let lastClick = { uid: "", at: 0 };
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#modals")) return;
   const t = (sel) => e.target.closest(sel);
@@ -1229,7 +1230,14 @@ document.addEventListener("click", async (e) => {
   if ((x = t("[data-modal]"))) return ({ drafts: draftsScreen, share: () => shareScreen(p), dream: dreamScreen, general: () => memoryEditor("") })[x.dataset.modal]();
   if ((x = t("[data-jumpsec]"))) { [...document.querySelectorAll("[data-fold]")].find((h) => h.dataset.fold === x.dataset.jumpsec)?.scrollIntoView({ block: "start", behavior: "smooth" }); return; }
   if ((x = t("[data-fold]"))) { state.folded[x.dataset.fold] = !state.folded[x.dataset.fold]; return render(); }
-  if ((x = t("[data-uid]"))) return select(x.dataset.uid);
+  if ((x = t("[data-uid]"))) {
+    // ponytail: counted by hand. The first click re-renders the list, so the second lands on a new node
+    // and the webview never fires dblclick.
+    const twice = lastClick.uid === x.dataset.uid && Date.now() - lastClick.at < 400;
+    lastClick = { uid: x.dataset.uid, at: Date.now() };
+    if (twice) { state.pane = true; return render(); }
+    return select(x.dataset.uid);
+  }
 });
 document.addEventListener("pointerdown", (e) => {
   const grip = e.target.closest("[data-grip]");
@@ -1242,10 +1250,6 @@ document.addEventListener("pointerdown", (e) => {
   grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
 });
 try { const w = JSON.parse(localStorage.getItem("dashy-widths") || "{}"); for (const k of ["side", "pane"]) if (w[k]) document.documentElement.style.setProperty(`--${k}-w`, w[k]); } catch {}
-document.addEventListener("dblclick", (e) => {
-  const row = e.target.closest("[data-uid]");
-  if (row) { state.sel = row.dataset.uid; state.pane = true; render(); pull(); }
-});
 document.addEventListener("change", (e) => {
   const set = e.target.closest("[data-set]");
   if (!set) return;
