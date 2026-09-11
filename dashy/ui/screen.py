@@ -907,12 +907,16 @@ def update_screen(scr, state, sel):
 	"""Full-screen update prompt. Returns True if the user said yes."""
 	def show(footer, extra=()):
 		draw(scr, state, sel, prompt=" ")
+		if update.is_binary_release(state.update):  # ponytail: v2+ is a binary, not a tag to check out
+			how = [("Downloads the new gitdashy app to", ""),
+			       (os.path.join(os.path.expanduser("~"), ".local", "bin"), ""),
+			       ("and restarts it.", "")]
+		else:
+			how = [("Installs the release tag into", ""), (HERE, ""), ("and restarts gitdashy.", "")]
 		panel(scr, "update available", [
 			(f"v{VERSION}  →  v{state.update}", "new release"),
 			("", ""),
-			("Installs the release tag into", ""),
-			(HERE, ""),
-			("and restarts gitdashy.", ""),
+			*how,
 			*extra,
 		], footer)
 	show("[y] update now     [n] later")
