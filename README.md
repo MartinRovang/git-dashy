@@ -609,6 +609,32 @@ vite.config.ts    dev server and the /api proxy to the local server
 `--demo` flips `config.demo`, and the few functions that reach the network (fetch, detail, the model)
 answer from `demo.rs` instead. Unit tests live beside the code in each module.
 
+## Develop the UI
+
+The React app and the Rust server run as two processes, so the frontend hot-reloads while the backend
+keeps running. Vite proxies `/api` to the backend on port 7777 (see `vite.config.ts`). You need Node +
+pnpm and Rust stable.
+
+```sh
+# terminal 1 — backend on 7777. --demo serves canned PRs and a fake reviewer: no GitHub token,
+# no Claude, no network. Pin the token to "dev" for --demo only; a real run should generate one.
+cd src-tauri && GITDASHY_GUI_TOKEN=dev cargo run -- --no-open --demo --port 7777
+
+# terminal 2 — frontend with hot reload on 1420
+pnpm install
+pnpm dev
+```
+
+Open `http://localhost:1420/?token=dev`. The port matters.
+
+- Use `1420`. Port 7777 serves the last `pnpm build` embedded in the binary, so your source changes
+  only show up through Vite. Hard-refresh if the page looks stale.
+- Stop any other `gitdashy` first: the installed binary defaults to 7777 and `cargo run` then fails
+  with "Address already in use".
+- Drop `--demo` to run against real GitHub (needs a token, see Environment), and omit
+  `GITDASHY_GUI_TOKEN` to have one generated — it is printed in terminal 1.
+- The installed binary embeds `dist/`; `pnpm build && cargo install --path src-tauri` updates it.
+
 ## Tests
 
 ```sh

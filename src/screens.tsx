@@ -496,6 +496,7 @@ export function escMenu(ctx: Ctx) {
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
       ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
+      ['Debug', '', () => { close(m); void debugScreen(ctx) }],
       ['Quit', '', () => void ctx.quit()],
     ]
   }
@@ -515,13 +516,30 @@ export function escMenu(ctx: Ctx) {
     idx = i
     void items()[i][2]()
   }
+  const n = () => items().length
   m.keys = {
-    j: () => { idx = (idx + 1) % 4; repaint() },
-    k: () => { idx = (idx + 3) % 4; repaint() },
+    j: () => { idx = (idx + 1) % n(); repaint() },
+    k: () => { idx = (idx - 1 + n()) % n(); repaint() },
     Enter: () => pick(idx),
     Escape: () => close(m),
     q: () => void ctx.quit(),
   }
+}
+
+/** The diagnostic bundle from /api/debug, as pretty JSON you can copy into a bug report. */
+export async function debugScreen(ctx: Ctx) {
+  const r = await api('/api/debug')
+  if (!r.ok) {
+    ctx.flash(`✗ ${await errorText(r)}`)
+    return
+  }
+  const text = JSON.stringify(await r.json(), null, 2)
+  // the same /api/copy the rest of the app uses, so a headless or wayland box still copies
+  const copy = () => void ctx.call('/api/copy', { text }, '✓ debug data copied')
+  const m = viewer('debug', text, 'holds repo names, pr urls and config paths — read it before pasting it in public')
+  m.keys!.y = copy
+  m.foot!.unshift(['y', 'copy', copy, 'go'])
+  repaint()
 }
 
 async function cycleTheme(ctx: Ctx) {

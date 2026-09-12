@@ -46,7 +46,6 @@ export default function App() {
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
-  const running = data?.running || 0
   const current = selected(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
@@ -72,6 +71,12 @@ export default function App() {
   }, [hinted])
 
   useEffect(() => {
+    if (!flash) return
+    const id = setTimeout(() => setFlash(''), 4000)
+    return () => clearTimeout(id)
+  }, [flash])
+
+  useEffect(() => {
     if (!current) return
     setRead((r) => {
       if (r[current.url] === current.updatedAt) return r
@@ -84,12 +89,6 @@ export default function App() {
       return next
     })
   }, [current])
-
-  useEffect(() => {
-    if (!flash) return
-    const id = setTimeout(() => setFlash(''), 4000)
-    return () => clearTimeout(id)
-  }, [flash])
 
   useEffect(() => {
     document.body.dataset.theme = data?.settings.theme || 'pencil'
@@ -522,29 +521,9 @@ export default function App() {
               />
             ) : null}
           </div>
-          <div className="hints">
-            <div className="g">
-              <b>NAV</b>
-              <span>j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold · / filter</span>
-            </div>
-            <div className="g">
-              <b>RUN</b>
-              <span>r review · p pre-review · Y open pre-review · a auto</span>
-            </div>
-            <div className="g">
-              <b>CONFIG</b>
-              <span>m model · d depth · e effort · x voices · h hunters · i interval</span>
-            </div>
-            <div className="g">
-              <b>APP</b>
-              <span>Z dream · f refresh · v view · T team · u update · esc menu · q quit</span>
-            </div>
-            <div className={`status${flash ? ' flash' : ''}`}>
-              {flash || (running ? `${running} running` : `${total} PRs in view`)}
-            </div>
-          </div>
         </div>
       </div>
+      {flash ? <div className="toast">{flash}</div> : null}
       <ModalHost />
     </div>
   )

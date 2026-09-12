@@ -6,7 +6,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 
 export type Foot = [key: string, label: string, fn: () => void, cls?: string]
 
-type Modal = {
+export type Modal = {
   id: number
   title: string
   sub?: string
@@ -124,7 +124,7 @@ export function prompt(text: string, value = '', title = 'gitdashy'): Promise<st
   })
 }
 
-/** Read-only text, like less. */
+/** Read-only text, like less. Returns the modal so a caller can add a key of its own. */
 export function viewer(title: string, text: string, sub = '') {
   const m = open({
     title,
@@ -134,6 +134,7 @@ export function viewer(title: string, text: string, sub = '') {
     foot: [['q', 'close', () => close(m)]],
   })
   m.keys = { Escape: () => close(m) }
+  return m
 }
 
 /** A textarea and a save. */
