@@ -90,11 +90,15 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
     >
       {child ? <div className="twist" /> : twist}
       <div className="age">{age(p.updatedAt)}</div>
-      <div className="repo">{p.repo}</div>
+      <div className="repo">{(p.repo || '').split('/').pop()}</div>
       <div className="num">#{p.number}</div>
       <div className="txt">
-        {child ? '└ ' : ''}
-        {p.isDraft ? <span style={{ color: 'var(--amber)' }}>draft</span> : null}
+        <b>
+          {child ? '└ ' : ''}
+          {p.isDraft ? <span style={{ color: 'var(--amber)' }}>draft</span> : null}
+          {p.isDraft ? ' ' : ''}
+          {p.title}
+        </b>
       </div>
       <div className="who">
         <div className="av" style={{ background: avatar(p.author || '?') }}>

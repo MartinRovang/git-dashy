@@ -149,10 +149,14 @@
   .pr.unread .age::before { content: '●'; color: var(--violet); font-size: 8px; vertical-align: 2px; margin-right: 4px; }
   .pr.sel { background: var(--sel); border-left-color: var(--pink); }
   .pr .age { font-family: var(--mono); font-size: 11px; color: var(--dim2); width: 34px; flex-shrink: 0; }
-  .pr .repo { font-family: var(--mono); font-size: 11px; color: var(--dim); flex: 1; min-width: 74px;
+  .pr .repo { font-family: var(--mono); font-size: 11px; color: var(--dim); width: 74px; flex-shrink: 0;
               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pr .num { font-family: var(--mono); font-size: 12px; color: var(--pink); width: 50px; flex-shrink: 0; }
-  .pr .txt { flex-shrink: 0; font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .pr .txt { flex: 1; min-width: 0; }
+  .pr .txt b { display: block; font-size: 13px; font-weight: 500; color: var(--ink);
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pr.sel .txt b { color: #fff; }
+  .pr.child .txt b { font-weight: 400; color: var(--ink3); }
   .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
   .who span { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .av { width: 20px; height: 20px; border-radius: 50%; color: var(--bg); font-size: 10px; font-weight: 700;
