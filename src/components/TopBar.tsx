@@ -18,9 +18,9 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
     <div className="top">
-      <div className="logo" title="the logo" onClick={onLogo}>
+      <button className="logo" title="play the intro" aria-label="toggle the player" onClick={onLogo}>
         <img src="/head.png" alt="" />
-      </div>
+      </button>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span className="brand">gitdashy</span>
         <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>

@@ -1535,10 +1535,10 @@ fn header(req: &Request, name: &'static str) -> String {
 ///
 /// ponytail: 'unsafe-inline' for styles only. React writes style attributes and the app sets its theme
 /// through CSS variables on <html>; scripts stay 'self', which is the half that matters. The two font
-/// origins are what dist/index.html already asks for.
+/// origins are what dist/index.html already asks for. frame-src is the logo's player and nothing else.
 const CSP: &str = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; \
      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; \
-     object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+     frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
 /// Every reply the server makes. `cache` is None for anything with data in it.
 ///
@@ -1693,6 +1693,14 @@ pub fn new_token() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn csp_lets_the_player_frame_load() {
+        // the embed in src/components/FloatingVideo.tsx; vite dev sends no CSP, so only this catches a block
+        let embed = include_str!("../../src/components/FloatingVideo.tsx");
+        assert!(embed.contains("const EMBED = 'https://www.youtube-nocookie.com'"));
+        assert!(super::CSP.contains("frame-src https://www.youtube-nocookie.com;"));
+    }
+
     use super::*;
     use crate::types::{Hunk, Line, Login, Repository, Section};
 

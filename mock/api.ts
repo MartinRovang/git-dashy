@@ -1,5 +1,6 @@
 // Dev-only mock of the Rust server's /api/* surface (src-tauri/src/web.rs), so `npm run dev` works
-// with no backend. Interactive: mutations change the in-memory state the way the real handlers do.
+// with no backend. Interactive: mutations change in-memory state roughly like the real handlers. Not modelled:
+// the drafts recurrence gate (promote just removes the draft) and the Host/token guard.
 // Active when no backend answers on :7777; force with DASHY_MOCK=1, disable with DASHY_MOCK=0.
 import { get as httpGet } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -188,7 +189,7 @@ function buildPayload() {
     error: '',
   }))
   return {
-    version: '2.1.2-mock',
+    version: '0.0.0-mock',
     sections,
     fetchedAt: S.fetchedAt,
     interval: S.settings.interval,
@@ -415,7 +416,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const p = buildPayload()
       return json(200, {
         at: secs(),
-        version: '2.1.2-mock',
+        version: '0.0.0-mock',
         pid: 0,
         os: 'linux',
         arch: 'x64',
@@ -453,7 +454,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/refresh') {
       S.fetching = true
       S.refreshes += 1
-      if (S.refreshes >= 1 && !S.rows.some((r) => r.number === 301)) S.rows.push(mkPr(301, 'Bump base image to fix CVE', 'acme/infra', 'erin', 0, 'ASSIGNED'))
+      if (!S.rows.some((r) => r.number === 301)) S.rows.push(mkPr(301, 'Bump base image to fix CVE', 'acme/infra', 'erin', 0, 'ASSIGNED'))
       if (S.refreshes >= 2 && !S.rows.some((r) => r.number === 213)) S.rows.push(mkPr(213, 'Hotfix: null check in export job', 'acme/web', 'bob', 0, 'REVIEW REQUESTED'))
       setTimeout(() => {
         S.fetching = false
@@ -475,11 +476,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = repoOf(body)
       const fact = str(body, 'fact')
       const i = S.drafts.findIndex((d) => d.repo === repo && d.fact === fact)
-      if (str(body, 'op') === 'promote') {
-        if (i >= 0) S.drafts.splice(i, 1)
-        return json(200, { ok: true })
-      }
-      if (str(body, 'op') === 'drop') {
+      const op = str(body, 'op')
+      if (op === 'promote' || op === 'drop') {
         if (i >= 0) S.drafts.splice(i, 1)
         return json(200, { ok: true })
       }
@@ -653,15 +651,18 @@ export function dashyMock(): Plugin {
     apply: 'serve',
     async configureServer(server) {
       const force = process.env.DASHY_MOCK
-      const mock = force === '1' ? true : force === '0' ? false : !(await backendUp())
-      if (!mock) {
-        server.config.logger.info(`[gitdashy] backend found on ${TARGET}, proxying /api`)
-        return
+      if (force === '0') return
+      // ponytail: unforced, ask the backend again at most every 2s, so starting gitdashy after vite takes over
+      let seen = { at: 0, up: false }
+      const up = async () => {
+        if (Date.now() - seen.at > 2000) seen = { at: Date.now(), up: await backendUp() }
+        return seen.up
       }
-      server.config.logger.info('[gitdashy] no backend — mock /api is on (DASHY_MOCK=0 to disable)')
-      server.middlewares.use((req: IncomingMessage, res: ServerResponse, next) => {
+      server.config.logger.info(`[gitdashy] mock /api answers while nothing is on ${TARGET} (DASHY_MOCK=0 to disable, =1 to force)`)
+      server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
         const raw = req.url || ''
-        if (!raw.startsWith('/api')) return next()
+        if (!raw.startsWith('/api/') || (force !== '1' && (await up()))) return next()
+        res.setHeader('X-Dashy-Mock', '1')
         const u = new URL(raw, 'http://localhost')
         void readBody(req).then((body) => {
           const { status, body: out } = handleApi(req.method || 'GET', u.pathname, u.searchParams, body)
