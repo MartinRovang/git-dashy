@@ -289,27 +289,11 @@ pub fn session_notes() -> Vec<String> {
     if hand_wired_team_import(None) {
         out.push("CLAUDE.md imports @prs-team by hand".to_string());
     }
-    // ponytail: the launch prompt asks ONCE, at startup. After a `n`, or on a machine that only ever
-    // runs the session hook, a team's instruction to your sessions is withheld for ever with nothing
-    // saying so, and this row exists for exactly that: what a session here is NOT being told.
-    // ponytail: a refusal is a note too, and unacked_agents forgets a team once it is answered.
-    let waiting: Vec<String> = memory::unacked_agents().into_iter().map(|(k, _)| k).collect();
-    if !waiting.is_empty() {
-        out.push(format!(
-            "{}: agents.md not read, restart to be asked",
-            waiting.join(", ")
-        ));
-    }
-    // ponytail: names the command that ACTUALLY re-asks. It said "restart to be asked again", and a
-    // restart asked nothing: ask_agents walks unacked_agents, which drops a team whose refusal
-    // matches the file it still has. Nothing cleared a `!` entry at all.
-    let refused = memory::refused_agents();
-    if !refused.is_empty() {
-        out.push(format!(
-            "{}: agents.md refused, `gitdashy teams --agents-again`",
-            refused.join(", ")
-        ));
-    }
+    // ponytail: the TEAM gates are not here any more. They started as notes because a withheld
+    // agents.md was invisible, and a note is the wrong shape for them: it states a problem the reader
+    // cannot act on from where they are reading it. memory::pending_answers() drives its own rows on
+    // the knowledge card, and pressing one asks the question again. What is left here is what the
+    // docstring says: things about THIS MACHINE's wiring, which no click in the dashboard can fix.
     *cache = Some((key, out.clone()));
     out
 }
