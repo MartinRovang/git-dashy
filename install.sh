@@ -50,7 +50,7 @@ if [ "$(uname -s)" = Linux ]; then
 	ICON=$HOME/.local/share/icons/$NAME.png
 	mkdir -p "$APPS" "$(dirname "$ICON")"
 	# best effort: a missing icon just means the generic one
-	curl -fsSL --retry 2 -o "$ICON" "https://raw.githubusercontent.com/$REPO/main/logo.png" || true
+	curl -fsSL --retry 2 -o "$ICON" "https://raw.githubusercontent.com/$REPO/main/public/head.png" || true
 	cat > "$APPS/$NAME.desktop" <<-EOF
 		[Desktop Entry]
 		Type=Application
