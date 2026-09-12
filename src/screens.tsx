@@ -475,13 +475,13 @@ export async function updateScreen(ctx: Ctx) {
   const v = ctx.getData()?.update
   if (!v) return
   if (!(await confirm(`v${ctx.getData()?.version}  →  v${v}. Installs the release tag and restarts gitdashy. Update now?`, { yes: 'update now', no: 'later' }))) return
-  // ponytail: the server downloads on its own thread and re-execs when it lands, so there is no
-  // progress to report — the spinner sits there until the page dies under us, or a failure notice
-  // arrives in the polled state. Add a real progress bar when the server can report one.
+  // ponytail: the server reports no progress, so the spinner runs until a failure notice arrives,
+  // the process re-execs under a desktop window, or the cap runs out (a --browser page survives the
+  // re-exec and would otherwise sit behind it forever). Add a real bar when the server can report one.
   await busy('update', `downloading v${v}…`, async () => {
     const seen = (ctx.getData()?.notices || []).length
-    await ctx.call('/api/update', {})
-    for (;;) {
+    if (!(await ctx.call('/api/update', {}))) return
+    for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 500))
       if ((ctx.getData()?.notices || []).length > seen) return
     }

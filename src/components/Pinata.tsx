@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 const HITS = 200
-// The loot: Tolkien and the gothics. A big pool on purpose — one round finds maybe a third of it,
-// so the next round still turns up lines you have not read.
+// The loot: Tolkien and the gothics. More quotes than one round shows.
 const QUOTES = [
   'Fly, you fools!',
   'You shall not pass!',
@@ -113,7 +112,7 @@ export function Pinata() {
   return (
     <>
       <span className="ib" title="piñata" onClick={() => setOpen(true)} style={{ padding: 3 }}>
-        <img draggable={false} src="/pinata/1.png" alt="" style={{ height: 18, display: 'block' }} />
+        <img draggable={false} src="/pinata/icon.png" alt="" style={{ height: 18, display: 'block' }} />
       </span>
       {open ? <Party onClose={() => setOpen(false)} /> : null}
     </>
@@ -133,6 +132,7 @@ function Party({ onClose }: { onClose: () => void }) {
   // off the render's closure silently drops every hit in the same batch. State only mirrors it for paint.
   const hits = useRef(0)
   const quoteFree = useRef(0) // one quote in the air at a time, so each stays readable
+  const quoteId = useRef(0)
   const burst = dmg >= HITS
 
   useEffect(() => {
@@ -246,13 +246,12 @@ function Party({ onClose }: { onClose: () => void }) {
     setWhack((n) => n + 1)
     // ponytail: most hits are just confetti; a quote is a find, and never on top of another one.
     if (Math.random() > 0.22 || performance.now() < quoteFree.current) return
-    quoteFree.current = performance.now() + 1600
+    quoteFree.current = performance.now() + 2800
     const said = QUOTES[(Math.random() * QUOTES.length) | 0]
-    const id = next * 1000 + Math.floor(Math.random() * 999)
-    // scattered around the top of the stage so two in the air never land on each other
+    const id = ++quoteId.current
     const x0 = rect.width / 2 + (Math.random() - 0.5) * 120
     const y0 = 40 + Math.random() * 80
-    setQuotes((q) => [...q, { id, text: said, x: x0, y: y0 }].slice(-2))
+    setQuotes((q) => [...q, { id, text: said, x: x0, y: y0 }].slice(-1))
     setTimeout(() => setQuotes((q) => q.filter((n) => n.id !== id)), 2800)
     setFound((all) => (all.includes(said) ? all : [...all, said]))
   }
