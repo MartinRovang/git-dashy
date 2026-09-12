@@ -92,6 +92,7 @@ if [ "$(uname -s)" = Linux ]; then
 		Icon=$ICON
 		Terminal=false
 		Categories=Development;
+		StartupWMClass=gitdashy
 	EOF
 	update-desktop-database "$APPS" 2>/dev/null || true
 fi

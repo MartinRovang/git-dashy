@@ -30,6 +30,18 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
+  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
+  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
+  // everything unread, and reading is one keypress per row.
+  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
+  const [read, setRead] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
+    } catch {
+      return {}
+    }
+  })
 
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
@@ -58,6 +70,20 @@ export default function App() {
       'welcome',
     )
   }, [hinted])
+
+  useEffect(() => {
+    if (!current) return
+    setRead((r) => {
+      if (r[current.url] === current.updatedAt) return r
+      const next = { ...r, [current.url]: current.updatedAt }
+      try {
+        localStorage.setItem('dashy-read', JSON.stringify(next))
+      } catch {
+        /* storage unavailable */
+      }
+      return next
+    })
+  }, [current])
 
   useEffect(() => {
     if (!flash) return
@@ -461,6 +487,7 @@ export default function App() {
                 secs={secs}
                 now={now}
                 sel={selUid}
+                read={read}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
@@ -481,6 +508,7 @@ export default function App() {
                 p={current}
                 detail={detail}
                 diff={diff}
+                subs={data?.settings.subs || 'all'}
                 tab={tab}
                 scope={scope}
                 context={context}
