@@ -146,6 +146,7 @@
   /* unread is an edge marker, not a wash: the row background belongs to the selection. */
   .pr.unread { border-left-color: var(--violet); box-shadow: inset 2px 0 0 var(--violet); }
   .pr.unread .repo, .pr.unread .num { color: var(--violet); font-weight: 700; }
+  .pr.unread .txt b { color: var(--violet); font-weight: 700; }
   .pr.unread .age::before { content: '●'; color: var(--violet); font-size: 8px; vertical-align: 2px; margin-right: 4px; }
   .pr.sel { background: var(--sel); border-left-color: var(--pink); }
   .pr .age { font-family: var(--mono); font-size: 11px; color: var(--dim2); width: 34px; flex-shrink: 0; }
