@@ -368,7 +368,7 @@ pub fn me() -> Result<String, Error> {
 // and the review decision, reviewers, head commit and CI state that no list endpoint returns.
 // ponytail: no `... on Team { slug }`. That field needs read:org, and a token without it failed the WHOLE
 // query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
-const NODE: &str = "{ nodes { ... on PullRequest { number title url updatedAt isDraft
+const NODE: &str = "{ nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
     author { login } repository { nameWithOwner name } headRefOid reviewDecision
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }
@@ -1167,7 +1167,7 @@ mod tests {
         );
         let b = node(
             "b",
-            json!({"updatedAt": "2021-01-01T00:00:00Z", "reviewDecision": "APPROVED",
+            json!({"updatedAt": "2021-01-01T00:00:00Z", "reviewDecision": "APPROVED", "additions": 12, "deletions": 3,
             "latestReviews": {"nodes": [{"author": {"login": "erin"}, "state": "COMMENTED"}]}}),
         );
         let secs =
@@ -1195,6 +1195,11 @@ mod tests {
             ("a/b", 7, "~erin", "")
         );
         assert_eq!((mine[1].head.as_str(), mine[1].checks.as_str()), ("aaa", "✗"));
+        // the graph sizes nodes from these, with no fetch of its own
+        assert_eq!(
+            (mine[0].additions, mine[0].deletions, mine[1].additions),
+            (Some(12), Some(3), None)
+        );
         assert_eq!(secs[1].prs.as_ref().unwrap().len(), 0);
         let row = serde_json::to_value(&mine[0]).unwrap();
         assert!(row.get("head").is_none() && row.get("checks").is_none());

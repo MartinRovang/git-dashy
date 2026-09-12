@@ -125,7 +125,7 @@ v read the full review of the selected PR (any row that has one), Y open the pre
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a picker: j/k moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default), ? show each setting's key,
 L local memory dir, C where all team checkouts live, n repo memory, g general memory (edited in the app),
-1/2 or Tab switch the pane between the review summary and the code it is about,
+1/2 or Tab switch the pane between the review summary and the code it is about, G switch the board and the graph view,
   in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
 + request a review from a collaborator (MINE), b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),

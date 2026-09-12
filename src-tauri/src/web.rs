@@ -128,6 +128,8 @@ pub fn payload(state: &State) -> Value {
                 "author": p.author(),
                 "updatedAt": p.updated_at,
                 "isDraft": p.is_draft,
+                "add": p.additions,
+                "del": p.deletions,
                 "status": p.status,
                 "prev": p.prev,
                 "checks": p.checks,
@@ -1807,7 +1809,7 @@ mod tests {
 
     #[test]
     fn no_token_is_refused_and_a_good_one_gets_the_payload() {
-        let (base, token, _state) = served();
+        let (base, token, state) = served();
         assert_eq!(get(&format!("{base}/api/state"), None).0, 401);
         assert_eq!(get(&format!("{base}/api/state?token=wrong"), None).0, 401);
         let (code, d) = get(&format!("{base}/api/state"), Some(&token));
@@ -1825,6 +1827,13 @@ mod tests {
         );
         assert_eq!(row["status"], "· awaiting review");
         assert_eq!(row["busy"], false);
+        // no additions on the fixture: the graph's `?? 0` path depends on null, not a missing zero
+        assert_eq!((&row["add"], &row["del"]), (&Value::Null, &Value::Null));
+        if let Some(prs) = state.lock().sections[0].prs.as_mut() {
+            (prs[0].additions, prs[0].deletions) = (Some(12), Some(3));
+        }
+        let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
+        assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it

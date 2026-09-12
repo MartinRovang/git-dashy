@@ -12,6 +12,9 @@ export type Pr = {
   author: string
   updatedAt: string
   isDraft: boolean
+  /** lines added/deleted from the board query; null when GitHub did not say. */
+  add?: number | null
+  del?: number | null
   status: string
   prev: string
   checks: string
