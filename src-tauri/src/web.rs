@@ -467,6 +467,101 @@ fn get_state(state: &State, _q: &Query) -> Out {
     Ok(payload(state))
 }
 
+/// The last `n` lines of a file, or "" when it is missing or unreadable.
+fn tail(path: &Path, n: usize) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// The diagnostic bundle the debugger screen shows: build, paths, live poll state, and the debug log tail.
+fn get_debug(state: &State, _q: &Query) -> Out {
+    let cfg = config::get();
+    let (
+        fetched_at,
+        fetching,
+        error,
+        auto,
+        pending,
+        running,
+        sections,
+        details,
+        detailing,
+        diffs,
+        diffing,
+        seen,
+        known,
+        sweeping,
+        asks,
+        notices,
+    ) = {
+        let inner = state.lock();
+        (
+            inner.fetched_at,
+            inner.fetching,
+            inner.error.clone(),
+            inner.auto,
+            inner.pending.clone(),
+            inner.running.iter().cloned().collect::<Vec<_>>(),
+            inner
+                .sections
+                .iter()
+                .map(|s| {
+                    json!({"name": s.name, "count": s.prs.as_ref().map(Vec::len).unwrap_or(0), "error": s.err})
+                })
+                .collect::<Vec<_>>(),
+            inner.details.len(),
+            inner.detailing.len(),
+            inner.diffs.len(),
+            inner.diffing.len(),
+            inner.seen_at.len(),
+            inner.known.as_ref().map(|k| k.len()),
+            inner.sweeping,
+            inner.asks.len(),
+            inner.notices.clone(),
+        )
+    };
+    Ok(json!({
+        "at": now(),
+        "version": config::VERSION,
+        "pid": std::process::id(),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "debug": cfg.debug,
+        "demo": cfg.demo,
+        "model": cfg.model,
+        "interval": cfg.interval,
+        "paths": {
+            "settings": cfg.settings.as_deref().map(config::tilde).unwrap_or_default(),
+            "memory": config::tilde(&cfg.memory_dir),
+            "log": config::tilde(&cfg.log),
+            "debugLog": config::tilde(&cfg.debug_log),
+            "selfReviews": config::tilde(&cfg.self_dir),
+            "backups": config::tilde(&cfg.backups),
+            "bindings": config::tilde(&cfg.bindings),
+            "teams": config::tilde(&cfg.teams),
+            "registry": config::tilde(&cfg.registry),
+            "corpus": config::tilde(&cfg.corpus_home),
+        },
+        "state": {
+            "fetchedAt": fetched_at,
+            "fetching": fetching,
+            "error": error,
+            "auto": auto,
+            "pending": pending,
+            "running": running,
+            "sections": sections,
+            "caches": {"details": details, "detailing": detailing, "diffs": diffs, "diffing": diffing, "seen": seen, "known": known},
+            "sweeping": sweeping,
+            "asks": asks,
+            "notices": notices,
+        },
+        "log": {"path": config::tilde(&cfg.debug_log), "tail": tail(&cfg.debug_log, 200)},
+    }))
+}
+
 fn get_pr(state: &State, query: &Query) -> Out {
     let (pr, section) = need_pr(state, q(query, "url"))?;
     Ok(detail(state, &pr, &section))
@@ -1298,6 +1393,7 @@ type Post = fn(&State, &Body) -> Out;
 fn get_route(path: &str) -> Option<Get> {
     Some(match path {
         "/api/state" => get_state,
+        "/api/debug" => get_debug,
         "/api/asks" => get_asks,
         "/api/pr" => get_pr,
         "/api/diff" => get_diff,

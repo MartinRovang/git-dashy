@@ -496,6 +496,7 @@ export function escMenu(ctx: Ctx) {
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
       ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
+      ['Debug', '', () => { close(m); void debugScreen(ctx) }],
       ['Quit', '', () => void ctx.quit()],
     ]
   }
@@ -515,13 +516,35 @@ export function escMenu(ctx: Ctx) {
     idx = i
     void items()[i][2]()
   }
+  const n = () => items().length
   m.keys = {
-    j: () => { idx = (idx + 1) % 4; repaint() },
-    k: () => { idx = (idx + 3) % 4; repaint() },
+    j: () => { idx = (idx + 1) % n(); repaint() },
+    k: () => { idx = (idx - 1 + n()) % n(); repaint() },
     Enter: () => pick(idx),
     Escape: () => close(m),
     q: () => void ctx.quit(),
   }
+}
+
+/** The diagnostic bundle from /api/debug, as pretty JSON you can copy into a bug report. */
+export async function debugScreen(ctx: Ctx) {
+  const r = await api('/api/debug')
+  if (!r.ok) {
+    ctx.flash(`✗ ${await errorText(r)}`)
+    return
+  }
+  const text = JSON.stringify(await r.json(), null, 2)
+  const copy = async () => {
+    await navigator.clipboard.writeText(text)
+    ctx.flash('✓ debug data copied')
+  }
+  const m = open({
+    title: 'debug',
+    wide: true,
+    body: () => <pre>{text}</pre>,
+    foot: [['y', 'copy', copy, 'go'], ['Esc', 'close', () => close(m)]] as Foot[],
+  })
+  m.keys = { y: copy, Escape: () => close(m) }
 }
 
 async function cycleTheme(ctx: Ctx) {
