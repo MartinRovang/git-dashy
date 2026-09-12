@@ -3,68 +3,74 @@
 <head>
 <meta charset="utf-8" />
 <title>gitdashy</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Archivo:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet" />
 <style>
-  /* ponytail: the pencil theme's palette, hardcoded — the splash loads before any setting is read. */
-  :root { --accent: #c9ae86; --ink: #ece5d6; --bg: #141210; --line: #3c352c; --mono: 'JetBrains Mono', ui-monospace, monospace; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: Archivo, Helvetica, Arial, sans-serif; user-select: none; }
-  @keyframes sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes drift { 0%, 100% { transform: translate(-5%, -3%) scale(1.05); } 50% { transform: translate(5%, 4%) scale(1.18); } }
-  @keyframes breathe { 0%, 100% { opacity: 0.38; } 50% { opacity: 0.8; } }
-  .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 24px; box-sizing: border-box; position: relative; overflow: hidden; }
-  /* ponytail: a soft graphite smudge and an SVG-noise paper grain, both one element. No images. */
-  .glow { position: absolute; inset: -30%; pointer-events: none; filter: blur(60px); will-change: transform, opacity;
-          background:
-            radial-gradient(40% 44% at 34% 40%, rgba(201,174,134,0.20), transparent 72%),
-            radial-gradient(46% 52% at 70% 64%, rgba(140,163,168,0.12), transparent 74%);
-          animation: drift 26s ease-in-out infinite, breathe 11s ease-in-out infinite; }
-  .grain { position: absolute; inset: 0; pointer-events: none; opacity: 0.22; mix-blend-mode: overlay;
-           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
-  @media (prefers-reduced-motion: reduce) { .glow { animation: none; opacity: 0.6; } }
-  .card { position: relative; width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 40px; }
-  .brand { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
-  .logo { width: 96px; height: 96px; border-radius: 18px; overflow: hidden; display: grid; place-items: center;
-          box-shadow: 0 0 0 1px var(--line), 0 14px 34px -16px #000; }
-  .logo img { width: 100%; display: block; }
-  .name { font-size: 26px; font-weight: 700; letter-spacing: 0.01em; }
-  .build { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.45; }
-  .track { position: relative; height: 10px; border-radius: 99px; background: rgba(236,229,214,0.08); border: 1px solid var(--line); box-sizing: border-box; overflow: hidden; }
-  .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 99px; background: linear-gradient(90deg, #8e8271, var(--accent)); transition: width 0.4s ease; overflow: hidden; }
-  .fill div { position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, color-mix(in oklab, white 55%, transparent), transparent); animation: sweep 1.5s ease-in-out infinite; }
-  .steps { display: flex; flex-direction: column; gap: 10px; }
-  .step { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 12.5px; color: color-mix(in oklab, var(--ink) 28%, transparent); }
-  .step i { width: 11px; height: 11px; border-radius: 50%; flex: none; box-sizing: border-box;
-            border: 2px solid color-mix(in oklab, var(--ink) 18%, transparent); }
-  .step b { flex: 1; font-weight: 400; }
-  .step s { text-decoration: none; opacity: 0.5; }
-  /* running: the ring spins */
+  /* ponytail: the palette is hardcoded — the splash paints before any setting is read. */
+  :root { --ink: #f0e7d9; --ink2: #cdc3b4; --ink3: #a49a8c; --dim: #9b9285; --mono: 'JetBrains Mono', ui-monospace, monospace;
+          --serif: 'Cormorant Garamond', Georgia, 'Times New Roman', serif; }
+  html, body { margin: 0; height: 100%; background: #17161a; color: var(--ink2); font-family: var(--mono); user-select: none; }
+  @keyframes smudge-in { from { opacity: 0; filter: blur(6px); } to { opacity: 1; filter: blur(0); } }
+  @keyframes graphite-spin { to { transform: rotate(360deg); } }
+  .wrap { position: relative; min-height: 100vh; display: grid; place-items: center; padding: 64px 28px; box-sizing: border-box; overflow: hidden;
+          background: radial-gradient(120% 90% at 50% 18%, #262329 0%, #1b191d 45%, #121113 100%); }
+  /* ponytail: paper tooth, grain and a vignette, three static layers. Animating them repaints the
+     whole window every frame, which the software webview on Linux stutters the spinner for. */
+  .tooth { position: absolute; inset: -20%; pointer-events: none; opacity: 0.5; mix-blend-mode: soft-light;
+           background-image: repeating-linear-gradient(38deg, rgba(255,246,230,0.055) 0 1px, transparent 1px 7px),
+                             repeating-linear-gradient(-52deg, rgba(255,246,230,0.03) 0 1px, transparent 1px 11px); }
+  .grain { position: absolute; inset: 0; pointer-events: none; opacity: 0.5; mix-blend-mode: overlay; background-size: 180px 180px;
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 180px 60px rgba(8,7,9,0.85); }
+  .card { position: relative; width: 100%; max-width: 560px; display: flex; flex-direction: column; align-items: center;
+          animation: smudge-in 1.4s ease-out both; }
+  .mark { position: relative; width: 148px; height: 148px; display: grid; place-items: center; }
+  .mark img { width: 148px; height: 148px; object-fit: cover; display: block; filter: grayscale(1) contrast(1.15) brightness(0.95); }
+  h1 { margin: 30px 0 0; font-family: var(--serif); font-weight: 300; font-size: 68px; line-height: 1; letter-spacing: 0.01em;
+       color: var(--ink); text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 26px rgba(240,231,217,0.12); }
+  .rule { width: 220px; height: 10px; margin-top: 10px; opacity: 0.5;
+          background: radial-gradient(60% 100% at 50% 0%, rgba(232,222,206,0.5), transparent 72%); }
+  .status { margin: 6px 0 0; font-size: 11px; font-weight: 300; letter-spacing: 0.42em; text-transform: uppercase; color: #8e8578; }
+  .bar { width: 100%; margin-top: 52px; display: flex; flex-direction: column; gap: 10px; }
+  .track { position: relative; height: 7px; background: rgba(232,222,206,0.07); box-shadow: inset 0 0 0 1px rgba(232,222,206,0.1); }
+  .fill { position: absolute; inset: 0 auto 0 0; width: 0; box-shadow: 0 0 14px rgba(240,231,217,0.14);
+          background-image: repeating-linear-gradient(52deg, rgba(240,231,217,0.92) 0 1.5px, rgba(240,231,217,0.28) 1.5px 4px);
+          transition: width 0.45s cubic-bezier(0.3,0.8,0.3,1); }
+  .legend { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 0.2em; color: var(--ink3); }
+  .steps { width: 100%; margin-top: 42px; display: flex; flex-direction: column; }
+  .step { display: flex; align-items: center; gap: 14px; padding: 11px 2px; border-top: 1px solid rgba(232,222,206,0.07);
+          font-size: 13px; font-weight: 300; color: var(--dim); }
+  .step i { width: 11px; height: 11px; flex: none; border-radius: 50%; box-sizing: border-box; border: 1px solid rgba(232,222,206,0.35); }
+  .step b { flex: 1; font-weight: 300; letter-spacing: 0.02em; }
+  .step s { text-decoration: none; font-size: 11px; letter-spacing: 0.18em; color: #9e9587; }
+  /* running: the ring is drawn open and turns; done: it is filled with hatching */
   .step.run { color: var(--ink); }
-  .step.run i { border-color: color-mix(in oklab, var(--ink) 22%, transparent); border-top-color: var(--accent);
-                animation: spin 0.7s linear infinite; }
-  /* done: the ring fills in */
-  .step.ok { color: color-mix(in oklab, var(--ink) 55%, transparent); }
-  .step.ok i { background: var(--accent); border-color: var(--accent); }
-  .err { display: none; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #c07a68; white-space: pre-wrap; }
+  .step.run i { border-color: rgba(232,222,206,0.6); border-top-color: transparent; animation: graphite-spin 0.9s linear infinite; }
+  .step.ok { color: #d6ccbd; }
+  .step.ok i { background-image: repeating-linear-gradient(48deg, rgba(240,231,217,0.9) 0 1px, rgba(240,231,217,0.25) 1px 3px); }
+  .foot { margin: 46px 0 0; font-family: var(--serif); font-style: italic; font-size: 15px; color: var(--ink3); }
+  .err { display: none; font-size: 12px; line-height: 1.6; color: #c07a68; white-space: pre-wrap; text-align: center; }
   body.failed .err { display: block; }
-  body.failed .track, body.failed .steps { display: none; }
+  body.failed .bar, body.failed .steps, body.failed .foot { display: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="glow"></div>
+  <div class="tooth"></div>
   <div class="grain"></div>
+  <div class="vignette"></div>
   <div class="card">
-    <div class="brand">
-      <div class="logo"><img src="head.png" alt="" /></div>
-      <div class="name">gitdashy</div>
-      <div class="build" id="build">starting</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:18px">
-      <div class="track"><div class="fill" id="fill"><div></div></div></div>
-      <div class="err" id="err"></div>
+    <div class="mark"><img src="head.png" alt="" /></div>
+    <h1>gitdashy</h1>
+    <div class="rule"></div>
+    <p class="status" id="status">starting</p>
+    <div class="bar">
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="legend"><span id="hint">warming up</span><span id="pct">000</span></div>
     </div>
     <div class="steps" id="steps"></div>
+    <p class="foot">sketching your pull requests</p>
+    <p class="err" id="err"></p>
   </div>
 </div>
 <script>
@@ -78,27 +84,38 @@ stepsEl.innerHTML = STEPS.map(s => `<div class="step"><i></i><b>${s}</b><s>queue
 const rows = [...stepsEl.children];
 let active = STEPS.length, t0 = Date.now();
 
-const timer = setInterval(() => {
-  const dt = Date.now() - t0;
-  const pct = (100 / STEPS.length) * (active - 1 + 0.9 * (1 - Math.exp(-dt / 2600)));
-  document.getElementById("fill").style.width = pct.toFixed(1) + "%";
+// ponytail: the rows only change when `active` does, so they are written once per change instead of
+// on every tick — restyling the spinning ring that often stutters it.
+function paint() {
   rows.forEach((r, i) => {
     const st = i < active - 1 ? "ok" : i === active - 1 ? "run" : "";
     r.className = "step " + st;
     r.lastChild.textContent = st === "ok" ? "done" : st === "run" ? "running" : "queued";
   });
-}, 80);
+}
+function bar(pct) {
+  document.getElementById("fill").style.width = pct.toFixed(1) + "%";
+  document.getElementById("pct").textContent = String(Math.round(pct)).padStart(3, "0");
+}
+paint();
+
+const timer = setInterval(() => {
+  const dt = Date.now() - t0;
+  bar((100 / STEPS.length) * (active - 1 + 0.9 * (1 - Math.exp(-dt / 2600))));
+}, 250);
 
 function done() {
   clearInterval(timer);
-  document.getElementById("fill").style.width = "100%";
+  bar(100);
   rows.forEach((r) => { r.className = "step ok"; r.lastChild.textContent = "done"; });
+  document.getElementById("status").textContent = "ready";
+  document.getElementById("hint").textContent = "ready";
 }
 
 function fail(msg) {
   clearInterval(timer);
   document.body.className = "failed";
-  document.getElementById("build").textContent = "could not start";
+  document.getElementById("status").textContent = "could not start";
   document.getElementById("err").textContent = msg;
 }
 
