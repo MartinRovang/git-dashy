@@ -5,7 +5,7 @@ import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, picker, prompt, viewer } from './modals'
+import { confirm, modalCount, ModalHost, notice, picker, prompt, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
@@ -42,6 +42,22 @@ export default function App() {
   const dataRef = useRef<StateData | null>(null)
   dataRef.current = data
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
+
+  // First run only: most people reach for the terminal, so say the desktop icon exists.
+  // ponytail: the flag is a SETTING, not localStorage. The GUI serves itself on a new random port
+  // every launch, so the webview's origin changes and its storage starts empty each time.
+  const hinted = data?.settings.hinted
+  useEffect(() => {
+    if (hinted !== false) return // undefined = state has not arrived yet
+    void post('/api/settings', { hinted: true })
+    void notice(
+      <>
+        <div style={{ marginBottom: 10 }}>gitdashy installed a desktop icon, open it from there, no terminal needed.</div>
+        <img src="/desktop-icon.png" alt="the gitdashy icon on a desktop" style={{ display: 'block' }} />
+      </>,
+      'welcome',
+    )
+  }, [hinted])
 
   useEffect(() => {
     if (!flash) return

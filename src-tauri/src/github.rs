@@ -539,13 +539,28 @@ pub fn git_auth() -> HashMap<String, String> {
     if h.is_empty() {
         return HashMap::new();
     }
+    auth_env(&h)
+}
+
+fn auth_env(h: &str) -> HashMap<String, String> {
+    // ponytail: the empty value FIRST resets the accumulated extraHeader list (git's documented
+    // reset), so the token persist_auth() wrote into .git/config at clone time cannot ride along
+    // beside this one. That checkout's copy never expires on its own: when the token behind it is
+    // rotated or revoked, every pull after it fails "Authentication failed" and no re-login fixes
+    // it, because the stale header is in the repo, not in the login. Two headers in one request is
+    // the other half: github answers the pair with invalid credentials whichever one is current.
     HashMap::from([
-        ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+        ("GIT_CONFIG_COUNT".to_string(), "2".to_string()),
         (
             "GIT_CONFIG_KEY_0".to_string(),
             format!("http.{GITHUB}.extraHeader"),
         ),
-        ("GIT_CONFIG_VALUE_0".to_string(), format!("Authorization: {h}")),
+        ("GIT_CONFIG_VALUE_0".to_string(), String::new()),
+        (
+            "GIT_CONFIG_KEY_1".to_string(),
+            format!("http.{GITHUB}.extraHeader"),
+        ),
+        ("GIT_CONFIG_VALUE_1".to_string(), format!("Authorization: {h}")),
     ])
 }
 
@@ -1229,6 +1244,31 @@ mod tests {
         assert!(text.contains("labels: [\"bug\"]") && text.ends_with("\n\ndiff --git a b"));
         let text = context_text(&json!({"title": "t"}), &"x".repeat(1000), 100);
         assert!(text.ends_with("[diff truncated]") && text.len() < 200);
+    }
+
+    /// The stale header a clone left in .git/config must not survive into today's pull.
+    #[test]
+    fn auth_env_replaces_the_header_a_clone_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = |args: &[&str], env: bool| {
+            let mut c = std::process::Command::new("git");
+            c.args(["-C", dir.path().to_str().unwrap()]).args(args);
+            if env {
+                c.envs(auth_env("Basic now"));
+            }
+            String::from_utf8(c.output().unwrap().stdout).unwrap()
+        };
+        run(&["init", "-q"], false);
+        run(&["config", "--add", &format!("http.{GITHUB}.extraHeader"), "Authorization: Basic stale"], false);
+        let got = run(&["config", "--get-all", &format!("http.{GITHUB}.extraHeader")], true);
+        // The env values come AFTER the repo's, and the empty one sits between them: git's http
+        // layer drops every header it has collected when it reads an empty extraHeader, so the
+        // request carries "now" alone. `config --get-all` does not apply that rule, it only shows
+        // the order, and the order is the half this can break.
+        assert_eq!(
+            got.lines().collect::<Vec<_>>(),
+            ["Authorization: Basic stale", "", "Authorization: Basic now"]
+        );
     }
 
     #[test]

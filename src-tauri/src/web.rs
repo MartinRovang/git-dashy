@@ -1274,6 +1274,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
     if body.contains_key("drafts") {
         c.drafts = truthy(body, "drafts");
     }
+    if body.contains_key("hinted") {
+        c.hinted = truthy(body, "hinted");
+    }
     if body.contains_key("notify") {
         c.notify = truthy(body, "notify");
     }
@@ -1862,6 +1865,12 @@ mod tests {
         assert_eq!(config::get().theme, "nord");
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
+        // The welcome hint is remembered HERE, not in the webview: its origin is a new random port
+        // every launch, so a localStorage flag would show the hint again on every open.
+        assert_eq!(d["settings"]["hinted"], json!(false));
+        post(&format!("{base}/api/settings"), json!({"hinted": true}), &token);
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["hinted"], json!(true));
         assert_eq!(d["options"]["interval"], json!(config::INTERVALS));
     }
 

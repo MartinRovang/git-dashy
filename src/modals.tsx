@@ -91,7 +91,7 @@ export function busy<T>(title: string, text: string, run: () => Promise<T>): Pro
 }
 
 /** One message. Any dismiss closes it. */
-export function notice(text: string, title = 'gitdashy'): Promise<void> {
+export function notice(text: ReactNode, title = 'gitdashy'): Promise<void> {
   return new Promise((res) => {
     const m = open({
       title,

@@ -59,6 +59,7 @@ export type Ask = { kind: string; key: string; name: string; waiting?: string; t
 export type Settings = {
   window?: number | null
   drafts?: boolean
+  hinted?: boolean
   subs?: string
   theme?: string
   notify?: boolean

@@ -48,7 +48,12 @@
           background: color-mix(in srgb, var(--green) 9%, transparent); border: 1px solid color-mix(in srgb, var(--green) 25%, transparent); font-size: 11px; font-weight: 600; color: var(--green); }
   .pill.busy { background: color-mix(in srgb, var(--cyan) 10%, transparent); border-color: color-mix(in srgb, var(--cyan) 28%, transparent); color: var(--cyan); }
   .pill.err { background: color-mix(in srgb, var(--red) 10%, transparent); border-color: color-mix(in srgb, var(--red) 28%, transparent); color: var(--red); }
-  .pill.up { background: color-mix(in srgb, var(--green) 16%, transparent); cursor: pointer; }
+  /* The one pill that wants a click: solid fill and a ring, like .act.go, so it reads as a button
+     next to the two tinted status pills rather than as a third status. */
+  .pill.up { background: var(--green); border-color: var(--green); color: var(--bg); font-weight: 700; cursor: pointer;
+             box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 20%, transparent); }
+  .pill.up:hover { filter: brightness(1.1); }
+  .pill.up kbd { color: color-mix(in srgb, var(--bg) 65%, transparent); background: color-mix(in srgb, var(--bg) 20%, transparent); }
   .toggle { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0 10px 0 8px; border-radius: 6px;
             border: 1px solid var(--edge); background: var(--bg4); cursor: pointer; }
   .toggle:hover { border-color: var(--dim3); }
