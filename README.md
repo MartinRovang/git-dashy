@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="PR Helper — smarter reviews, better code" width="620">
+  <img src="header.png" alt="git-dashy: smarter reviews, better code" width="900">
 </p>
 
 <h1 align="center">git-dashy</h1>
