@@ -191,6 +191,17 @@ fn install(version: &str) -> Result<std::path::PathBuf, String> {
     if bytes.is_empty() {
         return Err("empty download".into());
     }
+    // ponytail: the release publishes <asset>.sha256 beside the binary; refuse anything that does not
+    // match it. This is a tamper check on the download, not a signature: whoever can write the release
+    // writes both files. Real provenance needs a key the release job signs with.
+    let want = agent
+        .get(format!("{url}.sha256"))
+        .call()
+        .map_err(|e| format!("{}.sha256: {e}", asset_name()))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    verify(&bytes, &want)?;
     // ponytail: written beside the executable, so the rename is on one filesystem and atomic.
     let tmp = exe.with_file_name(format!(".{}.{}.new", asset_name(), std::process::id()));
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
@@ -209,6 +220,24 @@ fn install(version: &str) -> Result<std::path::PathBuf, String> {
         return Err(e.to_string());
     }
     Ok(exe)
+}
+
+/// Ok when `bytes` hash to the digest `sums` names. `sums` is one `sha256sum` line: "<hex>  <name>".
+fn verify(bytes: &[u8], sums: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let want = sums
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if want.len() != 64 || !want.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("no checksum published".into());
+    }
+    let got = format!("{:x}", Sha256::digest(bytes));
+    if got != want {
+        return Err(format!("checksum mismatch: {}", &got[..12]));
+    }
+    Ok(())
 }
 
 /// Replace this process with `exe` and the same arguments. Only returns on failure.
@@ -269,6 +298,21 @@ mod tests {
         assert_eq!(offer("1.10.0", |_| true), "1.10.0");
         assert_eq!(offer("1.10.0", |_| false), ""); // tagged, binaries not up yet
         assert_eq!(offer("", |_| panic!("not asked when there is no newer tag")), "");
+    }
+
+    #[test]
+    fn a_download_is_taken_only_when_it_matches_the_published_checksum() {
+        // sha256 of "hi", as sha256sum writes it
+        let line =
+            "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4  gitdashy-linux-x86_64\n";
+        assert_eq!(verify(b"hi", line), Ok(()));
+        assert!(verify(b"hi!", line).unwrap_err().starts_with("checksum mismatch"));
+        // a release with no .sha256, or a 404 page where one should be, is not an update
+        assert_eq!(verify(b"hi", "").unwrap_err(), "no checksum published");
+        assert_eq!(
+            verify(b"hi", "<html>404</html>").unwrap_err(),
+            "no checksum published"
+        );
     }
 
     #[test]

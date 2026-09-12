@@ -388,7 +388,7 @@ export default function App() {
           setScope((v) => (v === 'marks' ? 'diff' : 'marks'))
           setDiff(null)
         } else if (k === 'c') {
-          setContext((v) => CONTEXTS[(CONTEXTS.indexOf(v) + 1) % CONTEXTS.length])
+          onContext()
           setDiff(null)
         } else setAt((v) => v + (k === 'n' ? 1 : -1))
       })

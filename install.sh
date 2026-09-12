@@ -35,6 +35,13 @@ fi
 mkdir -p "$BIN"
 TMP="$BIN/.$NAME.download"
 curl -fsSL --retry 3 -o "$TMP" "$URL"
+# the release publishes <asset>.sha256 beside the binary; a download that does not match it is not
+# installed. A release without one (anything before v2.0.1) is taken as before.
+WANT=$(curl -fsSL --retry 2 "$URL.sha256" 2>/dev/null | cut -d' ' -f1 || true)
+if [ -n "$WANT" ]; then
+	GOT=$(sha256sum "$TMP" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$TMP" | cut -d' ' -f1)
+	[ "$GOT" = "$WANT" ] || { rm -f "$TMP"; printf '\n  checksum mismatch for %s: not installed\n\n' "$ASSET"; exit 1; }
+fi
 chmod +x "$TMP"
 mv -f "$TMP" "$BIN/$NAME"
 # ponytail: installs before the rewrite linked $BIN/prs at prs.py, which this release removes. Repoint
@@ -49,13 +56,17 @@ if [ "$(uname -s)" = Linux ]; then
 	APPS=$HOME/.local/share/applications
 	ICON=$HOME/.local/share/icons/$NAME.png
 	mkdir -p "$APPS" "$(dirname "$ICON")"
-	# best effort: a missing icon just means the generic one
-	curl -fsSL --retry 2 -o "$ICON" "https://raw.githubusercontent.com/$REPO/main/public/head.png" || true
-	# ponytail: the app menu starts us with no shell, so no GH_TOKEN from the user's rc.
-	# The launcher re-runs through an interactive login shell, which sources it.
+	# the binary carries the same icon it draws in its own window; no download for it
+	"$BIN/$NAME" --icon > "$ICON" 2>/dev/null || rm -f "$ICON"
+	# ponytail: the app menu starts us with no shell, so no GH_TOKEN from the user's rc. The launcher
+	# re-runs through an interactive shell, which sources it — but only for the shells where -ic means
+	# that. Anything else (tcsh has no such combination) gets the binary straight, token or not.
 	cat > "$BIN/$NAME-launch" <<-EOF
 		#!/bin/sh
-		exec "\${SHELL:-/bin/sh}" -lic 'exec "$BIN/$NAME"'
+		case \${SHELL##*/} in
+			bash|zsh|fish) exec "\$SHELL" -ic 'exec "$BIN/$NAME"' ;;
+		esac
+		exec "$BIN/$NAME"
 	EOF
 	chmod +x "$BIN/$NAME-launch"
 	cat > "$APPS/$NAME.desktop" <<-EOF

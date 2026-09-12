@@ -1343,6 +1343,17 @@ pub fn run(args: Vec<String>) -> i32 {
         println!("gitdashy {VERSION}");
         return 0;
     }
+    // ponytail: the app icon on stdout, so install.sh can write a .desktop icon from the binary it
+    // just put down instead of fetching the same bytes from the repo again.
+    if args.iter().any(|a| a == "--icon") {
+        let Some((png, _)) = crate::web::asset("head.png") else {
+            return fail("gitdashy: no icon in this build");
+        };
+        return match std::io::stdout().write_all(&png) {
+            Ok(()) => 0,
+            Err(e) => fail(format!("gitdashy: {e}")),
+        };
+    }
     // ponytail: an unknown subcommand is an ERROR, not the dashboard. `gitdashy api …` against a build
     // without that command fell through to the dashboard, which is how a review crashed rather than
     // being told the command was not there.

@@ -1377,7 +1377,7 @@ fn index_html() -> Vec<u8> {
 }
 
 /// One embedded asset by request path ("/assets/x.js"), and its content type.
-fn asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
+pub(crate) fn asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
     let file = DIST.get_file(path.trim_start_matches('/'))?;
     let ctype = match path.rsplit('.').next().unwrap_or("") {
         "html" => "text/html; charset=utf-8",
@@ -1799,6 +1799,27 @@ mod tests {
             "retries fire with no backoff",
         );
         assert_eq!(would, merged, "the panel promised {would}, the fold did {merged}");
+    }
+
+    /// ponytail: a theme the stylesheet has no rule for renders :root and looks like nothing happened.
+    /// "dashy" IS :root, so it is the one name that needs no body[data-theme=...] block.
+    #[test]
+    fn every_theme_but_the_root_one_has_a_rule_in_the_stylesheet() {
+        let css: String = DIST
+            .get_dir("assets")
+            .expect("built assets")
+            .files()
+            .filter(|f| f.path().extension().is_some_and(|e| e == "css"))
+            .map(|f| String::from_utf8_lossy(f.contents()).into_owned())
+            .collect();
+        assert!(!css.is_empty(), "no stylesheet in the bundle");
+        for t in THEMES.iter().filter(|t| **t != "dashy") {
+            // the bundler drops the quotes: [data-theme=pencil], not [data-theme="pencil"]
+            assert!(
+                css.contains(&format!("data-theme={t}")) || css.contains(&format!(r#"data-theme="{t}""#)),
+                "theme {t} has no rule in the stylesheet"
+            );
+        }
     }
 
     #[test]

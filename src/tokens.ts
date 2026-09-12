@@ -2,14 +2,17 @@
 // components and tests can share them.
 import type { Pr } from './types'
 
+// ponytail: the fill and the border are mixed from the same var as the text, so a theme swap moves
+// all three together. The hardcoded rgba they replaced stayed the old palette's neon under a theme.
+const wash = (v: string, pct: number) => `color-mix(in srgb, var(${v}) ${pct}%, transparent)`
 export const PALETTE: Record<string, { fg: string; bg: string; border: string }> = {
-  approved: { fg: 'var(--green)', bg: 'rgba(79,212,140,0.10)', border: 'rgba(79,212,140,0.28)' },
-  changes: { fg: 'var(--red)', bg: 'rgba(240,101,92,0.10)', border: 'rgba(240,101,92,0.28)' },
-  commented: { fg: 'var(--amber)', bg: 'rgba(223,176,60,0.10)', border: 'rgba(223,176,60,0.28)' },
-  awaiting: { fg: 'var(--cyan)', bg: 'rgba(95,196,217,0.10)', border: 'rgba(95,196,217,0.28)' },
-  running: { fg: 'var(--cyan)', bg: 'rgba(95,196,217,0.10)', border: 'rgba(95,196,217,0.28)' },
-  error: { fg: 'var(--red)', bg: 'rgba(240,101,92,0.08)', border: 'rgba(240,101,92,0.22)' },
-  idle: { fg: 'var(--dim)', bg: 'rgba(156,146,168,0.08)', border: 'var(--edge)' },
+  approved: { fg: 'var(--green)', bg: wash('--green', 10), border: wash('--green', 28) },
+  changes: { fg: 'var(--red)', bg: wash('--red', 10), border: wash('--red', 28) },
+  commented: { fg: 'var(--amber)', bg: wash('--amber', 10), border: wash('--amber', 28) },
+  awaiting: { fg: 'var(--cyan)', bg: wash('--cyan', 10), border: wash('--cyan', 28) },
+  running: { fg: 'var(--cyan)', bg: wash('--cyan', 10), border: wash('--cyan', 28) },
+  error: { fg: 'var(--red)', bg: wash('--red', 8), border: wash('--red', 22) },
+  idle: { fg: 'var(--dim)', bg: wash('--dim', 8), border: 'var(--edge)' },
 }
 // ponytail: the theme's own accents, so avatars follow a theme swap instead of staying neon.
 const AVATARS = ['var(--pink)', 'var(--cyan)', 'var(--green)', 'var(--amber)', 'var(--violet)', 'var(--ink3)']

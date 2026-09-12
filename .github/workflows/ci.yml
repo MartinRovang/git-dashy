@@ -131,4 +131,8 @@ jobs:
         run: |
           ext=; [ "$RUNNER_OS" = Windows ] && ext=.exe
           cp "src-tauri/target/release/gitdashy$ext" "${{ matrix.asset }}"
-          gh release upload "${{ needs.release.outputs.tag }}" "${{ matrix.asset }}" --clobber
+          # the updater and install.sh refuse a download that does not match this
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256" 2>/dev/null \
+            || shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            "${{ matrix.asset }}" "${{ matrix.asset }}.sha256" --clobber
