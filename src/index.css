@@ -338,5 +338,28 @@
   .floatvid .vol input[type=range] { flex: 1; accent-color: var(--violet); }
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--edge); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
 
+  /* graph view: PRs linked to repo and author hubs, zoom to read labels */
+  .vtabs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--edge); border-radius: 6px; }
+  .vtabs button { font: inherit; font-size: 11px; padding: 2px 10px; border: 0; border-radius: 4px; background: none; color: var(--dim); cursor: pointer; }
+  .vtabs button.on { background: var(--bg4); color: var(--ink); }
+  .graph { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .graph svg { flex: 1; min-height: 0; width: 100%; cursor: grab; }
+  .graph svg:active { cursor: grabbing; }
+  .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); pointer-events: none; }
+  .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
+  .graph line.lit { stroke: var(--ink3); }
+  .gnode { cursor: pointer; transition: opacity .2s; }
+  .gnode circle { stroke-width: 1.5; transition: r .3s; }
+  .gnode text { font-size: calc(11px / var(--k)); fill: var(--ink3); text-anchor: middle; dominant-baseline: hanging;
+                pointer-events: none; opacity: var(--label); transition: opacity .2s; }
+  .gnode.hub text { fill: var(--dim); opacity: 1; font-size: calc(12px / var(--k)); }
+  .gnode.sel circle { stroke-width: 3; }
+  .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
+  .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
+  .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
+  .glegend span { display: flex; align-items: center; gap: 5px; }
+  .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+  .glegend .gdot { background: linear-gradient(90deg, var(--pink), var(--cyan), var(--amber)); }
+
   /* ponytail: React mounts into #root, so it needs the full height the vanilla #app assumed. */
   #root { height: 100%; }
