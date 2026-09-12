@@ -43,6 +43,27 @@ mv -f "$TMP" "$BIN/$NAME"
 if [ -e "$BIN/prs" ] || [ -L "$BIN/prs" ]; then
 	ln -sf "$BIN/$NAME" "$BIN/prs"
 fi
+# ponytail: a launcher entry, so it starts from the app menu with no terminal attached.
+# Linux only: macOS wants a .app bundle, which a bare binary is not.
+if [ "$(uname -s)" = Linux ]; then
+	APPS=$HOME/.local/share/applications
+	ICON=$HOME/.local/share/icons/$NAME.png
+	mkdir -p "$APPS" "$(dirname "$ICON")"
+	# best effort: a missing icon just means the generic one
+	curl -fsSL --retry 2 -o "$ICON" "https://raw.githubusercontent.com/$REPO/main/logo.png" || true
+	cat > "$APPS/$NAME.desktop" <<-EOF
+		[Desktop Entry]
+		Type=Application
+		Name=github-dashy
+		Comment=Your PRs, review-requested, assigned
+		Exec=$BIN/$NAME
+		Icon=$ICON
+		Terminal=false
+		Categories=Development;
+	EOF
+	update-desktop-database "$APPS" 2>/dev/null || true
+fi
+
 # ponytail: --version is the cheapest full load of the binary, so a missing Linux webview shows
 # up here as a loader error instead of as a window that never opens.
 ERR=$("$BIN/$NAME" --version 2>&1 >/dev/null) || true
@@ -57,6 +78,7 @@ row "$NAME"          "the desktop dashboard: your PRs, review-requested, assigne
 row "$NAME --browser" "the same dashboard in your browser"
 row "$NAME --demo"   "try it with canned data (no token, no claude)"
 row "$NAME --help"   "all flags and subcommands"
+[ "$(uname -s)" = Linux ] && printf '\n  %sor launch it from your app menu: no terminal needed%s\n' "$DIM" "$R"
 
 if [ -z "$TAG" ]; then
 	warn "$NAME did not start: ${ERR:-unknown error}"
