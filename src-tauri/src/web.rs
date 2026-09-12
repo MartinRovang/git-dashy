@@ -24,7 +24,7 @@ use crate::{
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
 static DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../dist");
 /// The page carries the palettes; this is what the picker offers.
-pub const THEMES: &[&str] = &["dashy", "dracula", "gruvbox", "nord"];
+pub const THEMES: &[&str] = &["pencil", "dashy", "dracula", "gruvbox", "nord"];
 
 /// An error the page should read: (status, message).
 #[derive(Debug)]

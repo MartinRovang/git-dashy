@@ -483,7 +483,7 @@ export function escMenu(ctx: Ctx) {
   const items = (): [string, string, () => void | Promise<void>][] => {
     const s = ctx.getData()?.settings || {}
     return [
-      ['Theme', s.theme || 'dashy', () => void cycleTheme(ctx)],
+      ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
       ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
       ['Quit', '', () => void ctx.quit()],

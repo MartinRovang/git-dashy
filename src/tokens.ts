@@ -11,7 +11,8 @@ export const PALETTE: Record<string, { fg: string; bg: string; border: string }>
   error: { fg: 'var(--red)', bg: 'rgba(240,101,92,0.08)', border: 'rgba(240,101,92,0.22)' },
   idle: { fg: 'var(--dim)', bg: 'rgba(156,146,168,0.08)', border: 'var(--edge)' },
 }
-const AVATARS = ['#f56bb0', '#5fc4d9', '#4fd48c', '#dfb03c', '#c58cf0', '#f09a5c']
+// ponytail: the theme's own accents, so avatars follow a theme swap instead of staying neon.
+const AVATARS = ['var(--pink)', 'var(--cyan)', 'var(--green)', 'var(--amber)', 'var(--violet)', 'var(--ink3)']
 export const SECTION_TONE: Record<string, string> = {
   MINE: 'var(--pink)',
   'REVIEW REQUESTED': 'var(--cyan)',

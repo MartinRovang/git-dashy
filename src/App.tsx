@@ -50,7 +50,7 @@ export default function App() {
   }, [flash])
 
   useEffect(() => {
-    document.body.dataset.theme = data?.settings.theme || 'dashy'
+    document.body.dataset.theme = data?.settings.theme || 'pencil'
   }, [data?.settings.theme])
 
   // Grip drags: restore the saved widths, then write one CSS var per animation frame while dragging.

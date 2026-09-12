@@ -8,6 +8,12 @@
     --sans: 'IBM Plex Sans', system-ui, sans-serif;
   }
   /* ponytail: a theme swaps the accents and the greys, nothing else — the same rule the curses THEMES table had. */
+  /* ponytail: graphite on warm paper, the sketch look of the readme header. Greys carry the layout,
+     the accents are pencil-tinted so a red still reads as red without breaking the drawing. */
+  body[data-theme="pencil"] { --bg: #141210; --bg2: #171512; --bg3: #1c1916; --bg4: #24201b; --line: #2e2922; --line2: #252019; --edge: #3c352c;
+    --ink: #ece5d6; --ink2: #d5ccb9; --ink3: #bcb19c; --dim: #9e9382; --dim2: #776e60; --dim3: #605949;
+    --pink: #c9ae86; --green: #97a67f; --red: #c07a68; --amber: #cfa967; --cyan: #8ca3a8; --violet: #ab9aa6; --sel: #252019;
+    --addbg: rgba(151,166,127,0.10); --delbg: rgba(192,122,104,0.10); }
   body[data-theme="dracula"] { --bg: #282a36; --bg2: #262837; --bg3: #2b2d3a; --bg4: #343746; --line: #3b3d4d; --line2: #33354a; --edge: #44475a;
     --ink: #f8f8f2; --ink2: #e2e2dc; --ink3: #c9c9c3; --dim: #a5a5a0; --dim2: #6272a4; --dim3: #565b80;
     --pink: #ff79c6; --green: #50fa7b; --red: #ff5555; --amber: #f1fa8c; --cyan: #8be9fd; --violet: #bd93f9; --sel: #343746; }

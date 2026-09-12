@@ -154,7 +154,7 @@ impl Default for Config {
             debug_log: env_path("PRS_DEBUG_LOG", ".prs_debug.log"),
             interval: 300,
             notify: std::env::var("PRS_NOTIFY").map(|v| v != "0").unwrap_or(true),
-            theme: env_or("PRS_THEME", "dashy"),
+            theme: env_or("PRS_THEME", "pencil"),
             sub: "all".into(),
             window: Some(4),
             drafts: false,
