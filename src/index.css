@@ -40,8 +40,8 @@
   /* top bar */
   .top { height: 44px; flex-shrink: 0; background: var(--bg3); border-bottom: 1px solid var(--line);
          display: flex; align-items: center; gap: 14px; padding: 0 14px; }
-  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--pink); display: grid; place-items: center; overflow: hidden; }
-  .logo img { width: 17px; display: block; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; overflow: hidden; }
+  .logo img { width: 100%; display: block; }
   .brand { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
   .vbar { width: 1px; height: 18px; background: var(--line); }
   .pill { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 6px;
@@ -164,7 +164,7 @@
   .none.err { color: var(--red); }
   .splash { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--dim); }
   .splash .logo { width: 64px; height: 64px; border-radius: 16px; }
-  .splash .logo img { width: 50px; }
+  .splash .logo img { width: 100%; }
 
   /* side pane */
   .pane { width: var(--pane-w, 420px); flex-shrink: 0; border-left: 1px solid var(--line); background: var(--bg2);
