@@ -9,15 +9,16 @@ type Props = {
   onAuto: () => void
   onMenu: () => void
   onUpdate: () => void
+  onLogo: () => void
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate }: Props) {
+export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onLogo }: Props) {
   const running = d?.running || 0
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
     <div className="top">
-      <div className="logo">
+      <div className="logo" title="the logo" onClick={onLogo}>
         <img src="/head.png" alt="" />
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
