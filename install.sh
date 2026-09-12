@@ -54,10 +54,23 @@ fi
 # Linux only: macOS wants a .app bundle, which a bare binary is not.
 if [ "$(uname -s)" = Linux ]; then
 	APPS=$HOME/.local/share/applications
-	ICON=$HOME/.local/share/icons/$NAME.png
-	mkdir -p "$APPS" "$(dirname "$ICON")"
+	ICONS=$HOME/.local/share/icons
+	mkdir -p "$APPS" "$ICONS"
 	# the binary carries the same icon it draws in its own window; no download for it
-	"$BIN/$NAME" --icon > "$ICON" 2>/dev/null || rm -f "$ICON"
+	if "$BIN/$NAME" --icon > "$ICONS/.$NAME.new" 2>/dev/null; then
+		# ponytail: the file name carries the art's checksum. GNOME caches a .desktop icon by path, so
+		# writing new art to the same path leaves the old one in the app menu until the shell restarts;
+		# a path it has never seen is the one thing it reliably picks up. Older ones are swept.
+		SUM=$(sha256sum "$ICONS/.$NAME.new" 2>/dev/null | cut -c1-8 \
+			|| shasum -a 256 "$ICONS/.$NAME.new" | cut -c1-8)
+		ICON=$ICONS/$NAME-$SUM.png
+		mv -f "$ICONS/.$NAME.new" "$ICON"
+		find "$ICONS" -maxdepth 1 -name "$NAME-*.png" ! -name "$NAME-$SUM.png" -delete 2>/dev/null || true
+		rm -f "$ICONS/$NAME.png"
+	else
+		rm -f "$ICONS/.$NAME.new"
+		ICON=$NAME
+	fi
 	# ponytail: the app menu starts us with no shell, so no GH_TOKEN from the user's rc. The launcher
 	# re-runs through an interactive shell, which sources it — but only for the shells where -ic means
 	# that. Anything else (tcsh has no such combination) gets the binary straight, token or not.
@@ -69,7 +82,8 @@ if [ "$(uname -s)" = Linux ]; then
 		exec "$BIN/$NAME"
 	EOF
 	chmod +x "$BIN/$NAME-launch"
-	cat > "$APPS/$NAME.desktop" <<-EOF
+	rm -f "$APPS/gitdashy.desktop"
+	cat > "$APPS/github-dashy.desktop" <<-EOF
 		[Desktop Entry]
 		Type=Application
 		Name=github-dashy
@@ -96,7 +110,7 @@ row "$NAME"          "the desktop dashboard: your PRs, review-requested, assigne
 row "$NAME --browser" "the same dashboard in your browser"
 row "$NAME --demo"   "try it with canned data (no token, no claude)"
 row "$NAME --help"   "all flags and subcommands"
-[ "$(uname -s)" = Linux ] && printf '\n  %sor launch it from your app menu: no terminal needed%s\n' "$DIM" "$R"
+if [ "$(uname -s)" = Linux ]; then printf '\n  %sor launch it from your app menu: no terminal needed%s\n' "$DIM" "$R"; fi
 
 if [ -z "$TAG" ]; then
 	warn "$NAME did not start: ${ERR:-unknown error}"
