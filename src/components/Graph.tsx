@@ -1,66 +1,47 @@
-// The whole board as one picture: PRs are nodes sized by how much they change, and drawn near the
-// PRs they share a repo with (brighter when they also share an author). Hand-rolled force layout —
-// no graph library — so a poll that only changes a size never moves anything.
-import { useMemo } from 'react'
+// The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to a hub for its
+// repo and a hub for its author, so shared repos and authors pull together. PRs are sized by lines
+// changed and colored by review state. Drag nodes, scroll to zoom, hover to light up neighbours.
+//
+// ponytail: d3-force + SVG, not Quartz's PixiJS canvas. A board is tens of PRs, not thousands of
+// notes; switch the drawing to canvas if a board ever gets big enough for SVG to stutter.
+import { drag } from 'd3-drag'
+import type { Simulation, SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
+import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
+import { select } from 'd3-selection'
+import { zoom } from 'd3-zoom'
+import { useEffect, useMemo, useRef } from 'react'
 import type { VisSection } from '../board'
-import { PALETTE, rowState } from '../tokens'
+import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row, Size } from '../types'
 
-const W = 1000
-const H = 680
-const PAD = 42
-const R0 = 5
-const RMAX = 23
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; label: string; row?: Row; degree: number }
+type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 
-type Edge = [number, number, boolean] // a, b, same author
+const lines = (s?: Size) => (s && s.add != null && s.del != null ? s.add + s.del : null)
 
-/** Fruchterman-Reingold, deterministic, ~260 ticks. Membership, not sizes, decides the positions. */
-function layout(n: number, edges: Edge[]): { x: number; y: number }[] {
-  const pos = Array.from({ length: n }, (_, i) => {
-    const a = i * 2.399963
-    const rad = 15 * Math.sqrt(i + 1)
-    return { x: W / 2 + rad * Math.cos(a), y: H / 2 + rad * Math.sin(a) }
-  })
-  if (n < 2) return pos
-  const k = Math.sqrt((W * H) / n) * 0.8
-  for (let it = 0; it < 260; it++) {
-    const disp = pos.map(() => ({ x: 0, y: 0 }))
-    for (let i = 0; i < n; i++)
-      for (let j = i + 1; j < n; j++) {
-        const dx = pos[i].x - pos[j].x
-        const dy = pos[i].y - pos[j].y
-        const d = Math.sqrt(dx * dx + dy * dy) || 0.01
-        const f = (k * k) / (d * d)
-        const fx = (dx / d) * f
-        const fy = (dy / d) * f
-        disp[i].x += fx
-        disp[i].y += fy
-        disp[j].x -= fx
-        disp[j].y -= fy
-      }
-    for (const [a, b, same] of edges) {
-      const dx = pos[a].x - pos[b].x
-      const dy = pos[a].y - pos[b].y
-      const d = Math.sqrt(dx * dx + dy * dy) || 0.01
-      const f = ((d * d) / k) * (same ? 1.3 : 0.85)
-      const fx = (dx / d) * f
-      const fy = (dy / d) * f
-      disp[a].x -= fx
-      disp[a].y -= fy
-      disp[b].x += fx
-      disp[b].y += fy
+function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
+  const hubs = new Map<string, Node>()
+  const nodes: Node[] = []
+  const links: Link[] = []
+  const hub = (kind: 'repo' | 'author', label: string) => {
+    const id = `${kind}:${label}`
+    let n = hubs.get(id)
+    if (!n) {
+      n = { id, kind, label, degree: 0 }
+      hubs.set(id, n)
+      nodes.push(n)
     }
-    const t = k * (1 - it / 260) * 0.55 + 1
-    for (let i = 0; i < n; i++) {
-      disp[i].x += (W / 2 - pos[i].x) * 0.012
-      disp[i].y += (H / 2 - pos[i].y) * 0.012
-      const d = Math.sqrt(disp[i].x ** 2 + disp[i].y ** 2) || 0.01
-      const step = Math.min(d, t)
-      pos[i].x += (disp[i].x / d) * step
-      pos[i].y += (disp[i].y / d) * step
+    return n
+  }
+  for (const r of rows) {
+    const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, row: r, degree: 2 }
+    nodes.push(pr)
+    for (const h of [hub('repo', r.repo), hub('author', r.author)]) {
+      h.degree++
+      links.push({ source: pr, target: h })
     }
   }
-  return pos
+  return { nodes, links }
 }
 
 export function Graph({ secs, sizes, measuring, sel, onSelect }: {
@@ -71,125 +52,202 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
   onSelect: (uid: string) => void
 }) {
   const rows = useMemo(() => secs.flatMap((s) => s.prs), [secs])
-  const key = rows.map((r) => r.url).sort().join('|')
-  const maxLines = Math.max(1, ...rows.map((r) => (sizes[r.url]?.add || 0) + (sizes[r.url]?.del || 0)))
+  const key = rows.map((r) => `${r.url}\t${r.author}`).sort().join('|')
+  const svgRef = useRef<SVGSVGElement>(null)
+  const sim = useRef<Simulation<Node, Link> | null>(null)
+  const graph = useRef<{ nodes: Node[]; links: Link[] }>({ nodes: [], links: [] })
+  const latest = useRef({ rows, sizes, sel, onSelect })
+  latest.current = { rows, sizes, sel, onSelect }
 
-  const { pos, edges, repos } = useMemo(() => {
-    const edges: Edge[] = []
-    const byRepo = new Map<string, number[]>()
-    rows.forEach((r, i) => {
-      const g = byRepo.get(r.repo) || []
-      g.push(i)
-      byRepo.set(r.repo, g)
-    })
-    const repos: { name: string; x: number; y: number }[] = []
-    for (const [name, idx] of byRepo) {
-      for (let a = 0; a < idx.length; a++)
-        for (let b = a + 1; b < idx.length; b++) edges.push([idx[a], idx[b], rows[idx[a]].author === rows[idx[b]].author])
-      repos.push({ name, x: 0, y: 0 })
+  const radius = (n: Node) => {
+    if (n.kind !== 'pr') return 4 + 2.2 * Math.sqrt(n.degree)
+    const { rows, sizes } = latest.current
+    const max = Math.max(1, ...rows.map((r) => lines(sizes[r.url]) || 0))
+    const l = lines(sizes[n.id])
+    return l == null ? 4 : 4 + 10 * Math.sqrt(l / max)
+  }
+
+  // Look: colors, sizes, selection. Cheap, runs on every poll, never restarts the layout.
+  const paint = () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const { sizes, sel } = latest.current
+    const node = select(svg)
+      .selectAll<SVGGElement, Node>('g.gnode')
+      .classed('sel', (n) => n.row?.uid === sel)
+      .classed('hub', (n) => n.kind !== 'pr')
+    node.select('text').attr('y', (n) => radius(n) + 3)
+    node
+      .select<SVGCircleElement>('circle')
+      .attr('r', radius)
+      .style('fill', (n) => {
+        if (n.kind === 'repo') return 'var(--dim2)'
+        if (n.kind === 'author') return avatar(n.label)
+        if (lines(sizes[n.id]) == null) return 'var(--bg)'
+        return (PALETTE[rowState(n.row!).key] || PALETTE.idle).fg
+      })
+      .style('stroke', (n) => (n.kind === 'pr' ? (PALETTE[rowState(n.row!).key] || PALETTE.idle).fg : 'none'))
+    sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
+  }
+
+  // Structure: rebuilt when the set of PRs changes. Nodes that survive keep their position.
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const old = new Map(graph.current.nodes.map((n) => [n.id, n]))
+    const g = build(latest.current.rows)
+    for (const n of g.nodes) {
+      const was = old.get(n.id)
+      if (was) Object.assign(n, { x: was.x, y: was.y, vx: was.vx, vy: was.vy })
     }
-    const pos = layout(rows.length, edges)
-    for (const [name, idx] of byRepo) {
-      const i = repos.findIndex((r) => r.name === name)
-      repos[i].x = idx.reduce((s, j) => s + pos[j].x, 0) / idx.length
-      repos[i].y = idx.reduce((s, j) => s + pos[j].y, 0) / idx.length
-    }
-    return { pos, edges, repos }
+    graph.current = g
+
+    const root = select(svg)
+    const world = root.select<SVGGElement>('g.world')
+    const link = world
+      .select('g.links')
+      .selectAll<SVGLineElement, Link>('line')
+      .data(g.links)
+      .join('line')
+    const node = world
+      .select('g.nodes')
+      .selectAll<SVGGElement, Node>('g.gnode')
+      .data(g.nodes, (n) => n.id)
+      .join((enter) => {
+        const e = enter.append('g').attr('class', 'gnode')
+        e.append('circle')
+        e.append('text')
+        e.append('title')
+        return e
+      })
+    node.select('text').text((n) => n.label)
+    node.select('title').text((n) => (n.row ? `#${n.row.number} ${n.row.title}\n${n.row.repo} · ${n.row.author}` : n.label))
+
+    // Hover: the node and its neighbours stay lit, everything else fades.
+    const near = new Map<string, Set<string>>()
+    for (const l of g.links)
+      for (const [a, b] of [[l.source, l.target], [l.target, l.source]]) {
+        if (!near.has(a.id)) near.set(a.id, new Set([a.id]))
+        near.get(a.id)!.add(b.id)
+      }
+    node
+      .on('mouseenter', (_, n) => {
+        const lit = near.get(n.id) || new Set([n.id])
+        root.classed('focus', true)
+        node.classed('lit', (m) => lit.has(m.id))
+        link.classed('lit', (l) => l.source.id === n.id || l.target.id === n.id)
+      })
+      .on('mouseleave', () => {
+        root.classed('focus', false)
+        node.classed('lit', false)
+        link.classed('lit', false)
+      })
+      .on('click', (_, n) => {
+        if (n.row) latest.current.onSelect(n.row.uid)
+      })
+
+    const s = (sim.current ||= forceSimulation<Node, Link>())
+    s.nodes(g.nodes)
+      .force('charge', forceManyBody().strength(-160))
+      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.target.kind === 'repo' ? 40 : 70)))
+      .force('x', forceX(0).strength(0.04))
+      .force('y', forceY(0).strength(0.04))
+      .on('tick', () => {
+        link
+          .attr('x1', (l) => l.source.x!)
+          .attr('y1', (l) => l.source.y!)
+          .attr('x2', (l) => l.target.x!)
+          .attr('y2', (l) => l.target.y!)
+        node.attr('transform', (n) => `translate(${n.x},${n.y})`)
+      })
+    paint()
+    s.alpha(old.size ? 0.4 : 1).restart()
+
+    node.call(
+      drag<SVGGElement, Node>()
+        .on('start', (e, n) => {
+          if (!e.active) s.alphaTarget(0.3).restart()
+          n.fx = n.x
+          n.fy = n.y
+        })
+        .on('drag', (e, n) => {
+          n.fx = e.x
+          n.fy = e.y
+        })
+        .on('end', (e, n) => {
+          if (!e.active) s.alphaTarget(0)
+          n.fx = null
+          n.fy = null
+        }),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
-  if (!rows.length) return <div className="graph empty">nothing to graph yet</div>
+  useEffect(paint)
 
-  const bounds = () => {
-    const xs = pos.map((p) => p.x)
-    const ys = pos.map((p) => p.y)
-    const pad = PAD + RMAX
-    const x0 = Math.min(...xs) - pad
-    const y0 = Math.min(...ys) - pad
-    return { x0, y0, w: Math.max(...xs) - x0 + pad, h: Math.max(...ys) - y0 + pad }
-  }
-  const b = bounds()
-  const radius = (r: Row) => {
-    const s = sizes[r.url]
-    if (!s || s.add == null || s.del == null) return R0
-    const lines = s.add + s.del
-    return Math.max(R0, R0 + (RMAX - R0) * Math.sqrt(lines / maxLines))
-  }
-  const measured = rows.filter((r) => sizes[r.url]?.add != null).length
+  // Zoom and pan, once. Labels fade in as you zoom, like Quartz, so a wide view stays uncluttered.
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const root = select(svg)
+    const fit = () => root.attr('viewBox', `${-svg.clientWidth / 2} ${-svg.clientHeight / 2} ${svg.clientWidth} ${svg.clientHeight}`)
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(svg)
+    const z = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.25, 4])
+      .on('zoom', ({ transform }) => {
+        root.select('g.world').attr('transform', transform.toString())
+        svg.style.setProperty('--label', String(Math.min(1, Math.max(0, (transform.k - 0.8) * 2))))
+        svg.style.setProperty('--k', String(transform.k))
+      })
+    root.call(z).on('dblclick.zoom', null)
+    svg.style.setProperty('--label', '0.4')
+    svg.style.setProperty('--k', '1')
+    return () => {
+      ro.disconnect()
+      root.on('.zoom', null)
+      sim.current?.stop()
+    }
+  }, [])
+
+  const measured = rows.filter((r) => lines(sizes[r.url]) != null).length
+  const states = (['approved', 'changes', 'commented', 'awaiting', 'running', 'error', 'idle'] as const).filter((k) =>
+    rows.some((r) => rowState(r).key === k),
+  )
   return (
     <div className="graph">
       <div className="gbadge">
-        {measuring ? (
+        {!rows.length ? (
+          'nothing to graph yet'
+        ) : measuring ? (
           <span>
             <i className="spinner" /> measuring diffs {measured}/{rows.length}
           </span>
         ) : (
-          <span>
-            {rows.length} PRs · {new Set(rows.map((r) => r.repo)).size} repos
-          </span>
+          `${rows.length} PRs · ${new Set(rows.map((r) => r.repo)).size} repos · ${new Set(rows.map((r) => r.author)).size} authors`
         )}
       </div>
-      <svg viewBox={`${b.x0} ${b.y0} ${b.w} ${b.h}`} preserveAspectRatio="xMidYMid meet">
-        {edges.map(([a, e, same], i) => (
-          <line
-            key={i}
-            x1={pos[a].x}
-            y1={pos[a].y}
-            x2={pos[e].x}
-            y2={pos[e].y}
-            stroke={same ? 'var(--violet)' : 'var(--line2)'}
-            strokeWidth={same ? 1.6 : 1}
-            opacity={same ? 0.5 : 0.7}
-          />
-        ))}
-        {repos.map((r) => (
-          <text key={r.name} x={r.x} y={r.y} className="grepo">
-            {r.name}
-          </text>
-        ))}
-        {rows.map((r, i) => {
-          const st = rowState(r)
-          const pal = PALETTE[st.key] || PALETTE.idle
-          const rr = radius(r)
-          const known = sizes[r.url]?.add != null
-          return (
-            <g key={r.url} className="gnode" transform={`translate(${pos[i].x} ${pos[i].y})`} onClick={() => onSelect(r.uid)}>
-              <title>
-                #{r.number} {r.title}
-                {'\n'}
-                {r.repo} · {r.author}
-                {'\n'}
-                {known ? `+${sizes[r.url].add} −${sizes[r.url].del}` : 'measuring…'}
-              </title>
-              {r.uid === sel ? <circle r={rr + 4} className="gsel" /> : null}
-              <circle r={rr} fill={known ? pal.bg : 'transparent'} stroke={pal.border} strokeWidth={1.5} strokeDasharray={known ? undefined : '2 2'} />
-              {rr >= 9 ? (
-                <text y={rr + 11} className="glabel">
-                  #{r.number}
-                </text>
-              ) : null}
-            </g>
-          )
-        })}
+      <svg ref={svgRef}>
+        <g className="world">
+          <g className="links" />
+          <g className="nodes" />
+        </g>
       </svg>
       <div className="glegend">
-        {(['approved', 'changes', 'commented', 'awaiting', 'running', 'error', 'idle'] as const)
-          .filter((k) => rows.some((r) => rowState(r).key === k))
-          .map((k) => (
-            <span key={k}>
-              <i style={{ background: PALETTE[k].border }} />
-              {k}
-            </span>
-          ))}
-        <span className="gsize">
-          <i className="gdot" style={{ width: 6, height: 6 }} />
-          <i className="gdot" style={{ width: 11, height: 11 }} />
-          <i className="gdot" style={{ width: 16, height: 16 }} />
-          diff size
+        {states.map((k) => (
+          <span key={k}>
+            <i style={{ background: PALETTE[k].fg }} />
+            {k}
+          </span>
+        ))}
+        <span>
+          <i style={{ background: 'var(--dim2)' }} /> repo
         </span>
         <span>
-          <i style={{ background: 'var(--violet)' }} /> same author
+          <i className="gdot" /> author
         </span>
+        <span>size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>
   )
