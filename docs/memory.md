@@ -562,6 +562,17 @@ of what is waiting — `~/.prs_memory/.publishing` records the answer, a no incl
 publishes to a team that has not said yes. `_team_for()` mirrors `_project()` step for step so the
 permission is looked up for the same team the write goes to.
 
+**And it can be changed.** Asked once at launch is right for a nag and wrong for a state: a team joined
+since you started is never asked, and an answer given by accident can only be taken back by editing the
+file. The **Knowledge** group carries a `Waiting` row for every answer still holding something back —
+unasked, refused, or an `agents.md` edited since you read it — and `⏎` on that row asks the question
+again, there and then. `gitdashy teams --team KEY --publishing-again` and `--agents-again` do the same
+from a shell. A team that has answered yes and had its `agents.md` read shows no row at all.
+
+This mattered more than it looks. The launch prompt read a curses timeout as a keypress for four
+versions, so it recorded a refusal for every team on the first launch after v1.43.0 and then, by
+design, never asked again. Nothing published anywhere for two days and no surface said why.
+
 **So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
 to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
 team has; `x` removes one from your memory, from theirs, and from the evidence pool — but it leaves the team's

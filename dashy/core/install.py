@@ -171,12 +171,7 @@ def _notes_key():
 		names = sorted(n for n in os.listdir(ident) if n.endswith(".md"))
 	except OSError:
 		names = []
-	# ponytail: the team's agents.md files are in the key too, because a note below depends on them and
-	# on the answers file beside them. Without this the row would be right once and then keep saying it
-	# after the file was accepted — a standing note that has stopped being true is worse than none.
-	agents = tuple((t, stamp(os.path.join(t, "memory", "agents.md"))) for t in sorted(team.dirs()))
-	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")),
-	        agents, stamp(os.path.join(config.MEMORY_DIR, ".agents-ok")))
+	return (d, tuple((n, stamp(os.path.join(ident, n))) for n in names), stamp(os.path.join(d, "CLAUDE.md")))
 
 
 def session_notes():
@@ -194,17 +189,12 @@ def session_notes():
 			out.append("corpus never says `gitdashy remember`")
 		if hand_wired_team_import():
 			out.append("CLAUDE.md imports @prs-team by hand")
-		# ponytail: the launch prompt asks ONCE, at startup. After a `n`, or on a machine that only ever
-		# runs the session hook, a team's instruction to your sessions is withheld for ever with nothing
-		# saying so — and this row exists for exactly that: what a session here is NOT being told.
-		# ponytail: a refusal is a note too, and unacked_agents forgets a team once it is answered.
-		if waiting := [k for k, _t in memory.unacked_agents()]:
-			out.append(f"{', '.join(waiting)}: agents.md not read — restart to be asked")
-		# ponytail: names the command that ACTUALLY re-asks. It said "restart to be asked again", and a
-		# restart asked nothing: ask_agents walks unacked_agents, which drops a team whose refusal
-		# matches the file it still has. Nothing cleared a `!` entry at all.
-		if refused := memory.refused_agents():
-			out.append(f"{', '.join(refused)}: agents.md refused — `gitdashy teams --agents-again`")
+		# ponytail: the TEAM gates are not here any more. They started as notes because a withheld
+		# agents.md was invisible, and a note is the wrong shape for them: it states a problem the
+		# reader cannot act on from where they are reading it. memory.pending_answers() drives a row
+		# of its own on the same group, and ⏎ on that row asks the question again. What is left here
+		# is what it says on the docstring — things about THIS MACHINE's wiring, which no keypress in
+		# the dashboard can fix.
 		_NOTES = (key, out)
 	return _NOTES[1]
 

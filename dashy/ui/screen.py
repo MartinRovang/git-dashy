@@ -150,6 +150,15 @@ def header_groups(state):
 	# in full under it — the escape hatch Team's own clip relies on ("T shows it whole") and notes had none.
 	# ponytail: an empty key, so ⏎ on one is inert; group_menu only acts on a key it recognises.
 	know += [("", "Note", n, "on") for n in install.session_notes()]
+	# ponytail: a row you can act on, not a note you cannot. Both gates are asked once at launch and
+	# never again, so a team joined since you started, an agents.md a teammate pushed an hour ago, and
+	# an answer given by accident all left something withheld with the only route back being a restart
+	# — or, for a refusal, hand-editing a dotfile. ⏎ here asks the question again, now.
+	# ponytail: the KEY carries the team, because there can be one row per team per gate and the
+	# handler needs to know which. Nothing else in this table has a compound key, which is why it is
+	# prefixed: group_menu matches the prefix and no settings key can collide with it.
+	know += [(f"?{kind}:{key}", "Waiting", f"{key}: {what}", "on")
+	         for kind, key, what in memory.pending_answers()]
 	if knowledge.store_moved():  # ponytail: a row only once it says something — at the default it just repeats Memory
 		know.append(("C", "Store", knowledge.show(config.TEAMS), None))
 	return [("Agent", "R", reviewer), ("View", "V", view), ("Knowledge", "K", know)]
@@ -1014,6 +1023,12 @@ def group_menu(scr, state, sel, key):
 				team_setup(scr, state, sel)
 			elif sk in ("L", "C"):
 				set_path(scr, state, sel, sk)
+			elif sk.startswith("?"):
+				# ponytail: forget the recorded answer FIRST, then ask. Both prompts list what has no
+				# answer, so re-asking without clearing would draw nothing and look like a dead key.
+				kind, _, tkey = sk[1:].partition(":")
+				(memory.ask_agents_again if kind == "agents" else memory.ask_publishing_again)(tkey)
+				(ask_agents if kind == "agents" else ask_publishing)(scr, state, sel)
 		elif k in (27, ord("q")):
 			return
 

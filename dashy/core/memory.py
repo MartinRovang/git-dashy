@@ -813,6 +813,56 @@ def allow_publishing(key, yes=True):
 		pass  # ponytail: unanswerable is the same as unanswered — it asks again rather than assuming yes
 
 
+def ask_publishing_again(key):
+	"""Forget your answer about publishing to `key`, so it is asked again. True if there was one.
+
+	ponytail: the undo `allow_publishing` never had. A `no` is recorded as `!key` precisely so it is
+	not re-asked at every launch, which left hand-editing .publishing as the only way back — and a
+	`no` nobody meant to give is exactly how this arrived: the launch prompt read a curses timeout as
+	a keypress and recorded a refusal for three teams at once. An answer you cannot change is not a
+	consent mechanism, it is a trap with a nice panel on it.
+	"""
+	keys = _publishing_keys()
+	kept = {k for k in keys if k.lstrip("!") != key}
+	if len(kept) == len(keys):
+		return False  # nothing recorded for that team, so nothing to forget
+	try:
+		os.makedirs(config.MEMORY_DIR, exist_ok=True)
+		with open(os.path.join(config.MEMORY_DIR, PUBLISHING), "w") as f:
+			f.write("".join(k + "\n" for k in sorted(kept)))
+	except OSError:
+		return False
+	return True
+
+
+def pending_answers():
+	"""[(kind, key, what)] — every team answer the dashboard can still put in front of you.
+
+	`kind` is "publishing" or "agents", `key` names the team, `what` is the phrase a row shows. Both
+	gates are asked once at launch and then never again, which is right for a nag and wrong for a
+	state: a team joined since you started, a file a teammate pushed an hour ago, and an answer you
+	gave by accident all leave something withheld with no way to reach it. This is what makes them
+	reachable, and the Knowledge row is where it is shown.
+	ponytail: a GRANTED answer is not pending. This lists what is still being held back, so a team
+	that is publishing and whose agents.md you have read says nothing at all.
+	"""
+	out = []
+	for key in team.joined():
+		if key not in {k.lstrip("!") for k in _publishing_keys()}:
+			out.append(("publishing", key, "not asked about publishing yet"))
+		elif not publishing(key):
+			out.append(("publishing", key, "not publishing — your answer was no"))
+		if text := _agents_of(key):
+			seen = _agents_seen().get(_agents_key(key), "")
+			if not seen:
+				out.append(("agents", key, "agents.md not read"))
+			elif seen.startswith("!"):
+				out.append(("agents", key, "agents.md refused"))
+			elif seen != _agents_sha(text):
+				out.append(("agents", key, "agents.md changed since you read it"))
+	return out
+
+
 def unasked():
 	"""[(key, drafts, facts)] per joined team nobody has answered for. What the launch prompt counts."""
 	said = {k.lstrip("!") for k in _publishing_keys()}

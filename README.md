@@ -356,8 +356,9 @@ imperative text handed to an agent that holds tools, where facts and a brief are
 weighs, and whoever can push to the team's repo writes it. This gate covers `agents.md` only:
 `project.md` and the team's `general.md` come out of the same repo and reach the same mirror ungated,
 and the brief reaches review prompts too. The Knowledge row says when a team's `agents.md` is being
-withheld, whether because nobody has read it yet or because somebody said no; `gitdashy teams
---agents-again` forgets that answer so the next launch asks once more.
+withheld, whether because nobody has read it yet or because somebody said no. `⏎` on that row asks
+again without a restart, and `gitdashy teams --team KEY --agents-again` does the same from a shell.
+Publishing has the same row and the same undo, `--publishing-again`.
 
 **A repo belongs to a team, and that decides everything the team knows about it.**
 `gitdashy bind <owner/name>` — or `--owner neomedsys` for a whole org in one line — sets which brief its

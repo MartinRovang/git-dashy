@@ -30,8 +30,7 @@ Usage: gitdashy [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [-
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
-                      [--team KEY --agents-again]
-                      [--team KEY --agents-again]
+                      [--team KEY --agents-again | --publishing-again]
 
   --interval N   seconds between refreshes (default {config.INTERVAL}); i picks 1/2/5/10/15m
   --auto         Claude reviews every review-requested PR that appears from now on
@@ -548,6 +547,14 @@ def teams(argv):
 	elif "--agents-again" in argv:
 		key = _team_of(argv)
 		print(f"gitdashy: {key} will be asked about again at the next launch" if memory.ask_agents_again(key)
+		      else f"gitdashy: nothing recorded for {key} — it is already asked about at launch")
+	elif "--publishing-again" in argv:
+		# ponytail: the same undo, for the gate that had none. A `no` is recorded so it is not re-asked
+		# at every launch, which left hand-editing .publishing as the only way back — and a `no` nobody
+		# meant to give is exactly how this arrived on one machine: the launch prompt read a curses
+		# timeout as a keypress and recorded a refusal for three teams at once.
+		key = _team_of(argv)
+		print(f"gitdashy: {key} will be asked about again at the next launch" if memory.ask_publishing_again(key)
 		      else f"gitdashy: nothing recorded for {key} — it is already asked about at launch")
 	elif leave := arg("--leave", "", str, argv):
 		if err := knowledge.leave(leave):

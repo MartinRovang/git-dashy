@@ -564,3 +564,17 @@ def test_remember_general_keeps_the_project_it_was_observed_in(monkeypatch, caps
 	pooled = tmp_path / "teams" / "nms" / "memory" / memory.DRAFT_POOL / "tester" / "general.md"
 	assert pooled.exists(), "a general observation pooled to no project"
 	assert not (tmp_path / "teams" / "dashy" / "memory" / memory.DRAFT_POOL).exists()
+
+
+def test_teams_can_forget_a_publishing_answer(monkeypatch, tmp_path, capsys):
+	"""The gate with no undo. Hand-editing .publishing was the only route back from a `no`, and a `no`
+	nobody meant to give is how this arrived on a real machine."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	from conftest import a_team
+	a_team(monkeypatch, tmp_path, "org-t")
+	memory.allow_publishing("org-t", False)
+	cli.run(["gitdashy", "teams", "--team", "org-t", "--publishing-again"])
+	assert "will be asked about again" in capsys.readouterr().out
+	assert [k for k, _d, _f in memory.unasked()] == ["org-t"]
+	cli.run(["gitdashy", "teams", "--team", "org-t", "--publishing-again"])
+	assert "nothing recorded" in capsys.readouterr().out

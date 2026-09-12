@@ -2616,24 +2616,23 @@ def test_the_prompt_records_what_it_showed_not_what_the_file_says_later(screen, 
 	assert [k for k, _t in memory.unacked_agents()] == ["org-t"]   # it asks about the new wording
 
 
-def test_a_refused_agents_file_still_says_so_on_the_knowledge_row(monkeypatch, tmp_path):
-	"""The note was only tested for never-asked. After a `n` the instruction is withheld for ever, and
-	that is the case the row was added for."""
-	from dashy.core import install, memory
+def test_a_refused_agents_file_still_says_so_on_the_knowledge_row(screen, monkeypatch, st, tmp_path):
+	"""A refusal is withheld for ever, and that is the case the row was added for. It is a ROW rather
+	than a note now, because a note states a problem you cannot act on from where you are reading it."""
+	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(install, "claude_dir", lambda: str(tmp_path / "cfg"))
 	mem = a_team(monkeypatch, tmp_path, "org-t")
 	(mem / "agents.md").write_text("File what you work out.\n")
 	memory.allow_agents("org-t", memory.unacked_agents()[0][1], yes=False)
 	assert memory.unacked_agents() == []                          # not asked again, by design
-	assert [n for n in install.session_notes() if "agents.md" in n] == \
-	       ["org-t: agents.md refused — `gitdashy teams --agents-again`"]
-	# ponytail: the note names a command that WORKS. It said "restart to be asked again" and a restart
-	# asked nothing — ask_agents walks unacked_agents, which drops a team whose refusal matches the
-	# file it still has, and nothing ever cleared a `!` entry.
-	assert memory.ask_agents_again("org-t")
-	assert [k for k, _t in memory.unacked_agents()] == ["org-t"]  # and now a launch does ask
-	assert not [n for n in install.session_notes() if "refused" in n]
+	assert ("?agents:org-t", "Waiting", "org-t: agents.md refused", "on") in _know_rows(st)
+	# ponytail: ⏎ on the row ASKS, rather than naming a command to go and type. Feeding `y` here has
+	# to both clear the refusal and land a fresh answer, which is the whole round trip.
+	i = next(i for i, r in enumerate(_know_rows(st)) if r[0] == "?agents:org-t")
+	screen.getch, screen.timeout = _keys(*([ord("j")] * i), 10, ord("y"), 27), lambda t: None
+	ui.group_menu(screen, st, 0, "K")
+	assert memory.agents_text("org-t", str(mem)) == "File what you work out."
+	assert not [r for r in _know_rows(st) if r[1] == "Waiting"]
 
 
 def test_an_agents_file_nobody_can_decode_does_not_take_the_dashboard_with_it(monkeypatch, tmp_path):
@@ -2649,17 +2648,59 @@ def test_an_agents_file_nobody_can_decode_does_not_take_the_dashboard_with_it(mo
 	assert memory.refused_agents() == []
 	assert all("agents.md" not in n for n in install.session_notes())
 	assert memory.agents_text("org-t", str(mem)) == ""
-def test_a_team_whose_agents_file_is_unread_says_so_on_the_knowledge_row(monkeypatch, tmp_path):
-	"""The prompt runs once, at startup. After a `n`, or on a machine that only ever runs the session
-	hook, the instruction is withheld for ever with nothing saying so — and this row exists for
-	precisely that: what a session here is NOT being told."""
-	from dashy.core import install, memory
+def test_a_team_whose_agents_file_is_unread_says_so_on_the_knowledge_row(monkeypatch, st, tmp_path):
+	"""The prompt runs once, at startup. On a machine that only ever runs the session hook, or for a
+	file a teammate pushed an hour ago, the instruction is withheld with nothing saying so."""
+	from dashy.core import memory
 	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
-	monkeypatch.setattr(install, "claude_dir", lambda: str(tmp_path / "cfg"))
 	mem = a_team(monkeypatch, tmp_path, "org-t")
-	assert not [n for n in install.session_notes() if "agents.md" in n]
+	memory.allow_publishing("org-t")                              # answered, so only agents can be waiting
+	assert not [r for r in _know_rows(st) if r[1] == "Waiting"]   # no agents.md: nothing withheld
 	(mem / "agents.md").write_text("File what you work out.\n")
-	assert [n for n in install.session_notes() if "agents.md" in n] == \
-	       ["org-t: agents.md not read — restart to be asked"]
+	assert ("?agents:org-t", "Waiting", "org-t: agents.md not read", "on") in _know_rows(st)
 	memory.allow_agents("org-t", memory.unacked_agents()[0][1])
-	assert not [n for n in install.session_notes() if "agents.md" in n]  # and it stops, once read
+	assert not [r for r in _know_rows(st) if r[1] == "Waiting"]   # and it stops, once read
+
+
+def test_the_knowledge_row_re_asks_about_publishing_without_a_restart(screen, monkeypatch, st, tmp_path):
+	"""The case that cost a real machine two days. The launch prompt read a curses timeout as a
+	keypress and recorded a refusal for three teams; after that nothing asked again and nothing said
+	so, and the only way back was deleting a dotfile by hand."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	memory.allow_publishing("org-t", False)
+	row = ("?publishing:org-t", "Waiting", "org-t: not publishing — your answer was no", "on")
+	assert row in _know_rows(st)
+	i = next(i for i, r in enumerate(_know_rows(st)) if r[0] == "?publishing:org-t")
+	# ponytail: j to the row, ⏎ to open it, y to answer, esc to leave the group menu.
+	screen.getch, screen.timeout = _keys(*([ord("j")] * i), 10, ord("y"), 27), lambda t: None
+	ui.group_menu(screen, st, 0, "K")
+	assert memory.publishing("org-t") is True
+	assert not [r for r in _know_rows(st) if r[1] == "Waiting"]
+
+
+def test_answering_no_again_leaves_the_row_there(screen, monkeypatch, st, tmp_path):
+	"""A deliberate no is still a no, and the row has to keep saying so — otherwise pressing ⏎ and
+	meaning it looks exactly like pressing ⏎ and missing."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	a_team(monkeypatch, tmp_path, "org-t")
+	memory.allow_publishing("org-t", False)
+	i = next(i for i, r in enumerate(_know_rows(st)) if r[0] == "?publishing:org-t")
+	screen.getch, screen.timeout = _keys(*([ord("j")] * i), 10, ord("n"), 27), lambda t: None
+	ui.group_menu(screen, st, 0, "K")
+	assert memory.publishing("org-t") is False
+	assert [r for r in _know_rows(st) if r[1] == "Waiting"]
+
+
+def test_a_team_that_answered_yes_and_read_its_agents_file_is_not_waiting(monkeypatch, st, tmp_path):
+	"""The row is what is being HELD BACK. A team that is fully answered says nothing at all, or the
+	Knowledge group grows a permanent line nobody can clear."""
+	from dashy.core import memory
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mem"))
+	mem = a_team(monkeypatch, tmp_path, "org-t")
+	(mem / "agents.md").write_text("File what you work out.\n")
+	memory.allow_publishing("org-t")
+	memory.allow_agents("org-t", memory.unacked_agents()[0][1])
+	assert not [r for r in _know_rows(st) if r[1] == "Waiting"]
