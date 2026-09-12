@@ -82,7 +82,9 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
-          gh release create "$tag" --generate-notes $pre
+          # ponytail: a draft until the binaries are on it. A published release with no asset is what
+          # the in-app updater and install.sh download from, and they 404 for the whole build.
+          gh release create "$tag" --draft --generate-notes $pre
 
   # ponytail: one binary per OS as a release asset, named the way update::asset_name() looks for it.
   # The Vite bundle is built first and embedded into the binary by include_dir!.
@@ -136,3 +138,16 @@ jobs:
             || shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
           gh release upload "${{ needs.release.outputs.tag }}" \
             "${{ matrix.asset }}" "${{ matrix.asset }}.sha256" --clobber
+
+  # ponytail: the release goes live only once every asset is uploaded.
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh release edit "${{ needs.release.outputs.tag }}" --draft=false
