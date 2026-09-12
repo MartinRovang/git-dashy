@@ -51,12 +51,19 @@ if [ "$(uname -s)" = Linux ]; then
 	mkdir -p "$APPS" "$(dirname "$ICON")"
 	# best effort: a missing icon just means the generic one
 	curl -fsSL --retry 2 -o "$ICON" "https://raw.githubusercontent.com/$REPO/main/public/head.png" || true
+	# ponytail: the app menu starts us with no shell, so no GH_TOKEN from the user's rc.
+	# The launcher re-runs through an interactive login shell, which sources it.
+	cat > "$BIN/$NAME-launch" <<-EOF
+		#!/bin/sh
+		exec "\${SHELL:-/bin/sh}" -lic 'exec "$BIN/$NAME"'
+	EOF
+	chmod +x "$BIN/$NAME-launch"
 	cat > "$APPS/$NAME.desktop" <<-EOF
 		[Desktop Entry]
 		Type=Application
 		Name=github-dashy
 		Comment=Your PRs, review-requested, assigned
-		Exec=$BIN/$NAME
+		Exec=$BIN/$NAME-launch
 		Icon=$ICON
 		Terminal=false
 		Categories=Development;
