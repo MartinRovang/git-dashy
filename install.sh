@@ -43,6 +43,9 @@ mv -f "$TMP" "$BIN/$NAME"
 if [ -e "$BIN/prs" ] || [ -L "$BIN/prs" ]; then
 	ln -sf "$BIN/$NAME" "$BIN/prs"
 fi
+# ponytail: --version is the cheapest full load of the binary, so a missing Linux webview shows
+# up here as a loader error instead of as a window that never opens.
+ERR=$("$BIN/$NAME" --version 2>&1 >/dev/null) || true
 TAG=$("$BIN/$NAME" --version 2>/dev/null | awk '{print $NF}')
 
 row() { printf '    %s%-22s%s %s%s%s\n' "$CYAN" "$1" "$R" "$DIM" "$2" "$R"; }
@@ -54,6 +57,14 @@ row "$NAME"          "the desktop dashboard: your PRs, review-requested, assigne
 row "$NAME --browser" "the same dashboard in your browser"
 row "$NAME --demo"   "try it with canned data (no token, no claude)"
 row "$NAME --help"   "all flags and subcommands"
+
+if [ -z "$TAG" ]; then
+	warn "$NAME did not start: ${ERR:-unknown error}"
+	if [ "$(uname -s)" = Linux ]; then
+		printf '       %sit needs the system webview:%s\n' "$DIM" "$R"
+		printf '       %sapt install libwebkit2gtk-4.1-0 libgtk-3-0%s   %s(dnf: webkit2gtk4.1 gtk3 / pacman: webkit2gtk-4.1 gtk3)%s\n' "$CYAN" "$R" "$DIM" "$R"
+	fi
+fi
 
 case ":$PATH:" in
 	*":$BIN:"*) ;;
