@@ -34,12 +34,14 @@ export default function App() {
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
   const [view, setView] = useState<'board' | 'graph'>('board')
-  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it
-  useEffect(() => {
-    if (view !== 'graph') return
+  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it.
+  // Cleared here, in the same update as the switch, so the graph lays out once and not twice.
+  const show = (v: 'board' | 'graph') => {
+    setView(v)
+    if (v !== 'graph') return
     setQuery('')
     setFailing(false)
-  }, [view])
+  }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
   // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
@@ -465,7 +467,7 @@ export default function App() {
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
     if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
-    if (k === 'G') return one(() => setView((v) => (v === 'board' ? 'graph' : 'board')))
+    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
@@ -482,7 +484,7 @@ export default function App() {
 
   return (
     <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={setView} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
