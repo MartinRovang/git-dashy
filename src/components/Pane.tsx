@@ -141,6 +141,7 @@ export function Pane({
   p,
   detail,
   diff,
+  subs,
   tab,
   scope,
   context,
@@ -155,6 +156,7 @@ export function Pane({
   p: Row | null
   detail: Detail | null
   diff: Code | null
+  subs: string
   tab: 'summary' | 'code'
   scope: string
   context: number
@@ -224,6 +226,9 @@ export function Pane({
           <span>updated {age(p.updatedAt)} ago</span>
         </div>
         <div className="ptitle">{p.title}</div>
+        {p.summary && (subs === 'all' || (subs === 'open' && p.section !== 'REVIEWED')) ? (
+          <div className="prose">{p.summary}</div>
+        ) : null}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
           <div className="av" style={{ width: 24, height: 24, fontSize: 11, background: avatar(p.author || '?') }}>
             {(p.author || '?')[0].toUpperCase()}
