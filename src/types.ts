@@ -119,6 +119,12 @@ export type Detail = {
   review: Review | null
 }
 
+/** get_graph(): one PR's diff size for the graph view. */
+export type Size = { url: string; add: number | null; del: number | null; files: number | null }
+
+/** get_graph(): every known size, and whether any PR is still being measured. */
+export type GraphData = { pending: boolean; nodes: Size[] }
+
 /** code_rows(): the diff as a flat list. */
 export type CodeRow =
   | { kind: 'file'; path: string; add: number; dele: number }

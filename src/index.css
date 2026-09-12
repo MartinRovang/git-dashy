@@ -334,5 +334,23 @@
   .floatvid .vol input[type=range] { flex: 1; accent-color: var(--violet); }
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--edge); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
 
+  /* graph view: the board as nodes, sized by diff, pulled together by repo */
+  .vtabs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--edge); border-radius: 6px; }
+  .vtabs button { font: inherit; font-size: 11px; padding: 2px 10px; border: 0; border-radius: 4px; background: none; color: var(--dim); cursor: pointer; }
+  .vtabs button.on { background: var(--bg4); color: var(--ink); }
+  .graph { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .graph.empty { align-items: center; justify-content: center; color: var(--dim2); }
+  .graph svg { flex: 1; min-height: 0; width: 100%; }
+  .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); }
+  .gnode { cursor: pointer; }
+  .gnode:hover circle { filter: brightness(1.4); }
+  .gsel { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+  .glabel { font-size: 10px; fill: var(--dim); text-anchor: middle; pointer-events: none; }
+  .grepo { font-size: 13px; fill: var(--dim3); text-anchor: middle; pointer-events: none; opacity: .6; }
+  .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
+  .glegend span { display: flex; align-items: center; gap: 5px; }
+  .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+  .glegend .gdot { border: 1px solid var(--dim2); background: none; }
+
   /* ponytail: React mounts into #root, so it needs the full height the vanilla #app assumed. */
   #root { height: 100%; }

@@ -248,6 +248,14 @@ function detail(url: string) {
   }
 }
 
+function graph() {
+  const nodes = S.rows.map((r) => {
+    const d = detail(r.url) as { add: number; del: number; files: number }
+    return { url: r.url, add: d.add, del: d.del, files: d.files }
+  })
+  return { pending: false, nodes }
+}
+
 function code(url: string, scope: string) {
   const info = S.reviewInfo[url]
   if (!info) return { url, pending: false, rows: [], empty: 'no review yet — r reviews this PR, p pre-reviews it' }
@@ -345,6 +353,7 @@ function postSettings(b: Body) {
 function handleApi(method: string, path: string, query: URLSearchParams, body: Body) {
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
+    if (path === '/api/graph') return json(200, graph())
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
     if (path === '/api/diff') return json(200, code(query.get('url') || '', query.get('scope') || 'marks'))

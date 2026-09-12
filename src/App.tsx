@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
 import { flat, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
+import { Graph } from './components/Graph'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
@@ -10,7 +11,7 @@ import { confirm, modalCount, ModalHost, notice, picker, prompt, viewer } from '
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
-import type { Code, Detail, Row, StateData } from './types'
+import type { Code, Detail, GraphData, Row, Size, StateData } from './types'
 import { useNow, useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
@@ -32,6 +33,8 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  const [view, setView] = useState<'board' | 'graph'>('board')
+  const [graph, setGraph] = useState<GraphData | null>(null)
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
   // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
@@ -221,6 +224,32 @@ export default function App() {
       if (timer) clearTimeout(timer)
     }
   }, [pane, url, tab, scope, context])
+
+  // Diff sizes for the graph, only while it is open. Re-asked while pending, and on every state
+  // poll after that, so a PR that arrives or moves gets measured too (the server caches per revision).
+  useEffect(() => {
+    if (view !== 'graph') return
+    let alive = true
+    let timer: number | undefined
+    const run = async () => {
+      try {
+        const r = await api('/api/graph')
+        if (!r.ok) return
+        const got = (await r.json()) as GraphData
+        if (!alive) return
+        setGraph(got)
+        if (got.pending) timer = window.setTimeout(run, 1500)
+      } catch {
+        /* the next tick retries */
+      }
+    }
+    run()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [view, data?.fetchedAt])
+  const sizes = useMemo(() => Object.fromEntries((graph?.nodes || []).map((n) => [n.url, n])) as Record<string, Size>, [graph])
 
   useEffect(() => {
     if (tab !== 'code' || !diff || diff.pending) return
@@ -453,6 +482,7 @@ export default function App() {
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
     if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
+    if (k === 'G') return one(() => setView((v) => (v === 'board' ? 'graph' : 'board')))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
@@ -469,7 +499,7 @@ export default function App() {
 
   return (
     <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={setView} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -483,6 +513,19 @@ export default function App() {
         <div className="main">
           <div className="body">
             <div className="queue">
+              {view === 'graph' ? (
+                <Graph
+                  secs={secs}
+                  sizes={sizes}
+                  measuring={!graph || graph.pending}
+                  sel={selUid}
+                  onSelect={(uid) => {
+                    setSel(uid)
+                    setAt(0)
+                    setPane(true)
+                  }}
+                />
+              ) : (
               <Queue
                 data={data}
                 secs={secs}
@@ -503,6 +546,7 @@ export default function App() {
                 }}
                 onOpen={() => setPane(true)}
               />
+              )}
             </div>
             {pane ? (
               <Pane

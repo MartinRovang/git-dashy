@@ -468,6 +468,43 @@ fn get_state(state: &State, _q: &Query) -> Out {
     Ok(payload(state))
 }
 
+/// Diff sizes for every PR on the board, for the graph view. The frame omits them because sizing one
+/// costs a GitHub query, so the graph asks only while it is open.
+///
+/// ponytail: reuses want_detail, so a size is fetched once per revision and cached like the pane's.
+/// Answers pending while any size is still being fetched; the page repolls. A PR without a size is left out.
+fn get_graph(state: &State, _q: &Query) -> Out {
+    let prs: Vec<Pr> = {
+        let inner = state.lock();
+        inner
+            .sections
+            .iter()
+            .flat_map(|s| s.prs.iter().flatten())
+            .cloned()
+            .collect()
+    };
+    let mut nodes = Vec::new();
+    let mut pending = false;
+    for pr in &prs {
+        match state.want_detail(pr) {
+            Some(d) => nodes.push(json!({
+                "url": pr.url,
+                "add": d.add,
+                "del": d.del,
+                "files": d.files,
+            })),
+            // a failed fetch caches None too; only a fetch still running keeps the page polling
+            None => {
+                pending |= state
+                    .lock()
+                    .detailing
+                    .contains(&(pr.url.clone(), pr.updated_at.clone()))
+            }
+        }
+    }
+    Ok(json!({"pending": pending, "nodes": nodes}))
+}
+
 /// The last `n` lines of a file, or the io error when it cannot be read, so a blank tail says why.
 fn tail(path: &Path, n: usize) -> String {
     // ponytail: read the last 64 KB, not the whole log — the first line of the window may be a
@@ -1409,6 +1446,7 @@ type Post = fn(&State, &Body) -> Out;
 fn get_route(path: &str) -> Option<Get> {
     Some(match path {
         "/api/state" => get_state,
+        "/api/graph" => get_graph,
         "/api/debug" => get_debug,
         "/api/asks" => get_asks,
         "/api/pr" => get_pr,

@@ -10,10 +10,12 @@ type Props = {
   onMenu: () => void
   onUpdate: () => void
   onLogo: () => void
+  view: 'board' | 'graph'
+  onView: (v: 'board' | 'graph') => void
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onLogo }: Props) {
+export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onLogo, view, onView }: Props) {
   const running = d?.running || 0
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
@@ -32,6 +34,13 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{total} PRs</span>
         <span style={{ color: 'var(--dim3)' }}>·</span>
         <span>{d?.model || ''}</span>
+      </div>
+      <div className="vtabs" title="switch view (G)">
+        {(['board', 'graph'] as const).map((v) => (
+          <button key={v} className={view === v ? 'on' : ''} onClick={() => onView(v)}>
+            {v}
+          </button>
+        ))}
       </div>
       <div style={{ flex: 1 }} />
       {d?.update ? (
