@@ -51,7 +51,8 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
   sel: string
   onSelect: (uid: string) => void
 }) {
-  const rows = useMemo(() => secs.flatMap((s) => s.prs), [secs])
+  // REVIEWED is history, and an open PR there would be a second node for the same url
+  const rows = useMemo(() => secs.filter((s) => s.name !== 'REVIEWED').flatMap((s) => s.prs), [secs])
   const key = rows.map((r) => `${r.url}\t${r.author}`).sort().join('|')
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)

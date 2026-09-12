@@ -479,6 +479,10 @@ fn get_graph(state: &State, _q: &Query) -> Out {
         inner
             .sections
             .iter()
+            // ponytail: REVIEWED rows are log echoes keyed by review time, so an open PR there is a second
+            // revision of the same url and want_detail's eviction ping-pongs them forever. The live
+            // sections are already deduped, so skipping REVIEWED leaves one row per url.
+            .filter(|s| s.name != "REVIEWED")
             .flat_map(|s| s.prs.iter().flatten())
             .cloned()
             .collect()
@@ -493,12 +497,12 @@ fn get_graph(state: &State, _q: &Query) -> Out {
                 "del": d.del,
                 "files": d.files,
             })),
-            // a failed fetch caches None too; only a fetch still running keeps the page polling
+            // a failed fetch caches None too; only a fetch still running keeps the page polling. A fetch
+            // that landed a value since want_detail asked keeps it polling too, or its node never shows.
             None => {
-                pending |= state
-                    .lock()
-                    .detailing
-                    .contains(&(pr.url.clone(), pr.updated_at.clone()))
+                let key = (pr.url.clone(), pr.updated_at.clone());
+                let inner = state.lock();
+                pending |= inner.detailing.contains(&key) || matches!(inner.details.get(&key), Some(Some(_)))
             }
         }
     }
