@@ -5,7 +5,7 @@ import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, notice, picker, prompt, viewer } from './modals'
+import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
@@ -309,7 +309,11 @@ export default function App() {
         return
       }
       const got = await r.json()
-      viewer(`pre-review of #${p.number}`, got.text, got.path)
+      const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
+      const copy = () => void call('/api/copy', { text: got.text }, '✓ pre-review copied')
+      m.keys!.y = copy
+      m.foot!.unshift(['y', 'copy', copy, 'go'])
+      repaint()
       return
     }
     if (!(await confirm(p.pre ? `#${p.number} changed since its pre-review. Run again?` : `Pre-review #${p.number}? Nothing is posted.`))) return
