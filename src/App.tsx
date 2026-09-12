@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
 import { flat, selected, visible } from './board'
+import { FloatingVideo } from './components/FloatingVideo'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
@@ -23,6 +24,7 @@ export default function App() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
+  const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
   const [tab, setTab] = useState<'summary' | 'code'>('summary')
@@ -471,7 +473,7 @@ export default function App() {
 
   return (
     <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -528,6 +530,7 @@ export default function App() {
         </div>
       </div>
       {flash ? <div className="toast">{flash}</div> : null}
+      {video ? <FloatingVideo /> : null}
       <ModalHost />
     </div>
   )
