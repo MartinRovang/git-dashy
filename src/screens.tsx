@@ -420,6 +420,16 @@ export async function dreamScreen(ctx: Ctx) {
               </span>
             </div>
           ))}
+          {/* the dream reads the team's files and rewrites none of them: say how many, or one simply
+              missing from the list reads as a file it never looked at. */}
+          {Number(res.theirs) > 0 && (
+            <div className="diffrow">
+              <span>
+                {String(res.theirs)} team file{Number(res.theirs) === 1 ? '' : 's'} read, none changed
+              </span>
+              <span />
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -460,12 +470,22 @@ export async function dreamScreen(ctx: Ctx) {
       if (out?.error) await notice(out.error)
       close(m)
     }
-    m.foot = [
-      ['y', gone.length ? `accept — DELETES ${gone.length} file${gone.length === 1 ? '' : 's'}` : 'accept and rewrite memory', accept, gone.length ? 'warn' : 'go'],
-      ['v', 'view full', () => viewer('the dream', String(res!.detail))],
-      ['n', 'discard', stop],
-    ] as Foot[]
-    m.keys = { y: accept, v: m.foot[1][2], n: stop, Escape: stop }
+    // every proposal for a team file means nothing of yours moves, and "accept and rewrite memory"
+    // offered a rewrite that cannot happen — the keypress would still take a backup and a commit.
+    const nothing = (res!.files as Json[]).length === 0
+    m.foot = (nothing
+      ? [
+          ['v', 'view full', () => viewer('the dream', String(res!.detail))],
+          ['n', 'close — nothing of yours to change', stop],
+        ]
+      : [
+          ['y', gone.length ? `accept — DELETES ${gone.length} file${gone.length === 1 ? '' : 's'}` : 'accept and rewrite memory', accept, gone.length ? 'warn' : 'go'],
+          ['v', 'view full', () => viewer('the dream', String(res!.detail))],
+          ['n', 'discard', stop],
+        ]) as Foot[]
+    m.keys = nothing
+      ? { v: m.foot[0][2], n: stop, Escape: stop }
+      : { y: accept, v: m.foot[1][2], n: stop, Escape: stop }
     repaint()
   }
   poll()

@@ -252,7 +252,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 | review prompt | ONE `project.md` — the bound team's, else yours, named in the prompt — then the facts, every block labelled by source | drafts, the other brief |
 | agent session, any repo | `general.md` live, through a symlink in the user's config — **and both briefs, unscoped** | drafts |
 | agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored, and so scoped by the binding | drafts |
-| `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
+| `Z` dream | `mine/*.md` and `team/*.md`, keyed by source — and writes back only `mine/` | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
 
 Sessions read memory by two routes, and the split is deliberate. Cross-repo facts
@@ -562,6 +562,17 @@ of what is waiting — `~/.prs_memory/.publishing` records the answer, a no incl
 publishes to a team that has not said yes. `_team_for()` mirrors `_project()` step for step so the
 permission is looked up for the same team the write goes to.
 
+**And it can be changed.** Asked once at launch is right for a nag and wrong for a state: a team joined
+since you started is never asked, and an answer given by accident can only be taken back by editing the
+file. The **knowledge** card carries a row for every answer still holding something back — unasked,
+refused, or an `agents.md` edited since you read it — and clicking one asks the question again, there
+and then. `gitdashy teams --team KEY --publishing-again` and `--agents-again` do the same from a shell.
+A team that has answered yes and had its `agents.md` read shows no row at all.
+
+This mattered more than it looks. The launch prompt read a timeout as a keypress for four versions, so
+it recorded a refusal for every team on the first launch after auto-sharing shipped and then, by
+design, never asked again. Nothing published anywhere for two days and no surface said why.
+
 **So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
 to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
 team has; `x` removes one from your memory, from theirs, and from the evidence pool — but it leaves the team's
@@ -648,16 +659,24 @@ way a second run of the same model is not.
 | `P` → `t` | the team memory file; the pool line stays | team repo |
 | `P` → `x` | removes from `mine`, from the team's file when no other backer remains, and from the pool | private + team repo |
 | `n` / `g` edit | `mine` only — team memory is not hand-editable from the dashboard | private repo |
-| `Z` dream | `mine` and `team`, after you approve | both |
+| `Z` dream | `mine` only, after you approve — the team's are read, never written | private repo |
 | review verdict | `reviewed.jsonl` | team repo |
 | joining a team | seeds the **log** only | team repo |
 
 **Joining a team no longer copies your memory in.** That was a bulk publish of
 every private fact you had, unreviewed, in one action.
 
-**The dream may write team memory directly** — it is already gated, since it shows
-a diff and waits for `y`. It is explicitly told never to move a line from `mine/`
-into `team/`: sharing is your decision, not the model's.
+**The dream reads team memory and rewrites none of it.** It has to read it, or it
+merges your facts into duplicates of theirs, and it is told never to move a line
+from `mine/` into `team/` — sharing is your decision, not the model's. What it
+proposes for a team's files is dropped: `writable()` keeps the `mine/` half and
+`write()` lands only that, so the panel lists your files and says how many of
+theirs were read and left alone.
+
+The reason is the asymmetry of §1, applied to the one keypress that deletes. A
+dream returned `general.md` empty once and eight facts went with it, recovered
+because a backup and a commit exist. The same keypress against a team's file
+empties it for everyone, and the backup is on the machine that pressed accept.
 
 ---
 

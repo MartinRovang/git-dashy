@@ -12,13 +12,14 @@ type Props = {
   onPath: (which: 'L' | 'C') => void
   onTeams: () => void
   onModal: (name: string) => void
+  onAskAgain: (kind: string, key: string) => void
 }
 
 /** The left rail: sections to jump to, the session's counts, then the agent, view and knowledge cards. */
-export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onModal }: Props) {
+export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onModal, onAskAgain }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
-  const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [] }
+  const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   return (
     <div className="side scroll">
@@ -121,6 +122,14 @@ export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onMod
         {(k.notes || []).map((n, i) => (
           <div className="note" key={i}>
             ⚠ {n}
+          </div>
+        ))}
+        {/* Both consent gates are asked once at launch and never again, so a team joined since you
+            started, an agents.md a teammate pushed, and an answer given by accident all leave
+            something withheld. These say what, and clicking one asks the question again, now. */}
+        {(k.waiting || []).map((w, i) => (
+          <div className="note link" key={`w${i}`} title="ask me again" onClick={() => onAskAgain(w.kind, w.key)}>
+            ⚠ {w.key}: {w.what} — ask again
           </div>
         ))}
         <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>

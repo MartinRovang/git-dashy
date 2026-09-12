@@ -166,6 +166,13 @@ pub fn payload(state: &State) -> Value {
             "teams": names.iter().map(|k| json!({"key": k, "name": team::info(k).name, "arrived": arrived.get(k).copied().unwrap_or(0)})).collect::<Vec<_>>(),
             "teamError": team_error(),
             "notes": install::session_notes(),
+            // ponytail: a row you can act on, not a note you cannot. Both gates are asked once at
+            // launch and never again, so a team joined since you started, an agents.md a teammate
+            // pushed an hour ago, and an answer given by accident all left something withheld with the
+            // only route back being a restart, or hand-editing a dotfile for a refusal.
+            "waiting": memory::pending_answers().into_iter()
+                .map(|(kind, key, what)| json!({"kind": kind, "key": key, "what": what}))
+                .collect::<Vec<_>>(),
         },
         "asks": asks,
         "notices": notices,
@@ -435,27 +442,34 @@ pub fn dream_detail(summary: &str, before: &[(String, String)], new: &[(String, 
 }
 
 pub fn dream_result((summary, before, new): memory::Dream) -> Value {
-    let mut gone: Vec<&str> = new
+    // ponytail: everything the page is told comes from the same filter write() applies. The rows, the
+    // deletion count and the full diff all used the raw answer, so the panel could name a team file
+    // losing nine lines and then not touch it — a promise the apply drops. `theirs` is how many were
+    // read and left alone, because a file simply missing from the list reads as one never looked at.
+    let mine = memory::writable(&new);
+    let theirs = new.len() - mine.len();
+    let mut gone: Vec<&str> = mine
         .iter()
         .filter(|(n, t)| t.trim().is_empty() && !lookup(&before, n).trim().is_empty())
         .map(|(n, _)| n.as_str())
         .collect();
     gone.sort();
-    let mut names: Vec<&str> = new.iter().map(|(n, _)| n.as_str()).collect();
+    let mut names: Vec<&str> = mine.iter().map(|(n, _)| n.as_str()).collect();
     names.sort_by_key(|n| (!gone.contains(n), n.to_string()));
     let files: Vec<Value> = names
         .iter()
         .map(|n| {
             json!({"name": dream_name(n), "before": lookup(&before, n).lines().count(),
-                   "after": lookup(&new, n).lines().count(), "deleted": gone.contains(n)})
+                   "after": lookup(&mine, n).lines().count(), "deleted": gone.contains(n)})
         })
         .collect();
     let lost: usize = gone.iter().map(|n| lookup(&before, n).lines().count()).sum();
-    let new_obj: Map<String, Value> = new
+    let new_obj: Map<String, Value> = mine
         .iter()
         .map(|(n, t)| (n.clone(), Value::String(t.clone())))
         .collect();
-    json!({"summary": summary, "files": files, "lost": lost, "detail": dream_detail(&summary, &before, &new), "new": new_obj})
+    json!({"summary": summary, "files": files, "lost": lost, "theirs": theirs,
+           "detail": dream_detail(&summary, &before, &mine), "new": new_obj})
 }
 
 // ---------------------------------------------------------------- routes: GET
@@ -1145,18 +1159,19 @@ fn post_dream(_state: &State, body: &Body) -> Out {
             return Err(Fail::new(409, "no dream to apply"));
         };
         let dir = config::get().memory_dir;
-        team::pull_dir(&dir, "mine"); // a dream rewrites both sources, so both are pulled
-        team::pull();
+        // ponytail: YOUR dir only, on both legs. A dream rewrites nothing under a team checkout now, so
+        // pulling one first bought nothing and pushing one afterwards was worse: push_dir runs
+        // `git add -A`, so somebody else's pending team changes were committed under "dream cleanup",
+        // and its error could report "memory rewritten, but NOT committed" about a source the dream
+        // never touched.
+        team::pull_dir(&dir, "mine");
         let new: Vec<(String, String)> = new
             .iter()
             .map(|(n, t)| (n.clone(), t.as_str().unwrap_or("").to_string()))
             .collect();
         memory::write(&new)?;
         jobs().remove("dream");
-        let mut err = team::push_dir(&dir, "memory: dream cleanup", "mine");
-        if err.is_empty() {
-            err = team::push("memory: dream cleanup");
-        }
+        let err = team::push_dir(&dir, "memory: dream cleanup", "mine");
         let error = if err.is_empty() {
             String::new()
         } else {
@@ -1181,6 +1196,18 @@ fn post_request_review(state: &State, body: &Body) -> Out {
 /// Answer one launch-time ask: whether a team may receive facts, or its agents.md may reach sessions.
 fn post_consent(state: &State, body: &Body) -> Out {
     let (kind, key, yes) = (text(body, "kind"), text(body, "key"), truthy(body, "yes"));
+    // ponytail: "again" forgets the recorded answer so the ask comes back. The prompts list what has
+    // NO answer, so re-asking without forgetting first would draw nothing and read as a dead button.
+    if text(body, "op") == "again" {
+        match kind.as_str() {
+            "publishing" => memory::ask_publishing_again(&key),
+            "agents" => memory::ask_agents_again(&key),
+            _ => return Err(Fail::new(400, "kind must be publishing or agents")),
+        };
+        state.lock().asks = launch_asks();
+        state.wake();
+        return Ok(json!({"ok": true, "asks": launch_asks()}));
+    }
     match kind.as_str() {
         "publishing" => memory::allow_publishing(&key, yes),
         "agents" => memory::allow_agents(&key, &text(body, "text"), yes), // what was SHOWN is what gets recorded
@@ -2099,6 +2126,41 @@ mod tests {
             .map(|r| r["kind"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
+    }
+
+    #[test]
+    fn dream_result_promises_only_what_the_apply_will_do() {
+        // The rows, the deletion count and the full diff all came off the raw answer, so the page
+        // could show a team file losing nine lines and then not touch it. `v` is the view somebody
+        // opens because they want to be careful, which makes it the worst place to say that.
+        let before = vec![
+            ("mine/general.md".to_string(), "- mine\n".to_string()),
+            (
+                "team:org-t/general.md".to_string(),
+                (0..9).map(|i| format!("- theirs {i}\n")).collect::<String>(),
+            ),
+        ];
+        let new = vec![
+            ("mine/general.md".to_string(), "- mine, tidied\n".to_string()),
+            ("team:org-t/general.md".to_string(), String::new()),
+        ];
+        let r = dream_result(("tidy".into(), before, new));
+        let names: Vec<&str> = r["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["mine/general"]);
+        assert_eq!(r["lost"].as_u64(), Some(0)); // the team's emptied file is not a deletion
+        assert_eq!(r["theirs"].as_u64(), Some(1)); // and the page says it was read and left alone
+        let detail = r["detail"].as_str().unwrap();
+        assert!(detail.contains("mine, tidied"), "{detail}");
+        assert!(!detail.contains("theirs"), "{detail}");
+        assert!(!r["new"]
+            .as_object()
+            .unwrap()
+            .contains_key("team:org-t/general.md"));
     }
 
     #[test]

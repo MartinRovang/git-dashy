@@ -51,7 +51,11 @@ export type Knowledge = {
   teams: Team[]
   teamError: string
   notes: string[]
+  /** Team answers still holding something back. A row you can press, unlike a note. */
+  waiting?: Waiting[]
 }
+
+export type Waiting = { kind: string; key: string; what: string }
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
