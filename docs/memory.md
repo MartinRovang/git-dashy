@@ -252,7 +252,7 @@ Drafts below threshold are never garbage-collected today. **Open issue** — see
 | review prompt | ONE `project.md` — the bound team's, else yours, named in the prompt — then the facts, every block labelled by source | drafts, the other brief |
 | agent session, any repo | `general.md` live, through a symlink in the user's config — **and both briefs, unscoped** | drafts |
 | agent session, one repo | `.agent/team/repo.md` — that repo's facts, mirrored, and so scoped by the binding | drafts |
-| `Z` dream | `mine/*.md` and `team/*.md`, keyed by source | drafts, pool |
+| `Z` dream | `mine/*.md` and `team/*.md`, keyed by source — and writes back only `mine/` | drafts, pool |
 | nothing, ever | — | the pool is written and counted, never read as context |
 
 Sessions read memory by two routes, and the split is deliberate. Cross-repo facts
@@ -648,16 +648,24 @@ way a second run of the same model is not.
 | `P` → `t` | the team memory file; the pool line stays | team repo |
 | `P` → `x` | removes from `mine`, from the team's file when no other backer remains, and from the pool | private + team repo |
 | `n` / `g` edit | `mine` only — team memory is not hand-editable from the TUI | private repo |
-| `Z` dream | `mine` and `team`, after you approve | both |
+| `Z` dream | `mine` only, after you approve — the team's are read, never written | private repo |
 | review verdict | `reviewed.jsonl` | team repo |
 | joining a team | seeds the **log** only | team repo |
 
 **Joining a team no longer copies your memory in.** That was a bulk publish of
 every private fact you had, unreviewed, in one action.
 
-**The dream may write team memory directly** — it is already gated, since it shows
-a diff and waits for `y`. It is explicitly told never to move a line from `mine/`
-into `team/`: sharing is your decision, not the model's.
+**The dream reads team memory and rewrites none of it.** It has to read it, or it
+merges your facts into duplicates of theirs, and it is told never to move a line
+from `mine/` into `team/` — sharing is your decision, not the model's. What it
+proposes for a team's files is dropped: `writable()` keeps the `mine/` half and
+`write()` lands only that, so the panel lists your files and says how many of
+theirs were read and left alone.
+
+The reason is the asymmetry of §1, applied to the one keypress that deletes. A
+dream returned `general.md` empty once and eight facts went with it, recovered
+because a backup and a commit exist. The same keypress against a team's file
+empties it for everyone, and the backup is on the machine that pressed `y`.
 
 ---
 

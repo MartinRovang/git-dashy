@@ -2663,3 +2663,31 @@ def test_a_team_whose_agents_file_is_unread_says_so_on_the_knowledge_row(monkeyp
 	       ["org-t: agents.md not read — restart to be asked"]
 	memory.allow_agents("org-t", memory.unacked_agents()[0][1])
 	assert not [n for n in install.session_notes() if "agents.md" in n]  # and it stops, once read
+
+
+def test_the_dream_panel_only_promises_what_it_will_change(screen, monkeypatch, st, tmp_path):
+	"""The model is shown the team's files and cannot rewrite them, so listing its edits to them would
+	promise a change that write() then drops. The panel says how many it read and left alone, because
+	a team file simply missing from the list reads as a file the dream did not look at."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path))
+	(tmp_path / "general.md").write_text("- mine\n")
+	before = {"mine/general.md": "- mine\n",
+	          "team:org-t/general.md": "".join(f"- theirs {i}\n" for i in range(9)),
+	          "team:org-t/a__b.md": "- theirs too\n"}
+	answer = {"mine/general.md": "- mine, tidied\n",
+	          "team:org-t/general.md": "",                   # a deletion the panel must not advertise
+	          "team:org-t/a__b.md": "- rewritten\n"}
+	monkeypatch.setattr(ui.memory, "dream", lambda m: ("tidied", before, answer))
+	shown = []
+
+	def getch():
+		shown.append(screen.text())
+		return 27  # look, then walk away
+
+	screen.getch, screen.timeout = getch, lambda t: None
+	ui.dream_screen(screen, st, 0)
+	panel = shown[-1]
+	assert "general" in panel and "1 → 1" in panel          # your own file, and what happens to it
+	assert "DELETE" not in panel                            # the team's emptied file is not a deletion
+	assert "accept and rewrite memory" in panel             # so the footer is the ordinary one
+	assert "2 team files read, none changed" in panel

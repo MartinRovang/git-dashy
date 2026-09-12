@@ -130,8 +130,31 @@ def test_dream_keys_name_their_source_and_write_lands_in_it(monkeypatch, tmp_pat
 	assert new["mine/general.md"] == "- run make lint\n"  # untouched files keep what they had
 	memory.write(new)
 	assert facts(mine / "a__b.md") == ["- uses tabs"]
-	assert not (shared / "general.md").exists()  # empty content deletes
 	assert not (mine / "bogus.md").exists() and not (shared / "bogus.md").exists()
+	# ponytail: the team's file is SHOWN to the model and not rewritten by it. The dream returned this
+	# one empty, which is the keypress that emptied general.md once — on your own memory a backup and
+	# a commit walk it back, on the team's it is gone for everybody and the backup is on your machine.
+	assert facts(shared / "general.md") == ["- stale team line"]
+
+
+def test_a_dream_reads_the_teams_files_and_rewrites_none_of_them(monkeypatch, tmp_path):
+	"""One person pressing y on one machine must not rewrite what the team holds. The model still sees
+	those files — it has to, or it merges your facts into duplicates of theirs — and write() drops
+	every edit to them."""
+	monkeypatch.setattr(config, "MEMORY_DIR", str(tmp_path / "mine"))
+	shared = a_team(monkeypatch, tmp_path, "org-t")
+	os.makedirs(tmp_path / "mine", exist_ok=True)
+	(tmp_path / "mine" / "general.md").write_text("- mine, and tidyable\n")
+	(shared / "general.md").write_text("- theirs, and not\n")
+	(shared / "a__b.md").write_text("- theirs too\n")
+	answer = {"mine/general.md": "- mine, tidied\n",
+	          "team:org-t/general.md": "",                       # a deletion, refused
+	          "team:org-t/a__b.md": "- theirs, rewritten\n"}     # an edit, refused
+	assert memory.writable(answer) == {"mine/general.md": "- mine, tidied\n"}
+	memory.write(answer)
+	assert facts(tmp_path / "mine" / "general.md") == ["- mine, tidied"]
+	assert facts(shared / "general.md") == ["- theirs, and not"]
+	assert facts(shared / "a__b.md") == ["- theirs too"]
 
 
 def test_dream_never_writes_a_team_file_when_you_are_not_in_one(monkeypatch, tmp_path):

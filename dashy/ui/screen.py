@@ -1938,14 +1938,20 @@ def dream_screen(scr, state, sel):
 			return
 		summary, before, new = box[0]  # what the dream saw, not what is on disk now
 		lines = [(l[:70], "") for l in summary.splitlines() if l.strip()] + [("", "")]
+		# ponytail: the rows are what WILL HAPPEN, so they come from the same filter write() applies.
+		# The model is shown the team's files and cannot rewrite them, and listing its edits to them
+		# here would promise a change that is then silently dropped.
+		mine = memory.writable(new)
 		# ponytail: a file going to zero is a DELETION, and it read as one more row in a list of line
 		# counts. A dream emptied general.md — eight cross-repo facts — and "8 → 0" scrolled past among
 		# the tidies. Marked, coloured, and sorted to the top so it cannot be the row you skim over.
-		gone = sorted(n for n, t in new.items() if not t.strip() and before[n].strip())
+		gone = sorted(n for n, t in mine.items() if not t.strip() and before[n].strip())
 		lines += [(n[:-3].replace("__", "/"),
 		           f"{len(before[n].splitlines())} → DELETED" if n in gone
-		           else f"{len(before[n].splitlines())} → {len(new[n].splitlines())}")
-		          for n in sorted(new, key=lambda n: (n not in gone, n))]
+		           else f"{len(before[n].splitlines())} → {len(mine[n].splitlines())}")
+		          for n in sorted(mine, key=lambda n: (n not in gone, n))]
+		if theirs := len(new) - len(mine):
+			lines += [("", ""), (f"{theirs} team file{'' if theirs == 1 else 's'} read, none changed", "")]
 		scr.timeout(-1)
 		k = None
 		while k not in (ord("y"), ord("n"), 27):

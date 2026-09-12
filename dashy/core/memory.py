@@ -1544,16 +1544,33 @@ def dream(model):
 	return summary, before, new
 
 
+def writable(new):
+	"""The part of a dream's answer that will land: your own files, never a team's.
+
+	ponytail: the model is still SHOWN the team's files — it has to be, or it merges your facts into
+	duplicates of theirs — and it cannot rewrite them. A dream is one person pressing `y` on one
+	machine, and the rule this module is built on is that a change costing other people takes their
+	agreement too. It has already gone wrong once in the cheap direction: a dream returned general.md
+	empty and eight facts went, recovered only because a backup and a commit exist. The same keypress
+	against a team's file empties it for everybody, and the backup is on the wrong machine.
+	ponytail: a FILTER, not a refusal. Dropping the team's edits silently is right here — accepting
+	the dream is accepting what it does to your memory, and what it proposes for the team's is not a
+	thing anyone has agreed to. dream_screen shows the same subset, so nothing is promised and skipped.
+	"""
+	return {k: t for k, t in new.items() if k.startswith("mine/")}
+
+
 def write(new):
 	"""Overwrite memory files from a dream(); empty content deletes the file. You approved this, so it lands.
 
 	ponytail: a keypress here rewrites every file and DELETES any the model returned empty. Both nets go
 	down first — a compressed copy outside every synced tree, and a commit — so "you approved this" means
 	a decision you can walk back, not one that is final because a model was confident.
+	ponytail: YOUR files only — see writable(). The model reads the team's and rewrites none of them.
 	"""
 	_history()
 	backup("dream")
-	for key, t in new.items():
+	for key, t in writable(new).items():
 		base = _base(key)
 		if not base:
 			continue

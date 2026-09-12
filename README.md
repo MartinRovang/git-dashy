@@ -126,7 +126,7 @@ than being cut — a truncated key name still reads as an instruction, which is 
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
-| `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
+| `Z` | dream: Claude tidies your memory files (merge, dedupe, drop stale) — the team's are read, never rewritten — and you approve before anything is written |
 | `K` | knowledge: where memory is read and written — the local dir, the team repo, the checkout |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
@@ -226,10 +226,11 @@ is rediscovery, so the reviewer has to arrive at it again blind.
 bullet lists — `n` opens the selected PR's repo memory and `g` the general one in `$EDITOR`, so you can add,
 prune or correct freely.
 `Z` dreams: Claude reads every memory file — yours and the team's, each labelled — merges duplicates, drops
-stale or contradictory lines and moves repo-independent facts to that source's general file. It is told never
-to move a line from yours into the team's; sharing is your call, not its. It shows a summary and per-file line
-counts; `v` opens the full summary and diff in `less`. Nothing is
-written until you press `y`.
+stale or contradictory lines and moves repo-independent facts to that source's general file. **It rewrites
+only yours.** The team's are read so your facts are not merged into duplicates of theirs, and whatever the
+dream proposes for them is dropped: one person pressing `y` on one machine must not empty a file everybody
+reads. It shows a summary and per-file line counts, and says how many of the team's it read and left alone;
+`v` opens the full summary and diff in `less`. Nothing is written until you press `y`.
 
 ### Team
 
