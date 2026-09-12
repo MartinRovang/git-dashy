@@ -14,7 +14,7 @@ import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row, Size } from '../types'
 
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; label: string; row?: Row; degree: number }
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; label: string; degree: number }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 
 const lines = (s?: Size) => (s && s.add != null && s.del != null ? s.add + s.del : null)
@@ -34,7 +34,7 @@ function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
     return n
   }
   for (const r of rows) {
-    const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, row: r, degree: 2 }
+    const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, degree: 2 }
     nodes.push(pr)
     for (const h of [hub('repo', r.repo), hub('author', r.author)]) {
       h.degree++
@@ -60,34 +60,39 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
   const latest = useRef({ rows, sizes, sel, onSelect })
   latest.current = { rows, sizes, sel, onSelect }
 
-  const radius = (n: Node) => {
-    if (n.kind !== 'pr') return 4 + 2.2 * Math.sqrt(n.degree)
-    const { rows, sizes } = latest.current
-    const max = Math.max(1, ...rows.map((r) => lines(sizes[r.url]) || 0))
-    const l = lines(sizes[n.id])
-    return l == null ? 4 : 4 + 10 * Math.sqrt(l / max)
-  }
-
-  // Look: colors, sizes, selection. Cheap, runs on every poll, never restarts the layout.
+  // Look: colors, sizes, selection, tooltips. Cheap, runs on every poll, never restarts the layout.
+  // Rows are looked up by url here rather than pinned on the node: the structure effect only re-runs
+  // when the set of PRs changes, so a pinned row went stale on review state and its index-based uid.
   const paint = () => {
     const svg = svgRef.current
     if (!svg) return
-    const { sizes, sel } = latest.current
+    const { rows, sizes, sel } = latest.current
+    const byUrl = new Map(rows.map((r) => [r.url, r]))
+    const max = Math.max(1, ...rows.map((r) => lines(sizes[r.url]) || 0))
+    const radius = (n: Node) => {
+      if (n.kind !== 'pr') return 4 + 2.2 * Math.sqrt(n.degree)
+      const l = lines(sizes[n.id])
+      return l == null ? 4 : 4 + 10 * Math.sqrt(l / max)
+    }
+    const fg = (n: Node) => (PALETTE[rowState(byUrl.get(n.id)!).key] || PALETTE.idle).fg
     const node = select(svg)
       .selectAll<SVGGElement, Node>('g.gnode')
-      .classed('sel', (n) => n.row?.uid === sel)
+      .classed('sel', (n) => byUrl.get(n.id)?.uid === sel)
       .classed('hub', (n) => n.kind !== 'pr')
     node.select('text').attr('y', (n) => radius(n) + 3)
+    node.select('title').text((n) => {
+      const r = byUrl.get(n.id)
+      return r ? `#${r.number} ${r.title}\n${r.repo} · ${r.author}` : n.label
+    })
     node
       .select<SVGCircleElement>('circle')
       .attr('r', radius)
       .style('fill', (n) => {
         if (n.kind === 'repo') return 'var(--dim2)'
         if (n.kind === 'author') return avatar(n.label)
-        if (lines(sizes[n.id]) == null) return 'var(--bg)'
-        return (PALETTE[rowState(n.row!).key] || PALETTE.idle).fg
+        return lines(sizes[n.id]) == null ? 'var(--bg)' : fg(n)
       })
-      .style('stroke', (n) => (n.kind === 'pr' ? (PALETTE[rowState(n.row!).key] || PALETTE.idle).fg : 'none'))
+      .style('stroke', (n) => (n.kind === 'pr' ? fg(n) : 'none'))
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
   }
 
@@ -122,15 +127,14 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
         return e
       })
     node.select('text').text((n) => n.label)
-    node.select('title').text((n) => (n.row ? `#${n.row.number} ${n.row.title}\n${n.row.repo} · ${n.row.author}` : n.label))
 
     // Hover: the node and its neighbours stay lit, everything else fades.
     const near = new Map<string, Set<string>>()
-    for (const l of g.links)
-      for (const [a, b] of [[l.source, l.target], [l.target, l.source]]) {
-        if (!near.has(a.id)) near.set(a.id, new Set([a.id]))
-        near.get(a.id)!.add(b.id)
-      }
+    const edge = (a: string, b: string) => (near.get(a) || near.set(a, new Set([a])).get(a)!).add(b)
+    for (const l of g.links) {
+      edge(l.source.id, l.target.id)
+      edge(l.target.id, l.source.id)
+    }
     node
       .on('mouseenter', (_, n) => {
         const lit = near.get(n.id) || new Set([n.id])
@@ -144,7 +148,8 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
         link.classed('lit', false)
       })
       .on('click', (_, n) => {
-        if (n.row) latest.current.onSelect(n.row.uid)
+        const r = latest.current.rows.find((r) => r.url === n.id)
+        if (r) latest.current.onSelect(r.uid)
       })
 
     const s = (sim.current ||= forceSimulation<Node, Link>())

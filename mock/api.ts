@@ -250,8 +250,8 @@ function detail(url: string) {
 
 function graph() {
   const nodes = S.rows.map((r) => {
-    const d = detail(r.url) as { add: number; del: number; files: number }
-    return { url: r.url, add: d.add, del: d.del, files: d.files }
+    const d = detail(r.url) as { add: number; del: number }
+    return { url: r.url, add: d.add, del: d.del }
   })
   return { pending: false, nodes }
 }

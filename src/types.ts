@@ -120,7 +120,7 @@ export type Detail = {
 }
 
 /** get_graph(): one PR's diff size for the graph view. */
-export type Size = { url: string; add: number | null; del: number | null; files: number | null }
+export type Size = { url: string; add: number | null; del: number | null }
 
 /** get_graph(): every known size, and whether any PR is still being measured. */
 export type GraphData = { pending: boolean; nodes: Size[] }

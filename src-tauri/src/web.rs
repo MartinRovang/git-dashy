@@ -495,7 +495,6 @@ fn get_graph(state: &State, _q: &Query) -> Out {
                 "url": pr.url,
                 "add": d.add,
                 "del": d.del,
-                "files": d.files,
             })),
             // a failed fetch caches None too; only a fetch still running keeps the page polling. A fetch
             // that landed a value since want_detail asked keeps it polling too, or its node never shows.
