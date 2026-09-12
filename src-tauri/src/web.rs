@@ -1413,33 +1413,45 @@ fn header(req: &Request, name: &'static str) -> String {
         .unwrap_or_default()
 }
 
-fn send(req: Request, code: u16, body: String, ctype: &str) {
+/// What the window is allowed to load. The window navigates to this server over http, and a remote URL
+/// takes its policy from the RESPONSE, not from tauri.conf.json > app.security.csp, which only covers
+/// pages on the asset protocol. So the page that renders PR titles, diffs and model output, none of it
+/// written by us, gets its CSP here or nowhere.
+///
+/// ponytail: 'unsafe-inline' for styles only. React writes style attributes and the app sets its theme
+/// through CSS variables on <html>; scripts stay 'self', which is the half that matters. The two font
+/// origins are what dist/index.html already asks for.
+const CSP: &str = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; \
+     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; \
+     object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
+/// Every reply the server makes. `cache` is None for anything with data in it.
+///
+/// ponytail: one responder, because send and send_bytes had drifted into the same four headers written
+/// twice, and a header added to one of them would have been a header the other quietly lacked.
+fn send_with(req: Request, code: u16, body: Vec<u8>, ctype: &str, cache: Option<&str>) {
     let ok = |h: Result<Header, ()>| h.expect("a static header is well formed");
-    let resp = Response::from_string(body)
+    let mut resp = Response::from_data(body)
         .with_status_code(code)
         .with_header(ok(Header::from_bytes("Content-Type", ctype)))
         // ponytail: the page talks to its own origin only; nothing here is meant to be embedded.
-        .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")));
+        .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")))
+        .with_header(ok(Header::from_bytes("Content-Security-Policy", CSP)));
+    if let Some(c) = cache {
+        resp = resp.with_header(ok(Header::from_bytes("Cache-Control", c)));
+    }
     if let Err(e) = req.respond(resp) {
         debug!("gui reply failed: {e}");
     }
 }
 
 fn send_json(req: Request, code: u16, body: Value) {
-    send(req, code, body.to_string(), "application/json");
+    send_with(req, code, body.to_string().into_bytes(), "application/json", None);
 }
 
-/// A binary asset, same headers as send(). Cacheable hashed names, but no-store keeps it simple.
+/// A static asset. Cacheable hashed names, but no-store keeps it simple.
 fn send_bytes(req: Request, code: u16, body: Vec<u8>, ctype: &str) {
-    let ok = |h: Result<Header, ()>| h.expect("a static header is well formed");
-    let resp = Response::from_data(body)
-        .with_status_code(code)
-        .with_header(ok(Header::from_bytes("Content-Type", ctype)))
-        .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")))
-        .with_header(ok(Header::from_bytes("Cache-Control", "no-store")));
-    if let Err(e) = req.respond(resp) {
-        debug!("gui reply failed: {e}");
-    }
+    send_with(req, code, body, ctype, Some("no-store"));
 }
 
 /// Equal without leaking where they differ.
@@ -1680,13 +1692,21 @@ mod tests {
         assert!(html.contains("<div id=\"root\">"));
         assert_eq!(get(&format!("{base}/"), None).0, 401);
         // static assets load with no token; the app's own <script>/<link> carry none
-        let status = agent()
-            .get(format!("{base}/head.png"))
-            .call()
-            .unwrap()
-            .status()
-            .as_u16();
-        assert_eq!(status, 200);
+        let asset = agent().get(format!("{base}/head.png")).call().unwrap();
+        assert_eq!(asset.status().as_u16(), 200);
+
+        // the window loads this over http, so the policy has to ride on the response or it is absent.
+        // Both fonts origins are in it, or the page renders in a fallback face.
+        for r in [
+            &asset,
+            &agent().get(format!("{base}/?token={token}")).call().unwrap(),
+        ] {
+            let csp = r.headers()["content-security-policy"].to_str().unwrap();
+            assert!(csp.starts_with("default-src 'self'"), "{csp}");
+            assert!(csp.contains("script-src 'self';"), "{csp}");
+            assert!(csp.contains("https://fonts.gstatic.com"), "{csp}");
+            assert!(!csp.contains('\n'), "one header line, not three: {csp:?}");
+        }
     }
 
     #[test]
