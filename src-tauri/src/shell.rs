@@ -35,6 +35,15 @@ fn fetched(state: &State) -> bool {
 pub fn run(state: State, port: u16, token: String) {
     let url = format!("http://127.0.0.1:{port}/?token={token}");
     tauri::Builder::default()
+        // ponytail: one gitdashy. A second launch raises the window already up and exits, instead of
+        // a second window on a second port fetching the same PRs.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.unminimize();
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let handle = app.handle().clone();
