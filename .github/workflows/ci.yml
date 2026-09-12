@@ -6,6 +6,7 @@ on:
   # ponytail: an RC off any branch. The tag gets an -rcN suffix, which the regex in
   # update::newest_tag (anchored at \d+$) never matches, so no installed dashboard is offered it.
   # Testers take it by name: REF=v2.1.0-rc7 sh install.sh
+  # The button needs this trigger on the DEFAULT branch; the run then uses the chosen branch's copy.
   workflow_dispatch:
 
 env:
