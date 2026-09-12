@@ -173,6 +173,8 @@ function buildPayload() {
           author: r.author,
           updatedAt: r.updatedAt,
           isDraft: r.isDraft,
+          add: 62 + (r.number % 40),
+          del: 14 + (r.number % 9),
           status: r.status,
           prev: r.prev,
           checks: r.checks,
@@ -246,14 +248,6 @@ function detail(url: string) {
         }
       : null,
   }
-}
-
-function graph() {
-  const nodes = S.rows.map((r) => {
-    const d = detail(r.url) as { add: number; del: number }
-    return { url: r.url, add: d.add, del: d.del }
-  })
-  return { pending: false, nodes }
 }
 
 function code(url: string, scope: string) {
@@ -353,7 +347,6 @@ function postSettings(b: Body) {
 function handleApi(method: string, path: string, query: URLSearchParams, body: Body) {
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
-    if (path === '/api/graph') return json(200, graph())
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
     if (path === '/api/diff') return json(200, code(query.get('url') || '', query.get('scope') || 'marks'))

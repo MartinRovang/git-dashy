@@ -12,6 +12,9 @@ export type Pr = {
   author: string
   updatedAt: string
   isDraft: boolean
+  /** lines added/deleted from the board query; null when GitHub did not say. */
+  add?: number | null
+  del?: number | null
   status: string
   prev: string
   checks: string
@@ -118,12 +121,6 @@ export type Detail = {
   pre: Pre
   review: Review | null
 }
-
-/** get_graph(): one PR's diff size for the graph view. */
-export type Size = { url: string; add: number | null; del: number | null }
-
-/** get_graph(): every known size, and whether any PR is still being measured. */
-export type GraphData = { pending: boolean; nodes: Size[] }
 
 /** code_rows(): the diff as a flat list. */
 export type CodeRow =

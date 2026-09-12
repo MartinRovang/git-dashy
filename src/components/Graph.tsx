@@ -12,12 +12,12 @@ import { zoom } from 'd3-zoom'
 import { useEffect, useMemo, useRef } from 'react'
 import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
-import type { Row, Size } from '../types'
+import type { Row } from '../types'
 
 type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; label: string; degree: number }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 
-const lines = (s?: Size) => (s && s.add != null && s.del != null ? s.add + s.del : null)
+const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 
 function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
   const hubs = new Map<string, Node>()
@@ -44,10 +44,8 @@ function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
   return { nodes, links }
 }
 
-export function Graph({ secs, sizes, measuring, sel, onSelect }: {
+export function Graph({ secs, sel, onSelect }: {
   secs: VisSection[]
-  sizes: Record<string, Size>
-  measuring: boolean
   sel: string
   onSelect: (uid: string) => void
 }) {
@@ -57,8 +55,8 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)
   const graph = useRef<{ nodes: Node[]; links: Link[] }>({ nodes: [], links: [] })
-  const latest = useRef({ rows, sizes, sel, onSelect })
-  latest.current = { rows, sizes, sel, onSelect }
+  const latest = useRef({ rows, sel, onSelect })
+  latest.current = { rows, sel, onSelect }
 
   // Look: colors, sizes, selection, tooltips. Cheap, runs on every poll, never restarts the layout.
   // Rows are looked up by url here rather than pinned on the node: the structure effect only re-runs
@@ -66,13 +64,12 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
   const paint = () => {
     const svg = svgRef.current
     if (!svg) return
-    const { rows, sizes, sel } = latest.current
+    const { rows, sel } = latest.current
     const byUrl = new Map(rows.map((r) => [r.url, r]))
-    const max = Math.max(1, ...rows.map((r) => lines(sizes[r.url]) || 0))
+    const max = Math.max(1, ...rows.map(lines))
     const radius = (n: Node) => {
       if (n.kind !== 'pr') return 4 + 2.2 * Math.sqrt(n.degree)
-      const l = lines(sizes[n.id])
-      return l == null ? 4 : 4 + 10 * Math.sqrt(l / max)
+      return 4 + 10 * Math.sqrt(lines(byUrl.get(n.id)) / max)
     }
     const fg = (n: Node) => (PALETTE[rowState(byUrl.get(n.id)!).key] || PALETTE.idle).fg
     const node = select(svg)
@@ -90,7 +87,7 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
       .style('fill', (n) => {
         if (n.kind === 'repo') return 'var(--dim2)'
         if (n.kind === 'author') return avatar(n.label)
-        return lines(sizes[n.id]) == null ? 'var(--bg)' : fg(n)
+        return fg(n)
       })
       .style('stroke', (n) => (n.kind === 'pr' ? fg(n) : 'none'))
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
@@ -217,7 +214,6 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
     }
   }, [])
 
-  const measured = rows.filter((r) => lines(sizes[r.url]) != null).length
   const states = (['approved', 'changes', 'commented', 'awaiting', 'running', 'error', 'idle'] as const).filter((k) =>
     rows.some((r) => rowState(r).key === k),
   )
@@ -226,10 +222,6 @@ export function Graph({ secs, sizes, measuring, sel, onSelect }: {
       <div className="gbadge">
         {!rows.length ? (
           'nothing to graph yet'
-        ) : measuring ? (
-          <span>
-            <i className="spinner" /> measuring diffs {measured}/{rows.length}
-          </span>
         ) : (
           `${rows.length} PRs · ${new Set(rows.map((r) => r.repo)).size} repos · ${new Set(rows.map((r) => r.author)).size} authors`
         )}

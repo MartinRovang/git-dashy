@@ -128,6 +128,8 @@ pub fn payload(state: &State) -> Value {
                 "author": p.author(),
                 "updatedAt": p.updated_at,
                 "isDraft": p.is_draft,
+                "add": p.additions,
+                "del": p.deletions,
                 "status": p.status,
                 "prev": p.prev,
                 "checks": p.checks,
@@ -466,46 +468,6 @@ fn q<'a>(query: &'a Query, key: &str) -> &'a str {
 
 fn get_state(state: &State, _q: &Query) -> Out {
     Ok(payload(state))
-}
-
-/// Diff sizes for every PR on the board, for the graph view. The frame omits them because sizing one
-/// costs a GitHub query, so the graph asks only while it is open.
-///
-/// ponytail: reuses want_detail, so a size is fetched once per revision and cached like the pane's.
-/// Answers pending while any size is still being fetched; the page repolls. A PR without a size is left out.
-fn get_graph(state: &State, _q: &Query) -> Out {
-    let prs: Vec<Pr> = {
-        let inner = state.lock();
-        inner
-            .sections
-            .iter()
-            // ponytail: REVIEWED rows are log echoes keyed by review time, so an open PR there is a second
-            // revision of the same url and want_detail's eviction ping-pongs them forever. The live
-            // sections are already deduped, so skipping REVIEWED leaves one row per url.
-            .filter(|s| s.name != "REVIEWED")
-            .flat_map(|s| s.prs.iter().flatten())
-            .cloned()
-            .collect()
-    };
-    let mut nodes = Vec::new();
-    let mut pending = false;
-    for pr in &prs {
-        match state.want_detail(pr) {
-            Some(d) => nodes.push(json!({
-                "url": pr.url,
-                "add": d.add,
-                "del": d.del,
-            })),
-            // a failed fetch caches None too; only a fetch still running keeps the page polling. A fetch
-            // that landed a value since want_detail asked keeps it polling too, or its node never shows.
-            None => {
-                let key = (pr.url.clone(), pr.updated_at.clone());
-                let inner = state.lock();
-                pending |= inner.detailing.contains(&key) || matches!(inner.details.get(&key), Some(Some(_)))
-            }
-        }
-    }
-    Ok(json!({"pending": pending, "nodes": nodes}))
 }
 
 /// The last `n` lines of a file, or the io error when it cannot be read, so a blank tail says why.
@@ -1449,7 +1411,6 @@ type Post = fn(&State, &Body) -> Out;
 fn get_route(path: &str) -> Option<Get> {
     Some(match path {
         "/api/state" => get_state,
-        "/api/graph" => get_graph,
         "/api/debug" => get_debug,
         "/api/asks" => get_asks,
         "/api/pr" => get_pr,
