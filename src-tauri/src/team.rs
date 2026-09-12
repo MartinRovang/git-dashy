@@ -179,7 +179,10 @@ fn git(cwd: &Path, args: &[&str]) -> Out {
     let cwd = cwd.to_string_lossy();
     let mut cmd = vec!["git", "-C", &cwd];
     cmd.extend_from_slice(args);
-    remote(&cmd, None, Some(120))
+    // ponytail: the token from THIS login, on every pull and push, not only on the clone. A checkout
+    // carries whatever token cloned it, so a rotated or revoked one left the second machine failing
+    // every sync with nothing in the app able to fix it. git_auth() resets the repo's copy first.
+    remote(&cmd, Some(&github::git_auth()), Some(120))
 }
 
 fn note(r: &Out, label: &str) -> bool {

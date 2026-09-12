@@ -104,6 +104,10 @@ pub struct Config {
     pub sub: String,
     pub window: Option<u64>,
     pub drafts: bool,
+    /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
+    /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
+    /// each time. Anything that must be remembered across launches belongs on this side.
+    pub hinted: bool,
     /// Runtime picks land here. `None` (demo) means never write.
     pub settings: Option<PathBuf>,
     /// Pre-reviews of your own PRs.
@@ -158,6 +162,7 @@ impl Default for Config {
             sub: "all".into(),
             window: Some(4),
             drafts: false,
+            hinted: false,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
             backups: home().join(".prs_backups"),
@@ -184,6 +189,8 @@ pub struct Saved {
     pub window: Option<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,6 +286,9 @@ pub fn load() {
         if let Some(v) = saved.drafts {
             c.drafts = v;
         }
+        if let Some(v) = saved.hinted {
+            c.hinted = v;
+        }
         if let (Some(v), false) = (saved.depth, env("PRS_DEPTH")) {
             c.depth = v;
         }
@@ -318,6 +328,7 @@ pub fn snapshot(c: &Config) -> Saved {
         subs: Some(c.sub.clone()),
         window: Some(c.window),
         drafts: Some(c.drafts),
+        hinted: Some(c.hinted),
         depth: Some(c.depth.clone()),
         effort: Some(c.effort.clone()),
         notify: Some(c.notify),

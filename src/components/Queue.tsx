@@ -8,6 +8,7 @@ type Props = {
   secs: VisSection[]
   now: number
   sel: string
+  read: Record<string, string>
   query: string
   onQuery: (v: string) => void
   failing: boolean
@@ -26,12 +27,12 @@ function mineNote(prs: Row[]): string {
   return [work ? `${work} need work` : '', wait ? `${wait} waiting` : ''].filter(Boolean).join(' · ')
 }
 
-function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect, onOpen }: {
+function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: {
   p: Row
   child?: boolean
   sel: string
+  unread: boolean
   expanded: Record<string, boolean>
-  subs: string
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
   onOpen: () => void
@@ -81,11 +82,9 @@ function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect, onOpen }: {
   ) : (
     <div className="twist" />
   )
-  const sub =
-    p.summary && (subs === 'all' || (subs === 'open' && p.section !== 'REVIEWED')) ? <div className="sub">↳ {p.summary}</div> : null
   return (
     <div
-      className={`pr${p.uid === sel ? ' sel' : ''}${child ? ' child' : ''}`}
+      className={`pr${p.uid === sel ? ' sel' : ''}${child ? ' child' : ''}${unread ? ' unread' : ''}`}
       onClick={() => onSelect(p.uid)}
       onDoubleClick={() => onOpen()}
     >
@@ -100,7 +99,6 @@ function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect, onOpen }: {
           {p.isDraft ? ' ' : ''}
           {p.title}
         </b>
-        {sub}
       </div>
       <div className="who">
         <div className="av" style={{ background: avatar(p.author || '?') }}>
@@ -117,7 +115,6 @@ function PrRow({ p, child, sel, expanded, subs, onExpand, onSelect, onOpen }: {
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
-  const subs = settings(d).subs || 'all'
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
   const drafts = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => x.isDraft).length
 
@@ -205,7 +202,15 @@ export function Queue(p: Props) {
                             ─ {label || 'not bound to a team'} <i />
                           </div>
                         ) : null}
-                        <PrRow p={row} sel={p.sel} expanded={p.expanded} subs={subs} onExpand={p.onExpand} onSelect={p.onSelect} onOpen={p.onOpen} />
+                        <PrRow
+                          p={row}
+                          sel={p.sel}
+                          unread={p.read[row.url] !== row.updatedAt}
+                          expanded={p.expanded}
+                          onExpand={p.onExpand}
+                          onSelect={p.onSelect}
+                          onOpen={p.onOpen}
+                        />
                         {p.expanded[row.url]
                           ? row.older.map((o) => (
                               <PrRow
@@ -213,8 +218,8 @@ export function Queue(p: Props) {
                                 p={o}
                                 child
                                 sel={p.sel}
+                                unread={false}
                                 expanded={p.expanded}
-                                subs={subs}
                                 onExpand={p.onExpand}
                                 onSelect={p.onSelect}
                                 onOpen={p.onOpen}

@@ -5,7 +5,7 @@ import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, picker, prompt, viewer } from './modals'
+import { confirm, modalCount, ModalHost, notice, picker, prompt, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
@@ -30,11 +30,22 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
+  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
+  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
+  // everything unread, and reading is one keypress per row.
+  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
+  const [read, setRead] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
+    } catch {
+      return {}
+    }
+  })
 
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
-  const running = data?.running || 0
   const current = selected(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
@@ -43,11 +54,41 @@ export default function App() {
   dataRef.current = data
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
 
+  // First run only: most people reach for the terminal, so say the desktop icon exists.
+  // ponytail: the flag is a SETTING, not localStorage. The GUI serves itself on a new random port
+  // every launch, so the webview's origin changes and its storage starts empty each time.
+  const hinted = data?.settings.hinted
+  useEffect(() => {
+    if (hinted !== false) return // undefined = state has not arrived yet
+    void post('/api/settings', { hinted: true })
+    void notice(
+      <>
+        <div style={{ marginBottom: 10 }}>gitdashy installed a desktop icon, open it from there, no terminal needed.</div>
+        <img src="/desktop-icon.png" alt="the gitdashy icon on a desktop" style={{ display: 'block' }} />
+      </>,
+      'welcome',
+    )
+  }, [hinted])
+
   useEffect(() => {
     if (!flash) return
     const id = setTimeout(() => setFlash(''), 4000)
     return () => clearTimeout(id)
   }, [flash])
+
+  useEffect(() => {
+    if (!current) return
+    setRead((r) => {
+      if (r[current.url] === current.updatedAt) return r
+      const next = { ...r, [current.url]: current.updatedAt }
+      try {
+        localStorage.setItem('dashy-read', JSON.stringify(next))
+      } catch {
+        /* storage unavailable */
+      }
+      return next
+    })
+  }, [current])
 
   useEffect(() => {
     document.body.dataset.theme = data?.settings.theme || 'pencil'
@@ -452,6 +493,7 @@ export default function App() {
                 secs={secs}
                 now={now}
                 sel={selUid}
+                read={read}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
@@ -472,6 +514,7 @@ export default function App() {
                 p={current}
                 detail={detail}
                 diff={diff}
+                subs={data?.settings.subs || 'all'}
                 tab={tab}
                 scope={scope}
                 context={context}
@@ -485,29 +528,9 @@ export default function App() {
               />
             ) : null}
           </div>
-          <div className="hints">
-            <div className="g">
-              <b>NAV</b>
-              <span>j/k move · ⏎ pane · 1/2/⇥ tabs · o open · ␣ fold · / filter</span>
-            </div>
-            <div className="g">
-              <b>RUN</b>
-              <span>r review · p pre-review · Y open pre-review · a auto</span>
-            </div>
-            <div className="g">
-              <b>CONFIG</b>
-              <span>m model · d depth · e effort · x voices · h hunters · i interval</span>
-            </div>
-            <div className="g">
-              <b>APP</b>
-              <span>Z dream · f refresh · v view · T team · u update · esc menu · q quit</span>
-            </div>
-            <div className={`status${flash ? ' flash' : ''}`}>
-              {flash || (running ? `${running} running` : `${total} PRs in view`)}
-            </div>
-          </div>
         </div>
       </div>
+      {flash ? <div className="toast">{flash}</div> : null}
       <ModalHost />
     </div>
   )

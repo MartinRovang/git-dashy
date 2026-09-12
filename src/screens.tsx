@@ -495,7 +495,17 @@ export async function updateScreen(ctx: Ctx) {
   const v = ctx.getData()?.update
   if (!v) return
   if (!(await confirm(`v${ctx.getData()?.version}  →  v${v}. Installs the release tag and restarts gitdashy. Update now?`, { yes: 'update now', no: 'later' }))) return
-  await ctx.call('/api/update', {}, 'installing… the dashboard restarts in a moment')
+  // ponytail: the server reports no progress, so the spinner runs until a failure notice arrives,
+  // the process re-execs under a desktop window, or the cap runs out (a --browser page survives the
+  // re-exec and would otherwise sit behind it forever). Add a real bar when the server can report one.
+  await busy('update', `downloading v${v}…`, async () => {
+    const seen = (ctx.getData()?.notices || []).length
+    if (!(await ctx.call('/api/update', {}))) return
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      if ((ctx.getData()?.notices || []).length > seen) return
+    }
+  })
 }
 
 export function escMenu(ctx: Ctx) {
@@ -506,6 +516,7 @@ export function escMenu(ctx: Ctx) {
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
       ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
+      ['Debug', '', () => { close(m); void debugScreen(ctx) }],
       ['Quit', '', () => void ctx.quit()],
     ]
   }
@@ -525,13 +536,30 @@ export function escMenu(ctx: Ctx) {
     idx = i
     void items()[i][2]()
   }
+  const n = () => items().length
   m.keys = {
-    j: () => { idx = (idx + 1) % 4; repaint() },
-    k: () => { idx = (idx + 3) % 4; repaint() },
+    j: () => { idx = (idx + 1) % n(); repaint() },
+    k: () => { idx = (idx - 1 + n()) % n(); repaint() },
     Enter: () => pick(idx),
     Escape: () => close(m),
     q: () => void ctx.quit(),
   }
+}
+
+/** The diagnostic bundle from /api/debug, as pretty JSON you can copy into a bug report. */
+export async function debugScreen(ctx: Ctx) {
+  const r = await api('/api/debug')
+  if (!r.ok) {
+    ctx.flash(`✗ ${await errorText(r)}`)
+    return
+  }
+  const text = JSON.stringify(await r.json(), null, 2)
+  // the same /api/copy the rest of the app uses, so a headless or wayland box still copies
+  const copy = () => void ctx.call('/api/copy', { text }, '✓ debug data copied')
+  const m = viewer('debug', text, 'holds repo names, pr urls and config paths — read it before pasting it in public')
+  m.keys!.y = copy
+  m.foot!.unshift(['y', 'copy', copy, 'go'])
+  repaint()
 }
 
 async function cycleTheme(ctx: Ctx) {
