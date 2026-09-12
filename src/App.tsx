@@ -369,7 +369,11 @@ export default function App() {
       }
       return
     }
-    const k = e.ctrlKey && e.key === 's' ? 'ctrl+s' : e.key
+    // ponytail: no chord is bound in this handler, so hand every one back to the host. The ternary
+    // this replaces existed to keep ctrl-s out of the single-letter bindings below, and left ctrl-f
+    // firing a refresh and eating find. Modals DO bind ctrl+s; that handler keeps its own spelling.
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+    const k = e.key
     const one = (fn: () => void) => {
       e.preventDefault()
       fn()

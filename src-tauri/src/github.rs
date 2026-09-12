@@ -97,7 +97,14 @@ pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
     // Enterprise can sit behind a proxy that normalises before it forwards. A boundary that holds only
     // because the far end happens to be strict is one deployment away from not holding. Unquoted for the
     // test and never for the request, so what is sent is still exactly what was asked for.
-    if head.split('/').any(|seg| unquote(seg) == "..") {
+    //
+    // ponytail: split AGAIN after decoding. A segment can decode to separators of its own, so ..%2f..%2fuser
+    // arrives as one segment that is not "..", passes a decode-and-compare, and is a traversal by the time
+    // anything normalises it. Backslash too: a proxy on Windows may fold it to a slash.
+    if head
+        .split('/')
+        .any(|seg| unquote(seg).split(['/', '\\']).any(|s| s == ".."))
+    {
         return Err(format!("a review may not use .. in a path, and {head} does"));
     }
     let (want, low) = (format!("/repos/{repo}").to_lowercase(), head.to_lowercase());
@@ -1020,6 +1027,10 @@ mod tests {
             "/repos/acme/api/%2e%2e/%2e%2e/user",
             "/repos/acme/api/%2E%2E/user",
             "/repos/acme/api/contents/src/../../../../repos/other/x",
+            // a segment that decodes to separators of its own: one segment going in, a traversal coming out
+            "/repos/acme/api/..%2f..%2f..%2fuser",
+            "/repos/acme/api%2f..%2fother",
+            "/repos/acme/api/..%5c..%5cuser",
         ] {
             assert!(scoped(path, "acme/api", "acme-platform")
                 .unwrap_err()

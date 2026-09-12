@@ -531,19 +531,14 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
-// PORT-NOTE: memory::drafts returns (count, fact) rows without the run ids, so the Drafts handed to
-// would_merge carry empty `ids`; the Python passed the full rows.
+///
+/// ponytail: memory::rows, not memory::drafts. drafts() drops the run ids, and would_merge reads the ids
+/// to tell two independent reviews from one review worded twice: with them empty it can only ever answer
+/// the max and "origin unknown". That is the panel promising `promotes: false` on the very pair that
+/// merge() then promotes, because merge reads rows. The panel and the keypress read the same thing now.
 fn pair(repo: Option<&str>, a: &str, b: &str) -> Option<Value> {
-    let live = memory::drafts(repo);
-    let find = |fact: &str| {
-        live.iter()
-            .find(|(_, f)| f == fact)
-            .map(|(count, f)| crate::types::Draft {
-                count: *count,
-                ids: vec![],
-                fact: f.clone(),
-            })
-    };
+    let live = memory::rows(repo);
+    let find = |fact: &str| live.iter().find(|d| d.fact == fact).cloned();
     let (a, b) = (find(a)?, find(b)?);
     let (would, says) = memory::would_merge(&a, &b);
     Some(
@@ -1752,6 +1747,40 @@ mod tests {
         assert_eq!(post(&format!("{base}/api/nope"), json!({}), &token).0, 404);
     }
 
+    /// The fold panel and the keypress must not disagree: `pair` answering "1, origin unknown" while
+    /// `merge` folds to 2 and promotes is the one wrong answer here that writes to the team pool.
+    #[test]
+    fn the_fold_panel_counts_what_merge_would_actually_do() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::update(|c| c.memory_dir = dir.path().to_path_buf());
+        let queue = memory::queue_path(None);
+        std::fs::create_dir_all(queue.parent().unwrap()).unwrap();
+        // two drafts from two genuinely independent review runs
+        std::fs::write(
+            &queue,
+            "- (1) [r:aaaa] the retry loop never backs off\n- (1) [r:bbbb] retries fire with no backoff\n",
+        )
+        .unwrap();
+
+        let panel = pair(
+            None,
+            "the retry loop never backs off",
+            "retries fire with no backoff",
+        )
+        .expect("both rows are live");
+        let would = panel["would"].as_u64().unwrap() as u32;
+        assert_eq!(would, 2, "two run ids, so two observations: {panel}");
+        assert!(panel["promotes"].as_bool().unwrap());
+
+        let merged = memory::merge(
+            None,
+            "the retry loop never backs off",
+            "retries fire with no backoff",
+        );
+        assert_eq!(would, merged, "the panel promised {would}, the fold did {merged}");
+    }
+
     #[test]
     fn settings_change_the_theme_and_persist() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1947,6 +1976,25 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(job("test-ok")["result"]["n"], 1);
+    }
+
+    /// The catch_unwind in start_job only does anything while the release profile unwinds: under
+    /// `panic = "abort"` this passed in dev and the shipped binary took the whole app down instead.
+    #[test]
+    fn a_panicking_job_leaves_the_panel_readable_instead_of_killing_the_app() {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // ponytail: the panic is the point, keep it off the log
+        start_job("test-panic", || panic!("the dream went wrong"));
+        for _ in 0..200 {
+            if !job("test-panic")["running"].as_bool().unwrap() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::panic::set_hook(hook);
+        let j = job("test-panic");
+        assert_eq!(j["running"].as_bool(), Some(false));
+        assert_eq!(j["error"].as_str(), Some("the dream went wrong"));
     }
 
     #[test]
