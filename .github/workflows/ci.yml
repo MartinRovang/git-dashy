@@ -3,6 +3,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # ponytail: an RC off any branch. The tag gets an -rcN suffix, which the regex in
+  # update::newest_tag (anchored at \d+$) never matches, so no installed dashboard is offered it.
+  # Testers take it by name: REF=v2.1.0-rc7 sh install.sh
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,25 +57,36 @@ jobs:
           [ "$base" != "$head" ] || { echo "::error::Bump version in Cargo.toml before merging"; exit 1; }
 
   release:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Release v$VERSION unless the tag already exists
+      - id: tag
+        name: Release v$VERSION (a manual run is an -rc prerelease) unless the tag already exists
         run: |
           tag=v$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          pre=
+          # a manual run never claims the plain version: it is an RC off whatever branch was picked.
+          # --prerelease keeps it out of releases/latest, which install.sh defaults to.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            tag="$tag-rc$GITHUB_RUN_NUMBER"
+            pre="--prerelease --target $GITHUB_SHA"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
-          gh release create "$tag" --generate-notes
+          gh release create "$tag" --generate-notes $pre
 
   # ponytail: one binary per OS as a release asset, named the way update::asset_name() looks for it.
   # The Vite bundle is built first and embedded into the binary by include_dir!.
   binaries:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     needs: release
     strategy:
       matrix:
@@ -109,7 +124,6 @@ jobs:
         working-directory: src-tauri
       - shell: bash
         run: |
-          tag=v$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           ext=; [ "$RUNNER_OS" = Windows ] && ext=.exe
           cp "src-tauri/target/release/gitdashy$ext" "${{ matrix.asset }}"
-          gh release upload "$tag" "${{ matrix.asset }}" --clobber
+          gh release upload "${{ needs.release.outputs.tag }}" "${{ matrix.asset }}" --clobber
