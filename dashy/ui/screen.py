@@ -1028,7 +1028,7 @@ def group_menu(scr, state, sel, key):
 				# answer, so re-asking without clearing would draw nothing and look like a dead key.
 				kind, _, tkey = sk[1:].partition(":")
 				(memory.ask_agents_again if kind == "agents" else memory.ask_publishing_again)(tkey)
-				(ask_agents if kind == "agents" else ask_publishing)(scr, state, sel)
+				(ask_agents if kind == "agents" else ask_publishing)(scr, state, sel, only=tkey)
 		elif k in (27, ord("q")):
 			return
 
@@ -1662,8 +1662,12 @@ def _leave_team(scr, state, sel, key):
 	return True
 
 
-def ask_publishing(scr, state, sel):
+def ask_publishing(scr, state, sel, only=""):
 	"""Ask once per team whether it may receive facts and drafts without anyone sending them.
+
+	ponytail: `only` narrows it to one team, for the Knowledge row. Without it, pressing ⏎ on team A's
+	row held you until you had answered for every OTHER pending team too — yes_no does not let you
+	escape — which is the same surprise this feature exists to remove, wearing the other hat.
 
 	ponytail: the ONE keypress in this, and it is not in the pipeline — it is about the contract. A
 	binding made before v1.43 meant "reviews of this repo read that team's context"; it did not mean
@@ -1675,6 +1679,8 @@ def ask_publishing(scr, state, sel):
 	agreeing to a policy and agreeing to what is about to happen.
 	"""
 	for key, drafts, facts_ in memory.unasked():
+		if only and key != only:
+			continue
 		it = team.info(key)["name"][:28]
 		waiting = " · ".join(x for x in (f"{drafts} draft{'' if drafts == 1 else 's'}" if drafts else "",
 		                                 f"{facts_} fact{'' if facts_ == 1 else 's'}" if facts_ else "") if x)
@@ -1689,8 +1695,10 @@ def ask_publishing(scr, state, sel):
 		state.wake.set()
 
 
-def ask_agents(scr, state, sel):
+def ask_agents(scr, state, sel, only=""):
 	"""Ask before a team's instruction to your agent sessions is put in front of them.
+
+	ponytail: `only` narrows it to one team — see ask_publishing, same reason.
 
 	ponytail: memory.agents_text says why this file is the one that gets a keypress. The screen's own
 	job is to make the question answerable: it shows what the file will tell your sessions to do, and
@@ -1703,6 +1711,8 @@ def ask_agents(scr, state, sel):
 	characters accepted unseen — the same hole as the dropped tail, through the other axis.
 	"""
 	for key, text in memory.unacked_agents():
+		if only and key != only:
+			continue
 		it, lines = team.info(key)["name"][:28], [l for l in text.splitlines() if l.strip()]
 		body = [(l[:60], "") for l in lines[:8]]
 		more = len(lines) - len(body) + sum(1 for l in lines[:8] if len(l) > 60)

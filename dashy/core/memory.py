@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import tarfile
+import tempfile
 import time
 
 from .. import config
@@ -802,15 +803,37 @@ def _publishing_keys():
 		return set()
 
 
-def allow_publishing(key, yes=True):
-	"""Record the answer for team `key`. A no is recorded too, or it is asked again on every launch."""
-	keys = {k for k in _publishing_keys() if k.lstrip("!") != key} | {("" if yes else "!") + key}
+def _write_publishing(keys):
+	"""Replace the answers file with `keys`. False when it could not be written.
+
+	ponytail: whole, then renamed. Every writer here rewrites the FILE, not one line, so a crash
+	between truncate and write drops every team's answer at once — and there are two writers now.
+	The consent this records is the thing the store exists to protect; losing it silently and asking
+	again is survivable, losing it silently and publishing is not.
+	ponytail: unanswerable is the same as unanswered. A failed write leaves whatever was there, and
+	the launch prompt asks again rather than assuming yes.
+	"""
 	try:
 		os.makedirs(config.MEMORY_DIR, exist_ok=True)
-		with open(os.path.join(config.MEMORY_DIR, PUBLISHING), "w") as f:
-			f.write("".join(k + "\n" for k in sorted(keys)))
+		fd, tmp = tempfile.mkstemp(dir=config.MEMORY_DIR, prefix=PUBLISHING + ".")
+		try:
+			with os.fdopen(fd, "w") as f:
+				f.write("".join(k + "\n" for k in sorted(keys)))
+			os.replace(tmp, os.path.join(config.MEMORY_DIR, PUBLISHING))
+		except OSError:
+			try:
+				os.remove(tmp)
+			except OSError:
+				pass
+			raise
 	except OSError:
-		pass  # ponytail: unanswerable is the same as unanswered — it asks again rather than assuming yes
+		return False
+	return True
+
+
+def allow_publishing(key, yes=True):
+	"""Record the answer for team `key`. A no is recorded too, or it is asked again on every launch."""
+	_write_publishing({k for k in _publishing_keys() if k.lstrip("!") != key} | {("" if yes else "!") + key})
 
 
 def ask_publishing_again(key):
@@ -826,13 +849,7 @@ def ask_publishing_again(key):
 	kept = {k for k in keys if k.lstrip("!") != key}
 	if len(kept) == len(keys):
 		return False  # nothing recorded for that team, so nothing to forget
-	try:
-		os.makedirs(config.MEMORY_DIR, exist_ok=True)
-		with open(os.path.join(config.MEMORY_DIR, PUBLISHING), "w") as f:
-			f.write("".join(k + "\n" for k in sorted(kept)))
-	except OSError:
-		return False
-	return True
+	return _write_publishing(kept)
 
 
 def pending_answers():
@@ -846,14 +863,17 @@ def pending_answers():
 	ponytail: a GRANTED answer is not pending. This lists what is still being held back, so a team
 	that is publishing and whose agents.md you have read says nothing at all.
 	"""
-	out = []
+	# ponytail: both answer files are read ONCE for the whole walk. header_groups calls this and draw()
+	# calls that twice a second, and the loop reopened .publishing twice per team and .agents-ok once —
+	# the same mistake arrivals() already has a ponytail about, on the path where it costs most.
+	said, seen_all, out = _publishing_keys(), _agents_seen(), []
 	for key in team.joined():
-		if key not in {k.lstrip("!") for k in _publishing_keys()}:
+		if key not in {k.lstrip("!") for k in said}:
 			out.append(("publishing", key, "not asked about publishing yet"))
-		elif not publishing(key):
+		elif ("!" + key) in said:
 			out.append(("publishing", key, "not publishing — your answer was no"))
 		if text := _agents_of(key):
-			seen = _agents_seen().get(_agents_key(key), "")
+			seen = seen_all.get(_agents_key(key), "")
 			if not seen:
 				out.append(("agents", key, "agents.md not read"))
 			elif seen.startswith("!"):
@@ -987,24 +1007,6 @@ def unacked_agents():
 		if (sha := _agents_sha(text)) and seen.get(_agents_key(key), "").lstrip("!") != sha:
 			out.append((key, text))
 	return out
-
-
-def refused_agents():
-	"""Teams whose agents.md you said no to, at the wording it still has. What the standing note names.
-
-	ponytail: separate from unacked_agents, which is "what to ask about" and deliberately forgets a
-	team once it has been answered. A refusal is not a question any more; it is a state the Knowledge
-	row has to keep saying, or a `n` is exactly as silent as the launch-prompt bug it was added for.
-	"""
-	seen = _agents_seen()
-	out = []
-	for key in team.joined():
-		sha = _agents_sha(_agents_of(key))
-		if sha and seen.get(_agents_key(key)) == "!" + sha:
-			out.append(key)
-	return out
-
-
 def allow_agents(key, text, yes=True):
 	"""Record that you have read this team's agents.md at the wording in `text`. A no records the
 	refusal, so the file has to CHANGE before it is offered again rather than at every launch.
