@@ -34,6 +34,12 @@ export default function App() {
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
   const [view, setView] = useState<'board' | 'graph'>('board')
+  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it
+  useEffect(() => {
+    if (view !== 'graph') return
+    setQuery('')
+    setFailing(false)
+  }, [view])
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
   // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
@@ -492,7 +498,9 @@ export default function App() {
             <div className="queue">
               {view === 'graph' ? (
                 <Graph
-                  secs={secs}
+                  // folded sections are left out: selected() only searches unfolded rows, so a node there
+                  // would select a uid it cannot find and open rows[0] instead
+                  secs={secs.filter((s) => !folded[s.name])}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)

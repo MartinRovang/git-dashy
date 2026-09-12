@@ -1827,6 +1827,8 @@ mod tests {
         );
         assert_eq!(row["status"], "· awaiting review");
         assert_eq!(row["busy"], false);
+        // no additions on the fixture: the graph's `?? 0` path depends on null, not a missing zero
+        assert_eq!((&row["add"], &row["del"]), (&Value::Null, &Value::Null));
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it

@@ -36,7 +36,8 @@ function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
   for (const r of rows) {
     const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, degree: 2 }
     nodes.push(pr)
-    for (const h of [hub('repo', r.repo), hub('author', r.author)]) {
+    // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
+    for (const h of [hub('repo', r.repo), ...(r.author ? [hub('author', r.author)] : [])]) {
       h.degree++
       links.push({ source: pr, target: h })
     }
@@ -89,7 +90,7 @@ export function Graph({ secs, sel, onSelect }: {
         if (n.kind === 'author') return avatar(n.label)
         return fg(n)
       })
-      .style('stroke', (n) => (n.kind === 'pr' ? fg(n) : 'none'))
+      .style('stroke', (n) => (n.kind !== 'pr' ? 'none' : byUrl.get(n.id)?.uid === sel ? 'var(--ink)' : fg(n)))
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
   }
 

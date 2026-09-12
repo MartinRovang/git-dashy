@@ -173,8 +173,9 @@ function buildPayload() {
           author: r.author,
           updatedAt: r.updatedAt,
           isDraft: r.isDraft,
-          add: 62 + (r.number % 40),
-          del: 14 + (r.number % 9),
+          // one row without sizes, as when GitHub does not say
+          add: r.number === 98 ? null : 62 + (r.number % 40),
+          del: r.number === 98 ? null : 14 + (r.number % 9),
           status: r.status,
           prev: r.prev,
           checks: r.checks,

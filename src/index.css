@@ -349,7 +349,7 @@
   .gnode text { font-size: calc(11px / var(--k)); fill: var(--ink3); text-anchor: middle; dominant-baseline: hanging;
                 pointer-events: none; opacity: var(--label); transition: opacity .2s; }
   .gnode.hub text { fill: var(--dim); opacity: 1; font-size: calc(12px / var(--k)); }
-  .gnode.sel circle { stroke: var(--ink); stroke-width: 3; }
+  .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
   .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
