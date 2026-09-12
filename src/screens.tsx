@@ -534,17 +534,12 @@ export async function debugScreen(ctx: Ctx) {
     return
   }
   const text = JSON.stringify(await r.json(), null, 2)
-  const copy = async () => {
-    await navigator.clipboard.writeText(text)
-    ctx.flash('✓ debug data copied')
-  }
-  const m = open({
-    title: 'debug',
-    wide: true,
-    body: () => <pre>{text}</pre>,
-    foot: [['y', 'copy', copy, 'go'], ['Esc', 'close', () => close(m)]] as Foot[],
-  })
-  m.keys = { y: copy, Escape: () => close(m) }
+  // the same /api/copy the rest of the app uses, so a headless or wayland box still copies
+  const copy = () => void ctx.call('/api/copy', { text }, '✓ debug data copied')
+  const m = viewer('debug', text, 'holds repo names, pr urls and config paths — read it before pasting it in public')
+  m.keys!.y = copy
+  m.foot!.unshift(['y', 'copy', copy, 'go'])
+  repaint()
 }
 
 async function cycleTheme(ctx: Ctx) {

@@ -616,8 +616,8 @@ keeps running. Vite proxies `/api` to the backend on port 7777 (see `vite.config
 pnpm and Rust stable.
 
 ```sh
-# terminal 1 — backend on 7777. The token is pinned to "dev" and --demo serves canned PRs
-# and a fake reviewer: no GitHub token, no Claude, no network.
+# terminal 1 — backend on 7777. --demo serves canned PRs and a fake reviewer: no GitHub token,
+# no Claude, no network. Pin the token to "dev" for --demo only; a real run should generate one.
 cd src-tauri && GITDASHY_GUI_TOKEN=dev cargo run -- --no-open --demo --port 7777
 
 # terminal 2 — frontend with hot reload on 1420
@@ -625,10 +625,10 @@ pnpm install
 pnpm dev
 ```
 
-Then open **http://localhost:1420/?token=dev** — note the port.
+Open `http://localhost:1420/?token=dev`. The port matters.
 
-- Use the **1420** URL, not the backend's own 7777 one: 7777 serves the last `pnpm build` embedded in
-  the binary, so your source changes only show up through Vite. Hard-refresh if the page looks stale.
+- Use `1420`. Port 7777 serves the last `pnpm build` embedded in the binary, so your source changes
+  only show up through Vite. Hard-refresh if the page looks stale.
 - Stop any other `gitdashy` first: the installed binary defaults to 7777 and `cargo run` then fails
   with "Address already in use".
 - Drop `--demo` to run against real GitHub (needs a token, see Environment), and omit

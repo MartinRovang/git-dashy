@@ -6,6 +6,7 @@
 //! at this same URL, so there is one UI to maintain and it works in a browser too.
 
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -467,13 +468,25 @@ fn get_state(state: &State, _q: &Query) -> Out {
     Ok(payload(state))
 }
 
-/// The last `n` lines of a file, or "" when it is missing or unreadable.
+/// The last `n` lines of a file, or the io error when it cannot be read, so a blank tail says why.
 fn tail(path: &Path, n: usize) -> String {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return String::new();
+    // ponytail: read the last 64 KB, not the whole log — the first line of the window may be a
+    // fragment, which is fine for a tail. Seek to a line boundary if that ever matters.
+    let read = || -> std::io::Result<String> {
+        let mut f = std::fs::File::open(path)?;
+        let len = f.seek(SeekFrom::End(0))?;
+        f.seek(SeekFrom::Start(len.saturating_sub(64 * 1024)))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)?;
+        Ok(String::from_utf8_lossy(&buf).into_owned())
     };
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..].join("\n")
+    match read() {
+        Ok(text) => {
+            let lines: Vec<&str> = text.lines().collect();
+            lines[lines.len().saturating_sub(n)..].join("\n")
+        }
+        Err(e) => format!("({}: {e})", path.display()),
+    }
 }
 
 /// The diagnostic bundle the debugger screen shows: build, paths, live poll state, and the debug log tail.
@@ -558,7 +571,7 @@ fn get_debug(state: &State, _q: &Query) -> Out {
             "asks": asks,
             "notices": notices,
         },
-        "log": {"path": config::tilde(&cfg.debug_log), "tail": tail(&cfg.debug_log, 200)},
+        "log": tail(&cfg.debug_log, 200),
     }))
 }
 
@@ -878,8 +891,11 @@ fn post_open(state: &State, body: &Body) -> Out {
 }
 
 fn post_copy(state: &State, body: &Body) -> Out {
-    let (pr, _) = need_pr(state, &text(body, "url"))?;
-    Ok(json!({"ok": true, "tool": github::copy(&pr.url)}))
+    let what = match text(body, "text") {
+        t if !t.is_empty() => t,
+        _ => need_pr(state, &text(body, "url"))?.0.url,
+    };
+    Ok(json!({"ok": true, "tool": github::copy(&what)}))
 }
 
 fn post_memory(_state: &State, body: &Body) -> Out {
@@ -1750,6 +1766,35 @@ mod tests {
             resp.status().as_u16(),
             serde_json::from_str(&text).unwrap_or(Value::String(text)),
         )
+    }
+
+    #[test]
+    fn debug_route_needs_the_token_and_carries_the_paths() {
+        let (base, token, _state) = served();
+        assert_eq!(get(&format!("{base}/api/debug"), None).0, 401);
+        let (code, d) = get(&format!("{base}/api/debug"), Some(&token));
+        assert_eq!(code, 200);
+        assert_eq!(d["version"], config::VERSION);
+        assert!(!d["paths"]["debugLog"].as_str().unwrap().is_empty());
+        assert_eq!(d["state"]["sections"][0]["name"], "MINE");
+    }
+
+    #[test]
+    fn tail_handles_missing_short_and_long_files() {
+        let dir = std::env::temp_dir().join(format!("dashy-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("nope.log");
+        assert!(tail(&missing, 3).contains("nope.log"));
+        let empty = dir.join("empty.log");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(tail(&empty, 3), "");
+        let few = dir.join("few.log");
+        std::fs::write(&few, "a\nb\n").unwrap();
+        assert_eq!(tail(&few, 3), "a\nb");
+        let many = dir.join("many.log");
+        std::fs::write(&many, (0..10).map(|i| format!("{i}\n")).collect::<String>()).unwrap();
+        assert_eq!(tail(&many, 3), "7\n8\n9");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
