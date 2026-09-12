@@ -215,7 +215,7 @@ paths rather than defaulting them.
 
 ### What the hook does
 
-`dashy/hooks/claude-session-start.sh`, run at the start of every session in every repo. It seeds
+`hooks/claude-session-start.sh`, run at the start of every session in every repo. It seeds
 `.agent/STATE.md` and `.agent/PROJECT-MEMORY.md` if missing, creates a `CLAUDE.local.md`
 that imports them, and calls `gitdashy init` for that repo's review memory.
 

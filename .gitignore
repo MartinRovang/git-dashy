@@ -1,1 +1,6 @@
-__pycache__/
+target/
+gen/
+node_modules/
+dist/
+*.local
+.DS_Store

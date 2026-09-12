@@ -3,20 +3,44 @@ on:
   pull_request:
   push:
     branches: [main]
-  # the Run workflow button only exists when this trigger is on the DEFAULT branch, even though the
-  # run itself uses the selected branch's copy of this file. Here so a v2 branch can cut an RC build.
+  # ponytail: an RC off any branch. The tag gets an -rcN suffix, which the regex in
+  # update::newest_tag (anchored at \d+$) never matches, so no installed dashboard is offered it.
+  # Testers take it by name: REF=v2.1.0-rc7 sh install.sh
+  # The button needs this trigger on the DEFAULT branch; the run then uses the chosen branch's copy.
   workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # ponytail: the Linux build needs webkit for the window; the test job runs on Linux too.
+  APT_DEPS: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.x"
-      - run: pip install pytest
-      - run: python3 -m pytest -q
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo fmt --all -- --check
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
 
   version-bumped:
     if: github.event_name == 'pull_request'
@@ -24,25 +48,91 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git fetch origin "$GITHUB_BASE_REF" --depth=1
-      - name: VERSION in dashy/__init__.py must differ from base branch
+      - name: version in Cargo.toml must differ from base branch
         run: |
-          base=$(git show "origin/$GITHUB_BASE_REF:dashy/__init__.py" | grep -m1 '^VERSION = ')
-          head=$(grep -m1 '^VERSION = ' dashy/__init__.py)
+          # a PR that ADDS src-tauri/Cargo.toml has no base version: git show fatals, and under `set -e`
+          # that killed the step before the comparison. No base is not the same as no bump.
+          base=$(git show "origin/$GITHUB_BASE_REF:src-tauri/Cargo.toml" 2>/dev/null | grep -m1 '^version = ' || true)
+          head=$(grep -m1 '^version = ' src-tauri/Cargo.toml)
           echo "base: $base"; echo "head: $head"
-          [ "$base" != "$head" ] || { echo "::error::Bump VERSION in dashy/__init__.py before merging"; exit 1; }
+          [ "$base" != "$head" ] || { echo "::error::Bump version in Cargo.toml before merging"; exit 1; }
 
   release:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        name: Release v$VERSION (a manual run is an -rc prerelease) unless the tag already exists
+        run: |
+          tag=v$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          pre=
+          # a manual run never claims the plain version: it is an RC off whatever branch was picked.
+          # --prerelease keeps it out of releases/latest, which install.sh defaults to.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            tag="$tag-rc$GITHUB_RUN_NUMBER"
+            pre="--prerelease --target $GITHUB_SHA"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
+          gh release create "$tag" --generate-notes $pre
+
+  # ponytail: one binary per OS as a release asset, named the way update::asset_name() looks for it.
+  # The Vite bundle is built first and embedded into the binary by include_dir!.
+  binaries:
+    if: github.event_name != 'pull_request'
+    needs: release
+    strategy:
+      matrix:
+        include:
+          # ponytail: 22.04, not latest. The binary's glibc floor is whatever it was BUILT against, so a
+          # 24.04 runner silently makes it unrunnable on 22.04 and Debian 12. Tauri names this same pair
+          # as the build target because they also carry libwebkit2gtk-4.1-dev.
+          - os: ubuntu-22.04
+            asset: gitdashy-linux-x86_64
+          # ponytail: Linux only for now. Uncomment a row to ship that platform again.
+          # - os: macos-latest
+          #   asset: gitdashy-macos-arm64
+          # - os: macos-13
+          #   asset: gitdashy-macos-x86_64
+          # - os: windows-latest
+          #   asset: gitdashy-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Release v$VERSION unless the tag already exists
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo build --release
+        working-directory: src-tauri
+      - shell: bash
         run: |
-          tag=v$(sed -n 's/^VERSION = "\(.*\)"/\1/p' dashy/__init__.py)
-          gh release view "$tag" >/dev/null 2>&1 && { echo "$tag already released"; exit 0; }
-          gh release create "$tag" --generate-notes
+          ext=; [ "$RUNNER_OS" = Windows ] && ext=.exe
+          cp "src-tauri/target/release/gitdashy$ext" "${{ matrix.asset }}"
+          # the updater and install.sh refuse a download that does not match this
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256" 2>/dev/null \
+            || shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            "${{ matrix.asset }}" "${{ matrix.asset }}.sha256" --clobber
