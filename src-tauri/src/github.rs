@@ -1259,8 +1259,19 @@ mod tests {
             String::from_utf8(c.output().unwrap().stdout).unwrap()
         };
         run(&["init", "-q"], false);
-        run(&["config", "--add", &format!("http.{GITHUB}.extraHeader"), "Authorization: Basic stale"], false);
-        let got = run(&["config", "--get-all", &format!("http.{GITHUB}.extraHeader")], true);
+        run(
+            &[
+                "config",
+                "--add",
+                &format!("http.{GITHUB}.extraHeader"),
+                "Authorization: Basic stale",
+            ],
+            false,
+        );
+        let got = run(
+            &["config", "--get-all", &format!("http.{GITHUB}.extraHeader")],
+            true,
+        );
         // The env values come AFTER the repo's, and the empty one sits between them: git's http
         // layer drops every header it has collected when it reads an empty extraHeader, so the
         // request carries "now" alone. `config --get-all` does not apply that rule, it only shows
