@@ -91,7 +91,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          # ponytail: 22.04, not latest. The binary's glibc floor is whatever it was BUILT against, so a
+          # 24.04 runner silently makes it unrunnable on 22.04 and Debian 12. Tauri names this same pair
+          # as the build target because they also carry libwebkit2gtk-4.1-dev.
+          - os: ubuntu-22.04
             asset: gitdashy-linux-x86_64
           - os: macos-latest
             asset: gitdashy-macos-arm64
