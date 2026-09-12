@@ -97,12 +97,13 @@ jobs:
           # as the build target because they also carry libwebkit2gtk-4.1-dev.
           - os: ubuntu-22.04
             asset: gitdashy-linux-x86_64
-          - os: macos-latest
-            asset: gitdashy-macos-arm64
-          - os: macos-13
-            asset: gitdashy-macos-x86_64
-          - os: windows-latest
-            asset: gitdashy-windows-x86_64.exe
+          # ponytail: Linux only for now. Uncomment a row to ship that platform again.
+          # - os: macos-latest
+          #   asset: gitdashy-macos-arm64
+          # - os: macos-13
+          #   asset: gitdashy-macos-x86_64
+          # - os: windows-latest
+          #   asset: gitdashy-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
