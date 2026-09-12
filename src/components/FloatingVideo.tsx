@@ -18,8 +18,31 @@ export function FloatingVideo() {
     window.addEventListener('resize', fit)
     return () => window.removeEventListener('resize', fit)
   }, [])
-  const send = (func: string, args: number[]) =>
+  const send = (func: string, args: unknown[]) =>
     frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), EMBED)
+  // Commands sent before the player is ready are dropped, so set the sound on onReady. Captions load
+  // after that and announce themselves in apiInfoDelivery, so unload them each time they do.
+  const vol = useRef(volume)
+  vol.current = volume
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== EMBED || e.source !== frame.current?.contentWindow) return
+      let m: { event?: string; info?: { namespaces?: string[] } | null }
+      try {
+        m = JSON.parse(e.data)
+      } catch {
+        return
+      }
+      if (m.event === 'onReady') {
+        send('unMute', [])
+        send('setVolume', [vol.current])
+      }
+      if (m.event === 'apiInfoDelivery' && m.info?.namespaces?.includes('captions')) send('unloadModule', ['captions'])
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const apply = (v: number) => {
     setVolume(v)
     send('setVolume', [v])
@@ -55,10 +78,7 @@ export function FloatingVideo() {
           title="gitdashy"
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
-          onLoad={() => {
-            send('unMute', [])
-            send('setVolume', [volume])
-          }}
+          onLoad={() => frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), EMBED)}
         />
         <span className="cover">
           <span className="shim">
