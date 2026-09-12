@@ -475,7 +475,17 @@ export async function updateScreen(ctx: Ctx) {
   const v = ctx.getData()?.update
   if (!v) return
   if (!(await confirm(`v${ctx.getData()?.version}  →  v${v}. Installs the release tag and restarts gitdashy. Update now?`, { yes: 'update now', no: 'later' }))) return
-  await ctx.call('/api/update', {}, 'installing… the dashboard restarts in a moment')
+  // ponytail: the server reports no progress, so the spinner runs until a failure notice arrives,
+  // the process re-execs under a desktop window, or the cap runs out (a --browser page survives the
+  // re-exec and would otherwise sit behind it forever). Add a real bar when the server can report one.
+  await busy('update', `downloading v${v}…`, async () => {
+    const seen = (ctx.getData()?.notices || []).length
+    if (!(await ctx.call('/api/update', {}))) return
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      if ((ctx.getData()?.notices || []).length > seen) return
+    }
+  })
 }
 
 export function escMenu(ctx: Ctx) {

@@ -1,3 +1,4 @@
+import { Pinata } from './Pinata'
 import type { StateData } from '../types'
 
 type Props = {
@@ -58,6 +59,7 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         </div>
         <span>AUTO</span>
       </div>
+      <Pinata />
       <span className="ib" title="menu (esc)" onClick={onMenu}>
         ☰
       </span>
