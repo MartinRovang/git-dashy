@@ -99,8 +99,10 @@ pub fn payload(state: &State) -> Value {
     };
     let cfg = config::get();
     let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-    // each url's newest review: REVIEWED is newest first, so the first one seen wins
+    // each url's newest review, and its newest TAGGED one: a re-review that came back without a kind
+    // must not wipe the tag an earlier review gave. REVIEWED is newest first, so the first one seen wins.
     let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
+    let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
     for p in sections
         .iter()
         .filter(|s| s.name == "REVIEWED")
@@ -108,6 +110,9 @@ pub fn payload(state: &State) -> Value {
     {
         if let Some(r) = &p.review {
             logged.entry(p.url.as_str()).or_insert(r);
+            if !r.kind.is_empty() {
+                tags.entry(p.url.as_str()).or_insert(r);
+            }
         }
     }
     let mut out = Vec::new();
@@ -125,8 +130,12 @@ pub fn payload(state: &State) -> Value {
                 ("REVIEWED", None) => ("", ""),
                 _ => (logged.get(url).map(|r| r.summary.as_str()).unwrap_or(""), ""),
             };
-            // a REVIEWED row carries its own review; any other row, that url's newest
-            let tagged = p.review.as_deref().or_else(|| logged.get(url).copied());
+            // a REVIEWED row carries its own review, when that one is tagged; else the url's newest tagged
+            let tagged = p
+                .review
+                .as_deref()
+                .filter(|r| !r.kind.is_empty())
+                .or_else(|| tags.get(url).copied());
             rows.push(json!({
                 "url": url,
                 "number": p.number,
@@ -1843,6 +1852,24 @@ mod tests {
         }
         let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
         assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
+        // a re-review with no kind keeps the tag of the newest review that had one
+        {
+            let mut st = state.lock();
+            let pr = st.sections[0].prs.as_ref().unwrap()[0].clone();
+            let entry = |kind: &str, breaking: bool| Pr {
+                review: Some(Box::new(LogEntry { kind: kind.into(), breaking, ..Default::default() })),
+                ..pr.clone()
+            };
+            st.sections.push(Section {
+                name: "REVIEWED".into(),
+                prs: Some(vec![entry("", false), entry("security", true), entry("docs", false)]), // newest first
+                err: None,
+            });
+        }
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        let (row, newest) = (&d["sections"][0]["prs"][0], &d["sections"][2]["prs"][0]);
+        assert_eq!((&row["kind"], &row["breaking"]), (&json!("security"), &json!(true)));
+        assert_eq!((&newest["kind"], &newest["breaking"]), (&json!("security"), &json!(true)));
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it

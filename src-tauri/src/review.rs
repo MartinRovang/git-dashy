@@ -31,7 +31,7 @@ finding must appear there. Empty list when there is nothing to report.
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."#;
 pub const PREV: &str = "
 
-This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}. The PR has been updated since.
+This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}{tag}. The PR has been updated since.
 Your earlier review was:
 {body}
 
@@ -492,7 +492,14 @@ pub fn prompt(i: &Inputs) -> Result<String> {
         .prev
         .map(|p| {
             let at: String = p.at.chars().take(10).collect();
-            fill(PREV, &[("at", &at), ("verdict", &p.verdict), ("body", &p.body)])
+            // the earlier tag goes in too, or a borderline PR hops between kinds, and graph groups, each review
+            let tag = match (p.kind.as_str(), p.breaking) {
+                ("", _) => String::new(),
+                (k, b) => format!(
+                    ", tagged kind {k}, breaking {b}; keep both unless the new commits changed what the PR is"
+                ),
+            };
+            fill(PREV, &[("at", &at), ("verdict", &p.verdict), ("tag", &tag), ("body", &p.body)])
         })
         .unwrap_or_default();
     let mut out = fill(
@@ -940,6 +947,8 @@ mod tests {
             at: "2099-01-02T03:04:05+00:00".into(),
             verdict: "request_changes".into(),
             body: "- cache never invalidated {memory}".into(),
+            kind: "refactor".into(),
+            breaking: true,
             ..Default::default()
         };
         let p = prompt(&inputs(Some(&prev))).unwrap();
@@ -947,6 +956,7 @@ mod tests {
             p.contains("RE-REVIEW: you already reviewed this PR on 2099-01-02 with verdict request_changes")
         );
         assert!(p.contains("- cache never invalidated {memory}")); // pasted text is never re-filled
+        assert!(p.contains("tagged kind refactor, breaking true; keep both unless"));
         assert!(p.find("RE-REVIEW").unwrap() < p.find("Additional instructions").unwrap());
     }
 
