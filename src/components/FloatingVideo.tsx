@@ -6,6 +6,10 @@ const EMBED = 'https://www.youtube-nocookie.com'
 export function FloatingVideo() {
   const [volume, setVolume] = useState(50)
   const [pos, setPos] = useState({ x: 14, y: 54 })
+  // ponytail: WebKitGTK plays only on a click inside the frame itself (a click on our page does not
+  // count across the origin), so the frame takes clicks until the player reports it is playing.
+  // Chrome autoplays, so there the window is a blink.
+  const [playing, setPlaying] = useState(false)
   const frame = useRef<HTMLIFrameElement>(null)
   const box = useRef<HTMLDivElement>(null)
   const grab = useRef<{ dx: number; dy: number } | null>(null)
@@ -41,6 +45,7 @@ export function FloatingVideo() {
       }
       const captions = m.event === 'apiInfoDelivery' && m.info?.namespaces?.includes('captions')
       const playing = m.event === 'infoDelivery' && m.info?.playerState === 1
+      if (playing) setPlaying(true)
       if (captions || playing) {
         send('setOption', ['captions', 'track', {}])
         send('unloadModule', ['captions'])
@@ -86,6 +91,7 @@ export function FloatingVideo() {
           title="gitdashy"
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
+          style={{ pointerEvents: playing ? 'none' : 'auto' }}
           onLoad={() => frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), EMBED)}
         />
         <span className="cover">
