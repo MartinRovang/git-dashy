@@ -16,7 +16,7 @@ const VOICES = ['review', 'caveman', 'bot']
 const HUNTERS = ['ponytail', 'security', 'tests', 'humanizer']
 const SUBS = ['all', 'open', 'off']
 const INTERVALS = [60, 120, 300, 600, 900]
-const WINDOWS = [1, 4, 6, null]
+const WINDOWS = [6, 24, 168, 720, null]
 const PROMOTE_AT = 2
 
 type Pre = { at: number; moved: boolean } | null

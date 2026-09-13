@@ -11,7 +11,7 @@ import { TopBar } from './components/TopBar'
 import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
-import { CONTEXTS, every, tone } from './tokens'
+import { CONTEXTS, every, span, tone } from './tokens'
 import type { Code, Detail, Row, StateData } from './types'
 import { useNow, useStatePoll } from './usePoll'
 
@@ -243,9 +243,7 @@ export default function App() {
       : name === 'interval'
         ? every(Number(value))
         : name === 'window'
-          ? value == null
-            ? 'all'
-            : `${value}h`
+          ? span(value as number | null)
           : String(value === '' ? 'default' : value)
     await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
   }
@@ -393,7 +391,7 @@ export default function App() {
     else if (key === 'e') picker('Effort', o.effort, s.effort || '', (v) => v || 'default', (v) => on('effort', v))
     else if (key === 's') picker('Summaries', o.subs, s.subs || '', String, (v) => on('subs', v))
     else if (key === 't')
-      picker('History', o.window.map((v) => (v == null ? 'all' : String(v))), s.window == null ? 'all' : String(s.window), (v) => (v === 'all' ? 'all' : `${v}h`), (v) => on('window', v === 'all' ? null : +v))
+      picker('History', o.window.map((v) => (v == null ? 'all' : String(v))), s.window == null ? 'all' : String(s.window), (v) => (v === 'all' ? 'all' : span(+v)), (v) => on('window', v === 'all' ? null : +v))
     else if (key === 'i') picker('Refresh', o.interval.map(String), String(s.interval), (v) => every(+v), (v) => on('interval', +v))
     else if (key === 'x') picker('Voices', o.voice, s.voice || [], String, (v) => on('voice', v), true)
     else if (key === 'h') picker('Hunters', o.hunter, s.hunter || [], String, (v) => on('hunter', v), true)

@@ -1,6 +1,6 @@
 import type { StateData } from '../types'
 import { counts } from '../board'
-import { every } from '../tokens'
+import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
 type Props = {
@@ -66,7 +66,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal }: Props) {
           <Select
             value={s.window == null ? 'all' : String(s.window)}
             options={o.window.map((v) => (v == null ? 'all' : String(v)))}
-            show={(v) => (v === 'all' ? 'all' : `${v}h`)}
+            show={(v) => (v === 'all' ? 'all' : span(+v))}
             onChange={(v) => setting('window', v === 'all' ? null : +v)}
           />
         </Row>
