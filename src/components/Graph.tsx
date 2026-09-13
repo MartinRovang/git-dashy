@@ -22,6 +22,8 @@ const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
 
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
+// a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
+const PERSON = 'M-.3,-.32a.3,.3 0 1,0 .6,0a.3,.3 0 1,0 -.6,0ZM-.62,.62Q-.62,.06 0,.06Q.62,.06 .62,.62Z'
 
 // A title's conventional-commit prefix, for PRs no review has tagged yet: `feat(api)!: ...`
 const PREFIX: Record<string, string> = {
@@ -125,6 +127,11 @@ export function Graph({ secs, sel, onSelect }: {
       .classed('hit', (n) => hits.has(n.id))
       .classed('breaking', (n) => !!byUrl.get(n.id) && tagOf(byUrl.get(n.id)!).breaking)
     node.select('text').attr('y', (n) => radius(n) + 3)
+    node
+      .select('path.person')
+      .attr('display', (n) => (n.kind === 'author' ? null : 'none'))
+      .attr('transform', (n) => `scale(${radius(n) * 0.75})`)
+      .style('fill', (n) => avatar(n.label))
     node.select('title').text((n) => {
       const r = byUrl.get(n.id)
       if (!r) return n.label
@@ -192,6 +199,7 @@ export function Graph({ secs, sel, onSelect }: {
       .join((enter) => {
         const e = enter.append('g').attr('class', 'gnode')
         e.append('circle')
+        e.append('path').attr('class', 'person').attr('d', PERSON)
         e.append('text')
         e.append('title')
         return e
@@ -341,7 +349,10 @@ export function Graph({ secs, sel, onSelect }: {
         )}
         {(by === 'repo' || by === 'author') && (
           <span>
-            <i className="gdot" /> author
+            <svg className="gperson" viewBox="-1 -1 2 2">
+              <path d={PERSON} />
+            </svg>{' '}
+            author
           </span>
         )}
         {rows.some((r) => tagOf(r).breaking) && (

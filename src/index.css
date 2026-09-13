@@ -369,7 +369,8 @@
   .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
   .glegend span { display: flex; align-items: center; gap: 5px; }
   .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
-  .glegend .gdot { background: linear-gradient(90deg, var(--pink), var(--cyan), var(--amber)); }
+  .gnode path.person { pointer-events: none; }
+  .glegend .gperson { width: 11px; height: 11px; fill: var(--ink3); }
 
   /* ponytail: React mounts into #root, so it needs the full height the vanilla #app assumed. */
   #root { height: 100%; }
