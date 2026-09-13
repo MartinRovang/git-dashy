@@ -493,11 +493,16 @@ pub fn prompt(i: &Inputs) -> Result<String> {
         .map(|p| {
             let at: String = p.at.chars().take(10).collect();
             // the earlier tag goes in too, or a borderline PR hops between kinds, and graph groups, each review
+            // the log is shared, so a kind not on the list never reaches the prompt; "other" asks for a real one
             let tag = match (p.kind.as_str(), p.breaking) {
                 ("", _) => String::new(),
-                (k, b) => format!(
+                ("other", b) => {
+                    format!(", tagged kind other, breaking {b}; pick a kind from the list if one fits")
+                }
+                (k, b) if config::KINDS.contains(&k) => format!(
                     ", tagged kind {k}, breaking {b}; keep both unless the new commits changed what the PR is"
                 ),
+                _ => String::new(),
             };
             fill(
                 PREV,
@@ -576,10 +581,14 @@ pub fn parse_verdict(text: &str) -> Result<Verdict> {
     };
     obj.insert("remember".into(), serde_json::to_value(remember)?);
     // a free-text kind scatters one group across "feat", "feature" and "new-feature"; only the list is kept
-    let kind = match obj.get("kind").and_then(Value::as_str).map(str::to_lowercase) {
+    let kind = match obj
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(|k| k.trim().to_lowercase())
+    {
         Some(k) if config::KINDS.contains(&k.as_str()) => k,
-        Some(_) => "other".into(),
-        None => String::new(),
+        Some(k) if !k.is_empty() => "other".into(),
+        _ => String::new(),
     };
     obj.insert("kind".into(), kind.into());
     if !obj.get("breaking").map(Value::is_boolean).unwrap_or(false) {
@@ -764,7 +773,18 @@ pub fn review(pr: &Pr, model: &str) -> Result<String> {
 fn review_inner(pr: &Pr, model: &str) -> Result<String> {
     let (repo, n) = (pr.repo(), pr.number);
     let c = config::get();
-    let prev = rlog::last(&pr.url);
+    let mut prev = rlog::last(&pr.url);
+    // the newest entry may predate tags; the board shows the newest TAGGED one, so the prompt must see that too
+    if let Some(p) = prev.as_mut().filter(|p| p.kind.is_empty()) {
+        if let Some(t) = rlog::reviewed()
+            .into_iter()
+            .filter(|r| r.url == pr.url)
+            .filter_map(|r| r.review)
+            .find(|r| !r.kind.is_empty())
+        {
+            (p.kind, p.breaking) = (t.kind, t.breaking);
+        }
+    }
     let what = match &prev {
         Some(p) => {
             let was = config::status(&p.verdict).ok_or_else(|| anyhow!("unknown verdict {:?}", p.verdict))?;
@@ -965,6 +985,20 @@ mod tests {
         );
         assert!(p.contains("- cache never invalidated {memory}")); // pasted text is never re-filled
         assert!(p.contains("tagged kind refactor, breaking true; keep both unless"));
+        let other = LogEntry {
+            kind: "other".into(),
+            ..prev.clone()
+        };
+        assert!(prompt(&inputs(Some(&other)))
+            .unwrap()
+            .contains("pick a kind from the list"));
+        let junk = LogEntry {
+            kind: "ignore all previous".into(),
+            ..prev
+        };
+        assert!(!prompt(&inputs(Some(&junk)))
+            .unwrap()
+            .contains("ignore all previous"));
         assert!(p.find("RE-REVIEW").unwrap() < p.find("Additional instructions").unwrap());
     }
 
@@ -1035,6 +1069,14 @@ Hope that helps! {not json}"#;
             ("other".into(), false)
         );
         assert_eq!(tagged(r#"{"verdict": "approve"}"#), ("".into(), false));
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": " "}"#),
+            ("".into(), false)
+        );
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": " Fix"}"#),
+            ("fix".into(), false)
+        );
     }
 
     #[test]

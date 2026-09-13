@@ -121,7 +121,7 @@ self-check makes one real claude call and proves the three things every review d
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
 Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
-v read the full review of the selected PR (any row that has one), Y open the pre-review, o open, y copy the URL,
+v read the full review of the selected PR (any row that has one), o open, y copy the URL,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a picker: j/k moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default), ? show each setting's key,
 L local memory dir, C where all team checkouts live, n repo memory, g general memory (edited in the app),

@@ -103,7 +103,6 @@ button somewhere on the page.
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
-| `Y` | open the selected PR's pre-review with whatever the desktop uses for `.md` |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |

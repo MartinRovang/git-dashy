@@ -374,7 +374,6 @@ export default function App() {
     const fns: Record<string, () => void> = {
       review: () => void review(p),
       pre: () => void preReview(p),
-      openpre: () => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'),
       view: () => {
         if (detail?.review) viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
@@ -454,7 +453,6 @@ export default function App() {
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))
-    if (k === 'Y' && p) return one(() => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'))
     if (k === 'y' && p) return one(() => void copyUrl(p))
     if (k === 'g') return one(() => void memoryEditor(ctx, ''))
     if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))

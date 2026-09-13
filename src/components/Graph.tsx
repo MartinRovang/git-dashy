@@ -113,7 +113,7 @@ export function Graph({ secs, sel, onSelect }: {
     select(svg).classed('search', !!q)
     select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
     const max = Math.max(1, ...rows.map(lines))
-    // a hub grows with its PRs against the busiest hub, so the group that matters most reads biggest
+    // a hub grows with its PRs against the busiest hub, so the busiest hub is drawn largest
     const busiest = Math.max(1, ...graph.current.nodes.map((n) => (n.kind === 'pr' ? 0 : n.degree)))
     const radius = (n: Node) => {
       if (n.kind !== 'pr') return 5 + 15 * Math.sqrt(n.degree / busiest)

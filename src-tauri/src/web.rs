@@ -98,9 +98,10 @@ pub fn payload(state: &State) -> Value {
         )
     };
     let cfg = config::get();
-    let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-                                    // each url's newest review, and its newest TAGGED one: a re-review that came back without a kind
-                                    // must not wipe the tag an earlier review gave. REVIEWED is newest first, so the first one seen wins.
+    // ponytail: ONE resolver per frame, like the curses screen used to
+    let resolve = bind::resolver();
+    // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
+    // REVIEWED is newest first, so the first one seen wins.
     let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
     let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
     for p in sections
@@ -897,15 +898,6 @@ fn post_refresh(state: &State, _body: &Body) -> Out {
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.
 fn post_open(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
-    if truthy(body, "pre") {
-        let (at, _moved) = review::self_review_state(&pr);
-        if at == 0.0 {
-            return Err(no_prereview(&pr));
-        }
-        let path = review::self_review_path(pr.repo(), pr.number);
-        github::open_in_browser(&path.to_string_lossy());
-        return Ok(json!({"ok": true, "opened": path}));
-    }
     github::open_in_browser(&pr.url);
     Ok(json!({"ok": true, "opened": pr.url}))
 }
@@ -1953,16 +1945,6 @@ mod tests {
         assert_eq!(d["error"], "no such pr");
         let (code, d) = post(&format!("{base}/api/open"), json!({"url": "/etc/passwd"}), &token);
         assert_eq!((code, d["error"].as_str()), (404, Some("no such pr")));
-        // no pre-review file yet, so nothing to hand to the desktop either
-        assert_eq!(
-            post(
-                &format!("{base}/api/open"),
-                json!({"url": "u", "pre": true}),
-                &token
-            )
-            .0,
-            404
-        );
     }
 
     #[test]
