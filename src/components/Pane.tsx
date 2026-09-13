@@ -19,7 +19,6 @@ function actsHTML(p: Row, d: Detail | null): Act[] {
       p.busy,
       'pre',
     ])
-  if (mine && p.pre) acts.push(['Y', '', 'Open the pre-review', 'desktop .md handler', false, 'openpre'])
   if (d?.review) acts.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
   acts.push(['o', '', 'Open in browser', 'github', false, 'open'])
   acts.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
