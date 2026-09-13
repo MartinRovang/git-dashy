@@ -18,7 +18,17 @@ pub const DEPTHS: &[&str] = &["adaptive", "low", "medium", "high"];
 pub const VOICES: &[&str] = &["review", "caveman", "bot"];
 pub const HUNTERS: &[&str] = &["ponytail", "security", "tests", "humanizer"];
 /// What sort of change a review tags a PR as; the graph groups by it.
-pub const KINDS: &[&str] = &["feature", "fix", "security", "perf", "maintenance", "refactor", "docs", "tests", "deps"];
+pub const KINDS: &[&str] = &[
+    "feature",
+    "fix",
+    "security",
+    "perf",
+    "maintenance",
+    "refactor",
+    "docs",
+    "tests",
+    "deps",
+];
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.

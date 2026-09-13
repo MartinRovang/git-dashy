@@ -499,7 +499,15 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                     ", tagged kind {k}, breaking {b}; keep both unless the new commits changed what the PR is"
                 ),
             };
-            fill(PREV, &[("at", &at), ("verdict", &p.verdict), ("tag", &tag), ("body", &p.body)])
+            fill(
+                PREV,
+                &[
+                    ("at", &at),
+                    ("verdict", &p.verdict),
+                    ("tag", &tag),
+                    ("body", &p.body),
+                ],
+            )
         })
         .unwrap_or_default();
     let mut out = fill(
@@ -1018,8 +1026,14 @@ Hope that helps! {not json}"#;
             let v = parse_verdict(raw).unwrap();
             (v.kind, v.breaking)
         };
-        assert_eq!(tagged(r#"{"verdict": "approve", "kind": "Security", "breaking": true}"#), ("security".into(), true));
-        assert_eq!(tagged(r#"{"verdict": "approve", "kind": "new-feature", "breaking": "yes"}"#), ("other".into(), false));
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": "Security", "breaking": true}"#),
+            ("security".into(), true)
+        );
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": "new-feature", "breaking": "yes"}"#),
+            ("other".into(), false)
+        );
         assert_eq!(tagged(r#"{"verdict": "approve"}"#), ("".into(), false));
     }
 
