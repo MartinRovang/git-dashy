@@ -51,7 +51,8 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   const nodes: Node[] = []
   const links: Link[] = []
   for (const r of rows) {
-    const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, degree: 2 }
+    // the repo rides on the label, so a PR still says where it lives when grouped by anything but repo
+    const pr: Node = { id: r.url, kind: 'pr', label: `${r.repo.split('/').pop()} #${r.number}`, degree: 2 }
     nodes.push(pr)
     hubsOf(r, by).forEach(([kind, label], i) => {
       const id = `${kind}:${label}`
