@@ -245,11 +245,11 @@ fn on_line(m: &Mark, file: usize, line: &crate::types::Line) -> bool {
     m.file == file && m.n != 0 && line.n == Some(m.n) && line.del.is_none()
 }
 
-/// The code tab as a flat list of rows, so the page can window it and jump between marks.
+/// The code viewer's diff as a flat list of rows, the review's comments under the lines they are about.
 ///
 /// ponytail: ported from the curses pane as-is. Every mark gets a row: on its line when the diff has
 /// that line, as an orphan when it does not; a finding is kept only if it can be read.
-pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value> {
+pub fn code_rows(files: &[DiffFile], marks: &[Mark]) -> Vec<Value> {
     let mut rows = Vec::new();
     let mut landed = vec![false; marks.len()];
     for (fi, f) in files.iter().enumerate() {
@@ -261,9 +261,6 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
                     json!({"kind": "line", "n": l.n, "sign": l.sign, "text": l.text, "del": l.del,
                                  "mark": diff::worst(l)}),
                 );
-                if !scoped {
-                    continue;
-                }
                 for (mi, m) in marks.iter().enumerate() {
                     if on_line(m, fi, l) {
                         rows.push(json!({"kind": "note", "mark": m.kind, "text": m.text}));
@@ -274,19 +271,17 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
         }
         rows.push(json!({"kind": "gap"}));
     }
-    if scoped {
-        for (mi, m) in marks.iter().enumerate() {
-            if landed[mi] {
-                continue;
-            }
-            // ponytail: `file` past the list is how a mark says the diff does not touch that file
-            let why = if m.file >= files.len() {
-                "not in this diff"
-            } else {
-                "line not in this diff"
-            };
-            rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
+    for (mi, m) in marks.iter().enumerate() {
+        if landed[mi] {
+            continue;
         }
+        // ponytail: `file` past the list is how a mark says the diff does not touch that file
+        let why = if m.file >= files.len() {
+            "not in this diff"
+        } else {
+            "line not in this diff"
+        };
+        rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
     }
     rows
 }
@@ -305,10 +300,11 @@ pub fn code(state: &State, pr: &Pr, scope: &str, context: usize) -> Value {
                       "empty": "no diff to show — GitHub could not read it, or nothing changed"});
     }
     let scoped = scope == "marks";
+    // the review's comments show in both scopes; the scope only decides how much code is around them
     let rows = if scoped {
-        code_rows(&diff::narrow(&files, context), &marks, true)
+        code_rows(&diff::narrow(&files, context), &marks)
     } else {
-        code_rows(&files, &marks, false)
+        code_rows(&files, &marks)
     };
     if scoped && rows.is_empty() {
         return json!({"url": pr.url, "pending": false, "rows": [],
@@ -2097,7 +2093,7 @@ mod tests {
                 file: usize::MAX,
             },
         ];
-        let kinds: Vec<&str> = code_rows(&files, &marks, true)
+        let kinds: Vec<&str> = code_rows(&files, &marks)
             .iter()
             .map(|r| r["kind"].as_str().unwrap().to_string())
             .collect::<Vec<_>>()
@@ -2109,13 +2105,8 @@ mod tests {
             kinds,
             ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]
         );
-        let rows = code_rows(&files, &marks, true);
+        let rows = code_rows(&files, &marks);
         assert_eq!(rows[7]["why"], "not in this diff");
-        let plain: Vec<String> = code_rows(&files, &marks, false)
-            .iter()
-            .map(|r| r["kind"].as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
-import type { Row, Section, StateData } from './types'
+import type { CodeRow, Row, Section, StateData } from './types'
 import { rowState, tone } from './tokens'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
@@ -61,4 +61,25 @@ export function counts(d: StateData | null) {
     ['commented', by('commented'), 'var(--amber)'],
     ['errors', by('error'), 'var(--red)'],
   ] as const
+}
+
+type Group = { label: string; add?: number; dele?: number; marks: number; rows: CodeRow[] }
+
+/** The diff cut at its file rows. Orphans (marks that found no line) close it as their own group. */
+export function groups(rows: CodeRow[]): Group[] {
+  const files: Group[] = []
+  const loose: Group = { label: 'not on a diff line', marks: 0, rows: [] }
+  for (const r of rows) {
+    if (r.kind === 'orphan') {
+      loose.rows.push(r)
+      loose.marks++
+      continue
+    }
+    if (r.kind === 'file') files.push({ label: r.path, add: r.add, dele: r.dele, marks: 0, rows: [] })
+    const g = files[files.length - 1]
+    if (!g) continue
+    if (r.kind !== 'file') g.rows.push(r)
+    if (r.kind === 'line' && r.mark) g.marks++
+  }
+  return loose.rows.length ? [...files, loose] : files
 }
