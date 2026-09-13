@@ -348,8 +348,6 @@
   .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); pointer-events: none; }
   .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
   .graph line.lit { stroke: var(--ink3); }
-  .halo { opacity: .22; filter: url(#halo-blur); pointer-events: none; transition: fill .4s, opacity .2s; }
-  .graph svg.focus .halo, .graph svg.search .halo { opacity: .05; }
   .gnode { cursor: pointer; transition: opacity .2s; }
   .gnode circle { stroke-width: 1.5; transition: r .3s; }
   .gnode text { font-size: calc(11px / var(--k)); fill: var(--ink3); text-anchor: middle; dominant-baseline: hanging;

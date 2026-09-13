@@ -18,8 +18,6 @@ type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; 
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
-// most urgent first: a cluster's glow takes the colour of its most urgent PR
-const URGENCY = ['error', 'changes', 'awaiting', 'running', 'commented', 'approved', 'idle']
 
 function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
   const hubs = new Map<string, Node>()
@@ -109,12 +107,6 @@ export function Graph({ secs, sel, onSelect }: {
         return fg(n)
       })
       .style('stroke', (n) => (n.kind !== 'pr' ? 'none' : byUrl.get(n.id)?.uid === sel ? 'var(--ink)' : fg(n)))
-    select(svg)
-      .selectAll<SVGCircleElement, Node>('circle.halo')
-      .style('fill', (h) => {
-        const keys = rows.filter((r) => `repo:${r.repo}` === h.id).map((r) => rowState(r).key)
-        return (PALETTE[URGENCY.find((k) => keys.includes(k)) || 'idle'] || PALETTE.idle).fg
-      })
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
   }
 
@@ -167,16 +159,6 @@ export function Graph({ secs, sel, onSelect }: {
       })
     node.select('text').text((n) => n.label)
 
-    // A glow behind each repo cluster, sized on every tick to reach its farthest PR.
-    const members = new Map<Node, Node[]>()
-    for (const l of g.links) if (l.target.kind === 'repo') members.set(l.target, [...(members.get(l.target) || [l.target]), l.source])
-    const halo = world
-      .select('g.halos')
-      .selectAll<SVGCircleElement, Node>('circle.halo')
-      .data([...members.keys()], (n) => n.id)
-      .join('circle')
-      .attr('class', 'halo')
-
     // Hover: the node and its neighbours stay lit, everything else fades.
     const near = new Map<string, Set<string>>()
     const edge = (a: string, b: string) => (near.get(a) || near.set(a, new Set([a])).get(a)!).add(b)
@@ -215,13 +197,6 @@ export function Graph({ secs, sel, onSelect }: {
           .attr('x2', (l) => l.target.x!)
           .attr('y2', (l) => l.target.y!)
         node.attr('transform', (n) => `translate(${n.x},${n.y})`)
-        halo.each(function (h) {
-          const ms = members.get(h)!
-          const cx = ms.reduce((a, m) => a + m.x!, 0) / ms.length
-          const cy = ms.reduce((a, m) => a + m.y!, 0) / ms.length
-          const r = Math.max(...ms.map((m) => Math.hypot(m.x! - cx, m.y! - cy))) + 40
-          select(this).attr('cx', cx).attr('cy', cy).attr('r', r)
-        })
       })
     paint()
     s.alpha(old.size ? 0.4 : 1).restart()
@@ -299,13 +274,7 @@ export function Graph({ secs, sel, onSelect }: {
         )}
       </div>
       <svg ref={svgRef}>
-        <defs>
-          <filter id="halo-blur" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="18" />
-          </filter>
-        </defs>
         <g className="world">
-          <g className="halos" />
           <g className="links" />
           <g className="nodes" />
         </g>
@@ -323,7 +292,7 @@ export function Graph({ secs, sel, onSelect }: {
         <span>
           <i className="gdot" /> author
         </span>
-        <span>size = lines changed · glow = a repo's most urgent PR · scroll to zoom · drag to move</span>
+        <span>size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>
   )
