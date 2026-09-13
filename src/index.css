@@ -360,6 +360,9 @@
   .graph svg.search .gnode.hit text { opacity: 1; fill: var(--ink); }
   .gbadge { display: flex; flex-direction: column; gap: 6px; }
   .gbadge .search { pointer-events: auto; background: var(--bg); }
+  .gbadge .vtabs { pointer-events: auto; align-self: flex-start; background: var(--bg); }
+  .gnode.breaking circle { stroke-width: 2.5; stroke-dasharray: 3 2; }
+  .glegend i.gbreak { width: 8px; height: 8px; border-radius: 50%; border: 1.5px dashed var(--red); background: none; }
   .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
   .glegend span { display: flex; align-items: center; gap: 5px; }
   .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }

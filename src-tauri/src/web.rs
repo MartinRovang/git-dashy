@@ -99,12 +99,17 @@ pub fn payload(state: &State) -> Value {
     };
     let cfg = config::get();
     let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-    let summaries: HashMap<&str, &str> = sections
+    // each url's newest review: REVIEWED is newest first, so the first one seen wins
+    let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
+    for p in sections
         .iter()
         .filter(|s| s.name == "REVIEWED")
         .flat_map(|s| s.prs.iter().flatten())
-        .filter_map(|p| p.review.as_ref().map(|r| (p.url.as_str(), r.summary.as_str())))
-        .collect();
+    {
+        if let Some(r) = &p.review {
+            logged.entry(p.url.as_str()).or_insert(r);
+        }
+    }
     let mut out = Vec::new();
     for s in &sections {
         let mut rows = Vec::new();
@@ -118,8 +123,10 @@ pub fn payload(state: &State) -> Value {
             let (summary, review_at) = match (&s.name[..], &p.review) {
                 ("REVIEWED", Some(r)) => (r.summary.as_str(), r.at.as_str()),
                 ("REVIEWED", None) => ("", ""),
-                _ => (summaries.get(url).copied().unwrap_or(""), ""),
+                _ => (logged.get(url).map(|r| r.summary.as_str()).unwrap_or(""), ""),
             };
+            // a REVIEWED row carries its own review; any other row, that url's newest
+            let tagged = p.review.as_deref().or_else(|| logged.get(url).copied());
             rows.push(json!({
                 "url": url,
                 "number": p.number,
@@ -140,6 +147,8 @@ pub fn payload(state: &State) -> Value {
                 "team": resolve(p.repo()),
                 "summary": summary,
                 "reviewAt": review_at,
+                "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
+                "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
             }));
         }

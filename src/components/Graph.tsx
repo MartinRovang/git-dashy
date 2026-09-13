@@ -1,5 +1,6 @@
-// The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to a hub for its
-// repo and a hub for its author, so shared repos and authors pull together. PRs are sized by lines
+// The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to hubs, by default
+// one for its repo and one for its author, so shared repos and authors pull together. The group-by tabs
+// swap the hubs for the PR's author, kind (from its review) or review state. PRs are sized by lines
 // changed and colored by review state. Drag nodes, scroll to zoom, hover to light up neighbours.
 //
 // ponytail: d3-force + SVG, not Quartz's PixiJS canvas. A board is tens of PRs, not thousands of
@@ -14,33 +15,55 @@ import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | 'repo' | 'author'; label: string; degree: number }
-type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
+type Hub = 'repo' | 'author' | 'kind' | 'state'
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number }
+type Link = SimulationLinkDatum<Node> & { source: Node; target: Node; primary: boolean }
+const GROUPS = ['repo', 'kind', 'author', 'state'] as const
+type Group = (typeof GROUPS)[number]
 
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 
-function build(rows: Row[]): { nodes: Node[]; links: Link[] } {
+// A title's conventional-commit prefix, for PRs no review has tagged yet: `feat(api)!: ...`
+const PREFIX: Record<string, string> = {
+  feat: 'feature', feature: 'feature', fix: 'fix', bugfix: 'fix', hotfix: 'fix', security: 'security', sec: 'security',
+  perf: 'perf', refactor: 'refactor', docs: 'docs', doc: 'docs', test: 'tests', tests: 'tests', deps: 'deps',
+  chore: 'maintenance', ci: 'maintenance', build: 'maintenance', style: 'maintenance', revert: 'maintenance',
+}
+/** The review's tag when there is one, else the title's prefix, else untagged. */
+export function tagOf(r: Row): { kind: string; breaking: boolean } {
+  const m = /^(\w+)(\([^)]*\))?(!)?:/.exec(r.title)
+  const guess = m ? PREFIX[m[1].toLowerCase()] : undefined
+  return { kind: r.kind || guess || 'untagged', breaking: !!r.breaking || !!m?.[3] }
+}
+
+/** The hubs a PR links to, first one first: that one is its cluster. */
+function hubsOf(r: Row, by: Group): [Hub, string][] {
+  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
+  const author: [Hub, string][] = r.author ? [['author', r.author]] : []
+  if (by === 'repo') return [['repo', r.repo], ...author]
+  if (by === 'author') return author
+  if (by === 'kind') return [['kind', tagOf(r).kind]]
+  return [['state', rowState(r).key]]
+}
+
+function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   const hubs = new Map<string, Node>()
   const nodes: Node[] = []
   const links: Link[] = []
-  const hub = (kind: 'repo' | 'author', label: string) => {
-    const id = `${kind}:${label}`
-    let n = hubs.get(id)
-    if (!n) {
-      n = { id, kind, label, degree: 0 }
-      hubs.set(id, n)
-      nodes.push(n)
-    }
-    return n
-  }
   for (const r of rows) {
     const pr: Node = { id: r.url, kind: 'pr', label: `#${r.number}`, degree: 2 }
     nodes.push(pr)
-    // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
-    for (const h of [hub('repo', r.repo), ...(r.author ? [hub('author', r.author)] : [])]) {
+    hubsOf(r, by).forEach(([kind, label], i) => {
+      const id = `${kind}:${label}`
+      let h = hubs.get(id)
+      if (!h) {
+        h = { id, kind, label, degree: 0 }
+        hubs.set(id, h)
+        nodes.push(h)
+      }
       h.degree++
-      links.push({ source: pr, target: h })
-    }
+      links.push({ source: pr, target: h, primary: i === 0 })
+    })
   }
   return { nodes, links }
 }
@@ -56,14 +79,17 @@ export function Graph({ secs, sel, onSelect }: {
     for (const r of secs.flatMap((s) => s.prs)) if (!byUrl.has(r.url) || byUrl.get(r.url)!.section === 'REVIEWED') byUrl.set(r.url, r)
     return [...byUrl.values()]
   }, [secs])
-  const key = rows.map((r) => `${r.url}\t${r.author}`).sort().join('|')
+  // ponytail: plain state, not localStorage: the GUI gets a new port, so a new origin and empty storage, every launch
+  const [by, setBy] = useState<Group>('repo')
+  const key = by + '|' + rows.map((r) => `${r.url}\t${hubsOf(r, by).join('\t')}`).sort().join('|')
+  const lastBy = useRef(by)
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)
   const graph = useRef<{ nodes: Node[]; links: Link[] }>({ nodes: [], links: [] })
   // highlights rather than filters: dropping nodes would re-run the layout on every keystroke
   const [query, setQuery] = useState('')
-  const latest = useRef({ rows, sel, onSelect, query })
-  latest.current = { rows, sel, onSelect, query }
+  const latest = useRef({ rows, sel, onSelect, query, by })
+  latest.current = { rows, sel, onSelect, query, by }
 
   // Look: colors, sizes, selection, tooltips. Cheap, runs on every poll, never restarts the layout.
   // Rows are looked up by url here rather than pinned on the node: the structure effect only re-runs
@@ -77,8 +103,9 @@ export function Graph({ secs, sel, onSelect }: {
     const q = query.trim().toLowerCase()
     const hits = new Set<string>()
     for (const r of rows) {
-      if (!q || !`${r.title} ${r.repo} ${r.author} #${r.number}`.toLowerCase().includes(q)) continue
-      hits.add(r.url).add(`repo:${r.repo}`).add(`author:${r.author}`)
+      if (!q || !`${r.title} ${r.repo} ${r.author} #${r.number} ${tagOf(r).kind}`.toLowerCase().includes(q)) continue
+      hits.add(r.url)
+      for (const [kind, label] of hubsOf(r, latest.current.by)) hits.add(`${kind}:${label}`)
     }
     select(svg).classed('search', !!q)
     select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
@@ -93,20 +120,28 @@ export function Graph({ secs, sel, onSelect }: {
       .classed('sel', (n) => byUrl.get(n.id)?.uid === sel)
       .classed('hub', (n) => n.kind !== 'pr')
       .classed('hit', (n) => hits.has(n.id))
+      .classed('breaking', (n) => !!byUrl.get(n.id) && tagOf(byUrl.get(n.id)!).breaking)
     node.select('text').attr('y', (n) => radius(n) + 3)
     node.select('title').text((n) => {
       const r = byUrl.get(n.id)
-      return r ? `#${r.number} ${r.title}\n${r.repo} · ${r.author}` : n.label
+      if (!r) return n.label
+      const t = tagOf(r)
+      return `#${r.number} ${r.title}\n${r.repo} · ${r.author} · ${t.kind}${t.breaking ? ' · breaking' : ''}`
     })
     node
       .select<SVGCircleElement>('circle')
       .attr('r', radius)
       .style('fill', (n) => {
-        if (n.kind === 'repo') return 'var(--dim2)'
         if (n.kind === 'author') return avatar(n.label)
+        if (n.kind === 'state') return (PALETTE[n.label] || PALETTE.idle).fg
+        if (n.kind !== 'pr') return 'var(--dim2)'
         return fg(n)
       })
-      .style('stroke', (n) => (n.kind !== 'pr' ? 'none' : byUrl.get(n.id)?.uid === sel ? 'var(--ink)' : fg(n)))
+      .style('stroke', (n) => {
+        if (n.kind !== 'pr') return 'none'
+        if (byUrl.get(n.id)?.uid === sel) return 'var(--ink)'
+        return tagOf(byUrl.get(n.id)!).breaking ? 'var(--red)' : fg(n)
+      })
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
   }
 
@@ -115,21 +150,22 @@ export function Graph({ secs, sel, onSelect }: {
     const svg = svgRef.current
     if (!svg) return
     const old = new Map(graph.current.nodes.map((n) => [n.id, n]))
-    const g = build(latest.current.rows)
-    // A new node spawns by its repo, and each repo gets its own spot on a wide ring, so clusters start
-    // apart instead of untangling from one pile in the middle. An author starts by its first PR's repo.
-    const repos = [...new Set(latest.current.rows.map((r) => r.repo))].sort()
-    const ring = 90 * Math.sqrt(repos.length)
-    const spot = new Map(repos.map((repo, i) => {
-      const a = (2 * Math.PI * i) / repos.length
-      return [repo, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
+    const { rows, by } = latest.current
+    const g = build(rows, by)
+    // A new node spawns by its cluster's hub, and each cluster gets its own spot on a wide ring, so they
+    // start apart instead of untangling from one pile in the middle. A second hub starts by its first PR's.
+    const cluster = (r: Row) => hubsOf(r, by)[0]?.join(':') ?? 'none'
+    const clusters = [...new Set(rows.map(cluster))].sort()
+    const ring = 90 * Math.sqrt(clusters.length)
+    const spot = new Map(clusters.map((c, i) => {
+      const a = (2 * Math.PI * i) / clusters.length
+      return [c, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
     }))
     const home = new Map<string, { x: number; y: number }>()
-    for (const r of latest.current.rows) {
-      const at = spot.get(r.repo)!
-      home.set(`repo:${r.repo}`, at)
+    for (const r of rows) {
+      const at = spot.get(cluster(r))!
       home.set(r.url, at)
-      if (!home.has(`author:${r.author}`)) home.set(`author:${r.author}`, at)
+      for (const h of hubsOf(r, by)) if (!home.has(h.join(':'))) home.set(h.join(':'), at)
     }
     for (const n of g.nodes) {
       const was = old.get(n.id)
@@ -187,7 +223,7 @@ export function Graph({ secs, sel, onSelect }: {
     s.nodes(g.nodes)
       // hubs push harder than PRs and the pull to the centre is gentle, so repo clusters sit apart
       .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
-      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.target.kind === 'repo' ? 40 : 90)))
+      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.primary && by === 'repo' ? 40 : l.primary ? 60 : 90)))
       .force('x', forceX(0).strength(0.025))
       .force('y', forceY(0).strength(0.025))
       .on('tick', () => {
@@ -199,7 +235,9 @@ export function Graph({ secs, sel, onSelect }: {
         node.attr('transform', (n) => `translate(${n.x},${n.y})`)
       })
     paint()
-    s.alpha(old.size ? 0.4 : 1).restart()
+    // a regroup sends every PR to a new hub: full heat, or they stall halfway there
+    s.alpha(old.size && lastBy.current === by ? 0.4 : 1).restart()
+    lastBy.current = by
 
     node.call(
       drag<SVGGElement, Node>()
@@ -262,10 +300,17 @@ export function Graph({ secs, sel, onSelect }: {
           <input
             id="q"
             value={query}
-            placeholder="find by title, repo, author"
+            placeholder="find by title, repo, author, kind"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
           />
+        </div>
+        <div className="vtabs">
+          {GROUPS.map((g) => (
+            <button key={g} className={by === g ? 'on' : ''} onClick={() => setBy(g)}>
+              {g}
+            </button>
+          ))}
         </div>
         {!rows.length ? (
           'nothing to graph yet'
@@ -286,12 +331,21 @@ export function Graph({ secs, sel, onSelect }: {
             {k}
           </span>
         ))}
-        <span>
-          <i style={{ background: 'var(--dim2)' }} /> repo
-        </span>
-        <span>
-          <i className="gdot" /> author
-        </span>
+        {by !== 'author' && by !== 'state' && (
+          <span>
+            <i style={{ background: 'var(--dim2)' }} /> {by}
+          </span>
+        )}
+        {(by === 'repo' || by === 'author') && (
+          <span>
+            <i className="gdot" /> author
+          </span>
+        )}
+        {rows.some((r) => tagOf(r).breaking) && (
+          <span>
+            <i className="gbreak" /> breaking
+          </span>
+        )}
         <span>size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>

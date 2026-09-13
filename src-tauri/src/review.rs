@@ -23,6 +23,7 @@ Respond with ONLY a JSON object, no prose, no code fences:
 {"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line{sections}>",
  "findings": [{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}],
+ "kind": "feature" | "fix" | "security" | "perf" | "maintenance" | "refactor" | "docs" | "tests" | "deps", "breaking": <true when merging it breaks existing callers, users, data or config>,
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}
 "findings" is the same review as "body", one line each, so a dashboard can list them: every blocking
@@ -559,6 +560,16 @@ pub fn parse_verdict(text: &str) -> Result<Verdict> {
         _ => Vec::new(),
     };
     obj.insert("remember".into(), serde_json::to_value(remember)?);
+    // a free-text kind scatters one group across "feat", "feature" and "new-feature"; only the list is kept
+    let kind = match obj.get("kind").and_then(Value::as_str).map(str::to_lowercase) {
+        Some(k) if config::KINDS.contains(&k.as_str()) => k,
+        Some(_) => "other".into(),
+        None => String::new(),
+    };
+    obj.insert("kind".into(), kind.into());
+    if !obj.get("breaking").map(Value::is_boolean).unwrap_or(false) {
+        obj.insert("breaking".into(), false.into());
+    }
     Ok(serde_json::from_value(v)?)
 }
 
@@ -993,6 +1004,13 @@ Hope that helps! {not json}"#;
         assert_eq!(v.findings.len(), 1);
         assert_eq!(v.depth_used, "high");
         assert!(parse_verdict(r#"{"summary": "no verdict here"}"#).is_err());
+        let tagged = |raw: &str| {
+            let v = parse_verdict(raw).unwrap();
+            (v.kind, v.breaking)
+        };
+        assert_eq!(tagged(r#"{"verdict": "approve", "kind": "Security", "breaking": true}"#), ("security".into(), true));
+        assert_eq!(tagged(r#"{"verdict": "approve", "kind": "new-feature", "breaking": "yes"}"#), ("other".into(), false));
+        assert_eq!(tagged(r#"{"verdict": "approve"}"#), ("".into(), false));
     }
 
     #[test]
