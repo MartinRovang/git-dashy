@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { groups } from '../board'
 import type { Code, CodeRow, Row } from '../types'
 import { FINDING_TONE, MARK } from '../tokens'
 
-function CodeRowView({ r }: { r: CodeRow }) {
+// ponytail: memo so a drag frame (setBox) skips re-rendering every row of a big file
+const CodeRowView = memo(function CodeRowView({ r }: { r: CodeRow }) {
   if (r.kind === 'hunk') return <div className="hunk">{r.header}</div>
   if (r.kind === 'line')
     return (
@@ -30,7 +31,7 @@ function CodeRowView({ r }: { r: CodeRow }) {
       </div>
     )
   return <div style={{ height: 8 }} />
-}
+})
 
 type Box = { x: number; y: number; w: number; h: number; max: boolean }
 const KEY = 'dashy-code-box'
@@ -92,8 +93,7 @@ export function CodeViewer({
   useEffect(() => {
     const ro = new ResizeObserver(() => {
       const r = el.current
-      if (!r || box.max) return
-      if (r.offsetWidth !== box.w || r.offsetHeight !== box.h) setBox((b) => ({ ...b, w: r.offsetWidth, h: r.offsetHeight }))
+      if (r) setBox((b) => (b.max || (r.offsetWidth === b.w && r.offsetHeight === b.h) ? b : { ...b, w: r.offsetWidth, h: r.offsetHeight }))
     })
     ro.observe(el.current!)
     const onResize = () => setBox(fit)
@@ -102,7 +102,7 @@ export function CodeViewer({
       ro.disconnect()
       window.removeEventListener('resize', onResize)
     }
-  }, [box.max, box.w, box.h])
+  }, [])
   const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (box.max || (e.target as HTMLElement).closest('.tab, .ib')) return
     grab.current = { dx: e.clientX - box.x, dy: e.clientY - box.y }

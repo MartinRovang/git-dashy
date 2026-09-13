@@ -29,7 +29,7 @@ function actsHTML(p: Row, d: Detail | null): Act[] {
   return acts
 }
 
-/** The side pane: the selected PR's summary or its review pinned to the code. */
+/** The side pane: the selected PR's summary, checks and review. */
 export function Pane({
   p,
   detail,
@@ -119,97 +119,95 @@ export function Pane({
             {d ? d.brief.whose + (d.brief.empty ? ' · none' : '') : '…'}
           </span>
         </div>
-        <>
-          {d?.checks.length ? (
-            <>
-              <div className="sep" />
-              <div className="lab">CHECKS</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-                {d.checks.map((c) => (
-                  <div className="check" key={c.name}>
-                    <div className="ci" style={{ background: CHECK_TONE[c.state] || CHECK_TONE.dim }} />
-                    <span>{c.name}</span>
-                    <em>{c.state}</em>
+        {d?.checks.length ? (
+          <>
+            <div className="sep" />
+            <div className="lab">CHECKS</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+              {d.checks.map((c) => (
+                <div className="check" key={c.name}>
+                  <div className="ci" style={{ background: CHECK_TONE[c.state] || CHECK_TONE.dim }} />
+                  <span>{c.name}</span>
+                  <em>{c.state}</em>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
+        {rev ? (
+          <>
+            <div className="sep" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="lab">AI REVIEW</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
+                {rev.model} {rev.tag}
+              </span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--dim3)', marginLeft: 'auto' }}>
+                {age(rev.at)} ago
+              </span>
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: PALETTE[tone(rev.verdict)]?.fg || 'var(--amber)' }}>
+                {rev.verdict}
+              </span>
+              {counts}
+              {found.length ? (
+                <span
+                  className="mono"
+                  style={{ fontSize: 10, color: 'var(--violet)', marginLeft: 'auto', cursor: 'pointer' }}
+                  onClick={onCode}
+                >
+                  {found.length} in code →
+                </span>
+              ) : null}
+            </div>
+            {found.length ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+                {found.map((f, i) => (
+                  <div className="find" key={i}>
+                    <i style={{ background: FINDING_TONE[f.kind] || CHECK_TONE.dim }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="tag" style={{ color: FINDING_TONE[f.kind] || CHECK_TONE.dim }}>
+                          {f.kind.toUpperCase()}
+                        </span>
+                        <span className="loc">{(f.loc || '').split('/').pop()}</span>
+                      </div>
+                      <p>{f.text}</p>
+                    </div>
                   </div>
                 ))}
               </div>
-            </>
-          ) : null}
-          {rev ? (
-            <>
-              <div className="sep" />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="lab">AI REVIEW</span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-                  {rev.model} {rev.tag}
-                </span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--dim3)', marginLeft: 'auto' }}>
-                  {age(rev.at)} ago
-                </span>
-              </div>
-              <div style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
-                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: PALETTE[tone(rev.verdict)]?.fg || 'var(--amber)' }}>
-                  {rev.verdict}
-                </span>
-                {counts}
-                {found.length ? (
-                  <span
-                    className="mono"
-                    style={{ fontSize: 10, color: 'var(--violet)', marginLeft: 'auto', cursor: 'pointer' }}
-                    onClick={onCode}
-                  >
-                    {found.length} in code →
-                  </span>
-                ) : null}
-              </div>
-              {found.length ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-                  {found.map((f, i) => (
-                    <div className="find" key={i}>
-                      <i style={{ background: FINDING_TONE[f.kind] || CHECK_TONE.dim }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span className="tag" style={{ color: FINDING_TONE[f.kind] || CHECK_TONE.dim }}>
-                            {f.kind.toUpperCase()}
-                          </span>
-                          <span className="loc">{(f.loc || '').split('/').pop()}</span>
-                        </div>
-                        <p>{f.text}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : rev.summary ? (
-                <div className="prose">{rev.summary}</div>
-              ) : null}
-            </>
-          ) : null}
-          {pre ? (
-            <>
-              <div className="sep" />
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="lab">PRE-REVIEW</span>
-                <span className="mono" style={{ fontSize: 11, color: pre.moved ? 'var(--red)' : 'var(--dim)' }}>
-                  {pre.moved ? '· stale, the PR moved since' : '· current'}
-                </span>
-              </div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)', marginTop: 6 }}>
-                {when(pre.at)} — p to read, Y to open
-              </div>
-            </>
-          ) : null}
-          <div className="sep" />
-          <div className="lab">ACTIONS</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-            {actsHTML(p, d).map(([k, cls, label, note, off, act]) => (
-              <div key={act} className={`act ${cls}${off ? ' off' : ''}`} onClick={() => !off && onAct(act)}>
-                <kbd className="hint">{k}</kbd>
-                <b>{label}</b>
-                <em>{note}</em>
-              </div>
-            ))}
-          </div>
-        </>
+            ) : rev.summary ? (
+              <div className="prose">{rev.summary}</div>
+            ) : null}
+          </>
+        ) : null}
+        {pre ? (
+          <>
+            <div className="sep" />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className="lab">PRE-REVIEW</span>
+              <span className="mono" style={{ fontSize: 11, color: pre.moved ? 'var(--red)' : 'var(--dim)' }}>
+                {pre.moved ? '· stale, the PR moved since' : '· current'}
+              </span>
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)', marginTop: 6 }}>
+              {when(pre.at)} — p to read, Y to open
+            </div>
+          </>
+        ) : null}
+        <div className="sep" />
+        <div className="lab">ACTIONS</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          {actsHTML(p, d).map(([k, cls, label, note, off, act]) => (
+            <div key={act} className={`act ${cls}${off ? ' off' : ''}`} onClick={() => !off && onAct(act)}>
+              <kbd className="hint">{k}</kbd>
+              <b>{label}</b>
+              <em>{note}</em>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

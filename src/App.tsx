@@ -423,10 +423,10 @@ export default function App() {
       fn()
     }
     const p = current
-    // the viewer covers the board, so while it is open no board key may reach what is behind it
-    if (codeOpen && codeFocus) {
+    // while the viewer has focus, board keys do not reach the board; a click on the board hands them back
+    if (codeOpen && codeFocus && p) {
       if (k === 'Escape' || k === 'q') return one(() => setCodeOpen(false))
-      const last = diff && !diff.pending ? groups(diff.rows).length - 1 : 0
+      const last = diff?.url === p.url && !diff.pending ? groups(diff.rows).length - 1 : 0
       if (['j', 'n', 'ArrowDown'].includes(k)) return one(() => setAt((v) => Math.max(0, Math.min(last, v + 1))))
       if (['k', 'N', 'ArrowUp'].includes(k)) return one(() => setAt((v) => Math.max(0, v - 1)))
       if (k === 'D') return one(() => onScope(scope === 'marks' ? 'diff' : 'marks'))
