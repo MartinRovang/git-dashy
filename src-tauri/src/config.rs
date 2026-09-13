@@ -32,7 +32,7 @@ pub const KINDS: &[&str] = &[
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.
-pub const WINDOWS: &[Option<u64>] = &[Some(1), Some(4), Some(6), None];
+pub const WINDOWS: &[Option<u64>] = &[Some(6), Some(24), Some(168), Some(720), None];
 pub const SPLASH_MIN: f64 = 1.0;
 
 /// Verdict -> the status string every row and log reader shows.
@@ -172,7 +172,7 @@ impl Default for Config {
             notify: std::env::var("PRS_NOTIFY").map(|v| v != "0").unwrap_or(true),
             theme: env_or("PRS_THEME", "pencil"),
             sub: "all".into(),
-            window: Some(4),
+            window: Some(24),
             drafts: false,
             hinted: false,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
