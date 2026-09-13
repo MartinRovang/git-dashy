@@ -30,7 +30,7 @@ const PREFIX: Record<string, string> = {
   chore: 'maintenance', ci: 'maintenance', build: 'maintenance', style: 'maintenance', revert: 'maintenance',
 }
 /** The review's tag when there is one, else the title's prefix, else untagged. */
-export function tagOf(r: Row): { kind: string; breaking: boolean } {
+function tagOf(r: Row): { kind: string; breaking: boolean } {
   const m = /^(\w+)(\([^)]*\))?(!)?:/.exec(r.title)
   const guess = m ? PREFIX[m[1].toLowerCase()] : undefined
   return { kind: r.kind || guess || 'untagged', breaking: !!r.breaking || !!m?.[3] }
