@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { flat, selected, visible } from './board'
+import { flat, groups, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
+import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
@@ -28,7 +29,9 @@ export default function App() {
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
-  const [tab, setTab] = useState<'summary' | 'code'>('summary')
+  const [codeOpen, setCodeOpen] = useState(false)
+  // the viewer floats over a live board: keys go to whichever of the two was clicked last
+  const [codeFocus, setCodeFocus] = useState(false)
   const [scope, setScope] = useState('marks')
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
@@ -122,14 +125,7 @@ export default function App() {
       const start = e.clientX
       const w0 = box.offsetWidth
       // ponytail: writing --pane-w on :root re-inherits the custom property across the whole
-      // document, so a full-diff pane re-styles thousands of rows every frame. Write the width on
-      // the dragged box instead, and while the pane drags hide the diff: re-laying 8k lines is what
-      // makes the drag crawl, and a drag is not the time to do it. The scroll offset is restored on
-      // release. (60 frames over 8k rows: 2.9s rooted-var, 1.4s inline, 64ms frozen.)
-      const isPane = which === 'pane'
-      const scroller = isPane ? box.querySelector<HTMLElement>('.in') : null
-      const scrollTop = scroller?.scrollTop ?? 0
-      if (isPane) document.documentElement.classList.add('resizing-pane')
+      // document, so the width is written on the dragged box and only copied to :root on release.
       e.preventDefault()
       document.documentElement.classList.add('dragging')
       grip.classList.add('on')
@@ -155,10 +151,6 @@ export default function App() {
         grip.removeEventListener('pointerup', up)
         grip.removeEventListener('pointercancel', up)
         document.documentElement.classList.remove('dragging')
-        if (isPane) {
-          document.documentElement.classList.remove('resizing-pane')
-          if (scroller) requestAnimationFrame(() => (scroller.scrollTop = scrollTop))
-        }
         // keep the root var in step so a remounted pane or sidebar keeps the saved width
         document.documentElement.style.setProperty(`--${which}-w`, `${want}px`)
         try {
@@ -208,9 +200,9 @@ export default function App() {
     }
   }, [pane, url])
 
-  // The diff, only while the code tab is open.
+  // The diff, only while the code viewer is open.
   useEffect(() => {
-    if (!pane || !url || tab !== 'code') return
+    if (!url || !codeOpen) return
     let alive = true
     let timer: number | undefined
     const run = async () => {
@@ -230,12 +222,7 @@ export default function App() {
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [pane, url, tab, scope, context])
-
-  useEffect(() => {
-    if (tab !== 'code' || !diff || diff.pending) return
-    document.getElementById('jumpto')?.scrollIntoView({ block: 'center' })
-  }, [diff, at, tab])
+  }, [url, codeOpen, scope, context])
 
   async function call(path: string, body?: unknown, okMsg?: string) {
     const r = await post(path, body)
@@ -432,19 +419,18 @@ export default function App() {
       fn()
     }
     const p = current
-    const code = !!(pane && tab === 'code' && p && detail?.url === p.url && detail?.review)
+    // while the viewer has focus, board keys do not reach the board; a click on the board hands them back
+    if (codeOpen && codeFocus && p) {
+      if (k === 'Escape' || k === 'q') return one(() => setCodeOpen(false))
+      const last = diff?.url === p.url && !diff.pending ? groups(diff.rows).length - 1 : 0
+      if (['j', 'n', 'ArrowDown'].includes(k)) return one(() => setAt((v) => Math.max(0, Math.min(last, v + 1))))
+      if (['k', 'N', 'ArrowUp'].includes(k)) return one(() => setAt((v) => Math.max(0, v - 1)))
+      if (k === 'D') return one(() => onScope(scope === 'marks' ? 'diff' : 'marks'))
+      if (k === 'c') return one(onCodeContext)
+      return
+    }
     if (k === 'j' || k === 'ArrowDown') return one(() => move(1))
     if (k === 'k' || k === 'ArrowUp') return one(() => move(-1))
-    if (code && ['D', 'n', 'N', 'c'].includes(k))
-      return one(() => {
-        if (k === 'D') {
-          setScope((v) => (v === 'marks' ? 'diff' : 'marks'))
-          setDiff(null)
-        } else if (k === 'c') {
-          onContext()
-          setDiff(null)
-        } else setAt((v) => v + (k === 'n' ? 1 : -1))
-      })
     if (k === 'f') return one(onRefresh)
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
@@ -460,8 +446,7 @@ export default function App() {
     if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
     if (k === 'W') return one(() => void draftsScreen(ctx))
     if (k === 'b' && p) return one(() => void bindScreen(p))
-    if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
-    if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
+    if ((k === '2' || k === 'Tab') && p) return one(openCode)
     if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
@@ -475,10 +460,26 @@ export default function App() {
   }
   keyRef.current = handleKey
 
+  function openCode() {
+    setAt(0)
+    setCodeOpen(true)
+    setCodeFocus(true)
+  }
+  // a stale diff of the old scope would flash its files before the new one lands
+  function onScope(v: string) {
+    setScope(v)
+    setAt(0)
+    setDiff(null)
+  }
+  function onCodeContext() {
+    onContext()
+    setDiff(null)
+  }
+
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
   return (
-    <div id="app">
+    <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
       <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
@@ -532,16 +533,8 @@ export default function App() {
               <Pane
                 p={current}
                 detail={detail}
-                diff={diff}
                 subs={data?.settings.subs || 'all'}
-                tab={tab}
-                scope={scope}
-                context={context}
-                at={at}
-                onTab={setTab}
-                onScope={setScope}
-                onContext={onContext}
-                onAt={setAt}
+                onCode={openCode}
                 onAct={doAct}
                 onClose={() => setPane(false)}
               />
@@ -549,6 +542,20 @@ export default function App() {
           </div>
         </div>
       </div>
+      {codeOpen && current ? (
+        <CodeViewer
+          p={current}
+          c={diff?.url === current.url ? diff : null}
+          scope={scope}
+          context={context}
+          at={at}
+          onScope={onScope}
+          onContext={onCodeContext}
+          onAt={setAt}
+          focused={codeFocus}
+          onClose={() => setCodeOpen(false)}
+        />
+      ) : null}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

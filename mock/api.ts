@@ -251,7 +251,7 @@ function detail(url: string) {
   }
 }
 
-function code(url: string, scope: string) {
+function code(url: string) {
   const info = S.reviewInfo[url]
   if (!info) return { url, pending: false, rows: [], empty: 'no review yet — r reviews this PR, p pre-reviews it' }
   const rows: unknown[] = [
@@ -274,11 +274,7 @@ function code(url: string, scope: string) {
     { kind: 'gap' },
     { kind: 'orphan', mark: 'nit', text: 'the retry helper is unused after this change', loc: 'api/handlers.py:12', why: 'not in this diff' },
   ]
-  const filtered = rows.filter((r) => {
-    const k = (r as { kind: string }).kind
-    return k !== 'note' && k !== 'orphan'
-  })
-  return { url, pending: false, rows: scope === 'marks' ? rows : filtered }
+  return { url, pending: false, rows }
 }
 
 const json = (status: number, body: unknown) => ({ status, body })
@@ -350,7 +346,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
-    if (path === '/api/diff') return json(200, code(query.get('url') || '', query.get('scope') || 'marks'))
+    if (path === '/api/diff') return json(200, code(query.get('url') || ''))
     if (path === '/api/memory') {
       const repo = query.get('repo') || 'general'
       return json(200, { repo, path: `~/.prs_memory/${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`, text: memoryText[repo] || '' })

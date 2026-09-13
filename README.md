@@ -125,8 +125,8 @@ button somewhere on the page.
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
-| `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
-| `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
+| `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
+| `j` `k` `D` `c` `Esc` | in the code viewer (after clicking into it): next/prev file, marks-only vs full diff, how much context, close. Click the board and its keys come back, with the viewer following the selected PR |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
