@@ -23,8 +23,9 @@ fn pr_at(n: u64, title: &str, repo: &str, author: &str, hours: f64, draft: bool,
         title: title.into(),
         url: format!("https://github.com/{repo}/pull/{n}"),
         is_draft: draft,
-        additions: Some(62 + n % 40),
-        deletions: Some(14 + n % 9),
+        // a wide spread of diff sizes, so the graph's node sizes visibly differ
+        additions: Some([6, 30, 90, 240, 600, 1400, 3200][n as usize % 7]),
+        deletions: Some([2, 12, 40, 110, 300, 700, 1500][n as usize % 7]),
         repository: Repository {
             name_with_owner: repo.into(),
             name: repo.split('/').nth(1).unwrap_or("").into(),
