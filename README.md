@@ -182,7 +182,8 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
 over-engineering, `security` only security, `tests` only missing or toothless tests,
-`humanizer` only AI-sounding prose in the description, docs, comments and user-facing strings.
+`humanizer` only AI-sounding prose the change adds to the application: user-facing strings, docs
+and comments, never the PR description.
 The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
 them at runtime.
 

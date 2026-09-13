@@ -93,9 +93,9 @@ pub const HUNTER: &[(&str, &str)] = &[
     ),
     (
         "humanizer",
-        "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds: description, docs, \
-         comments, user-facing strings. Not-X-but-Y contrasts, one-line closers, staged run-ups, forced triads, \
-         dashes as the universal connector, inflated significance, sales language, stock AI words (delve, \
+        "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds to the application: \
+         user-facing strings, docs, comments. Never the PR description, title or commit messages. \
+         Not-X-but-Y contrasts, one-line closers, staged run-ups, forced triads, dashes as the universal connector, inflated significance, sales language, stock AI words (delve, \
          pivotal, seamless, robust), bold as decoration, chatbot residue. One line per finding, \
          `file:L<n>: <tell>: the phrase. plain rewrite.` Never add a fact the text lacks. Nothing found: `Reads human.`",
     ),
