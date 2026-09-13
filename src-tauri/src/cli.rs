@@ -1002,10 +1002,7 @@ fn teams(
             team_error_suffix()
         );
     } else if agents_again || publishing_again {
-        // ponytail: the same undo for both gates. A `no` is recorded so it is not re-asked at every
-        // launch, which left hand-editing the answers file as the only way back — and a `no` nobody
-        // meant to give is exactly how this arrived on one machine: a prompt read a timeout as a
-        // keypress and recorded a refusal for three teams at once.
+        // ponytail: the same undo for both gates — see memory::ask_publishing_again for why.
         let key = match key_or_fail() {
             Ok(k) => k,
             Err(e) => return fail(e),

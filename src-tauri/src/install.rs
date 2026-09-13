@@ -2118,6 +2118,35 @@ mod tests {
     }
 
     #[test]
+    fn session_notes_leaves_the_team_gates_to_the_knowledge_rows() {
+        // They started here because a withheld agents.md was invisible, and a note is the wrong shape:
+        // it states a problem you cannot act on from where you read it. memory::pending_answers drives
+        // rows you can click. Saying it twice would be worse than saying it once in the wrong place.
+        let _g = lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        let team = root.join("teams").join("org-t");
+        std::fs::create_dir_all(team.join(".git")).unwrap();
+        std::fs::create_dir_all(team.join("memory")).unwrap();
+        std::fs::write(team.join("memory").join("agents.md"), "File what you work out.\n").unwrap();
+        // ponytail: the cache is keyed on the identity dir and CLAUDE.md, so it must be cleared here
+        // rather than trusted to notice a team file it no longer reads.
+        *NOTES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        assert_eq!(memory::pending_answers().len(), 2); // publishing unasked, agents unread
+        assert!(
+            session_notes().iter().all(|n| !n.contains("agents.md")),
+            "{:?}",
+            session_notes()
+        );
+    }
+
+    #[test]
     fn stripping_a_block_keeps_the_files_last_newline() {
         let text = format!("# mine\n\n{CBEGIN}\nx\n{CEND}\n\nmore\n");
         assert_eq!(strip_blocks(&text, CBEGIN, CEND), "# mine\nmore\n");

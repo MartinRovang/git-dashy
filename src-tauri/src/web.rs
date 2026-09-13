@@ -168,10 +168,7 @@ pub fn payload(state: &State) -> Value {
             "teams": names.iter().map(|k| json!({"key": k, "name": team::info(k).name, "arrived": arrived.get(k).copied().unwrap_or(0)})).collect::<Vec<_>>(),
             "teamError": team_error(),
             "notes": install::session_notes(),
-            // ponytail: a row you can act on, not a note you cannot. Both gates are asked once at
-            // launch and never again, so a team joined since you started, an agents.md a teammate
-            // pushed an hour ago, and an answer given by accident all left something withheld with the
-            // only route back being a restart, or hand-editing a dotfile for a refusal.
+            // ponytail: a row you can act on, not a note you cannot — see memory::pending_answers.
             "waiting": memory::pending_answers().into_iter()
                 .map(|(kind, key, what)| json!({"kind": kind, "key": key, "what": what}))
                 .collect::<Vec<_>>(),
@@ -1206,9 +1203,12 @@ fn post_consent(state: &State, body: &Body) -> Out {
             "agents" => memory::ask_agents_again(&key),
             _ => return Err(Fail::new(400, "kind must be publishing or agents")),
         };
-        state.lock().asks = launch_asks();
+        // ponytail: computed ONCE. It walks the draft queue and the fact files per team, which is not
+        // a thing to do twice in three lines.
+        let asks = launch_asks();
+        state.lock().asks = asks.clone();
         state.wake();
-        return Ok(json!({"ok": true, "asks": launch_asks()}));
+        return Ok(json!({"ok": true, "asks": asks}));
     }
     match kind.as_str() {
         "publishing" => memory::allow_publishing(&key, yes),
@@ -2143,6 +2143,105 @@ mod tests {
             .map(|r| r["kind"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
+    }
+
+    #[test]
+    fn applying_a_dream_leaves_the_team_checkout_alone() {
+        // The apply used to pull and push every joined team around a write that cannot reach one.
+        // push_dir runs `git add -A`, so a teammate's unrelated working-tree state was committed under
+        // "memory: dream cleanup" — a commit nobody asked for, in a repo the dream never wrote to.
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.backups = root.join("backups");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::write(root.join("mine").join("general.md"), "- mine\n").unwrap();
+        let team_dir = root.join("teams").join("org-t");
+        std::fs::create_dir_all(team_dir.join("memory")).unwrap();
+        assert!(crate::team::init_history(&team_dir)); // a real checkout, so a commit would show
+        std::fs::write(team_dir.join("memory").join("general.md"), "- theirs\n").unwrap();
+        let commits = |d: &std::path::Path| {
+            std::process::Command::new("git")
+                .args(["-C", &d.to_string_lossy(), "log", "--oneline"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+                .unwrap_or(0)
+        };
+        let before = commits(&team_dir);
+
+        let state = State::new();
+        start_job("dream", move || {
+            Ok(dream_result((
+                "tidy".into(),
+                vec![("mine/general.md".into(), "- mine\n".into())],
+                vec![("mine/general.md".into(), "- mine, tidied\n".into())],
+            )))
+        });
+        for _ in 0..200 {
+            if job_of("dream").is_some_and(|j| !j.lock().unwrap().running) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let body: Body = serde_json::from_value(json!({"op": "apply"})).unwrap();
+        post_dream(&state, &body).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("mine").join("general.md")).unwrap(),
+            "- mine, tidied\n"
+        );
+        assert_eq!(
+            commits(&team_dir),
+            before,
+            "the dream committed in a team checkout"
+        );
+        // and the teammate's file is still sitting there uncommitted, which is theirs to deal with
+        assert_eq!(
+            std::fs::read_to_string(team_dir.join("memory").join("general.md")).unwrap(),
+            "- theirs\n"
+        );
+    }
+
+    #[test]
+    fn the_again_op_clears_the_answer_and_hands_back_the_ask() {
+        // Every other test calls memory::ask_*_again directly, so a typo in this match or a missing
+        // refresh of state.asks would pass. This is the route the knowledge-card row actually takes.
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams").join("org-t").join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("teams").join("org-t").join("memory")).unwrap();
+        memory::allow_publishing("org-t", false);
+        assert!(memory::unasked().is_empty());
+
+        let state = State::new();
+        let body: Body =
+            serde_json::from_value(json!({"op": "again", "kind": "publishing", "key": "org-t"})).unwrap();
+        let out = post_consent(&state, &body).unwrap();
+        let keys: Vec<&str> = out["asks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(keys, ["org-t"]); // the ask is back, and the page is handed it
+        assert_eq!(state.lock().asks.len(), 1); // and the server's own copy agrees
+        assert_eq!(memory::unasked().len(), 1);
+
+        let bad: Body =
+            serde_json::from_value(json!({"op": "again", "kind": "nonsense", "key": "org-t"})).unwrap();
+        assert_eq!(post_consent(&state, &bad).unwrap_err().0, 400);
     }
 
     #[test]

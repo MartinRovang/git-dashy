@@ -569,9 +569,9 @@ refused, or an `agents.md` edited since you read it — and clicking one asks th
 and then. `gitdashy teams --team KEY --publishing-again` and `--agents-again` do the same from a shell.
 A team that has answered yes and had its `agents.md` read shows no row at all.
 
-This mattered more than it looks. The launch prompt read a timeout as a keypress for four versions, so
-it recorded a refusal for every team on the first launch after auto-sharing shipped and then, by
-design, never asked again. Nothing published anywhere for two days and no surface said why.
+The launch prompt read a timeout as a keypress for four versions, so it recorded a refusal for every
+team on the first launch after auto-sharing shipped and then, by design, never asked again. Nothing
+published anywhere for two days and no surface said why.
 
 **So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
 to know it was published in order to remove it. `P` lists your facts for bound repos and says which the

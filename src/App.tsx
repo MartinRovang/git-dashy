@@ -294,7 +294,9 @@ export default function App() {
   const onAskAgain = (kind: string, key: string) =>
     void (async () => {
       const out = await ctx.call('/api/consent', { op: 'again', kind, key })
-      if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key))
+      // ponytail: kind as well as key. launch_asks returns publishing first, so a team with both
+      // gates pending opened the publishing dialog from the row that said agents.md.
+      if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
     })()
   const onModal = (name: string) => {
     if (name === 'drafts') void draftsScreen(ctx)

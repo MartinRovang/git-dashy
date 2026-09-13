@@ -124,9 +124,7 @@ export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onMod
             ⚠ {n}
           </div>
         ))}
-        {/* Both consent gates are asked once at launch and never again, so a team joined since you
-            started, an agents.md a teammate pushed, and an answer given by accident all leave
-            something withheld. These say what, and clicking one asks the question again, now. */}
+        {/* What each consent gate is still holding back. Clicking one asks that question again. */}
         {(k.waiting || []).map((w, i) => (
           <div className="note link" key={`w${i}`} title="ask me again" onClick={() => onAskAgain(w.kind, w.key)}>
             ⚠ {w.key}: {w.what} — ask again

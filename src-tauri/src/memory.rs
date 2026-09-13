@@ -1223,17 +1223,19 @@ fn write_publishing(keys: &BTreeSet<String>) -> bool {
     if std::fs::create_dir_all(&dir).is_err() {
         return false;
     }
+    // ponytail: the temp has to be a SIBLING, because rename is only atomic within one filesystem and
+    // the memory dir can be anywhere. That puts it inside a git checkout whose push runs `git add -A`,
+    // and nothing there is ignored: .publishing itself is tracked on purpose, so your answers follow
+    // you between machines. A crash between the write and the rename would leave this to be committed,
+    // so it is swept on the way in — the next answer clears whatever the last crash left.
     let tmp = dir.join(format!("{PUBLISHING}.part"));
+    let _ = std::fs::remove_file(&tmp);
     let body = keys.iter().map(|k| format!("{k}\n")).collect::<String>();
-    if std::fs::write(&tmp, body).is_err() {
+    let wrote = std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, dir.join(PUBLISHING)).is_ok();
+    if !wrote {
         let _ = std::fs::remove_file(&tmp);
-        return false;
     }
-    if std::fs::rename(&tmp, dir.join(PUBLISHING)).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return false;
-    }
-    true
+    wrote
 }
 
 /// Record the answer for team `key`. A no is recorded too, or it is asked again on every launch.
@@ -1251,8 +1253,8 @@ pub fn allow_publishing(key: &str, yes: bool) {
 /// ponytail: the undo allow_publishing never had. A no is recorded as "!key" precisely so it is not
 /// re-asked at every launch, which left hand-editing the file as the only way back, and a no nobody
 /// meant to give is exactly how this arrived: a prompt read a timeout as a keypress and recorded a
-/// refusal for three teams at once. Nothing published anywhere for two days. An answer you cannot
-/// change is not a consent mechanism, it is a trap with a nice panel on it.
+/// refusal for three teams at once. Nothing published anywhere for two days. An answer that cannot be
+/// changed is not consent.
 pub fn ask_publishing_again(key: &str) -> bool {
     let keys = publishing_keys();
     let kept: BTreeSet<String> = keys
@@ -1271,7 +1273,8 @@ pub fn ask_publishing_again(key: &str) -> bool {
 /// `kind` is "publishing" or "agents", `key` names the team, `what` is the phrase a row shows. Both
 /// gates are asked once at launch and then never again, which is right for a nag and wrong for a
 /// state: a team joined since you started, a file a teammate pushed an hour ago, and an answer you
-/// gave by accident all leave something withheld with no way to reach it.
+/// gave by accident all leave something withheld with no way to reach it. This is the one place that
+/// phrase is spelled out; everywhere else just says what the row does.
 ///
 /// ponytail: a GRANTED answer is not pending. This lists what is still being held back, so a team that
 /// is publishing and whose agents.md you have read says nothing at all.
@@ -1303,12 +1306,16 @@ pub fn pending_answers() -> Vec<(String, String, String)> {
         let text = agents_of(&key);
         if !text.trim().is_empty() {
             let seen = seen_all.get(&agents_key(&key)).cloned().unwrap_or_default();
+            // ponytail: the WORDING is tested before the refusal. A no recorded against wording A
+            // plus a teammate's edit to B is not "refused", it is a file nobody has answered about —
+            // unacked_agents already re-offers it at the next launch, and a row saying "refused" sent
+            // the reader to an undo they do not need.
             let what = if seen.is_empty() {
                 "agents.md not read"
+            } else if seen.trim_start_matches('!') != agents_sha(&text) {
+                "agents.md changed since you read it"
             } else if seen.starts_with('!') {
                 "agents.md refused"
-            } else if seen != agents_sha(&text) {
-                "agents.md changed since you read it"
             } else {
                 continue;
             };
@@ -2256,7 +2263,10 @@ fn promote_locked(repo: Option<&str>, fact: &str) -> PathBuf {
 
 const DREAM: &str = "You are tidying the review memory of a code-review bot. Below are its memory files: \"mine/\" are one
 reviewer's private notes, \"team:<key>/\" are shared with one of their teams (there may be several, and they
-are different groups of people), and each source has a general file plus one per repo. Rewrite them: merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
+are different groups of people), and each source has a general file plus one per repo.
+Rewrite the \"mine/\" files ONLY. The \"team:<key>/\" files are there so you do not merge a private note into
+a duplicate of one the team already holds; they are read-only and any edit to them is discarded, so do not
+return them at all. Merge duplicates, drop contradictions, stale or vague lines, keep every concrete durable
 fact, move repo-independent lines to that source's general file. Keep only overarching knowledge: how a repo is
 structured and why, conventions, how it affects other repos or the database, which authors own which areas, and —
 in a general file — how reviews are conducted here at all: what blocks and what does not, what must be verified
@@ -2270,10 +2280,10 @@ genuinely worthless — never merely because the file does not match a category 
 
 {files}
 
-Respond with ONLY a JSON object, no prose, no code fences. Every key must be a file name exactly as
-listed above, including its \"mine/\" or \"team:<key>/\" prefix — a key without one names no file and is ignored:
+Respond with ONLY a JSON object, no prose, no code fences. Every key must be a \"mine/\" file name exactly as
+listed above — anything else names no file you may write and is ignored:
 {\"summary\": \"<2-5 short lines: what you merged, dropped or moved>\",
- \"files\": {\"mine/general.md\": \"<new content>\", \"team:<key>/<owner>__<repo>.md\": \"<new content>\", ...}}";
+ \"files\": {\"mine/general.md\": \"<new content>\", \"mine/<owner>__<repo>.md\": \"<new content>\", ...}}";
 
 /// The DREAM prompt over these files. Public so a caller can show or test what the model is asked.
 pub fn dream_prompt(files: &[(String, String)]) -> String {
