@@ -284,9 +284,6 @@ export default function App() {
     if (on && data?.pending) includeExisting = await confirm(`Auto on. Also review the ${data.pending} already listed?`)
     call('/api/auto', { on, includeExisting }, on ? 'auto on' : 'auto off')
   }
-  const onJump = (name: string) => {
-    document.querySelector(`[data-fold="${name}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }
   const onPath = (which: 'L' | 'C') => void setPath(ctx, which)
   const onTeams = () => void teamsScreen(ctx, current)
   const onModal = (name: string) => {
@@ -494,7 +491,7 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
+        <Sidebar data={data} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
         <div className="main">
           <div className="body">
             <div className="queue">

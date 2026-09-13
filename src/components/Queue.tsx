@@ -175,7 +175,7 @@ export function Queue(p: Props) {
           let seen: string | null = null
           return (
             <div key={s.name}>
-              <div className="head" data-fold={s.name} onClick={() => p.onFold(s.name)}>
+              <div className="head" onClick={() => p.onFold(s.name)}>
                 <span className="caret">{open ? '▾' : '▸'}</span>
                 <span className="label" style={{ color: colour }}>
                   {s.name}
