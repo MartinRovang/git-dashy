@@ -5,7 +5,10 @@ fn main() {
     // and a value the user set already wins.
     #[cfg(target_os = "linux")]
     if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() {
-        std::env::set_var("GST_PLUGIN_FEATURE_RANK", "nvvp8dec:0,nvvp9dec:0,nvh264dec:0,nvh265dec:0,nvav1dec:0");
+        std::env::set_var(
+            "GST_PLUGIN_FEATURE_RANK",
+            "nvvp8dec:0,nvvp9dec:0,nvh264dec:0,nvh265dec:0,nvav1dec:0",
+        );
     }
     std::process::exit(gitdashy::cli::run(std::env::args().skip(1).collect()));
 }
