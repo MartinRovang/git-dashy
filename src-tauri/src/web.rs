@@ -98,13 +98,24 @@ pub fn payload(state: &State) -> Value {
         )
     };
     let cfg = config::get();
-    let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-    let summaries: HashMap<&str, &str> = sections
+    // ponytail: ONE resolver per frame, like the curses screen used to
+    let resolve = bind::resolver();
+    // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
+    // REVIEWED is newest first, so the first one seen wins.
+    let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
+    let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
+    for p in sections
         .iter()
         .filter(|s| s.name == "REVIEWED")
         .flat_map(|s| s.prs.iter().flatten())
-        .filter_map(|p| p.review.as_ref().map(|r| (p.url.as_str(), r.summary.as_str())))
-        .collect();
+    {
+        if let Some(r) = &p.review {
+            logged.entry(p.url.as_str()).or_insert(r);
+            if !r.kind.is_empty() {
+                tags.entry(p.url.as_str()).or_insert(r);
+            }
+        }
+    }
     let mut out = Vec::new();
     for s in &sections {
         let mut rows = Vec::new();
@@ -118,8 +129,14 @@ pub fn payload(state: &State) -> Value {
             let (summary, review_at) = match (&s.name[..], &p.review) {
                 ("REVIEWED", Some(r)) => (r.summary.as_str(), r.at.as_str()),
                 ("REVIEWED", None) => ("", ""),
-                _ => (summaries.get(url).copied().unwrap_or(""), ""),
+                _ => (logged.get(url).map(|r| r.summary.as_str()).unwrap_or(""), ""),
             };
+            // a REVIEWED row carries its own review, when that one is tagged; else the url's newest tagged
+            let tagged = p
+                .review
+                .as_deref()
+                .filter(|r| !r.kind.is_empty())
+                .or_else(|| tags.get(url).copied());
             rows.push(json!({
                 "url": url,
                 "number": p.number,
@@ -140,6 +157,8 @@ pub fn payload(state: &State) -> Value {
                 "team": resolve(p.repo()),
                 "summary": summary,
                 "reviewAt": review_at,
+                "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
+                "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
             }));
         }
@@ -879,15 +898,6 @@ fn post_refresh(state: &State, _body: &Body) -> Out {
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.
 fn post_open(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
-    if truthy(body, "pre") {
-        let (at, _moved) = review::self_review_state(&pr);
-        if at == 0.0 {
-            return Err(no_prereview(&pr));
-        }
-        let path = review::self_review_path(pr.repo(), pr.number);
-        github::open_in_browser(&path.to_string_lossy());
-        return Ok(json!({"ok": true, "opened": path}));
-    }
     github::open_in_browser(&pr.url);
     Ok(json!({"ok": true, "opened": pr.url}))
 }
@@ -1834,6 +1844,38 @@ mod tests {
         }
         let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
         assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
+        // a re-review with no kind keeps the tag of the newest review that had one
+        {
+            let mut st = state.lock();
+            let pr = st.sections[0].prs.as_ref().unwrap()[0].clone();
+            let entry = |kind: &str, breaking: bool| Pr {
+                review: Some(Box::new(LogEntry {
+                    kind: kind.into(),
+                    breaking,
+                    ..Default::default()
+                })),
+                ..pr.clone()
+            };
+            st.sections.push(Section {
+                name: "REVIEWED".into(),
+                prs: Some(vec![
+                    entry("", false),
+                    entry("security", true),
+                    entry("docs", false),
+                ]), // newest first
+                err: None,
+            });
+        }
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        let (row, newest) = (&d["sections"][0]["prs"][0], &d["sections"][2]["prs"][0]);
+        assert_eq!(
+            (&row["kind"], &row["breaking"]),
+            (&json!("security"), &json!(true))
+        );
+        assert_eq!(
+            (&newest["kind"], &newest["breaking"]),
+            (&json!("security"), &json!(true))
+        );
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it
@@ -1903,16 +1945,6 @@ mod tests {
         assert_eq!(d["error"], "no such pr");
         let (code, d) = post(&format!("{base}/api/open"), json!({"url": "/etc/passwd"}), &token);
         assert_eq!((code, d["error"].as_str()), (404, Some("no such pr")));
-        // no pre-review file yet, so nothing to hand to the desktop either
-        assert_eq!(
-            post(
-                &format!("{base}/api/open"),
-                json!({"url": "u", "pre": true}),
-                &token
-            )
-            .0,
-            404
-        );
     }
 
     #[test]

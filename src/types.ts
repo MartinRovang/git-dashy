@@ -26,6 +26,9 @@ export type Pr = {
   team: string
   summary: string
   reviewAt: string
+  /** the newest review's tag: feature, fix, security...; "" when no review tagged it. */
+  kind: string
+  breaking: boolean
   pre: Pre
 }
 

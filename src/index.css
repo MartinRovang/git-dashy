@@ -75,12 +75,6 @@
   .side { width: var(--side-w, 236px); flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--line);
           display: flex; flex-direction: column; padding: 14px 10px; overflow-y: auto; gap: 0; }
   .cap { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--dim3); padding: 0 8px 8px; }
-  .nav { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 10px; border-radius: 7px; cursor: pointer; }
-  .nav:hover { background: var(--bg4); }
-  .nav i { width: 6px; height: 6px; border-radius: 2px; background: var(--dim3); }
-  .nav b { font-size: 13px; font-weight: 500; color: var(--ink3); flex: 1; min-width: 0; overflow: hidden;
-           text-overflow: ellipsis; white-space: nowrap; }
-  .nav em { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--dim2); }
   .rule { height: 1px; background: var(--line); margin: 12px 8px; flex-shrink: 0; }
   .stat { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
   .stat span { font-size: 12px; color: var(--dim); }
@@ -158,6 +152,8 @@
   .pr .txt { flex: 1; min-width: 0; }
   .pr .txt b { display: block; font-size: 13px; font-weight: 500; color: var(--ink);
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* a read PR's title steps back so the unread ones stand out; the selected row still reads white */
+  .pr:not(.unread) .txt b { color: var(--dim); }
   .pr.sel .txt b { color: #fff; }
   .pr.child .txt b { font-weight: 400; color: var(--ink3); }
   .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
@@ -351,15 +347,26 @@
   .gnode { cursor: pointer; transition: opacity .2s; }
   .gnode circle { stroke-width: 1.5; transition: r .3s; }
   .gnode text { font-size: calc(11px / var(--k)); fill: var(--ink3); text-anchor: middle; dominant-baseline: hanging;
-                pointer-events: none; opacity: var(--label); transition: opacity .2s; }
+                pointer-events: none; opacity: max(var(--label), .75); transition: opacity .2s; }
+  /* hubs only group PRs: nothing opens on click, so they read as disabled; still draggable */
+  .gnode.hub { cursor: grab; }
+  .gnode.hub circle { filter: saturate(.4); }
   .gnode.hub text { fill: var(--dim); opacity: 1; font-size: calc(12px / var(--k)); }
   .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
+  .graph svg.search:not(.focus) .gnode:not(.hit), .graph svg.search:not(.focus) line:not(.hit) { opacity: .15; }
+  .graph svg.search .gnode.hit text { opacity: 1; fill: var(--ink); }
+  .gbadge { display: flex; flex-direction: column; gap: 6px; }
+  .gbadge .search { pointer-events: auto; background: var(--bg); }
+  .gbadge .vtabs { pointer-events: auto; align-self: flex-start; background: var(--bg); }
+  .gnode.breaking circle { stroke-width: 2.5; stroke-dasharray: 3 2; }
+  .glegend i.gbreak { width: 8px; height: 8px; border-radius: 50%; border: 1.5px dashed var(--red); background: none; }
   .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
   .glegend span { display: flex; align-items: center; gap: 5px; }
   .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
-  .glegend .gdot { background: linear-gradient(90deg, var(--pink), var(--cyan), var(--amber)); }
+  .gnode path.person { pointer-events: none; }
+  .glegend .gperson { width: 11px; height: 11px; fill: var(--ink3); }
 
   /* ponytail: React mounts into #root, so it needs the full height the vanilla #app assumed. */
   #root { height: 100%; }
