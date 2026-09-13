@@ -23,6 +23,8 @@ fn pr_at(n: u64, title: &str, repo: &str, author: &str, hours: f64, draft: bool,
         title: title.into(),
         url: format!("https://github.com/{repo}/pull/{n}"),
         is_draft: draft,
+        additions: Some(62 + n % 40),
+        deletions: Some(14 + n % 9),
         repository: Repository {
             name_with_owner: repo.into(),
             name: repo.split('/').nth(1).unwrap_or("").into(),

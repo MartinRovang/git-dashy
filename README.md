@@ -125,6 +125,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
+| `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state |
 | `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
 | `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |

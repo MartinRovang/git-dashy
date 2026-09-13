@@ -1,9 +1,10 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { dashyMock } from './mock/api.ts'
 
 // https://vite.dev/config/ and https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), dashyMock()],
   // Tauri's own output is noisy; keep the Rust warnings readable.
   clearScreen: false,
   server: {

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
 import { flat, selected, visible } from './board'
+import { FloatingVideo } from './components/FloatingVideo'
+import { Graph } from './components/Graph'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, notice, picker, prompt, viewer } from './modals'
+import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, tone } from './tokens'
@@ -23,6 +25,7 @@ export default function App() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
+  const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
   const [tab, setTab] = useState<'summary' | 'code'>('summary')
@@ -30,6 +33,15 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  const [view, setView] = useState<'board' | 'graph'>('board')
+  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it.
+  // Cleared here, in the same update as the switch, so the graph lays out once and not twice.
+  const show = (v: 'board' | 'graph') => {
+    setView(v)
+    if (v !== 'graph') return
+    setQuery('')
+    setFailing(false)
+  }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
   // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
@@ -316,7 +328,11 @@ export default function App() {
         return
       }
       const got = await r.json()
-      viewer(`pre-review of #${p.number}`, got.text, got.path)
+      const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
+      const copy = () => void call('/api/copy', { text: got.text }, '✓ pre-review copied')
+      m.keys!.y = copy
+      m.foot!.unshift(['y', 'copy', copy, 'go'])
+      repaint()
       return
     }
     if (!(await confirm(p.pre ? `#${p.number} changed since its pre-review. Run again?` : `Pre-review #${p.number}? Nothing is posted.`))) return
@@ -458,6 +474,7 @@ export default function App() {
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
     if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
+    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
@@ -474,7 +491,7 @@ export default function App() {
 
   return (
     <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -488,6 +505,19 @@ export default function App() {
         <div className="main">
           <div className="body">
             <div className="queue">
+              {view === 'graph' ? (
+                <Graph
+                  // folded sections are left out: selected() only searches unfolded rows, so a node there
+                  // would select a uid it cannot find and open rows[0] instead
+                  secs={secs.filter((s) => !folded[s.name])}
+                  sel={selUid}
+                  onSelect={(uid) => {
+                    setSel(uid)
+                    setAt(0)
+                    setPane(true)
+                  }}
+                />
+              ) : (
               <Queue
                 data={data}
                 secs={secs}
@@ -508,6 +538,7 @@ export default function App() {
                 }}
                 onOpen={() => setPane(true)}
               />
+              )}
             </div>
             {pane ? (
               <Pane
@@ -531,6 +562,7 @@ export default function App() {
         </div>
       </div>
       {flash ? <div className="toast">{flash}</div> : null}
+      {video ? <FloatingVideo /> : null}
       <ModalHost />
     </div>
   )

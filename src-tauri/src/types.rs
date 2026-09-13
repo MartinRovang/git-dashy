@@ -32,6 +32,11 @@ pub struct Pr {
     pub updated_at: String,
     #[serde(rename = "isDraft", default)]
     pub is_draft: bool,
+    /// Lines added and deleted, straight from the board query, so the graph needs no fetch of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u64>,
     /// None when the author's account is gone.
     #[serde(default)]
     pub author: Option<Login>,

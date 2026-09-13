@@ -128,6 +128,8 @@ pub fn payload(state: &State) -> Value {
                 "author": p.author(),
                 "updatedAt": p.updated_at,
                 "isDraft": p.is_draft,
+                "add": p.additions,
+                "del": p.deletions,
                 "status": p.status,
                 "prev": p.prev,
                 "checks": p.checks,
@@ -1562,10 +1564,10 @@ fn header(req: &Request, name: &'static str) -> String {
 ///
 /// ponytail: 'unsafe-inline' for styles only. React writes style attributes and the app sets its theme
 /// through CSS variables on <html>; scripts stay 'self', which is the half that matters. The two font
-/// origins are what dist/index.html already asks for.
+/// origins are what dist/index.html already asks for. frame-src is the logo's player and nothing else.
 const CSP: &str = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; \
      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; \
-     object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+     frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
 /// Every reply the server makes. `cache` is None for anything with data in it.
 ///
@@ -1720,6 +1722,14 @@ pub fn new_token() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn csp_lets_the_player_frame_load() {
+        // the embed in src/components/FloatingVideo.tsx; vite dev sends no CSP, so only this catches a block
+        let embed = include_str!("../../src/components/FloatingVideo.tsx");
+        assert!(embed.contains("const EMBED = 'https://www.youtube-nocookie.com'"));
+        assert!(super::CSP.contains("frame-src https://www.youtube-nocookie.com;"));
+    }
+
     use super::*;
     use crate::types::{Hunk, Line, Login, Repository, Section};
 
@@ -1826,7 +1836,7 @@ mod tests {
 
     #[test]
     fn no_token_is_refused_and_a_good_one_gets_the_payload() {
-        let (base, token, _state) = served();
+        let (base, token, state) = served();
         assert_eq!(get(&format!("{base}/api/state"), None).0, 401);
         assert_eq!(get(&format!("{base}/api/state?token=wrong"), None).0, 401);
         let (code, d) = get(&format!("{base}/api/state"), Some(&token));
@@ -1844,6 +1854,13 @@ mod tests {
         );
         assert_eq!(row["status"], "· awaiting review");
         assert_eq!(row["busy"], false);
+        // no additions on the fixture: the graph's `?? 0` path depends on null, not a missing zero
+        assert_eq!((&row["add"], &row["del"]), (&Value::Null, &Value::Null));
+        if let Some(prs) = state.lock().sections[0].prs.as_mut() {
+            (prs[0].additions, prs[0].deletions) = (Some(12), Some(3));
+        }
+        let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
+        assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it
