@@ -135,10 +135,10 @@ export function Graph({ secs, sel, onSelect }: {
       .select<SVGCircleElement>('circle')
       .attr('r', radius)
       .style('fill', (n) => {
-        if (n.kind === 'author') return avatar(n.label)
-        if (n.kind === 'state') return (PALETTE[n.label] || PALETTE.idle).fg
-        if (n.kind !== 'pr') return 'var(--dim2)'
-        return fg(n)
+        if (n.kind === 'pr') return fg(n)
+        const c = n.kind === 'author' ? avatar(n.label) : n.kind === 'state' ? (PALETTE[n.label] || PALETTE.idle).fg : 'var(--dim2)'
+        // a hub reads disabled: its colour washed into the background, opaque so links stop at its edge
+        return `color-mix(in srgb, ${c} 35%, var(--bg))`
       })
       .style('stroke', (n) => {
         if (n.kind !== 'pr') return 'none'
