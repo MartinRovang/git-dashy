@@ -116,7 +116,6 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 export function Queue(p: Props) {
   const d = p.data
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
-  const drafts = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => x.isDraft).length
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
@@ -148,9 +147,6 @@ export function Queue(p: Props) {
         </div>
         <div className={`chip${p.failing ? ' on' : ''}`} onClick={p.onFailing}>
           CI failing <em>{failing}</em>
-        </div>
-        <div className="chip" title="toggle drafts in the settings card">
-          Drafts <em>{drafts}</em>
         </div>
         <div style={{ flex: 1 }} />
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
