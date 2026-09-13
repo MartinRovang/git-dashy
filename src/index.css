@@ -152,6 +152,8 @@
   .pr .txt { flex: 1; min-width: 0; }
   .pr .txt b { display: block; font-size: 13px; font-weight: 500; color: var(--ink);
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* a read PR's title steps back so the unread ones stand out; the selected row still reads white */
+  .pr:not(.unread) .txt b { color: var(--dim); }
   .pr.sel .txt b { color: #fff; }
   .pr.child .txt b { font-weight: 400; color: var(--ink3); }
   .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
