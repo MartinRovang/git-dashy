@@ -63,8 +63,10 @@ gitdashy remember "the viewer owns mask state"   # file what a coding session le
 gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
-The list is a table — `age · repo · pr · title · author · state` — with your own PRs in their own
-section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `⏎`
+The list is a table — `age · repo · pr · title · author · state` — and above it one tab per queue:
+`all`, `mine`, `review requested`, `assigned`, `reviewed`, each with its count. `all` stacks them under
+their own headers; any other tab shows that queue alone. Beside the tabs, `CI failing` and `Drafts` narrow
+whatever the tab is showing. `[` and `]` walk the tabs. Beside it, `⏎`
 opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
 found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
 
@@ -118,7 +120,7 @@ button somewhere on the page.
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
 | `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / humanizer |
-| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header counts down to the next one) |
+| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
 | `n` | edit this repo's review memory in the app |
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
@@ -132,12 +134,15 @@ button somewhere on the page.
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
 | `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
+| `S` | collapse the left rail to 92px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
+| `[` `]` | previous / next queue tab |
+| `?` | the shortcut sheet: every key, grouped |
 | `Esc` | the menu: theme, notifications, refresh, quit |
 | `q` | quit |
 
 `m` `d` `e` `s` `t` `i` open a picker: `j`/`k` moves, `Enter` picks, `Esc` keeps. `x` and `h` open a checklist
-that stays open while you toggle. The sidebar's AGENT, VIEW and KNOWLEDGE cards hold the same settings as
-dropdowns and chips, so nothing needs a key.
+that stays open while you toggle. The left rail holds the same settings as dropdowns and chips, one group
+open at a time — Agent, View, Knowledge — so nothing needs a key. A shut group still says what it is set to.
 
 ## Installing
 

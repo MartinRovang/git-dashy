@@ -28,6 +28,14 @@ export const SECTION_HINT: Record<string, string> = {
   ASSIGNED: 'owned by you',
   REVIEWED: 'recently done',
 }
+/** What an empty bucket says. ponytail: names the queue rather than saying "none", because a tab you
+ *  clicked deliberately deserves an answer about that queue, not a shrug. */
+export const SECTION_EMPTY: Record<string, string> = {
+  MINE: 'Nothing of yours is open.',
+  'REVIEW REQUESTED': 'Nobody is waiting on your review.',
+  ASSIGNED: 'Nothing assigned to you.',
+  REVIEWED: 'Nothing reviewed in the window.',
+}
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }
 export const CHECK_TONE: Record<string, string> = {
   ok: 'var(--green)',

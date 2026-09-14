@@ -9,14 +9,16 @@ type Props = {
   onAuto: () => void
   onMenu: () => void
   onUpdate: () => void
+  onHelp: () => void
   onLogo: () => void
   view: 'board' | 'graph'
   onView: (v: 'board' | 'graph') => void
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onLogo, view, onView }: Props) {
+export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
   const running = d?.running || 0
+  const repos = new Set((d?.sections || []).flatMap((s) => s.prs || []).map((p) => p.repo)).size
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
     <div className="top">
@@ -30,9 +32,14 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         </span>
       </div>
       <div className="vbar" />
-      <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--dim)' }}>
+      <div className="ctx">
         <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{total} PRs</span>
-        <span style={{ color: 'var(--dim3)' }}>·</span>
+        <i className="dot" />
+        {/* ponytail: repos, not orgs. The board spans whatever the token can see, and "4 repos" is the
+            number that tells you whether a queue looks short because it is, or because you are
+            pointed at less than you thought. */}
+        <span>{repos} repo{repos === 1 ? '' : 's'}</span>
+        <i className="dot" />
         <span>{d?.model || ''}</span>
       </div>
       <div className="vtabs" title="switch view (G)">
@@ -70,6 +77,9 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         <span>AUTO</span>
       </div>
       <Pinata />
+      <button className="ghost" title="keyboard shortcuts (?)" onClick={onHelp}>
+        <kbd>?</kbd> shortcuts
+      </button>
       <span className="ib" title="menu (esc)" onClick={onMenu}>
         ☰
       </span>

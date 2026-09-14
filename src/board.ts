@@ -10,7 +10,7 @@ export function settings(d: StateData | null) {
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box. */
-export function visible(d: StateData | null, query: string, failing: boolean): VisSection[] {
+export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts = false): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -22,6 +22,7 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
         if (!s.drafts && p.isDraft && !p.busy && !p.review) return false // a draft under review stays visible
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
         if (failing && tone(p.checks) !== 'changes') return false
+        if (onlyDrafts && !p.isDraft) return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
       })
@@ -41,9 +42,28 @@ function group(rows: Row[]): Row[] {
   return [...by.values()]
 }
 
-export function flat(secs: VisSection[], folded: Record<string, boolean>, expanded: Record<string, boolean>): Row[] {
-  return secs
-    .filter((s) => !folded[s.name])
+/** The bucket tabs: one per section the server sent, with All in front. */
+export const ALL = 'ALL'
+
+export function buckets(secs: VisSection[]): { key: string; label: string; n: number }[] {
+  return [
+    { key: ALL, label: 'All', n: secs.reduce((t, s) => t + s.prs.length, 0) },
+    ...secs.map((s) => ({ key: s.name, label: s.name.toLowerCase(), n: s.prs.length })),
+  ]
+}
+
+/** The sections one bucket shows. ALL is every section; anything else is the one that matches.
+ *
+ * ponytail: a bucket that is not in `secs` yields nothing rather than falling back to ALL. The server
+ * decides which sections exist, and a saved bucket from a version that had more of them must not
+ * silently widen to everything — an empty board says "that queue is gone", a full one says nothing.
+ */
+export function inBucket(secs: VisSection[], bucket: string): VisSection[] {
+  return bucket === ALL ? secs : secs.filter((s) => s.name === bucket)
+}
+
+export function flat(secs: VisSection[], bucket: string, expanded: Record<string, boolean>): Row[] {
+  return inBucket(secs, bucket)
     .flatMap((s) => s.prs)
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }

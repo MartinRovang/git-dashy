@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import type { VisSection } from '../board'
-import { settings } from '../board'
-import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
+import { ALL, buckets, inBucket, settings } from '../board'
+import { age, avatar, PALETTE, rowState, SECTION_EMPTY, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
   data: StateData | null
@@ -13,9 +13,11 @@ type Props = {
   onQuery: (v: string) => void
   failing: boolean
   onFailing: () => void
-  folded: Record<string, boolean>
+  drafts: boolean
+  onDrafts: () => void
+  bucket: string
+  onBucket: (name: string) => void
   expanded: Record<string, boolean>
-  onFold: (name: string) => void
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
   onOpen: () => void
@@ -115,7 +117,11 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
-  const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
+  const shown = inBucket(p.secs, p.bucket).flatMap((s) => s.prs)
+  const failing = shown.filter((x) => tone(x.checks) === 'changes').length
+  // ponytail: counted over the BUCKET, not the whole board. The chip sits beside the tabs and filters
+  // what they show, so a count of rows you are not looking at is a number that cannot be acted on.
+  const drafts = shown.filter((x) => x.isDraft).length
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
@@ -139,16 +145,52 @@ export function Queue(p: Props) {
   return (
     <>
       <div className="bar">
-        <div className="search">
+        {/* ponytail: the tabs ARE the section headers now. One queue at a time, so the thing that used
+            to be a fold caret is the thing that picks what you are looking at. */}
+        <div className="tabs scroll" role="tablist">
+          {buckets(p.secs).map((b) => (
+            <button
+              key={b.key}
+              className="tab"
+              role="tab"
+              aria-selected={b.key === p.bucket}
+              onClick={() => p.onBucket(b.key)}
+            >
+              {b.label}
+              <span className="n">{b.n}</span>
+            </button>
+          ))}
+        </div>
+        <span className="vr" />
+        <div className="fgroup">
+          <span className="fi" aria-hidden="true">
+            ≡
+          </span>
+          <button className="chip" aria-pressed={p.failing} disabled={!failing && !p.failing} onClick={p.onFailing}>
+            CI failing <b>{failing}</b>
+          </button>
+          <button className="chip" aria-pressed={p.drafts} disabled={!drafts && !p.drafts} onClick={p.onDrafts}>
+            Drafts <b>{drafts}</b>
+          </button>
+          {p.failing || p.drafts ? (
+            <button
+              className="chip clr"
+              onClick={() => {
+                if (p.failing) p.onFailing()
+                if (p.drafts) p.onDrafts()
+              }}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+        <div style={{ flex: 1 }} />
+        <label className="search">
           <span className="mono" style={{ fontSize: 12, color: 'var(--dim3)' }}>
             /
           </span>
           <input id="q" value={p.query} placeholder="filter by title, repo, author" onChange={(e) => p.onQuery(e.target.value)} />
-        </div>
-        <div className={`chip${p.failing ? ' on' : ''}`} onClick={p.onFailing}>
-          CI failing <em>{failing}</em>
-        </div>
-        <div style={{ flex: 1 }} />
+        </label>
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
           updated{' '}
           {d?.fetchedAt
@@ -157,10 +199,7 @@ export function Queue(p: Props) {
         </div>
       </div>
       <div className="list scroll">
-        {p.secs.map((s) => {
-          const open = !p.folded[s.name]
-          const colour = SECTION_TONE[s.name] || 'var(--dim)'
-          const hint = s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''
+        {inBucket(p.secs, p.bucket).map((s) => {
           const labels = new Set(s.prs.map((x) => x.team || ''))
           const rows =
             labels.size > 1
@@ -171,62 +210,66 @@ export function Queue(p: Props) {
           let seen: string | null = null
           return (
             <div key={s.name}>
-              <div className="head" onClick={() => p.onFold(s.name)}>
-                <span className="caret">{open ? '▾' : '▸'}</span>
-                <span className="label" style={{ color: colour }}>
-                  {s.name}
-                </span>
-                <span className="count">{s.prs.length}</span>
-                <div className="fill" />
-                <span className="hint">{hint}</span>
-              </div>
-              {open ? (
-                s.error ? (
-                  <div className="none err">{s.error.split('\n')[0]}</div>
-                ) : !s.prs.length ? (
-                  <div className="none">
-                    {s.name === 'REVIEWED' && settings(d).window ? `none in the last ${settings(d).window}h` : 'none'}
-                  </div>
-                ) : (
-                  rows.map((row) => {
-                    const label = row.team || ''
-                    const sep = labels.size > 1 && label !== seen ? ((seen = label), true) : false
-                    return (
-                      <div key={row.uid}>
-                        {sep ? (
-                          <div className="group">
-                            ─ {label || 'not bound to a team'} <i />
-                          </div>
-                        ) : null}
-                        <PrRow
-                          p={row}
-                          sel={p.sel}
-                          unread={p.read[row.url] !== row.updatedAt}
-                          expanded={p.expanded}
-                          onExpand={p.onExpand}
-                          onSelect={p.onSelect}
-                          onOpen={p.onOpen}
-                        />
-                        {p.expanded[row.url]
-                          ? row.older.map((o) => (
-                              <PrRow
-                                key={o.uid}
-                                p={o}
-                                child
-                                sel={p.sel}
-                                unread={false}
-                                expanded={p.expanded}
-                                onExpand={p.onExpand}
-                                onSelect={p.onSelect}
-                                onOpen={p.onOpen}
-                              />
-                            ))
-                          : null}
-                      </div>
-                    )
-                  })
-                )
+              {/* ponytail: the section name still appears in the ALL bucket, because there it is the
+                  only thing saying which queue a row came from. Inside one bucket the tab says it. */}
+              {p.bucket === ALL ? (
+                <div className="grp">
+                  <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>{s.name}</span>
+                  <span className="hint">
+                    {s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''}
+                  </span>
+                  <hr />
+                </div>
               ) : null}
+              {s.error ? (
+                <div className="none err">{s.error.split('\n')[0]}</div>
+              ) : !s.prs.length ? (
+                <div className="empty">
+                  <b>Clear</b>
+                  {s.name === 'REVIEWED' && settings(d).window
+                    ? `Nothing reviewed in the last ${settings(d).window}h.`
+                    : SECTION_EMPTY[s.name] || 'Nothing here.'}
+                </div>
+              ) : (
+                rows.map((row) => {
+                  const label = row.team || ''
+                  const sep = labels.size > 1 && label !== seen ? ((seen = label), true) : false
+                  return (
+                    <div key={row.uid}>
+                      {sep ? (
+                        <div className="grp">
+                          <span>{label || 'not bound to a team'}</span>
+                          <hr />
+                        </div>
+                      ) : null}
+                      <PrRow
+                        p={row}
+                        sel={p.sel}
+                        unread={p.read[row.url] !== row.updatedAt}
+                        expanded={p.expanded}
+                        onExpand={p.onExpand}
+                        onSelect={p.onSelect}
+                        onOpen={p.onOpen}
+                      />
+                      {p.expanded[row.url]
+                        ? row.older.map((o) => (
+                            <PrRow
+                              key={o.uid}
+                              p={o}
+                              child
+                              sel={p.sel}
+                              unread={false}
+                              expanded={p.expanded}
+                              onExpand={p.onExpand}
+                              onSelect={p.onSelect}
+                              onOpen={p.onOpen}
+                            />
+                          ))
+                        : null}
+                    </div>
+                  )
+                })
+              )}
             </div>
           )
         })}

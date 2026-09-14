@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { flat, groups, selected, visible } from './board'
+import { ALL, buckets, flat, groups, inBucket, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
+import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
@@ -11,7 +12,7 @@ import { TopBar } from './components/TopBar'
 import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
-import { CONTEXTS, every, span, tone } from './tokens'
+import { CONTEXTS, age, every, span, tone } from './tokens'
 import type { Code, Detail, Row, StateData } from './types'
 import { useNow, useStatePoll } from './usePoll'
 
@@ -22,7 +23,17 @@ export default function App() {
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
-  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  // ponytail: which bucket the tabs are on, not which sections are folded. The board shows one queue
+  // at a time now, so "what is on screen" is one string rather than a map of what is hidden.
+  const [bucket, setBucket] = useState<string>(ALL)
+  // ponytail: a FILTER over the bucket, not the `drafts` setting. That setting decides whether drafts
+  // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
+  // counts zero and goes flat, which is the honest state rather than a contradiction.
+  const [onlyDrafts, setOnlyDrafts] = useState(false)
+  // ponytail: the rail shuts to a 92px digest rather than disappearing. A hidden sidebar makes the
+  // settings unreachable without remembering a key; a narrow one still answers "which model".
+  const [railShut, setRailShut] = useState(false)
+  const [help, setHelp] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
@@ -58,8 +69,8 @@ export default function App() {
     }
   })
 
-  const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
-  const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
+  const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
+  const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
   const current = selected(rows, sel)
   const selUid = current?.uid || ''
@@ -417,6 +428,11 @@ export default function App() {
       fn()
     }
     const p = current
+    // the shortcut sheet is not a ModalHost dialog, so it swallows board keys itself
+    if (help) {
+      if (k === 'Escape' || k === 'q' || k === '?') return one(() => setHelp(false))
+      return
+    }
     // while the viewer has focus, board keys do not reach the board; a click on the board hands them back
     if (codeOpen && codeFocus && p) {
       if (k === 'Escape' || k === 'q') return one(() => setCodeOpen(false))
@@ -455,6 +471,18 @@ export default function App() {
     if (k === 'Escape') return one(onMenu)
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
+    if (k === '?') return one(() => setHelp(true))
+    if (k === 'S') return one(() => setRailShut((v) => !v))
+    // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
+    // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
+    if (k === '[' || k === ']')
+      return one(() =>
+        setBucket((cur) => {
+          const keys = buckets(secs).map((b) => b.key)
+          const i = Math.max(0, keys.indexOf(cur))
+          return keys[(i + (k === ']' ? 1 : keys.length - 1)) % keys.length]
+        }),
+      )
   }
   keyRef.current = handleKey
 
@@ -478,7 +506,7 @@ export default function App() {
 
   return (
     <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp(true)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -488,15 +516,24 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
+        <Sidebar
+          data={data}
+          setting={setting}
+          onPath={onPath}
+          onTeams={onTeams}
+          onModal={onModal}
+          onAuto={onAuto}
+          collapsed={railShut}
+          onCollapse={() => setRailShut((v) => !v)}
+        />
         <div className="main">
           <div className="body">
             <div className="queue">
               {view === 'graph' ? (
                 <Graph
-                  // folded sections are left out: selected() only searches unfolded rows, so a node there
-                  // would select a uid it cannot find and open rows[0] instead
-                  secs={secs.filter((s) => !folded[s.name])}
+                  // the bucket's sections only: selected() searches the rows on screen, so a node from
+                  // another bucket would select a uid it cannot find and open rows[0] instead
+                  secs={inBucket(secs, bucket)}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)
@@ -515,9 +552,11 @@ export default function App() {
                 onQuery={setQuery}
                 failing={failing}
                 onFailing={() => setFailing((v) => !v)}
-                folded={folded}
+                drafts={onlyDrafts}
+                onDrafts={() => setOnlyDrafts((v) => !v)}
+                bucket={bucket}
+                onBucket={setBucket}
                 expanded={expanded}
-                onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
                 onSelect={(uid) => {
                   setSel(uid)
@@ -554,6 +593,24 @@ export default function App() {
           onClose={() => setCodeOpen(false)}
         />
       ) : null}
+      <footer className="ft">
+        <span>j / k move</span>
+        <span>⏎ pane</span>
+        <span>r review</span>
+        <span>? all keys</span>
+        <div style={{ flex: 1 }} />
+        <div className="sync">
+          <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />
+          <span>
+            {!data?.fetchedAt
+              ? 'fetching…'
+              : data?.fetching
+                ? 'refreshing…'
+                : `synced ${age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in ${Math.max(0, Math.round((data.interval || 0) - (now / 1000 - data.fetchedAt)))}s`}
+          </span>
+        </div>
+      </footer>
+      {help ? <Shortcuts onClose={() => setHelp(false)} /> : null}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />
