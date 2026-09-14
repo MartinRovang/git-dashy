@@ -6,6 +6,7 @@ import { Graph } from './components/Graph'
 import { shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
+import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
@@ -32,6 +33,9 @@ export default function App() {
   // ponytail: the rail shuts to a 92px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
+  // the PR the actions popup is about, and where to put it. One state for both the pane's Options
+  // button and a right-click on a row.
+  const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
@@ -373,14 +377,16 @@ export default function App() {
     )
   }
 
-  function doAct(name: string) {
-    if (!current) return
-    const p = current
+  function doAct(name: string, target?: Row | null) {
+    const p = target || current
+    if (!p) return
     const fns: Record<string, () => void> = {
       review: () => void review(p),
       pre: () => void preReview(p),
       view: () => {
-        if (detail?.review) viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
+        // the detail belongs to the selected PR, so only offer its review for that one
+        if (detail?.url === p.url && detail.review)
+          viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
       open: () => void call('/api/open', { url: p.url }),
       copy: () => void copyUrl(p),
@@ -420,6 +426,9 @@ export default function App() {
 
   function handleKey(e: KeyboardEvent) {
     if (modalCount() > 0) return
+    // the actions popup owns the keyboard while it is up; it captures Escape itself so that
+    // dismissing it does not also open the app menu
+    if (menuAt) return
     const t = e.target as HTMLElement
     if (/input|textarea|select/i.test(t.tagName)) {
       if (e.key === 'Escape') {
@@ -570,6 +579,7 @@ export default function App() {
                   setAt(0)
                 }}
                 onOpen={() => setPane(true)}
+                onMenu={(row, at) => setMenuAt({ p: row, at })}
               />
               )}
             </div>
@@ -579,7 +589,7 @@ export default function App() {
                 detail={detail}
                 subs={data?.settings.subs || 'all'}
                 onCode={openCode}
-                onAct={doAct}
+                onOptions={(at) => current && setMenuAt({ p: current, at })}
                 onClose={() => setPane(false)}
               />
             ) : null}
@@ -617,6 +627,15 @@ export default function App() {
           </span>
         </div>
       </footer>
+      {menuAt ? (
+        <ActsMenu
+          p={menuAt.p}
+          d={detail?.url === menuAt.p.url ? detail : null}
+          at={menuAt.at}
+          onAct={(name, target) => doAct(name, target)}
+          onClose={() => setMenuAt(null)}
+        />
+      ) : null}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

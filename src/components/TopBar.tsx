@@ -50,8 +50,6 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
             number that tells you whether a queue looks short because it is, or because you are
             pointed at less than you thought. */}
         <span>{repos} repo{repos === 1 ? '' : 's'}</span>
-        <i className="dot" />
-        <span>{d?.model || ''}</span>
       </div>
       <div className="vtabs" title="switch view (G)">
         {(['board', 'graph'] as const).map((v) => (

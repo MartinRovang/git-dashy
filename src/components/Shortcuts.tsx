@@ -16,6 +16,7 @@ const KEYS: [string, [string, string][]][] = [
       ['/', 'Filter the list'],
       ['⏎', 'Open the detail pane'],
       ['o', 'Open the PR in your browser'],
+      ['right-click', 'Everything you can do to that PR'],
       ['G', 'Graph view'],
     ],
   ],

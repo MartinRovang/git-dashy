@@ -1,33 +1,6 @@
 import type { Detail, Row } from '../types'
-import { useNow } from '../usePoll'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
-
-type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
-
-function actsHTML(p: Row, d: Detail | null): Act[] {
-  const acts: Act[] = []
-  const rr = p.section === 'REVIEW REQUESTED'
-  const mine = p.section === 'MINE'
-  const reviewed = !!(p.review && !p.busy && tone(p.review))
-  if (rr)
-    acts.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
-  if (mine)
-    acts.push([
-      'p',
-      '',
-      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Read the pre-review' : 'Pre-review',
-      p.pre?.moved ? 'the PR moved since' : 'nothing posted',
-      p.busy,
-      'pre',
-    ])
-  if (d?.review) acts.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
-  acts.push(['o', '', 'Open in browser', 'github', false, 'open'])
-  acts.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
-  if (mine) acts.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
-  acts.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
-  acts.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
-  return acts
-}
+import { useNow } from '../usePoll'
 
 /** The side pane: the selected PR's summary, checks and review. */
 export function Pane({
@@ -35,14 +8,14 @@ export function Pane({
   detail,
   subs,
   onCode,
-  onAct,
+  onOptions,
   onClose,
 }: {
   p: Row | null
   detail: Detail | null
   subs: string
   onCode: () => void
-  onAct: (name: string) => void
+  onOptions: (at: { x: number; y: number }) => void
   onClose: () => void
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
@@ -84,6 +57,19 @@ export function Pane({
         <span className="tab" onClick={onCode}>
           <kbd className="hint">2</kbd>view code
         </span>
+        {/* ponytail: the actions were seven rows at the foot of a scrolling pane, so the one you
+            wanted was usually below the fold. In the header they are one click from anywhere in it,
+            and the same list answers a right-click on a row in the queue. */}
+        <button
+          className="tab opt"
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            onOptions({ x: r.left, y: r.bottom + 6 })
+          }}
+        >
+          options <span className="car">▾</span>
+        </button>
         <div style={{ flex: 1 }} />
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
           {d && d.branch ? d.branch : d && d.pending ? 'loading…' : ''}
@@ -198,35 +184,6 @@ export function Pane({
             </div>
           </>
         ) : null}
-        <div className="sep" />
-        {/* ponytail: seven 38px rows was the pane's tallest block and six of them are things you do
-            once a week. The one that matters — review, or the pre-review on your own PR — stays out;
-            the rest fold into Options, the way the design drew them. */}
-        {(() => {
-          const acts = actsHTML(p, d)
-          const lead = acts.filter(([, cls]) => cls === 'go')
-          const rest = acts.filter(([, cls]) => cls !== 'go')
-          const row = ([k, cls, label, note, off, act]: Act) => (
-            <div key={act} className={`act ${cls}${off ? ' off' : ''}`} onClick={() => !off && onAct(act)}>
-              <kbd className="hint">{k}</kbd>
-              <b>{label}</b>
-              <em>{note}</em>
-            </div>
-          )
-          return (
-            <>
-              {lead.length ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{lead.map(row)}</div> : null}
-              <details className="opts">
-                <summary>
-                  <span className="car">▶</span>
-                  <b>Options</b>
-                  <em>{rest.length}</em>
-                </summary>
-                <div className="optsb">{rest.map(row)}</div>
-              </details>
-            </>
-          )
-        })()}
       </div>
     </div>
   )

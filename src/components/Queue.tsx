@@ -22,6 +22,7 @@ type Props = {
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
   onOpen: () => void
+  onMenu: (row: Row, at: { x: number; y: number }) => void
 }
 
 function mineNote(prs: Row[]): string {
@@ -30,7 +31,7 @@ function mineNote(prs: Row[]): string {
   return [work ? `${work} need work` : '', wait ? `${wait} waiting` : ''].filter(Boolean).join(' · ')
 }
 
-function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: {
+function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, onMenu }: {
   p: Row
   child?: boolean
   sel: string
@@ -39,6 +40,7 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
   onExpand: (url: string) => void
   onSelect: (uid: string) => void
   onOpen: () => void
+  onMenu: (row: Row, at: { x: number; y: number }) => void
 }) {
   const st = rowState(p)
   const pal = PALETTE[st.key] || PALETTE.idle
@@ -90,6 +92,11 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
       className={`pr${p.uid === sel ? ' sel' : ''}${child ? ' child' : ''}${unread ? ' unread' : ''}`}
       onClick={() => onSelect(p.uid)}
       onDoubleClick={() => onOpen()}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onSelect(p.uid)
+        onMenu(p, { x: e.clientX, y: e.clientY })
+      }}
     >
       {child ? <div className="twist" /> : twist}
       <div className="age">{age(p.updatedAt)}</div>
@@ -261,6 +268,7 @@ export function Queue(p: Props) {
                         onExpand={p.onExpand}
                         onSelect={p.onSelect}
                         onOpen={p.onOpen}
+                        onMenu={p.onMenu}
                       />
                       {p.expanded[row.url]
                         ? row.older.map((o) => (
@@ -274,6 +282,7 @@ export function Queue(p: Props) {
                               onExpand={p.onExpand}
                               onSelect={p.onSelect}
                               onOpen={p.onOpen}
+                              onMenu={p.onMenu}
                             />
                           ))
                         : null}

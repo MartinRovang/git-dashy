@@ -105,6 +105,7 @@ button somewhere on the page.
 |-----|------|
 | `j` / `k`, `↑` / `↓` | move |
 | `o` | open the PR in your browser |
+| right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |

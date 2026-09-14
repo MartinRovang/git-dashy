@@ -557,20 +557,29 @@
   .krow kbd { min-width: 44px; height: 20px; font-size: 11px; color: var(--ink2); }
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
 
-  /* the pane's Options disclosure: one row out, the rest folded */
-  .opts { margin-top: 10px; }
-  .opts > summary { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px;
-                    border-radius: 8px; border: 1px solid var(--edge); background: var(--bg3);
-                    cursor: pointer; list-style: none; }
-  .opts > summary::-webkit-details-marker { display: none; }
-  .opts > summary:hover { background: var(--bg4); border-color: var(--dim3); }
-  .opts > summary b { font-size: 12.5px; font-weight: 500; color: var(--ink3); }
-  .opts > summary em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--dim3); }
-  .opts > summary .car { font-size: 8px; color: var(--dim2); transition: transform .15s; }
-  .opts[open] > summary .car { transform: rotate(90deg); color: var(--pink); }
-  .opts[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
-  .optsb { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 9px;
-           border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 8px 8px; background: var(--bg2); }
+  /* the pane header's options button */
+  .tab.opt { font-family: var(--sans); font-size: 12px; border-color: var(--edge); background: var(--bg4); color: var(--ink3); }
+  .tab.opt:hover { border-color: var(--dim3); color: var(--ink); }
+  .tab.opt .car { font-size: 9px; color: var(--dim2); }
+
+  /* the actions popup: the pane's options button and a right-click on a row open the same one */
+  .acts { position: fixed; z-index: 30; min-width: 234px; max-width: min(320px, 92vw); padding: 5px;
+          border-radius: 10px; border: 1px solid var(--edge); background: var(--bg3);
+          box-shadow: 0 16px 44px rgba(0,0,0,0.5); animation: acts-in .12s ease-out; }
+  @keyframes acts-in { from { opacity: 0; transform: translateY(-4px); } }
+  .actsh { display: flex; align-items: baseline; gap: 7px; padding: 5px 9px 7px;
+           border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .actsh .mono { font-size: 11px; color: var(--pink); }
+  .actsh span:last-child { font-size: 11px; color: var(--dim2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acts .ai { display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px;
+              border: 0; border-radius: 7px; background: none; font: inherit; text-align: left; cursor: pointer; }
+  .acts .ai:hover:not(:disabled) { background: var(--bg4); }
+  .acts .ai b { font-size: 12.5px; font-weight: 500; color: var(--ink2); white-space: nowrap; }
+  .acts .ai em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--dim3);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acts .ai kbd { flex-shrink: 0; }
+  .acts .ai:disabled { opacity: .4; cursor: default; }
+  .acts .ai.go b { color: var(--pink); font-weight: 600; }
 
   /* a multi-value setting in the collapsed digest, as the badges the expanded rail already uses.
      Stacked, never joined: at 92px a comma list is a truncated one. */
