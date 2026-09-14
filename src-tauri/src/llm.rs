@@ -5,7 +5,7 @@
 //! prompt for those backends. Claude reads it itself, with the one command it is given. Add a tool loop when
 //! a backend proves it can drive one, not before.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -176,15 +176,9 @@ fn ask_claude(
     effort: &str,
 ) -> Result<(String, Option<f64>, u64)> {
     let mut cmd = Command::new("claude");
-    cmd.args([
-        "-p",
-        prompt,
-        "--output-format",
-        "json",
-        "--safe-mode",
-        "--model",
-        name,
-    ]);
+    // ponytail: the prompt goes in on stdin. As an argument it hit Linux's 128 KB cap on one argv
+    // string (E2BIG), and the dream prompt carries every memory file, already ~90 KB (#80).
+    cmd.args(["-p", "--output-format", "json", "--safe-mode", "--model", name]);
     if !system.is_empty() {
         cmd.args(["--append-system-prompt", system]);
     }
@@ -205,10 +199,10 @@ fn ask_claude(
     // child an environment built from scratch: PATH and the token still arrive.
     cmd.current_dir(&here)
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let out = run(cmd, Duration::from_secs(timeout_secs));
+    let out = run(cmd, prompt, Duration::from_secs(timeout_secs));
     let _ = std::fs::remove_dir_all(&here);
     let out = out?;
     let result: Value = serde_json::from_str(&out).context("claude: output is not JSON")?;
@@ -223,8 +217,15 @@ fn ask_claude(
 }
 
 /// stdout of a finished, successful command; Err on a non-zero exit or once `timeout` passes (killed).
-fn run(mut cmd: Command, timeout: Duration) -> Result<String> {
+fn run(mut cmd: Command, input: &str, timeout: Duration) -> Result<String> {
     let mut child = cmd.spawn().context("claude: could not start")?;
+    let mut stdin = child.stdin.take().expect("piped");
+    let input = input.to_string();
+    // a thread, so a prompt bigger than the pipe buffer cannot block on a child that is not reading yet;
+    // dropping stdin at the end is the EOF claude waits for
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(input.as_bytes());
+    });
     let mut stdout = child.stdout.take().expect("piped");
     let mut stderr = child.stderr.take().expect("piped");
     let out = std::thread::spawn(move || {
@@ -513,22 +514,29 @@ mod tests {
     #[test]
     fn run_kills_a_command_that_outlives_its_timeout() {
         let mut cmd = Command::new("sleep");
-        cmd.arg("5").stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.arg("5")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let started = Instant::now();
-        assert!(run(cmd, Duration::from_millis(200)).is_err());
+        assert!(run(cmd, "", Duration::from_millis(200)).is_err());
         assert!(started.elapsed() < Duration::from_secs(3));
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "echo out; echo err >&2; exit 3"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        assert!(run(cmd, Duration::from_secs(5))
+        assert!(run(cmd, "", Duration::from_secs(5))
             .unwrap_err()
             .to_string()
             .contains("err"));
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "echo out"])
+        // the prompt arrives on stdin, whole, past both argv's 128 KB cap and the pipe buffer
+        let mut cmd = Command::new("wc");
+        cmd.arg("-c")
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        assert_eq!(run(cmd, Duration::from_secs(5)).unwrap(), "out\n");
+        let big = "x".repeat(200_000);
+        assert_eq!(run(cmd, &big, Duration::from_secs(5)).unwrap().trim(), "200000");
     }
 }

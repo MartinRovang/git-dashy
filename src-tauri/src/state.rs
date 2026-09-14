@@ -32,6 +32,9 @@ pub type DiffKey = (String, u64, String, Vec<(String, String, String)>, u64);
 /// One PR's parsed diff and the marks anchored onto it.
 pub type DiffCache = (Vec<DiffFile>, Vec<Mark>);
 
+/// Seconds a wake waits after the previous tick, so a burst of finished reviews refetches once.
+const WAKE_GAP: f64 = 10.0;
+
 /// An event the refresh loop sleeps on: `set` wakes it, `wait` returns true when it was set.
 #[derive(Default)]
 pub struct Wake {
@@ -435,6 +438,13 @@ impl State {
             // dropping 30m to 1m waited out the remaining 29 instead of refetching now.
             while !wake.wait(Duration::from_secs(1)) && now() < base + config::get().interval as f64 {
                 // 1s slices, so a change to either side takes effect within the second
+            }
+            // ponytail: every finished review wakes the loop, and a tick is pulls, ls-remote, backup,
+            // mirrors and a fetch. Auto-review finishing ten PRs ran ten of them back to back (#73). Holding
+            // a wake until WAKE_GAP after the last tick lands a burst as one. Ceiling: `f` right after a
+            // tick waits out the rest of the gap; a fetch-only wake is the upgrade if that is felt.
+            while now() < base + WAKE_GAP {
+                std::thread::sleep(Duration::from_millis(250));
             }
             wake.clear();
         }
