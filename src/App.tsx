@@ -13,12 +13,11 @@ import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, span, tone } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
-import { useNow, useStatePoll } from './usePoll'
+import { useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
 export default function App() {
   const [data, reload] = useStatePoll(2000)
-  const now = useNow(1000)
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
@@ -491,7 +490,7 @@ export default function App() {
 
   return (
     <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -519,7 +518,6 @@ export default function App() {
               <Queue
                 data={data}
                 secs={secs}
-                now={now}
                 sel={selUid}
                 read={read}
                 onReadAll={() => markRead(secs.flatMap((s) => s.prs))}

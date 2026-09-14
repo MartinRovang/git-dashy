@@ -86,7 +86,7 @@ export function Graph({ secs, sel, onSelect }: {
   }, [secs])
   // ponytail: plain state, not localStorage: the GUI gets a new port, so a new origin and empty storage, every launch
   const [by, setBy] = useState<Group>('repo')
-  const key = by + '|' + rows.map((r) => `${r.url}\t${hubsOf(r, by).join('\t')}`).sort().join('|')
+  const key = useMemo(() => by + '|' + rows.map((r) => `${r.url}\t${hubsOf(r, by).join('\t')}`).sort().join('|'), [rows, by])
   const lastBy = useRef(by)
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)
@@ -272,7 +272,8 @@ export function Graph({ secs, sel, onSelect }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
-  useEffect(paint)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(paint, [rows, sel, query, by])
 
   // Zoom and pan, once. Labels fade in as you zoom, like Quartz, so a wide view stays uncluttered.
   useEffect(() => {
