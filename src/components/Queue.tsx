@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { buckets, chips, emptyLine, inBucket } from '../board'
+import { buckets, chips, emptyLine, folded, inBucket } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -20,6 +20,8 @@ type Props = {
   onBucket: (name: string) => void
   expanded: Record<string, boolean>
   onExpand: (url: string) => void
+  unfolded: Record<string, boolean>
+  onFold: (name: string) => void
   onSelect: (uid: string) => void
   onOpen: () => void
   onMenu: (row: Row, at: { x: number; y: number }) => void
@@ -218,6 +220,8 @@ export function Queue(p: Props) {
               : s.prs
           let seen: string | null = null
           const named = shownSecs.length > 1
+          const shut = folded(s.name, shownSecs.length, p.unfolded)
+          const foldable = named && s.name === 'REVIEWED'
           const hint = s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''
           return (
             <div key={s.name}>
@@ -225,13 +229,23 @@ export function Queue(p: Props) {
                   The hint beside it is not: "3 need work · 2 waiting" is the one thing that row
                   carried that no tab does, and it vanished in the queue you opened to read it. */}
               {named || hint ? (
-                <div className="grp">
-                  {named ? <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>{s.name}</span> : null}
+                <div
+                  className="grp"
+                  onClick={foldable ? () => p.onFold(s.name) : undefined}
+                  style={foldable ? { cursor: 'pointer' } : undefined}
+                >
+                  {named ? (
+                    <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>
+                      {foldable ? (shut ? '▸ ' : '▾ ') : ''}
+                      {s.name}
+                      {shut ? ` · ${s.prs.length}` : ''}
+                    </span>
+                  ) : null}
                   <span className="hint">{hint}</span>
                   <hr />
                 </div>
               ) : null}
-              {s.error ? (
+              {shut ? null : s.error ? (
                 <div className="none err">{s.error.split('\n')[0]}</div>
               ) : !s.prs.length ? (
                 <div className="empty">{emptyLine(d, s.name, p.query, p.failing, p.drafts)}</div>

@@ -38,6 +38,8 @@ export default function App() {
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // ponytail: session-only, like `expanded`; REVIEWED opens folded every launch
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
   const [video, setVideo] = useState(false)
@@ -88,7 +90,7 @@ export default function App() {
     })
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
-  const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
+  const rows = useMemo(() => flat(secs, bucket, expanded, unfolded), [secs, bucket, expanded, unfolded])
   const { row: current, chosen } = pick(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
@@ -579,6 +581,8 @@ export default function App() {
                 onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
+                unfolded={unfolded}
+                onFold={(name) => setUnfolded((f) => ({ ...f, [name]: !f[name] }))}
                 onSelect={(uid) => {
                   setSel(uid)
                   setAt(0)

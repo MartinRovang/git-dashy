@@ -144,8 +144,21 @@ export function emptyLine(d: StateData | null, name: string, query: string, fail
   return SECTION_EMPTY[name] || 'Nothing here.'
 }
 
-export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {
-  return inBucket(secs, bucket)
+/** REVIEWED starts folded while it shares the board with other queues; its own tab always shows it.
+ *  `unfolded` is what the header clicks opened. */
+export function folded(name: string, shown: number, unfolded: Record<string, boolean>): boolean {
+  return name === 'REVIEWED' && shown > 1 && !unfolded[name]
+}
+
+export function flat(
+  secs: VisSection[],
+  bucket: readonly string[],
+  expanded: Record<string, boolean>,
+  unfolded: Record<string, boolean> = {},
+): Row[] {
+  const shown = inBucket(secs, bucket)
+  return shown
+    .filter((s) => !folded(s.name, shown.length, unfolded))
     .flatMap((s) => s.prs)
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
