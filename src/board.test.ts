@@ -461,6 +461,15 @@ describe('TEAM sources', () => {
     expect(v[1].prs[0].section).toBe('OTHER')
     const known = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', status: '✓ approved' })] }], on))
     expect(known.map((s) => s.name)).toEqual(['TEAM'])
+    // MERGED follows the same sources, lands at the bottom below OTHER, and starts folded
+    const m = secs(state([
+      { name: 'TEAM', prs: [pr({ repo: 'acme/b', title: 'new' })] },
+      { name: 'MERGED', prs: [pr({ repo: 'acme/m', title: 'shipped' }), pr({ repo: 'other/x', title: 'off' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+    ], on))
+    expect(m.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', []], ['REVIEWED', ['r']], ['OTHER', ['new']], ['MERGED', ['shipped']]])
+    expect(flat(m, [ALL], {}).map((p) => p.title)).toEqual([])
+    expect(flat(m, ['MERGED'], {}).map((p) => p.title)).toEqual(['shipped'])
     // every source off: no empty TEAM left behind
     expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
   })

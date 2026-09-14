@@ -23,15 +23,17 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
   const out: VisSection[] = []
   let other: VisSection | null = null // last, below REVIEWED
+  let merged: VisSection | null = null // below OTHER: the bottom of the board
   for (const sec of d?.sections || []) {
+    const sourced = sec.name === 'TEAM' || sec.name === 'MERGED'
     // every source toggled off: the server still searches them this session, but there is nothing to show
-    if (sec.name === 'TEAM' && !s.scopes?.length) continue
+    if (sourced && !s.scopes?.length) continue
     const rows: Row[] = (sec.prs || [])
       .map((p, i) => ({ ...p, uid: `${sec.name}/${i}/${p.url}`, section: sec.name, older: [] }))
       .filter((p) => {
         if (!s.drafts && p.isDraft && !p.busy && !p.review) return false // a draft under review stays visible
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
-        if (sec.name === 'TEAM' && !inScope(p, s.scopes || [])) return false // the window is in the search itself
+        if (sourced && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (onlyDrafts && !p.isDraft) return false
         if (!q) return true
@@ -43,9 +45,14 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
       other = { ...sec, name: 'OTHER', error: '', prs: rows.filter((p) => !known(p)).map((p) => ({ ...p, section: 'OTHER', uid: p.uid.replace(/^TEAM\//, 'OTHER/') })) }
       continue
     }
+    if (sec.name === 'MERGED') {
+      merged = { ...sec, prs: rows }
+      continue
+    }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
   }
   if (other?.prs.length) out.push(other)
+  if (merged) out.push(merged)
   return out
 }
 
@@ -146,9 +153,9 @@ export function emptyLine(d: StateData | null, name: string, query: string, fail
   return SECTION_EMPTY[name] || 'Nothing here.'
 }
 
-/** REVIEWED and OTHER start folded while they share the board with other queues; their own tab always shows them.
+/** REVIEWED, OTHER and MERGED start folded while they share the board with other queues; their own tab always shows them.
  *  `unfolded` is what the header clicks opened. */
-export const FOLDABLE = ['REVIEWED', 'OTHER']
+export const FOLDABLE = ['REVIEWED', 'OTHER', 'MERGED']
 
 export function folded(name: string, shown: number, unfolded: Record<string, boolean>): boolean {
   return FOLDABLE.includes(name) && shown > 1 && !unfolded[name]
