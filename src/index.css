@@ -460,6 +460,8 @@
                     border-radius: 50%; background: #fff; transition: left .15s; }
   .fld[aria-pressed="true"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
   .fld[aria-pressed="true"] .sw { background: var(--green); }
+  /* the rail's switches read by their knob; a border on each boxed the whole card in */
+  .side .fld, .side .fld:hover, .side .fld[aria-pressed="true"] { border-color: transparent; }
   .fld[aria-pressed="true"] .sw::after { left: 14px; }
 
   .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 3px; }

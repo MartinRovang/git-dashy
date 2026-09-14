@@ -1447,6 +1447,21 @@ fn post_settings(state: &State, body: &Body) -> Out {
         wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
     }
+    if let Some(v) = body.get("read") {
+        // ponytail: capped, not pruned here; the page drops urls no longer on the board before it sends
+        let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
+            m.iter()
+                .map(|(u, t)| t.as_str().map(|t| (u.clone(), t.to_string())))
+                .collect()
+        });
+        let Some(got) = got else {
+            return Err(Fail::new(
+                400,
+                "read must be an object of url to updatedAt, at most 5000",
+            ));
+        };
+        c.read = got;
+    }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
     }
@@ -2120,6 +2135,24 @@ mod tests {
             200
         );
         assert_eq!(config::get().scopes, ["team:k"]);
+        assert_eq!(
+            post(
+                &format!("{base}/api/settings"),
+                json!({"read": {"https://x/1": "t1"}}),
+                &token
+            )
+            .0,
+            200
+        );
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            (saved["read"]["https://x/1"].as_str(), saved["scopes"][0].as_str()),
+            (Some("t1"), Some("team:k"))
+        );
+        assert_eq!(
+            post(&format!("{base}/api/settings"), json!({"read": {"u": 3}}), &token).0,
+            400
+        );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port

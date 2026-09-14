@@ -118,6 +118,9 @@ pub struct Config {
     pub drafts: bool,
     /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
     pub scopes: Vec<String>,
+    /// url -> the updatedAt that was read, so a PR that moves goes unread again. Here, not in localStorage:
+    /// the webview's origin is new every launch (see `hinted`). The page prunes it to the PRs on the board.
+    pub read: HashMap<String, String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
     /// each time. Anything that must be remembered across launches belongs on this side.
@@ -180,6 +183,7 @@ impl Default for Config {
             window: Some(24),
             drafts: false,
             scopes: Vec::new(),
+            read: HashMap::new(),
             hinted: false,
             keyhints: true,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
@@ -210,6 +214,8 @@ pub struct Saved {
     pub drafts: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -321,6 +327,9 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.scopes {
         c.scopes = v;
     }
+    if let Some(v) = saved.read {
+        c.read = v;
+    }
     if let Some(v) = saved.hinted {
         c.hinted = v;
     }
@@ -366,6 +375,7 @@ pub fn snapshot(c: &Config) -> Saved {
         window: Some(c.window),
         drafts: Some(c.drafts),
         scopes: Some(c.scopes.clone()),
+        read: Some(c.read.clone()),
         hinted: Some(c.hinted),
         keyhints: Some(c.keyhints),
         depth: Some(c.depth.clone()),
@@ -414,7 +424,7 @@ mod tests {
     fn a_saved_file_reaches_every_setting() {
         let none = |_: &str| false;
         let json = r#"{
-            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,
+            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
             "hinted":true,"keyhints":false,"depth":"high","effort":"max","notify":true,
             "theme":"nord","voice":["caveman"],"hunter":["security"]
         }"#;
@@ -426,6 +436,8 @@ mod tests {
         assert_eq!(c.sub, "open");
         assert_eq!(c.window, Some(168));
         assert!(c.drafts);
+        assert_eq!(c.scopes, ["org:acme"]);
+        assert_eq!(c.read.get("u").map(String::as_str), Some("t"));
         assert!(c.hinted);
         assert!(!c.keyhints);
         assert_eq!(c.depth, "high");

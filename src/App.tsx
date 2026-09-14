@@ -64,30 +64,25 @@ export default function App() {
     setOnlyDrafts(f.drafts)
     setBucket(f.bucket)
   }
-  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
-  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
-  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
-  // everything unread, and reading is one keypress per row.
-  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
-  const [read, setRead] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
-    } catch {
-      return {}
-    }
-  })
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
+  // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
+  // `marked` is what this page read since the last save landed; it wins over the polled copy.
+  const [marked, setMarked] = useState<Record<string, string> | null>(null)
+  const read = useMemo(() => marked || data?.settings.read || {}, [marked, data])
 
-  const markRead = (prs: Row[]) =>
-    setRead((r) => {
-      if (prs.every((p) => r[p.url] === p.updatedAt)) return r
-      const next = { ...r, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
+  const markRead = (prs: Row[]) => {
+    if (prs.every((p) => read[p.url] === p.updatedAt)) return
+    const secs = data?.sections || []
+    const onBoard = new Set(secs.flatMap((s) => (s.prs || []).map((p) => p.url)))
+    // pruned to what is on the board, so the file does not keep every PR ever opened; not while a
+    // section failed, or one bad fetch would forget everything in it
+    const prune = secs.every((s) => !s.error)
+    const next = Object.fromEntries(
+      Object.entries({ ...read, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }).filter(([u]) => !prune || onBoard.has(u)),
+    )
+    setMarked(next)
+    post('/api/settings', { read: next })
+  }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
   const rows = useMemo(() => flat(secs, bucket, expanded, unfolded), [secs, bucket, expanded, unfolded])
