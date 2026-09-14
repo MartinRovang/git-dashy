@@ -327,8 +327,10 @@
   .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
-  .graph svg.search:not(.focus) .gnode:not(.hit), .graph svg.search:not(.focus) line:not(.hit) { opacity: .15; }
-  .graph svg.search .halos circle:not(.hit), .graph svg.search .gnames text:not(.hit), .graph svg.focus .halos, .graph svg.focus .gnames { opacity: .3; }
+  /* search dims harder than hover: you typed to find something, so the rest should all but vanish */
+  .graph svg.search:not(.focus) .gnode:not(.hit), .graph svg.search:not(.focus) line:not(.hit) { opacity: .05; }
+  .graph svg.search .halos circle:not(.hit), .graph svg.search .gnames text:not(.hit) { opacity: .1; }
+  .graph svg.focus .halos, .graph svg.focus .gnames { opacity: .3; }
   .graph svg.search .gnode.hit text { opacity: 1; fill: var(--ink); }
   .gbadge { display: flex; flex-direction: column; gap: 6px; }
   .gbadge .search { pointer-events: auto; background: var(--bg); }
