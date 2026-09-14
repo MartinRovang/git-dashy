@@ -14,8 +14,9 @@ export function useStatePoll(ms: number): [StateData | null, () => void] {
       const text = await r.text()
       // the same payload keeps the same object, so nothing downstream re-renders (#71)
       if (text === last.current || !mounted.current) return
+      const got = JSON.parse(text) as StateData // before remembering it: a body that fails to parse is not seen
       last.current = text
-      setData(JSON.parse(text) as StateData)
+      setData(got)
     } catch {
       /* server gone; the next tick retries */
     }

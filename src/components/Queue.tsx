@@ -115,6 +115,7 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
+  // running: not read here, but a running row's elapsed label (rowState) only moves when this re-renders
   const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
 
