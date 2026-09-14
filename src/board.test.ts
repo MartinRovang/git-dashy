@@ -404,6 +404,15 @@ describe('counts: what the status block reads', () => {
     expect(got.commented).toBe(1)
   })
 
+  it('does not count a TEAM or MERGED verdict twice beside its REVIEWED row', () => {
+    const d = state([
+      { name: 'MERGED', prs: [pr({ review: '✓ approved' })] },
+      { name: 'TEAM', prs: [pr({ review: '✓ approved' })] },
+      { name: 'REVIEWED', prs: [pr({ review: '✓ approved' })] },
+    ])
+    expect(Object.fromEntries(counts(d).map(([l, n]) => [l, n])).approved).toBe(1)
+  })
+
   it('is all zero on an empty board rather than throwing', () => {
     expect(counts(null).map(([, n]) => n)).toEqual([0, 0, 0, 0])
   })

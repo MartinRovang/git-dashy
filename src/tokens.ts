@@ -41,7 +41,7 @@ export const SECTION_EMPTY: Record<string, string> = {
   'REVIEW REQUESTED': 'Nobody is waiting on your review.',
   ASSIGNED: 'Nothing assigned to you.',
   REVIEWED: 'Nothing reviewed yet.',
-  MERGED: 'Nothing merged in your sources in this window.',
+  MERGED: 'No merged PR in your sources was updated in this window.',
 }
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }
 export const CHECK_TONE: Record<string, string> = {

@@ -15,8 +15,8 @@ export function inScope(p: { repo: string; team: string }, scopes: string[]): bo
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
- *  TEAM is filtered by the sources toggles here, not by a refetch, and splits in two: rows the logs know a
- *  review of stay TEAM, the rest are OTHER. */
+ *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
+ *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. */
 export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
@@ -205,8 +205,8 @@ export function selected(rows: Row[], sel: string): Row | null {
 }
 
 export function counts(d: StateData | null) {
-  // TEAM verdicts come from log entries REVIEWED already counts
-  const all = (d?.sections || []).filter((s) => s.name !== 'TEAM').flatMap((s) => s.prs || []).map(rowState)
+  // TEAM and MERGED verdicts come from reviews REVIEWED already counts
+  const all = (d?.sections || []).filter((s) => s.name !== 'TEAM' && s.name !== 'MERGED').flatMap((s) => s.prs || []).map(rowState)
   const by = (t: string) => all.filter((r) => r.key === t).length
   return [
     ['approved', by('approved'), 'var(--green)'],

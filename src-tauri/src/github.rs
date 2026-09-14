@@ -497,7 +497,7 @@ pub fn scope_terms(
     terms.join(" ")
 }
 
-/// The TEAM search held to the history window, like REVIEWED: only PRs touched in the last `window`
+/// The TEAM and MERGED searches held to the history window, like REVIEWED: only PRs touched in the last `window`
 /// hours. `None` is all time; "" stays "" so nothing toggled still means no search.
 pub fn within(scope: &str, window: Option<u64>, now: chrono::DateTime<chrono::Utc>) -> String {
     match window {
