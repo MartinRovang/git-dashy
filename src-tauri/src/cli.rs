@@ -632,7 +632,7 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     let show = || {
         let rows = autorev::scope().listed();
         if rows.is_empty() {
-            println!("  auto-review covers every repo on the board — name one to narrow it");
+            println!("  auto-review covers every repo on the board; name one to narrow it");
             return;
         }
         println!(
@@ -647,6 +647,14 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         );
         println!("  every other repo is left alone while anything is armed");
     };
+    // ponytail: BEFORE the owner branch and before the positional guard. --list is a read-only
+    // question, and bind() already learned this one command over: gating it behind a check on the
+    // thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
+    // Here it was worse — `auto --owner acme --list` armed the org and returned before reading it.
+    if list {
+        show();
+        return 0;
+    }
     if let Some(owner) = owner.filter(|o| !o.is_empty()) {
         let err = autorev::set_owner(&owner, on);
         if !err.is_empty() {
@@ -677,7 +685,7 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         }
         None => String::new(),
     };
-    if list || named.is_empty() {
+    if named.is_empty() {
         show();
         return 0;
     }
@@ -685,8 +693,10 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     if !err.is_empty() {
         return fail(format!("gitdashy: {err}"));
     }
+    // the folded key, not what was typed: `auto https://github.com/Acme/API` reported the URL back
     println!(
-        "gitdashy: {named} {}",
+        "gitdashy: {} {}",
+        bind_mod::key(&named),
         if on {
             "is auto-reviewed"
         } else {
@@ -1553,6 +1563,56 @@ mod tests {
         Cli::try_parse_from(std::iter::once("gitdashy").chain(args.iter().copied())).unwrap()
     }
 
+    /// --list is a question. It must answer before anything in this command writes, whatever else
+    /// is on the line — the bug this pins armed acme/* and returned before ever reading the store.
+    #[test]
+    fn auto_list_answers_without_writing_whatever_else_is_asked() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+
+        assert_eq!(auto_cmd(None, Some("acme".into()), false, true), 0);
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, false, true), 0);
+        assert_eq!(
+            auto_cmd(Some("not-a-slug".into()), None, false, true),
+            0,
+            "a typo is not an error for a question"
+        );
+        assert!(!store.exists(), "--list wrote to the store");
+        assert!(crate::autorev::scope().everywhere());
+
+        // and without --list the same calls do write
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, false, false), 0);
+        assert!(crate::autorev::armed("acme/api") && !crate::autorev::armed("other/thing"));
+        assert_eq!(auto_cmd(None, Some("beta".into()), false, false), 0);
+        assert!(crate::autorev::armed("beta/anything"));
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, true, false), 0);
+        assert!(!crate::autorev::armed("acme/api"), "--off disarms it again");
+    }
+
+    /// A bare `gitdashy auto` reports: naming no repo and asking for no change is a question, and
+    /// answering it by arming whatever directory you are standing in is a write nobody asked for.
+    #[test]
+    fn a_bare_auto_reports_rather_than_arming_here() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+        assert_eq!(auto_cmd(None, None, false, false), 0);
+        assert!(!store.exists());
+    }
+
+    #[test]
+    fn auto_refuses_a_key_it_cannot_read() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.autorev = d.path().join("autorev"));
+        assert_eq!(auto_cmd(Some("notes".into()), None, false, false), 1);
+        assert_eq!(auto_cmd(None, Some("acme/api".into()), false, false), 1);
+        assert!(crate::autorev::scope().everywhere());
+    }
+
     #[test]
     fn top_level_flags_parse() {
         let c = parse(&[
@@ -1647,6 +1707,28 @@ mod tests {
         assert!(matches!(
             parse(&["install", "--uninstall"]).command,
             Some(Command::Install { uninstall: true, .. })
+        ));
+        let Some(Command::Auto {
+            repo,
+            owner,
+            off,
+            list,
+        }) = parse(&["auto", "acme/api", "--owner", "acme", "--off", "--list"]).command
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (repo.as_deref(), owner.as_deref(), off, list),
+            (Some("acme/api"), Some("acme"), true, true)
+        );
+        assert!(matches!(
+            parse(&["auto"]).command,
+            Some(Command::Auto {
+                repo: None,
+                owner: None,
+                off: false,
+                list: false
+            })
         ));
         assert!(matches!(
             parse(&["self-review", "12", "--repo", "a/b", "--model", "opus"]).command,

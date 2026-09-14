@@ -218,7 +218,10 @@ pub fn why(repo: &str) -> (String, String) {
 
 /// A JSON string the way Python's json.dumps writes it (ASCII only), so the file stays byte-identical
 /// whichever version appended the line.
-fn dumps(s: &str) -> String {
+///
+/// ponytail: shared with autorev.rs rather than copied. The whole job of this function is producing
+/// a byte-identical line, and two copies of it drift into a file an older version cannot read.
+pub(crate) fn dumps(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -252,19 +255,22 @@ fn repr(s: &str) -> String {
     }
 }
 
-/// Add one line. Returns "" or why it could not: never panics.
+/// Add one line to `store`. Returns "" or why it could not: never panics.
 ///
 /// ponytail: seed() runs from team.activate(), which runs at startup, inside the UI. An unwritable
 /// ~/.prs_bindings (a directory of that name, a read-only home, a full disk) would otherwise unwind
 /// out of the wrapper and take the whole dashboard down before it drew anything. This program has
 /// killed a session that way once already, over a path that could not be resolved.
-fn append(fields: &[(&str, &str)]) -> String {
+///
+/// ponytail: takes the path so autorev.rs can use it. Both stores are one JSON object per line,
+/// last line wins on read, and one writer is one place for the escaping and the never-panic rule.
+pub(crate) fn append_to(p: PathBuf, fields: &[(&str, &str)], extra: &[(&str, String)]) -> String {
     let line = fields
         .iter()
         .map(|(k, v)| format!("{}: {}", dumps(k), dumps(v)))
+        .chain(extra.iter().map(|(k, raw)| format!("{}: {}", dumps(k), raw)))
         .collect::<Vec<_>>()
         .join(", ");
-    let p = store();
     let parent = p
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
@@ -280,6 +286,10 @@ fn append(fields: &[(&str, &str)]) -> String {
         Ok(()) => String::new(),
         Err(e) => e.to_string(),
     }
+}
+
+fn append(fields: &[(&str, &str)]) -> String {
+    append_to(store(), fields, &[])
 }
 
 /// Bind `repo` to team `to`. Returns "" or why it did not.

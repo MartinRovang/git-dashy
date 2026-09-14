@@ -20,12 +20,11 @@
 //! on reading back a file an older version wrote.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::bind::{key, owner_key};
+use crate::bind::{self, key, owner_key};
 
 fn store() -> PathBuf {
     crate::config::get().autorev
@@ -115,70 +114,16 @@ pub fn scope() -> Scope {
 }
 
 /// Whether auto reviews `repo`, against one read. For a single question.
+///
+/// ponytail: a caller asking about many rows holds a `scope()` and calls `armed` on it instead — a
+/// tick asks per PR, and reopening the file per row would let two rows in one tick disagree.
 pub fn armed(repo: &str) -> bool {
     scope().armed(repo)
 }
 
-/// A repo -> armed function over ONE read, for a caller asking about many.
-///
-/// ponytail: a tick asks this per row. Calling armed() per row would reopen the file once per PR on
-/// every refresh, and the answers could differ within one tick.
-pub fn resolver() -> Box<dyn Fn(&str) -> bool + Send + Sync> {
-    let s = scope();
-    Box::new(move |repo: &str| s.armed(repo))
-}
-
-/// Add one line. Returns "" or why it could not: never panics.
-///
-/// ponytail: the same shape and the same reason as bind::append — this runs from the UI, and an
-/// unwritable home must not unwind out of a click and take the dashboard down.
+/// Add one line: the fields, then the `auto` flag as a bare JSON bool.
 fn append(fields: &[(&str, &str)], on: bool) -> String {
-    let mut line: Vec<String> = fields
-        .iter()
-        .map(|(k, v)| format!("{}: {}", dumps(k), dumps(v)))
-        .collect();
-    line.push(format!("{}: {}", dumps("auto"), on));
-    let p = store();
-    let parent = p
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| ".".into());
-    let go = || -> std::io::Result<()> {
-        std::fs::create_dir_all(&parent)?;
-        let mut f = std::fs::OpenOptions::new().append(true).create(true).open(&p)?;
-        f.write_all(format!("{{{}}}\n", line.join(", ")).as_bytes())
-    };
-    match go() {
-        Ok(()) => String::new(),
-        Err(e) => e.to_string(),
-    }
-}
-
-/// A JSON string the way Python's json.dumps writes it, so a line is byte-identical to bind's.
-fn dumps(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || (c as u32) > 0x7e => {
-                let mut buf = [0u16; 2];
-                for u in c.encode_utf16(&mut buf) {
-                    out.push_str(&format!("\\u{:04x}", u));
-                }
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    bind::append_to(store(), fields, &[("auto", on.to_string())])
 }
 
 /// Arm or disarm one repo. Returns "" or why it did not.
@@ -205,15 +150,21 @@ pub fn set_owner(owner: &str, on: bool) -> String {
     append(&[("owner", &o)], on)
 }
 
+/// The one lock for tests that repoint `config.autorev`, which is process-global. Two locks would
+/// let web.rs and cli.rs point each other's reads at the wrong tempdir, intermittently.
+#[cfg(test)]
+pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use std::sync::MutexGuard;
 
     fn fresh() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         (g, d)
@@ -349,15 +300,38 @@ mod tests {
         );
     }
 
+    /// A tick holds one Scope and asks it per row, so the file changing under it cannot make two
+    /// rows in the same tick disagree.
     #[test]
-    fn the_resolver_answers_from_one_read() {
+    fn one_scope_answers_every_row_from_one_read() {
         let (_g, _d) = fresh();
         set_owner("acme", true);
-        let f = resolver();
-        // the file changing under it must not change its answers mid-tick
+        let s = scope();
         set("acme/api", false);
-        assert!(f("acme/api"));
-        assert!(f("acme/web"));
-        assert!(!f("other/thing"));
+        assert!(s.armed("acme/api"));
+        assert!(s.armed("acme/web"));
+        assert!(!s.armed("other/thing"));
+        assert!(!armed("acme/api"), "a fresh read sees the change");
+    }
+
+    /// autorev writes through bind's serializer, so a key that needs escaping reads back intact.
+    #[test]
+    fn a_key_that_needs_escaping_survives_the_round_trip() {
+        let (_g, d) = fresh();
+        set("ac\u{e8}me/api", true);
+        let line = std::fs::read_to_string(d.path().join("autorev")).unwrap();
+        assert!(
+            line.contains("\\u00e8"),
+            "non-ASCII is escaped the way bind writes it: {line}"
+        );
+        assert!(armed("ac\u{e8}me/api"));
+    }
+
+    #[test]
+    fn the_flag_is_a_json_bool_not_a_string() {
+        let (_g, d) = fresh();
+        set("acme/api", true);
+        let line = std::fs::read_to_string(d.path().join("autorev")).unwrap();
+        assert!(line.contains("\"auto\": true"), "{line}");
     }
 }

@@ -337,6 +337,24 @@ impl State {
         }
     }
 
+    /// Treat what is already listed in the repos `newly` names as seen by auto.
+    ///
+    /// ponytail: widening the scope must not fire a batch. `a` asks before reviewing a backlog and
+    /// shows the count; arming a repo goes through no such gate, so the PRs already on the board
+    /// there join the baseline and only what arrives afterwards starts.
+    pub fn seen_by_auto(&self, newly: &dyn Fn(&str) -> bool) {
+        let mut inner = self.lock();
+        let urls: Vec<String> = inner
+            .rr_prs()
+            .into_iter()
+            .filter(|p| newly(p.repo()))
+            .map(|p| p.url.clone())
+            .collect();
+        if let Some(b) = inner.auto_baseline.as_mut() {
+            b.extend(urls);
+        }
+    }
+
     /// Review-requested PRs with no verdict or review in flight.
     pub fn pending_rr(&self) -> Vec<Pr> {
         let inner = self.lock();
@@ -688,8 +706,8 @@ impl State {
                     // ponytail: one read of the store for the whole tick. Asking per row would
                     // reopen the file once per PR, and two rows in one tick could get different
                     // answers if a click landed between them.
-                    let armed = autorev::resolver();
-                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &*armed)
+                    let scope = autorev::scope();
+                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
                 }
                 _ => Vec::new(),
             }

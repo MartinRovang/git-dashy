@@ -894,16 +894,23 @@ fn post_review(state: &State, body: &Body) -> Out {
 }
 
 fn post_auto(state: &State, body: &Body) -> Out {
-    // arming one repo or owner is a scope change, not the master switch; `repo` says which
-    let repo = text(body, "repo");
-    if !repo.is_empty() {
+    // arming is a scope change, not the master switch. `owner` carries the owner and `repo` the
+    // repo: a truthy FLAG that re-read `repo` through owner_of() meant a client sending the owner
+    // name in `owner` — the obvious reading — widened a repo arm to the whole org by coincidence.
+    let (repo, owner) = (text(body, "repo"), text(body, "owner"));
+    if !repo.is_empty() || !owner.is_empty() {
         let on = truthy(body, "on");
-        let err = if truthy(body, "owner") {
-            autorev::set_owner(&owner_of(&repo), on)
-        } else {
+        let before = autorev::scope();
+        fail_if(if owner.is_empty() {
             autorev::set(&repo, on)
-        };
-        fail_if(err)?;
+        } else {
+            autorev::set_owner(&owner, on)
+        })?;
+        // ponytail: what a newly armed repo already has listed is treated as seen. `a` asks before
+        // reviewing a backlog, with the count; widening the scope must not skip that gate and fire
+        // a batch nobody asked for. Anything arriving after this still starts on its own.
+        let after = autorev::scope();
+        state.seen_by_auto(&|r| !before.armed(r) && after.armed(r));
         state.wake();
         return Ok(json!({"ok": true}));
     }
@@ -1983,6 +1990,7 @@ mod tests {
     /// A body with no `repo` must still be the switch, or turning auto on would arm nothing.
     #[test]
     fn the_auto_route_arms_a_repo_without_touching_the_switch() {
+        let _g = autorev::test_lock(); // config.autorev is process-global; one lock for every test that moves it
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.autorev = d.path().join("autorev"));
         let (base, token, state) = served();
@@ -2008,15 +2016,22 @@ mod tests {
         );
         assert!(autorev::armed("acme/api") && !autorev::armed("other/thing"));
 
+        // the owner is its own value, not a flag that re-reads `repo`
         post(
             &format!("{base}/api/auto"),
-            json!({"repo": "acme/api", "owner": true, "on": true}),
+            json!({"owner": "acme", "on": true}),
             &token,
         );
         assert!(
             autorev::armed("acme/web"),
             "the owner rule reaches a sibling repo"
         );
+        post(
+            &format!("{base}/api/auto"),
+            json!({"owner": "acme", "on": false}),
+            &token,
+        );
+        assert!(!autorev::armed("acme/web") && autorev::armed("acme/api"));
 
         let (code, body) = post(
             &format!("{base}/api/auto"),
@@ -2026,6 +2041,58 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (400, Some("notes is not an owner/name"))
+        );
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"owner": "acme/api", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("acme/api is not an owner"))
+        );
+    }
+
+    /// `a` asks before reviewing a backlog, with the count. Widening the scope goes through no such
+    /// gate, so what a newly armed repo already has listed must not start on the next tick.
+    #[test]
+    fn arming_a_repo_does_not_fire_a_batch_for_what_is_already_listed() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.autorev = d.path().join("autorev"));
+        let (base, token, state) = served();
+        let mut other = pr();
+        other.url = "elsewhere".into();
+        other.repository.name_with_owner = "other/thing".into();
+        state.lock().sections = vec![Section {
+            name: "REVIEW REQUESTED".into(),
+            prs: Some(vec![pr(), other]),
+            err: None,
+        }];
+        state.set_auto(true, true); // an empty baseline: everything listed is fair game
+
+        // the FIRST arm narrows from everything to one, so nothing becomes newly covered
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "a/b", "on": true}),
+            &token,
+        );
+        assert!(
+            state.lock().auto_baseline.clone().unwrap().is_empty(),
+            "narrowing the scope covers nothing new"
+        );
+
+        // the second WIDENS it, and what other/thing already has listed must not start
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "other/thing", "on": true}),
+            &token,
+        );
+        let seen = state.lock().auto_baseline.clone().unwrap();
+        assert_eq!(
+            seen.iter().cloned().collect::<Vec<_>>(),
+            vec!["elsewhere".to_string()],
+            "only the newly covered repo's listed PRs joined the baseline"
         );
     }
 
