@@ -176,7 +176,8 @@ export function Graph({ secs, sel, onSelect }: {
     // Each galaxy gets its own spot on a wide ring and its nodes are pulled there, so galaxies sit apart
     // instead of untangling from one pile in the middle. A new node spawns at its galaxy's spot.
     const galaxies = [...new Set(rows.map((r) => galaxyOf(r, by)))].sort()
-    const ring = 90 * Math.sqrt(galaxies.length)
+    // a lone galaxy sits in the middle
+    const ring = galaxies.length > 1 ? 90 * Math.sqrt(galaxies.length) : 0
     const spot = new Map(galaxies.map((c, i) => {
       const a = (2 * Math.PI * i) / galaxies.length
       return [c, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
@@ -194,13 +195,13 @@ export function Graph({ secs, sel, onSelect }: {
     // a soft glow behind each galaxy. A radial gradient per galaxy fades each disc out;
     // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
     const gid = (d: string) => `ghalo-${galaxies.indexOf(d)}`
-    // no two galaxies share a colour: hues spread evenly round the wheel, the widest gap any count allows.
-    // The ring order steps through them by a stride coprime to the count, so ring neighbours sit far apart in hue too
-    const n = galaxies.length
+    // no two galaxies share a colour: hues spread evenly round the wheel, one slice each.
+    // The ring order steps through them by a stride coprime to the count, so ring neighbours usually sit apart in hue too
+    const count = galaxies.length
     const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a)
-    let stride = Math.max(1, Math.round(n * 0.38))
-    while (gcd(stride, n) !== 1) stride++
-    const tint = (d: string, light: number) => `hsl(${(((galaxies.indexOf(d) * stride) % n) * 360) / n} 90% ${light}%)`
+    let stride = Math.max(1, Math.round(count * 0.38))
+    while (gcd(stride, count) !== 1) stride++
+    const tint = (d: string, light: number) => `hsl(${(((galaxies.indexOf(d) * stride) % count) * 360) / count} 90% ${light}%)`
     root
       .select('defs')
       .selectAll<SVGRadialGradientElement, string>('radialGradient')
@@ -271,6 +272,9 @@ export function Graph({ secs, sel, onSelect }: {
         if (r) latest.current.onSelect(r.uid)
       })
 
+    // galaxy membership is fixed until the next rebuild; the tick only moves the centroids
+    const area = new Map<string, Node[]>()
+    for (const n of g.nodes) (area.get(n.galaxy) || area.set(n.galaxy, []).get(n.galaxy)!).push(n)
     const s = (sim.current ||= forceSimulation<Node, Link>())
     s.nodes(g.nodes)
       // hubs push harder than PRs, so the hubs inside a galaxy spread out around its spot
@@ -280,8 +284,6 @@ export function Graph({ secs, sel, onSelect }: {
       .force('x', forceX<Node>((n) => spot.get(n.galaxy)?.x ?? 0).strength(0.08))
       .force('y', forceY<Node>((n) => spot.get(n.galaxy)?.y ?? 0).strength(0.08))
       .on('tick', () => {
-        const area = new Map<string, Node[]>()
-        for (const n of g.nodes) (area.get(n.galaxy) || area.set(n.galaxy, []).get(n.galaxy)!).push(n)
         const at = new Map(galaxies.map((d) => {
           const ns = area.get(d) ?? []
           const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
