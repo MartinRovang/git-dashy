@@ -72,14 +72,21 @@ pub fn fetched(scope: &str) -> bool {
 }
 pub const SCOPE_TEAM: &str = "PRS_API_TEAM";
 pub const SECTIONS: &[(&str, &str)] = &[
-    ("MINE", "author:{me}"),
-    ("REVIEW REQUESTED", "review-requested:{me}"),
-    ("ASSIGNED", "assignee:{me}"),
+    ("MINE", "is:open author:{me}"),
+    ("REVIEW REQUESTED", "is:open review-requested:{me}"),
+    ("ASSIGNED", "is:open assignee:{me}"),
     // ponytail: open PRs in whatever orgs/teams are toggled on, so the board sees the team's work, not
     // only what names me. Dropped from the query when nothing is on. Last, so dedup gives it the leftovers.
     // Sorted, so the 100 it returns are the newest, not GitHub's best-match slice.
-    ("TEAM", "{scope} sort:updated-desc"),
+    ("TEAM", "is:open {scope} sort:updated-desc"),
+    // merged PRs from the same sources and window, so the board shows what the team shipped
+    ("MERGED", "is:merged {scope} sort:updated-desc"),
 ];
+
+/// True for a section that searches the toggled-on sources, and so is not asked for when none is on.
+fn sourced(q: &str) -> bool {
+    q.contains("{scope}")
+}
 /// Search terms that choose WHERE to look, not what for.
 const QUALIFIERS: &[&str] = &["repo:", "user:", "org:", "owner:"];
 
@@ -431,13 +438,13 @@ pub fn query(who: &str, scope: &str) -> String {
     let parts: Vec<String> = SECTIONS
         .iter()
         .enumerate()
-        .filter(|(_, (_, q))| !(q.contains("{scope}") && scope.is_empty()))
+        .filter(|(_, (_, q))| !(sourced(q) && scope.is_empty()))
         .map(|(i, (_, q))| {
             format!(
                 "s{i}: search(query: {}, type: ISSUE, first: 100) {NODE}",
                 // a JSON string is a valid GraphQL string literal, so escaping is structural
                 Value::String(format!(
-                    "is:pr is:open {}",
+                    "is:pr {}",
                     q.replace("{me}", who).replace("{scope}", scope)
                 ))
             )
@@ -490,7 +497,7 @@ pub fn scope_terms(
     terms.join(" ")
 }
 
-/// The TEAM search held to the history window, like REVIEWED: only PRs touched in the last `window`
+/// The TEAM and MERGED searches held to the history window, like REVIEWED: only PRs touched in the last `window`
 /// hours. `None` is all time; "" stays "" so nothing toggled still means no search.
 pub fn within(scope: &str, window: Option<u64>, now: chrono::DateTime<chrono::Utc>) -> String {
     match window {
@@ -780,7 +787,7 @@ pub fn fetch() -> Vec<Section> {
                 .to_string();
             let mut out: Vec<Section> = SECTIONS
                 .iter()
-                .filter(|(name, _)| *name != "TEAM" || !scope.is_empty())
+                .filter(|(_, q)| !sourced(q) || !scope.is_empty())
                 .map(|(name, _)| Section {
                     name: name.to_string(),
                     prs: None,
@@ -805,13 +812,13 @@ pub fn fetch() -> Vec<Section> {
     out
 }
 
-/// The three SECTIONS from a dashboard query's `data`: deduped across sections, newest first.
+/// The SECTIONS from a dashboard query's `data`: deduped across sections, newest first.
 pub fn sections_of(data: &Value) -> Vec<Section> {
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
-    for (i, (name, _)) in SECTIONS.iter().enumerate() {
+    for (i, (name, q)) in SECTIONS.iter().enumerate() {
         match data.get(format!("s{i}")) {
-            None if *name == "TEAM" => continue, // nothing toggled on, so it was never asked for
+            None if sourced(q) => continue, // nothing toggled on, so it was never asked for
             Some(Value::Null) => {
                 // an errored alias; gql fails the whole call for a non-null search today, but an empty
                 // section must never stand in for a rejected one
@@ -1302,13 +1309,18 @@ mod tests {
         );
         let q = query("me", "org:acme");
         assert!(q.contains("s3: search(query: \"is:pr is:open org:acme sort:updated-desc\""));
+        assert!(q.contains("s4: search(query: \"is:pr is:merged org:acme sort:updated-desc\""));
+        assert!(
+            !query("me", "").contains("s4:"),
+            "no MERGED search while nothing is toggled on"
+        );
         assert!(query("me", "org:a\"b").contains(r#""is:pr is:open org:a\"b sort:updated-desc""#));
         let secs = sections_of(
-            &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}}),
+            &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}, "s4": {"nodes": []}}),
         );
         assert_eq!(
             secs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
-            ["MINE", "REVIEW REQUESTED", "ASSIGNED", "TEAM"]
+            ["MINE", "REVIEW REQUESTED", "ASSIGNED", "TEAM", "MERGED"]
         );
         let opts = scope_options(
             &on(&["org:gone", "org:acme"]),
