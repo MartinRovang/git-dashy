@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { buckets, chips, emptyLine, folded, inBucket } from '../board'
+import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -221,7 +221,7 @@ export function Queue(p: Props) {
           let seen: string | null = null
           const named = shownSecs.length > 1
           const shut = folded(s.name, shownSecs.length, p.unfolded)
-          const foldable = named && s.name === 'REVIEWED'
+          const foldable = named && FOLDABLE.includes(s.name)
           const hint = s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''
           return (
             <div key={s.name}>

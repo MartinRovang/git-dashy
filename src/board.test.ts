@@ -162,13 +162,15 @@ describe('flat', () => {
     expect(flat(v, ['ASSIGNED'], {}).map((r) => r.title)).toEqual(['b', 'c'])
   })
 
-  it('folds REVIEWED while it shares the board, never under its own tab', () => {
+  it('folds REVIEWED and OTHER while they share the board, never under its own tab', () => {
     const v = secs(state([
       { name: 'MINE', prs: [pr({ title: 'a' })] },
       { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+      { name: 'OTHER', prs: [pr({ title: 'o' })] },
     ]))
     expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['a'])
     expect(flat(v, [ALL], {}, { REVIEWED: true }).map((r) => r.title)).toEqual(['a', 'r'])
+    expect(flat(v, ['OTHER'], {}).map((r) => r.title)).toEqual(['o'])
     expect(flat(v, ['REVIEWED'], {}).map((r) => r.title)).toEqual(['r'])
   })
 

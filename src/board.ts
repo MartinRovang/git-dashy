@@ -144,10 +144,12 @@ export function emptyLine(d: StateData | null, name: string, query: string, fail
   return SECTION_EMPTY[name] || 'Nothing here.'
 }
 
-/** REVIEWED starts folded while it shares the board with other queues; its own tab always shows it.
+/** REVIEWED and OTHER start folded while they share the board with other queues; their own tab always shows them.
  *  `unfolded` is what the header clicks opened. */
+export const FOLDABLE = ['REVIEWED', 'OTHER']
+
 export function folded(name: string, shown: number, unfolded: Record<string, boolean>): boolean {
-  return name === 'REVIEWED' && shown > 1 && !unfolded[name]
+  return FOLDABLE.includes(name) && shown > 1 && !unfolded[name]
 }
 
 export function flat(
