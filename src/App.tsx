@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, visible, walkBucket } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, remember, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -64,30 +64,25 @@ export default function App() {
     setOnlyDrafts(f.drafts)
     setBucket(f.bucket)
   }
-  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
-  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
-  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
-  // everything unread, and reading is one keypress per row.
-  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
-  const [read, setRead] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
-    } catch {
-      return {}
-    }
-  })
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
+  // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
+  // `marked` is what this page has read; once set it wins over the polled copy for the page's life.
+  const [marked, setMarked] = useState<Record<string, string> | null>(null)
+  const read = useMemo(() => marked || data?.settings.read || {}, [marked, data])
+  const saveRead = useRef(0)
 
-  const markRead = (prs: Row[]) =>
-    setRead((r) => {
-      if (prs.every((p) => r[p.url] === p.updatedAt)) return r
-      const next = { ...r, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
+  const markRead = (prs: Row[]) => {
+    if (prs.every((p) => read[p.url] === p.updatedAt)) return
+    const next = remember(read, prs)
+    setMarked(next)
+    // debounced: walking the list with j would otherwise rewrite the settings file per row
+    clearTimeout(saveRead.current)
+    saveRead.current = window.setTimeout(() => {
+      post('/api/settings', { read: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`read marks not saved: ${t}`))))
+        .catch(() => setFlash('read marks not saved'))
+    }, 500)
+  }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
   const rows = useMemo(() => flat(secs, bucket, expanded, unfolded), [secs, bucket, expanded, unfolded])
