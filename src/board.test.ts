@@ -46,7 +46,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     update: '',
     // drafts on by default so a test that is not about drafts is not silently filtered
     settings: { drafts: true, ...settings },
-    options: { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] },
+    options: { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] },
     knowledge: { memory: '', store: '', teams: [], teamError: '', notes: [] },
     asks: [],
     notices: [],
