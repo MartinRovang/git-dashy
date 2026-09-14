@@ -17,7 +17,10 @@ GitHub.
 ## Requirements
 
 - Nothing to install but the binary: gitdashy is one Rust executable (the desktop window, the server
-  behind it and the CLI the hooks call). `--browser` opens the same dashboard in your browser instead
+  behind it and the CLI the hooks call). `--browser` opens the same dashboard in your browser instead.
+  On Linux the binary links the system webview, so that must be installed, even for `--browser`:
+  `apt install libwebkit2gtk-4.1-0 libgtk-3-0` (dnf: `webkit2gtk4.1 gtk3`, pacman: `webkit2gtk-4.1 gtk3`).
+  That needs Ubuntu 22.04 / Debian 12 or newer.
 - A GitHub token in `$GH_TOKEN` or `$GITHUB_TOKEN` (scope: `repo`). Nothing shells out to `gh` —
   gitdashy talks to the API itself. (`$GITHUB_API` points it at GitHub Enterprise.)
 - [`claude`](https://claude.com/claude-code) on PATH, for the review feature only
