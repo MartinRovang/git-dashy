@@ -1,7 +1,7 @@
-// The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to hubs, by default
-// one for its repo, so each repo is a star of its PRs. The group-by tabs
-// swap the hubs for the PR's author, kind (from its review) or review state. PRs are sized by lines
-// changed and colored by review state. Drag nodes, scroll to zoom, hover to light up neighbours.
+// The whole board as a live graph, Obsidian/Quartz style. The group-by tab picks the galaxies: a named, coloured
+// cloud per repo, author, kind (from its review) or review state. Inside a galaxy PRs hang off hubs, their repo,
+// or their author in the repo tab. PRs are sized by lines changed and colored by review state.
+// Drag nodes, scroll to zoom, hover to light up neighbours.
 //
 // ponytail: d3-force + SVG, not Quartz's PixiJS canvas. A board is tens of PRs, not thousands of
 // notes; switch the drawing to canvas if a board ever gets big enough for SVG to stutter.
@@ -15,9 +15,8 @@ import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
-type Hub = 'repo' | 'author' | 'kind' | 'state'
-// repo: the repo a PR or repo hub belongs to, what the author tab pulls together and haloes
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; repo?: string }
+type Hub = 'repo' | 'author'
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; galaxy: string }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
@@ -39,17 +38,20 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
   return { kind: r.kind || guess || 'untagged', breaking: !!r.breaking || !!m?.[3] }
 }
 
-/** The hubs a PR links to. */
-function hubsOf(r: Row, by: Group): [Hub, string][] {
-  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one.
-  // In author mode such a PR then clusters on its repo, the only hub it has left.
-  const author: [Hub, string][] = r.author ? [['author', r.author]] : []
-  // repo is a plain star, the repo with its PRs around it; author is a star per author, with no repo node:
-  // the repo is the coloured cloud its PRs are pulled into
-  if (by === 'repo') return [['repo', r.repo]]
-  if (by === 'author') return r.author ? author : [['repo', r.repo]]
-  if (by === 'kind') return [['kind', tagOf(r).kind]]
-  return [['state', rowState(r).key]]
+/** The galaxy a PR sits in: whatever the tab groups by. */
+function galaxyOf(r: Row, by: Group): string {
+  if (by === 'repo') return r.repo
+  if (by === 'author') return r.author || 'no author'
+  if (by === 'kind') return tagOf(r).kind
+  return rowState(r).key
+}
+
+/** The hub a PR hangs off inside its galaxy, one per galaxy: its author in the repo tab, its repo anywhere else. */
+function hubOf(r: Row, by: Group): { kind: Hub; label: string; id: string } | null {
+  // an author whose account is gone has no login; no hub rather than pool them all on a blank one
+  if (by === 'repo' && !r.author) return null
+  const [kind, label]: [Hub, string] = by === 'repo' ? ['author', r.author] : ['repo', r.repo]
+  return { kind, label, id: `${kind}:${galaxyOf(r, by)}|${label}` }
 }
 
 function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
@@ -59,19 +61,19 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   for (const r of rows) {
     // the title labels a PR; repo and number are in the tooltip
     const label = r.title.length > 40 ? r.title.slice(0, 39) + '…' : r.title
-    const pr: Node = { id: r.url, kind: 'pr', label, degree: 2, repo: r.repo }
+    const galaxy = galaxyOf(r, by)
+    const pr: Node = { id: r.url, kind: 'pr', label, degree: 2, galaxy }
     nodes.push(pr)
-    for (const [kind, label] of hubsOf(r, by)) {
-      const id = `${kind}:${label}`
-      let h = hubs.get(id)
-      if (!h) {
-        h = { id, kind, label, degree: 0, repo: kind === 'repo' ? r.repo : undefined }
-        hubs.set(id, h)
-        nodes.push(h)
-      }
-      h.degree++
-      links.push({ source: pr, target: h })
+    const hub = hubOf(r, by)
+    if (!hub) continue
+    let h = hubs.get(hub.id)
+    if (!h) {
+      h = { ...hub, degree: 0, galaxy }
+      hubs.set(hub.id, h)
+      nodes.push(h)
     }
+    h.degree++
+    links.push({ source: pr, target: h })
   }
   return { nodes, links }
 }
@@ -89,7 +91,7 @@ export function Graph({ secs, sel, onSelect }: {
   }, [secs])
   // ponytail: plain state, not localStorage: the GUI gets a new port, so a new origin and empty storage, every launch
   const [by, setBy] = useState<Group>('repo')
-  const key = useMemo(() => by + '|' + rows.map((r) => `${r.url}\t${hubsOf(r, by).join('\t')}`).sort().join('|'), [rows, by])
+  const key = useMemo(() => by + '|' + rows.map((r) => `${r.url}\t${galaxyOf(r, by)}\t${hubOf(r, by)?.id}`).sort().join('|'), [rows, by])
   const lastBy = useRef(by)
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)
@@ -107,13 +109,14 @@ export function Graph({ secs, sel, onSelect }: {
     if (!svg) return
     const { rows, sel, query } = latest.current
     const byUrl = new Map(rows.map((r) => [r.url, r]))
-    // same fields as the board's filter box; a hit lights its PR and that PR's repo and author hubs
+    // same fields as the board's filter box; a hit lights its PR and that PR's hub
     const q = query.trim().toLowerCase()
     const hits = new Set<string>()
     for (const r of rows) {
       if (!q || !`${r.title} ${r.repo} ${r.author} #${r.number} ${tagOf(r).kind}`.toLowerCase().includes(q)) continue
       hits.add(r.url)
-      for (const [kind, label] of hubsOf(r, latest.current.by)) hits.add(`${kind}:${label}`)
+      const hub = hubOf(r, latest.current.by)
+      if (hub) hits.add(hub.id)
     }
     select(svg).classed('search', !!q)
     select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
@@ -148,7 +151,7 @@ export function Graph({ secs, sel, onSelect }: {
       .attr('r', radius)
       .style('fill', (n) => {
         if (n.kind === 'pr') return fg(n)
-        const c = n.kind === 'author' ? avatar(n.label) : n.kind === 'state' ? (PALETTE[n.label] || PALETTE.idle).fg : 'var(--dim2)'
+        const c = n.kind === 'author' ? avatar(n.label) : 'var(--dim2)'
         // a hub reads disabled: its colour washed into the background, opaque so links stop at its edge
         return `color-mix(in srgb, ${c} 35%, var(--bg))`
       })
@@ -167,40 +170,31 @@ export function Graph({ secs, sel, onSelect }: {
     const old = new Map(graph.current.nodes.map((n) => [n.id, n]))
     const { rows, by } = latest.current
     const g = build(rows, by)
-    // A new node spawns by its cluster's hub, and each cluster gets its own spot on a wide ring, so they
-    // start apart instead of untangling from one pile in the middle. A second hub starts by its first PR's.
-    // the author tab clusters on repo, not author: one repo's nodes share an area whoever wrote them
-    const cluster = (r: Row) => (by === 'author' ? `repo:${r.repo}` : (hubsOf(r, by)[0]?.join(':') ?? 'none'))
-    const clusters = [...new Set(rows.map(cluster))].sort()
-    const ring = 90 * Math.sqrt(clusters.length)
-    const spot = new Map(clusters.map((c, i) => {
-      const a = (2 * Math.PI * i) / clusters.length
+    // Each galaxy gets its own spot on a wide ring and its nodes are pulled there, so galaxies sit apart
+    // instead of untangling from one pile in the middle. A new node spawns at its galaxy's spot.
+    const galaxies = [...new Set(rows.map((r) => galaxyOf(r, by)))].sort()
+    const ring = 90 * Math.sqrt(galaxies.length)
+    const spot = new Map(galaxies.map((c, i) => {
+      const a = (2 * Math.PI * i) / galaxies.length
       return [c, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
     }))
-    const home = new Map<string, { x: number; y: number }>()
-    for (const r of rows) {
-      const at = spot.get(cluster(r))!
-      home.set(r.url, at)
-      for (const h of hubsOf(r, by)) if (!home.has(h.join(':'))) home.set(h.join(':'), at)
-    }
     for (const n of g.nodes) {
       const was = old.get(n.id)
-      const at = home.get(n.id)
+      const at = spot.get(n.galaxy)!
       if (was) Object.assign(n, { x: was.x, y: was.y, vx: was.vx, vy: was.vy })
-      else if (at) Object.assign(n, { x: at.x + Math.random() * 30 - 15, y: at.y + Math.random() * 30 - 15 })
+      else Object.assign(n, { x: at.x + Math.random() * 30 - 15, y: at.y + Math.random() * 30 - 15 })
     }
     graph.current = g
 
     const root = select(svg)
     const world = root.select<SVGGElement>('g.world')
-    // a soft glow per repo behind its area, author tab only. A radial gradient per repo fades each disc out;
+    // a soft glow behind each galaxy. A radial gradient per galaxy fades each disc out;
     // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
-    const repos = by === 'author' ? [...new Set(rows.map((r) => r.repo))].sort() : []
-    const gid = (d: string) => `ghalo-${repos.indexOf(d)}`
+        const gid = (d: string) => `ghalo-${galaxies.indexOf(d)}`
     root
       .select('defs')
       .selectAll<SVGRadialGradientElement, string>('radialGradient')
-      .data(repos, (d) => d)
+      .data(galaxies, (d) => d)
       .join((enter) => {
         const e = enter.append('radialGradient')
         e.append('stop').attr('offset', '0%').style('stop-color', 'currentColor').style('stop-opacity', 0.35)
@@ -208,22 +202,22 @@ export function Graph({ secs, sel, onSelect }: {
         return e
       })
       .attr('id', gid)
-      // saturated hues a golden angle apart, so neighbouring repos never share a colour; the stops paint currentColor
-      .style('color', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 55%)`)
+      // saturated hues a golden angle apart, so neighbouring galaxies never share a colour; the stops paint currentColor
+      .style('color', (d) => `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% 55%)`)
     const halo = world
       .select('g.halos')
       .selectAll<SVGCircleElement, string>('circle')
-      .data(repos, (d) => d)
+      .data(galaxies, (d) => d)
       .join('circle')
       .style('fill', (d) => `url(#${gid(d)})`)
     // the names get their own layer above the nodes, so a node never covers one
-    const rname = world
-      .select('g.rnames')
+    const gname = world
+      .select('g.gnames')
       .selectAll<SVGTextElement, string>('text')
-      .data(repos, (d) => d)
+      .data(galaxies, (d) => d)
       .join('text')
       .text((d) => d)
-      .style('fill', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 65%)`)
+      .style('fill', (d) => `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% 65%)`)
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
@@ -269,25 +263,23 @@ export function Graph({ secs, sel, onSelect }: {
 
     const s = (sim.current ||= forceSimulation<Node, Link>())
     s.nodes(g.nodes)
-      // hubs push harder than PRs and the pull to the centre is gentle, so repo clusters sit apart
+      // hubs push harder than PRs, so the hubs inside a galaxy spread out around its spot
       .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
-      .force('link', forceLink<Node, Link>(g.links).distance(by === 'repo' ? 70 : 60))
-      // in the author tab a repo's nodes are pulled to that repo's spot, authors float between their repos
-      .force('x', forceX<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.x : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
-      .force('y', forceY<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.y : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
+      .force('link', forceLink<Node, Link>(g.links).distance(60))
+      // ?? 0: s.nodes() above re-initialises the previous tab's forces, whose spots don't know these galaxies
+      .force('x', forceX<Node>((n) => spot.get(n.galaxy)?.x ?? 0).strength(0.08))
+      .force('y', forceY<Node>((n) => spot.get(n.galaxy)?.y ?? 0).strength(0.08))
       .on('tick', () => {
-        if (repos.length) {
-          const area = new Map<string, Node[]>()
-          for (const n of g.nodes) if (n.repo) (area.get(n.repo) || area.set(n.repo, []).get(n.repo)!).push(n)
-          const at = new Map(repos.map((d) => {
-            const ns = area.get(d) ?? []
-            const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
-            const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
-            return [d, { cx, cy, r: 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy))) }]
-          }))
-          halo.attr('cx', (d) => at.get(d)!.cx).attr('cy', (d) => at.get(d)!.cy).attr('r', (d) => at.get(d)!.r)
-          rname.attr('x', (d) => at.get(d)!.cx).attr('y', (d) => at.get(d)!.cy - at.get(d)!.r * 0.6)
-        }
+        const area = new Map<string, Node[]>()
+        for (const n of g.nodes) (area.get(n.galaxy) || area.set(n.galaxy, []).get(n.galaxy)!).push(n)
+        const at = new Map(galaxies.map((d) => {
+          const ns = area.get(d) ?? []
+          const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
+          const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
+          return [d, { cx, cy, r: 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy))) }]
+        }))
+        halo.attr('cx', (d) => at.get(d)!.cx).attr('cy', (d) => at.get(d)!.cy).attr('r', (d) => at.get(d)!.r)
+        gname.attr('x', (d) => at.get(d)!.cx).attr('y', (d) => at.get(d)!.cy - at.get(d)!.r * 0.6)
         link
           .attr('x1', (l) => l.source.x!)
           .attr('y1', (l) => l.source.y!)
@@ -381,13 +373,12 @@ export function Graph({ secs, sel, onSelect }: {
         )}
       </div>
       <svg ref={svgRef}>
-        <defs>
-        </defs>
+        <defs />
         <g className="world">
           <g className="halos" />
           <g className="links" />
           <g className="nodes" />
-          <g className="rnames" />
+          <g className="gnames" />
         </g>
       </svg>
       <div className="glegend">
@@ -397,12 +388,12 @@ export function Graph({ secs, sel, onSelect }: {
             {k}
           </span>
         ))}
-        {(by === 'repo' || by === 'kind') && (
+        {by !== 'repo' && (
           <span>
-            <i style={{ background: 'var(--dim2)' }} /> {by === 'kind' ? 'kind' : 'repo'}
+            <i style={{ background: 'var(--dim2)' }} /> repo
           </span>
         )}
-        {by === 'author' && (
+        {by === 'repo' && (
           <span>
             <svg className="gperson" viewBox="-1 -1 2 2">
               <path d={PERSON} />
@@ -415,7 +406,7 @@ export function Graph({ secs, sel, onSelect }: {
             <i className="gbreak" /> breaking
           </span>
         )}
-        <span>hub size = PRs · PR size = lines changed · scroll to zoom · drag to move</span>
+        <span>cloud = {by} · hub size = PRs · PR size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>
   )
