@@ -259,6 +259,8 @@ export function Graph({ secs, sel, onSelect }: {
       .join('circle')
       .style('fill', (d) => `url(#${gid(d)})`)
     // the names get their own layer above the nodes, so a node never covers one
+    const size = new Map<string, number>()
+    for (const r of rows) size.set(galaxyOf(r, by), (size.get(galaxyOf(r, by)) ?? 0) + 1)
     const gname = world
       .select('g.gnames')
       .selectAll<SVGTextElement, string>('text')
@@ -266,6 +268,8 @@ export function Graph({ secs, sel, onSelect }: {
       .join('text')
       .text((d) => d)
       .style('fill', (d) => tint(d, 65))
+      // bigger galaxy, bigger name: sqrt of its PR count against the largest, from 0.6x to 1.2x the base size
+      .style('--gs', (d) => String(0.6 + 0.6 * Math.sqrt(size.get(d)! / Math.max(...size.values()))))
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
