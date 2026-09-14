@@ -48,8 +48,10 @@ export function flat(secs: VisSection[], folded: Record<string, boolean>, expand
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
-export function selected(rows: Row[], sel: string): Row | null {
-  return rows.find((p) => p.uid === sel) || rows[0] || null
+/** `hidden` is also searched, so a graph node in a folded section resolves, but the fallback stays a
+ *  VISIBLE row: with every section folded it was the first hidden PR, auto-selected and marked read. */
+export function selected(rows: Row[], sel: string, hidden: Row[] = []): Row | null {
+  return rows.find((p) => p.uid === sel) || hidden.find((p) => p.uid === sel) || rows[0] || null
 }
 
 export function counts(d: StateData | null) {
