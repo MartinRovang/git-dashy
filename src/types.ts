@@ -70,6 +70,8 @@ export type Settings = {
   window?: number | null
   drafts?: boolean
   hinted?: boolean
+  /** Show the key hint on every button and settings row. */
+  keyhints?: boolean
   subs?: string
   theme?: string
   notify?: boolean
