@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
 
 let n = 0
 
@@ -507,5 +507,14 @@ describe('remember', () => {
     const read = { a: '2026-01-01', b: '2026-03-01', c: '2026-02-01' }
     expect(remember(read, [{ url: 'a', updatedAt: '2026-04-01' }])).toEqual({ a: '2026-04-01', b: '2026-03-01', c: '2026-02-01' })
     expect(remember(read, [{ url: 'd', updatedAt: '2026-05-01' }], 2)).toEqual({ d: '2026-05-01', b: '2026-03-01' })
+  })
+})
+
+describe('isRefetching', () => {
+  it('shows only while a fetch runs and none has landed since the history change', () => {
+    expect(isRefetching(100, { fetching: true, fetchedAt: 100 })).toBe(true)
+    expect(isRefetching(100, { fetching: true, fetchedAt: 200 })).toBe(false)
+    expect(isRefetching(100, { fetching: false, fetchedAt: 100 })).toBe(false)
+    expect(isRefetching(null, { fetching: true, fetchedAt: 100 })).toBe(false)
   })
 })

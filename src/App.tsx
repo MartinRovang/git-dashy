@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -268,8 +268,10 @@ export default function App() {
         : name === 'window'
           ? span(value as number | null)
           : String(value === '' ? 'default' : value)
-    if (name === 'window') setRefetchFrom(data?.fetchedAt ?? null)
-    await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    const from = data?.fetchedAt ?? null
+    const ok = await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    // the server only refetches a new window when a source is on; a failed POST refetches nothing
+    if (ok && name === 'window' && data?.settings?.scopes?.length) setRefetchFrom(from)
   }
 
   async function quit() {
@@ -525,8 +527,7 @@ export default function App() {
     setDiff(null)
   }
 
-  // until a fetch newer than the history change lands, the board still shows the old window
-  const refetching = refetchFrom != null && !!data?.fetching && data.fetchedAt === refetchFrom
+  const refetching = isRefetching(refetchFrom, data)
 
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
