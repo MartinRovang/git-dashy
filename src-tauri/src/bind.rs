@@ -169,6 +169,12 @@ pub fn owners() -> HashMap<String, String> {
     entries().owners
 }
 
+/// (bindings(), owners()) from one read of the store.
+pub fn maps() -> (HashMap<String, String>, HashMap<String, String>) {
+    let e = entries();
+    (e.repos, e.owners)
+}
+
 /// (kind, slug) for `repo` against one read of the store: ("team"|"owner", slug) or ("", "").
 ///
 /// ponytail: THE precedence, in one place. of(), why() and resolver() all come through here, so the

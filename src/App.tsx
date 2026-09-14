@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, pick, pickBucket, visible, walkBucket } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -570,7 +570,7 @@ export default function App() {
                 secs={secs}
                 sel={selUid}
                 read={read}
-                onReadAll={() => markRead(inBucket(secs, bucket).flatMap((s) => s.prs))}
+                onReadAll={() => markRead(onScreen(secs, bucket, unfolded))}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}

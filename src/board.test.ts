@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, pick, pickBucket, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, selected, visible, walkBucket } from './board'
 
 let n = 0
 
@@ -160,6 +160,15 @@ describe('flat', () => {
     ]))
     expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['a', 'b', 'c'])
     expect(flat(v, ['ASSIGNED'], {}).map((r) => r.title)).toEqual(['b', 'c'])
+  })
+
+  it('counts only what is on screen: a folded section is not marked read', () => {
+    const v = secs(state([
+      { name: 'MINE', prs: [pr({ title: 'a' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+    ]))
+    expect(onScreen(v, [ALL]).map((r) => r.title)).toEqual(['a'])
+    expect(onScreen(v, [ALL], { REVIEWED: true }).map((r) => r.title)).toEqual(['a', 'r'])
   })
 
   it('folds REVIEWED and OTHER while they share the board, never under its own tab', () => {
@@ -434,5 +443,23 @@ describe('visible: the CI filter', () => {
 
   it('on, only the failing one does — a repo with no checks is not failing', () => {
     expect(visible(d(), '', true, false)[0].prs.map((p) => p.title)).toEqual(['red'])
+  })
+})
+
+describe('TEAM sources', () => {
+  it('matches an org chip by owner, a team chip by binding, and hides an unbound repo', () => {
+    expect(inScope({ repo: 'Acme/api', team: '' }, ['org:acme'])).toBe(true)
+    expect(inScope({ repo: 'x/y', team: 'core' }, ['team:core'])).toBe(true)
+    // unbound under a team-bound owner: pick() gave it no team, so the team chip does not claim it
+    expect(inScope({ repo: 'acme/forgotten', team: '' }, ['team:core'])).toBe(false)
+  })
+
+  it('splits TEAM into logged verdicts and OTHER, and drops an empty OTHER', () => {
+    const on = { scopes: ['org:acme'] }
+    const v = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', title: 'seen', status: '✓ approved' }), pr({ repo: 'acme/b', title: 'new' }), pr({ repo: 'other/c', title: 'off' })] }], on))
+    expect(v.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', ['seen']], ['OTHER', ['new']]])
+    expect(v[1].prs[0].section).toBe('OTHER')
+    const known = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', status: '✓ approved' })] }], on))
+    expect(known.map((s) => s.name)).toEqual(['TEAM'])
   })
 })

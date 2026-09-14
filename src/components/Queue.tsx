@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket } from '../board'
+import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket, onScreen } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -131,7 +131,7 @@ export function Queue(p: Props) {
   // running: not read here, but a running row's elapsed label (rowState) only moves when this re-renders
   const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const shownSecs = inBucket(p.secs, p.bucket)
-  const shown = shownSecs.flatMap((s) => s.prs)
+  const shown = onScreen(p.secs, p.bucket, p.unfolded)
 
   // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
   const unread = new Set(shown.filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size

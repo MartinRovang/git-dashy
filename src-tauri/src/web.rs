@@ -165,6 +165,8 @@ pub fn payload(state: &State) -> Value {
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
     }
     let names = team::joined();
+    let (repos, owners) = bind::maps();
+    let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
         "sections": out,
@@ -181,7 +183,7 @@ pub fn payload(state: &State) -> Value {
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
                     "interval": config::INTERVALS, "theme": THEMES,
-                    "scopes": github::scope_options(&cfg.scopes, &sections, &names, &bind::bindings(), &bind::owners())},
+                    "scopes": scopes},
         "knowledge": {
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },

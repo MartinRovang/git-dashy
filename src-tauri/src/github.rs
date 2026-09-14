@@ -758,7 +758,10 @@ pub fn fetch() -> Vec<Section> {
         f.clone()
     };
     let scope = within(
-        &scope_terms(&searched, &crate::bind::bindings(), &crate::bind::owners()),
+        &{
+            let (repos, owners) = crate::bind::maps();
+            scope_terms(&searched, &repos, &owners)
+        },
         cfg.window,
         chrono::Utc::now(),
     );
@@ -767,7 +770,7 @@ pub fn fetch() -> Vec<Section> {
         Err(e) => {
             // ponytail: a scope that broke the query must not outlive being toggled off, so the next
             // tick searches only what is saved
-            *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = cfg.scopes.clone();
+            *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = config::get().scopes; // fresh: `cfg` predates an untoggle
             let msg = e.0.trim();
             let err = msg
                 .lines()

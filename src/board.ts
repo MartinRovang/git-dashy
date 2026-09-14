@@ -10,7 +10,7 @@ export function settings(d: StateData | null) {
 }
 
 /** A TEAM row's source is on: its owner's org chip, or the team its repo is bound to. */
-function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
+export function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
   return scopes.includes(`org:${p.repo.split('/')[0].toLowerCase()}`) || (!!p.team && scopes.includes(`team:${p.team}`))
 }
 
@@ -43,7 +43,7 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
     }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
   }
-  if (other) out.push(other)
+  if (other?.prs.length) out.push(other)
   return out
 }
 
@@ -152,17 +152,20 @@ export function folded(name: string, shown: number, unfolded: Record<string, boo
   return FOLDABLE.includes(name) && shown > 1 && !unfolded[name]
 }
 
+/** The PRs actually on screen: the picked buckets minus folded sections. Unread counts and "Read all"
+ *  go through here too, so a fold never marks read what it hides. */
+export function onScreen(secs: VisSection[], bucket: readonly string[], unfolded: Record<string, boolean> = {}): Row[] {
+  const shown = inBucket(secs, bucket)
+  return shown.filter((s) => !folded(s.name, shown.length, unfolded)).flatMap((s) => s.prs)
+}
+
 export function flat(
   secs: VisSection[],
   bucket: readonly string[],
   expanded: Record<string, boolean>,
   unfolded: Record<string, boolean> = {},
 ): Row[] {
-  const shown = inBucket(secs, bucket)
-  return shown
-    .filter((s) => !folded(s.name, shown.length, unfolded))
-    .flatMap((s) => s.prs)
-    .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
+  return onScreen(secs, bucket, unfolded).flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
 /** The selected row, and whether it is the one that was actually chosen.
