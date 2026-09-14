@@ -26,6 +26,29 @@ function Ln({ label, value, off }: { label: string; value: string; off?: boolean
   )
 }
 
+/** A setting that holds several at once, as the badges the expanded rail uses for the same thing.
+ *
+ * ponytail: joined with commas these ran off the 92px rail and you saw "review, cave…". One badge
+ * per value, stacked, so every active one is readable at any width — which is the whole reason the
+ * digest exists.
+ */
+function Pills({ label, values }: { label: string; values: string[] }) {
+  return (
+    <span className="ln">
+      <em>{label}</em>
+      {values.length ? (
+        <span className="pills">
+          {values.map((v) => (
+            <i key={v}>{v}</i>
+          ))}
+        </span>
+      ) : (
+        <s className="off">none</s>
+      )}
+    </span>
+  )
+}
+
 /** A settings group: a caret and a one-line summary when open, a stacked digest when collapsed.
  *
  * ponytail: the digest is the whole point of the collapsed rail. A column of icons tells you which
@@ -90,7 +113,8 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
     }
     setOpen((o) => ({ ...o, [name]: !o[name] }))
   }
-  const teams = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : '')).join(', ')
+  const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
+  const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
 
   return (
@@ -116,8 +140,8 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <Ln label="model" value={s.model || '—'} />
               <Ln label="depth" value={s.depth || 'default'} />
               <Ln label="effort" value={s.effort || 'default'} off={!s.effort} />
-              <Ln label="voices" value={(s.voice || []).join(', ') || 'none'} off={!(s.voice || []).length} />
-              <Ln label="hunters" value={(s.hunter || []).join(', ') || 'none'} off={!(s.hunter || []).length} />
+              <Pills label="voices" values={s.voice || []} />
+              <Pills label="hunters" values={s.hunter || []} />
               <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
             </>
           }
@@ -156,7 +180,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           summary={`${win} history · ${every(s.interval || 0)}`}
           digest={
             <>
-              <Ln label="summaries" value={s.subs || 'all'} />
               <Ln label="history" value={win} />
               <Ln label="refresh" value={every(s.interval || 0)} />
               <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
@@ -198,7 +221,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           digest={
             <>
               <Ln label="memory" value={k.memory || 'default'} />
-              <Ln label="teams" value={teams || 'none'} off={!k.teams.length} />
+              <Pills label="teams" values={teamList} />
               {k.store ? <Ln label="store" value={k.store} /> : null}
               {/* ponytail: a pending consent gate is a nudge, so it survives the collapse as a count.
                   Everything else in this digest is a setting; this one is the only thing asking. */}

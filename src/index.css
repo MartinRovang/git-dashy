@@ -567,3 +567,12 @@
   .opts[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
   .optsb { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 9px;
            border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 8px 8px; background: var(--bg2); }
+
+  /* a multi-value setting in the collapsed digest, as the badges the expanded rail already uses.
+     Stacked, never joined: at 92px a comma list is a truncated one. */
+  .icv .ln .pills { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; margin-top: 2px; min-width: 0; max-width: 100%; }
+  .icv .ln .pills i { max-width: 100%; font-family: var(--mono); font-style: normal; font-size: 9.5px; line-height: 1.4;
+                      padding: 0 6px; border-radius: 9px; color: var(--pink);
+                      border: 1px solid color-mix(in srgb, var(--pink) 50%, transparent);
+                      background: color-mix(in srgb, var(--pink) 12%, transparent);
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
