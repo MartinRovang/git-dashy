@@ -44,6 +44,24 @@ pub const SCOPE: &str = "PRS_API_REPO";
 /// filters it away and back without a fetch; session-only, so a restart searches just what is saved.
 static FETCHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Most scopes one TEAM search carries. ponytail: a guess under GitHub's search length cap; the oldest
+/// toggled-off scope drops first, the saved ones never.
+const MAX_FETCHED: usize = 8;
+
+/// `fetched` plus every saved scope it lacks, trimmed to MAX_FETCHED by dropping the oldest scope that
+/// is no longer saved.
+fn merge_fetched(saved: &[String], fetched: &[String]) -> Vec<String> {
+    let mut f = fetched.to_vec();
+    f.extend(saved.iter().filter(|s| !fetched.contains(s)).cloned());
+    while f.len() > MAX_FETCHED {
+        let Some(i) = f.iter().position(|s| !saved.contains(s)) else {
+            break;
+        };
+        f.remove(i);
+    }
+    f
+}
+
 /// True when `scope` is already in the TEAM search, so toggling it on needs no refetch.
 pub fn fetched(scope: &str) -> bool {
     FETCHED
@@ -59,7 +77,8 @@ pub const SECTIONS: &[(&str, &str)] = &[
     ("ASSIGNED", "assignee:{me}"),
     // ponytail: open PRs in whatever orgs/teams are toggled on, so the board sees the team's work, not
     // only what names me. Dropped from the query when nothing is on. Last, so dedup gives it the leftovers.
-    ("TEAM", "{scope}"),
+    // Sorted, so the 100 it returns are the newest, not GitHub's best-match slice.
+    ("TEAM", "{scope} sort:updated-desc"),
 ];
 /// Search terms that choose WHERE to look, not what for.
 const QUALIFIERS: &[&str] = &["repo:", "user:", "org:", "owner:"];
@@ -415,8 +434,12 @@ pub fn query(who: &str, scope: &str) -> String {
         .filter(|(_, (_, q))| !(q.contains("{scope}") && scope.is_empty()))
         .map(|(i, (_, q))| {
             format!(
-                "s{i}: search(query: \"is:pr is:open {}\", type: ISSUE, first: 100) {NODE}",
-                q.replace("{me}", who).replace("{scope}", scope)
+                "s{i}: search(query: {}, type: ISSUE, first: 100) {NODE}",
+                // a JSON string is a valid GraphQL string literal, so escaping is structural
+                Value::String(format!(
+                    "is:pr is:open {}",
+                    q.replace("{me}", who).replace("{scope}", scope)
+                ))
             )
         })
         .collect();
@@ -725,11 +748,7 @@ pub fn fetch() -> Vec<Section> {
         &scope_terms(
             &{
                 let mut f = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
-                for s in &cfg.scopes {
-                    if !f.contains(s) {
-                        f.push(s.clone());
-                    }
-                }
+                *f = merge_fetched(&cfg.scopes, &f);
                 f.clone()
             },
             &crate::bind::bindings(),
@@ -1260,7 +1279,8 @@ mod tests {
             ("org:acme", "")
         );
         let q = query("me", "org:acme");
-        assert!(q.contains("s3: search(query: \"is:pr is:open org:acme\""));
+        assert!(q.contains("s3: search(query: \"is:pr is:open org:acme sort:updated-desc\""));
+        assert!(query("me", "org:a\"b").contains(r#""is:pr is:open org:a\"b sort:updated-desc""#));
         let secs = sections_of(
             &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}}),
         );
@@ -1270,6 +1290,18 @@ mod tests {
         );
         let opts = scope_options(&secs, &["core".to_string()], &repos, &owners);
         assert_eq!(opts, ["team:core", "org:a", "org:acme", "org:x"]);
+    }
+
+    #[test]
+    fn fetched_keeps_dropped_scopes_up_to_the_cap_and_never_drops_saved_ones() {
+        let v = |n: std::ops::Range<usize>| n.map(|i| format!("org:o{i}")).collect::<Vec<_>>();
+        // toggled off: still searched; toggled on: appended
+        assert_eq!(merge_fetched(&v(1..2), &v(0..1)), v(0..2));
+        // over the cap: the oldest unsaved goes first
+        let merged = merge_fetched(&v(8..9), &v(0..8));
+        assert_eq!(merged, [v(1..8), v(8..9)].concat());
+        // everything saved: nothing dropped
+        assert_eq!(merge_fetched(&v(0..10), &[]).len(), 10);
     }
 
     #[test]

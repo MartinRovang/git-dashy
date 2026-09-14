@@ -29,7 +29,7 @@ export const SECTION_HINT: Record<string, string> = {
   'REVIEW REQUESTED': 'waiting on you',
   ASSIGNED: 'owned by you',
   TEAM: 'reviewed, from your sources',
-  OTHER: 'nobody has reviewed yet',
+  OTHER: 'no review in your logs',
   REVIEWED: 'recently done',
 }
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }

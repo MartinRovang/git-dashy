@@ -1411,7 +1411,7 @@ fn post_settings(state: &State, body: &Body) -> Out {
         match got {
             Some(w) if config::WINDOWS.contains(&w) => {
                 c.window = w;
-                wake = true; // TEAM searches within the window, so it has to refetch
+                wake |= !c.scopes.is_empty(); // TEAM searches within the window, so it has to refetch
             }
             _ => {
                 return Err(Fail::new(
@@ -1431,12 +1431,12 @@ fn post_settings(state: &State, body: &Body) -> Out {
             a.iter()
                 .map(|x| {
                     x.as_str()
-                        .filter(|s| s.starts_with("org:") || s.starts_with("team:"))
+                        .filter(|s| (s.starts_with("org:") || s.starts_with("team:")) && s.len() <= 100)
                         .map(String::from)
                 })
                 .collect()
         });
-        let Some(got) = got else {
+        let Some(got) = got.filter(|g| g.len() <= 50) else {
             return Err(Fail::new(
                 400,
                 "scopes must be a list of org:<owner> or team:<key>",
@@ -2098,10 +2098,22 @@ mod tests {
             json!({"theme": "neon"}),
             json!({"voice": []}),
             json!({"window": 5}),
+            json!({"scopes": ["bogus"]}),
+            json!({"scopes": ["org:x", 3]}),
         ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }
         assert_eq!(config::get().theme, "nord");
+        assert_eq!(
+            post(
+                &format!("{base}/api/settings"),
+                json!({"scopes": ["team:k"]}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(config::get().scopes, ["team:k"]);
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port

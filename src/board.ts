@@ -29,7 +29,7 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
       .filter((p) => {
         if (!s.drafts && p.isDraft && !p.busy && !p.review) return false // a draft under review stays visible
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
-        if (sec.name === 'TEAM' && (!inScope(p, s.scopes || []) || (cutoff && new Date(p.updatedAt).getTime() < cutoff))) return false
+        if (sec.name === 'TEAM' && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
@@ -37,7 +37,7 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
     if (sec.name === 'TEAM') {
       const known = (p: Row) => !!(p.status || p.prev || p.review || p.busy)
       out.push({ ...sec, prs: rows.filter(known) })
-      other = { ...sec, name: 'OTHER', prs: rows.filter((p) => !known(p)) }
+      other = { ...sec, name: 'OTHER', error: '', prs: rows.filter((p) => !known(p)) }
       continue
     }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
@@ -71,7 +71,8 @@ export function selected(rows: Row[], sel: string, hidden: Row[] = []): Row | nu
 }
 
 export function counts(d: StateData | null) {
-  const all = (d?.sections || []).flatMap((s) => s.prs || []).map(rowState)
+  // TEAM verdicts come from log entries REVIEWED already counts
+  const all = (d?.sections || []).filter((s) => s.name !== 'TEAM').flatMap((s) => s.prs || []).map(rowState)
   const by = (t: string) => all.filter((r) => r.key === t).length
   return [
     ['approved', by('approved'), 'var(--green)'],
