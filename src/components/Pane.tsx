@@ -1,33 +1,6 @@
 import type { Detail, Row } from '../types'
-import { useNow } from '../usePoll'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
-
-type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
-
-function actsHTML(p: Row, d: Detail | null): Act[] {
-  const acts: Act[] = []
-  const rr = p.section === 'REVIEW REQUESTED'
-  const mine = p.section === 'MINE'
-  const reviewed = !!(p.review && !p.busy && tone(p.review))
-  if (rr)
-    acts.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
-  if (mine)
-    acts.push([
-      'p',
-      '',
-      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Read the pre-review' : 'Pre-review',
-      p.pre?.moved ? 'the PR moved since' : 'nothing posted',
-      p.busy,
-      'pre',
-    ])
-  if (d?.review) acts.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
-  acts.push(['o', '', 'Open in browser', 'github', false, 'open'])
-  acts.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
-  if (mine) acts.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
-  acts.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
-  acts.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
-  return acts
-}
+import { useNow } from '../usePoll'
 
 /** The side pane: the selected PR's summary, checks and review. */
 export function Pane({
@@ -35,14 +8,14 @@ export function Pane({
   detail,
   subs,
   onCode,
-  onAct,
+  onOptions,
   onClose,
 }: {
   p: Row | null
   detail: Detail | null
   subs: string
   onCode: () => void
-  onAct: (name: string) => void
+  onOptions: (at: { x: number; y: number }) => void
   onClose: () => void
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
@@ -80,16 +53,24 @@ export function Pane({
     <div className="pane">
       <div className="grip" data-grip="pane" />
       <div className="bar">
-        <span className="lab">SELECTED PR</span>
-        <span className="tab" onClick={onCode}>
-          <kbd className="hint">2</kbd>view code
+        <span className="lab">SELECTED</span>
+        <span className="branch mono" title={d?.branch || ''}>
+          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : `#${p.number}`}
         </span>
         <div style={{ flex: 1 }} />
-        <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : ''}
-        </div>
+        <button
+          className="tab opt"
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            onOptions({ x: r.right, y: r.bottom + 6 })
+          }}
+        >
+          options <span className="car">▾</span>
+        </button>
         <span className="ib" title="hide the pane (⏎)" onClick={onClose}>
           ×
+          <kbd className="hint">⏎</kbd>
         </span>
       </div>
       <div className="in scroll">
@@ -198,17 +179,6 @@ export function Pane({
             </div>
           </>
         ) : null}
-        <div className="sep" />
-        <div className="lab">ACTIONS</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-          {actsHTML(p, d).map(([k, cls, label, note, off, act]) => (
-            <div key={act} className={`act ${cls}${off ? ' off' : ''}`} onClick={() => !off && onAct(act)}>
-              <kbd className="hint">{k}</kbd>
-              <b>{label}</b>
-              <em>{note}</em>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )

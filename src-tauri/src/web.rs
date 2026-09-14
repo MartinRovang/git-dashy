@@ -1449,6 +1449,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
     }
+    if body.contains_key("keyhints") {
+        c.keyhints = truthy(body, "keyhints");
+    }
     if body.contains_key("notify") {
         c.notify = truthy(body, "notify");
     }
@@ -2123,6 +2126,15 @@ mod tests {
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["hinted"], json!(true));
         assert_eq!(d["options"]["interval"], json!(config::INTERVALS));
+        // the key hints are on out of the box, and the switch is remembered the same way
+        assert_eq!(d["settings"]["keyhints"], json!(true));
+        post(
+            &format!("{base}/api/settings"),
+            json!({"keyhints": false}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["keyhints"], json!(false));
     }
 
     #[test]

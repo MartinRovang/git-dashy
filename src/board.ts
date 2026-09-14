@@ -1,7 +1,7 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
 import type { CodeRow, Row, Section, StateData } from './types'
-import { rowState, tone } from './tokens'
+import { rowState, SECTION_EMPTY, tone } from './tokens'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
 
@@ -17,7 +17,7 @@ function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM is filtered by the sources toggles here, not by a refetch, and splits in two: rows the logs know a
  *  review of stay TEAM, the rest are OTHER. */
-export function visible(d: StateData | null, query: string, failing: boolean): VisSection[] {
+export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -31,6 +31,7 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
         if (sec.name === 'TEAM' && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
+        if (onlyDrafts && !p.isDraft) return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
       })
@@ -57,17 +58,111 @@ function group(rows: Row[]): Row[] {
   return [...by.values()]
 }
 
-export function flat(secs: VisSection[], folded: Record<string, boolean>, expanded: Record<string, boolean>): Row[] {
-  return secs
-    .filter((s) => !folded[s.name])
+/** The bucket tabs: one per section the server sent, with All in front. */
+export const ALL = 'ALL'
+
+export function buckets(secs: VisSection[]): { key: string; label: string; n: number }[] {
+  return [
+    { key: ALL, label: 'All', n: secs.reduce((t, s) => t + s.prs.length, 0) },
+    ...secs.map((s) => ({ key: s.name, label: s.name.toLowerCase(), n: s.prs.length })),
+  ]
+}
+
+/** The sections the picked buckets show. More than one tab can be on at a time; ALL is every
+ *  section, and an empty pick is none.
+ *
+ * ponytail: a bucket that is not in `secs` contributes nothing rather than widening to ALL. The
+ * server decides which sections exist, and a saved pick from a version that had more of them must
+ * not silently show everything — an empty board shows the queue is gone. An empty pick is the same:
+ * nothing named, nothing shown. `pickBucket` never produces one, and the tab strip reads it the same
+ * way, so the two cannot disagree.
+ * Order follows `secs`, never the order they were clicked, so the board does not reshuffle.
+ */
+export function inBucket(secs: VisSection[], bucket: readonly string[]): VisSection[] {
+  if (bucket.includes(ALL)) return secs
+  return secs.filter((s) => bucket.includes(s.name))
+}
+
+/** Click a tab: All replaces the pick, a section toggles into it, and emptying it falls back to All. */
+export function pickBucket(bucket: readonly string[], key: string): string[] {
+  if (key === ALL) return [ALL]
+  const rest = bucket.filter((b) => b !== ALL && b !== key)
+  return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
+}
+
+export type Filters = { query: string; failing: boolean; drafts: boolean; bucket: string[] }
+
+/** The filter row after a view switch: cleared for the graph, untouched for the board.
+ *
+ * ponytail: the graph has no filter row of its own, so a narrowed board there is a filter you can
+ * neither see nor clear — and a node outside the pick resolves to a uid `flat()` never produced,
+ * which `selected()` then answers with rows[0]. It lives here because `show()` has no harness and
+ * this is the third field that has been forgotten in it.
+ */
+export function forView(v: 'board' | 'graph', cur: Filters): Filters {
+  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : cur
+}
+
+/** The two filter chips over the bucket on screen, with the rule for when one goes dead.
+ *
+ * ponytail: counted over the BUCKET, not the whole board — a chip offering "3 failing" while you are
+ * looking at a queue holding none of them is a number you cannot act on. `secs` already has the other
+ * chip's filter applied, so the number is how many rows pressing THIS one would leave: a zero means
+ * the pair is empty, and a dead chip is the honest answer.
+ */
+export function chips(
+  secs: VisSection[],
+  bucket: readonly string[],
+  failing: boolean,
+  drafts: boolean,
+): { key: 'failing' | 'drafts'; label: string; n: number; on: boolean; off: boolean }[] {
+  const shown = inBucket(secs, bucket).flatMap((s) => s.prs)
+  return [
+    { key: 'failing' as const, label: 'CI failing', n: shown.filter((x) => tone(x.checks) === 'changes').length, on: failing },
+    { key: 'drafts' as const, label: 'Drafts', n: shown.filter((x) => x.isDraft).length, on: drafts },
+  ].map((c) => ({ ...c, off: !c.n && !c.on }))
+}
+
+/// `[` and `]`: one tab at a time, replacing the pick.
+export function walkBucket(keys: string[], cur: readonly string[], dir: 1 | -1): string[] {
+  if (!keys.length) return [...cur]
+  // a stacked pick has no single place in the strip, so the walk starts from All
+  const i = keys.indexOf(cur.length === 1 ? cur[0] : ALL)
+  return [keys[((i < 0 ? 0 : i) + dir + keys.length) % keys.length]]
+}
+
+/** What an empty section says.
+ *
+ * ponytail: the per-queue line ("Nothing of yours is open.") is a claim about the queue, and a
+ * filter emptying the section makes it false — type `/foo` and MINE says you have nothing open. The
+ * queue line is only true when nothing is narrowing the board.
+ */
+export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean): string {
+  if (query.trim() || failing || drafts) return 'Nothing matches the filter.'
+  const win = settings(d).window
+  if (name === 'REVIEWED' && win) return `Nothing reviewed in the last ${win}h.`
+  return SECTION_EMPTY[name] || 'Nothing here.'
+}
+
+export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {
+  return inBucket(secs, bucket)
     .flatMap((s) => s.prs)
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
-/** `hidden` is also searched, so a graph node in a folded section resolves, but the fallback stays a
- *  VISIBLE row: with every section folded it was the first hidden PR, auto-selected and marked read. */
-export function selected(rows: Row[], sel: string, hidden: Row[] = []): Row | null {
-  return rows.find((p) => p.uid === sel) || hidden.find((p) => p.uid === sel) || rows[0] || null
+/** The selected row, and whether it is the one that was actually chosen.
+ *
+ * ponytail: the fallback exists so the board is never without a selection, but it is a guess, not a
+ * choice — and marking it read is a claim you looked at it. Switching tabs lands on rows[0] of the
+ * new queue, so every `[` and `]` step was marking the top PR of that queue read.
+ */
+export function pick(rows: Row[], sel: string): { row: Row | null; chosen: boolean } {
+  const found = rows.find((p) => p.uid === sel)
+  return { row: found || rows[0] || null, chosen: !!found }
+}
+
+export function selected(rows: Row[], sel: string): Row | null {
+  return pick(rows, sel).row
 }
 
 export function counts(d: StateData | null) {

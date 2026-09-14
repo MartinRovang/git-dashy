@@ -80,6 +80,7 @@ const S = {
     theme: 'pencil',
     notify: false,
     hinted: true,
+    keyhints: true,
     subs: 'all',
     model: 'opus',
     depth: 'adaptive',
@@ -95,6 +96,8 @@ const S = {
   fetchedAt: secs(),
   notices: [] as string[],
   asks: [] as { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }[],
+  // what a "no" left held back, so the rail's consent rows and its asks count are reachable in dev
+  refused: [] as { kind: string; key: string; what: string }[],
   refreshes: 0,
   cursor: 0,
   overlaps: { running: false, t0: 0, error: '', result: null as unknown[] | null, idle: true },
@@ -219,6 +222,9 @@ function buildPayload() {
       teams: S.teams.map((t) => ({ key: t.key, name: t.name, arrived: 0 })),
       teamError: '',
       notes: [],
+      // the consent rows #60 added. Nothing supplied them here, so the rail's asks count and the
+      // "ask again" row were not reachable in `pnpm dev` at all.
+      waiting: S.refused,
     },
     asks: S.asks,
     notices: S.notices,
@@ -343,7 +349,7 @@ function postReview(b: Body) {
 
 function postSettings(b: Body) {
   const s = S.settings
-  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'hinted']) {
+  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'hinted', 'keyhints']) {
     if (k in b) s[k] = b[k]
   }
   return json(200, { ok: true })
@@ -607,7 +613,15 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/consent') {
       const kind = str(body, 'kind')
       const key = str(body, 'key')
+      if (str(body, 'op') === 'again') {
+        const held = S.refused.find((w) => w.kind === kind && w.key === key)
+        S.refused = S.refused.filter((w) => w !== held)
+        if (held) S.asks = [...S.asks, { kind, key, name: key, waiting: '2 drafts · 1 fact' }]
+        return json(200, { ok: true })
+      }
       S.asks = S.asks.filter((a) => !(a.kind === kind && a.key === key))
+      if (body.yes === false && !S.refused.some((w) => w.kind === kind && w.key === key))
+        S.refused = [...S.refused, { kind, key, what: kind === 'agents' ? 'agents.md not read' : 'not publishing' }]
       return json(200, { ok: true })
     }
     if (path === '/api/path') return json(200, { ok: true })
