@@ -29,8 +29,7 @@ function Ln({ label, value, off }: { label: string; value: string; off?: boolean
 /** A setting that holds several at once, as the badges the expanded rail uses for the same thing.
  *
  * ponytail: joined with commas these ran off the narrow rail and you saw "review, cave…". One badge
- * per value, stacked, so every active one is readable at any width — which is the whole reason the
- * digest exists.
+ * per value, stacked, so every active one is readable at any width.
  */
 function Pills({ label, values }: { label: string; values: string[] }) {
   return (
@@ -51,9 +50,9 @@ function Pills({ label, values }: { label: string; values: string[] }) {
 
 /** A settings group: a caret and a one-line summary when open, a stacked digest when collapsed.
  *
- * ponytail: the digest is the whole point of the collapsed rail. A column of icons tells you which
- * group to click and nothing about what it holds; three label/value pairs tell you the model you are
- * reviewing with without expanding anything, which is the question the rail is usually asked.
+ * ponytail: the collapsed rail shows a digest. A column of icons tells you which group to click and
+ * nothing about what it holds; label/value pairs tell you the model you are reviewing with without
+ * expanding anything.
  */
 function Group({
   k,
@@ -77,8 +76,7 @@ function Group({
   return (
     <div className={`sgrp${open && !collapsed ? ' open' : ''}`}>
       {/* ponytail: on the narrow rail the fields cannot render, so the click opens the rail ONTO this
-          group instead of toggling a body nobody can see. A button that hovers and does nothing is
-          worse than no button. */}
+          group instead of toggling a body nobody can see. */}
       <button
         className="summary"
         title={collapsed ? `${label} — open the rail here` : undefined}
@@ -113,6 +111,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
     }
     setOpen((o) => ({ ...o, [name]: !o[name] }))
   }
+  // ponytail: `waiting` is what a NO is holding back, not what is waiting for an answer — the rows
+  // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
+  const held = k.waiting || []
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -227,15 +228,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           k="know"
           label="Knowledge"
-          summary={[teams || 'no team', (k.waiting || []).length ? `${(k.waiting || []).length} asking` : ''].filter(Boolean).join(' · ')}
+          summary={[teams || 'no team', held.length ? `${held.length} held back` : ''].filter(Boolean).join(' · ')}
           digest={
             <>
               <Ln label="memory" value={k.memory || 'default'} />
               <Pills label="teams" values={teamList} />
               {k.store ? <Ln label="store" value={k.store} /> : null}
-              {/* ponytail: a pending consent gate is a nudge, so it survives the collapse as a count.
-                  Everything else in this digest is a setting; this one is the only thing asking. */}
-              <Ln label="asks" value={String((k.waiting || []).length)} off={!(k.waiting || []).length} />
+              {/* ponytail: a refused consent is a nudge, so it survives the collapse as a count.
+                  Everything else in this digest is a setting; this one is something to go and undo. */}
+              <Ln label="held back" value={String(held.length)} off={!held.length} />
             </>
           }
           open={!!open.know}
@@ -264,8 +265,8 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               ⚠ {n}
             </div>
           ))}
-          {/* What each consent gate is still holding back. Clicking one asks that question again. */}
-          {(k.waiting || []).map((w, i) => (
+          {/* What a "no" is still holding back. Clicking one asks that question again. */}
+          {held.map((w, i) => (
             <div className="note link" key={`w${i}`} title="ask me again" onClick={() => onAskAgain(w.kind, w.key)}>
               ⚠ {w.key}: {w.what} — ask again
             </div>

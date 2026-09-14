@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, flat, forView, inBucket, pickBucket, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, pick, pickBucket, selected, visible, walkBucket } from './board'
 
 let n = 0
 
@@ -117,6 +117,12 @@ describe('inBucket', () => {
   it('an unknown name alongside a real one contributes nothing', () => {
     expect(inBucket(v(), ['RETIRED', 'MINE']).map((s) => s.name)).toEqual(['MINE'])
   })
+
+  // nothing produces this today, but the tab strip reads an empty pick the same way, so the two
+  // cannot drift into disagreeing about what no tabs means
+  it('an empty pick is no sections, the way no tabs selected looks', () => {
+    expect(inBucket(v(), [])).toEqual([])
+  })
 })
 
 describe('pickBucket', () => {
@@ -204,6 +210,55 @@ describe('visible: the drafts rules compose', () => {
 
   it('with drafts hidden and onlyDrafts off, no plain draft survives', () => {
     expect(titles(board({ drafts: false }), false)).toEqual(['plain', 'draft busy', 'draft reviewed'])
+  })
+})
+
+describe('emptyLine', () => {
+  const d = state([], { window: 24 })
+
+  it('names the queue when nothing is narrowing the board', () => {
+    expect(emptyLine(d, 'MINE', '', false, false)).toBe('Nothing of yours is open.')
+    expect(emptyLine(d, 'REVIEW REQUESTED', '', false, false)).toBe('Nobody is waiting on your review.')
+  })
+
+  // the claim is about the QUEUE, so a filter emptying the section makes it false
+  it('blames the filter, not the queue, whenever one is on', () => {
+    expect(emptyLine(d, 'MINE', 'foo', false, false)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', true, false)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', false, true)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'REVIEWED', 'foo', false, false)).toBe('Nothing matches the filter.')
+  })
+
+  it('a query of nothing but spaces is not a filter', () => {
+    expect(emptyLine(d, 'MINE', '   ', false, false)).toBe('Nothing of yours is open.')
+  })
+
+  it('REVIEWED names the window it is cut to, and says so only when one is set', () => {
+    expect(emptyLine(d, 'REVIEWED', '', false, false)).toBe('Nothing reviewed in the last 24h.')
+    expect(emptyLine(state([], { window: null }), 'REVIEWED', '', false, false)).toBe('Nothing reviewed yet.')
+  })
+
+  it('a section it has no line for still says something', () => {
+    expect(emptyLine(d, 'SOMETHING NEW', '', false, false)).toBe('Nothing here.')
+  })
+})
+
+describe('pick: a chosen row and a fallback are not the same thing', () => {
+  const rows = () => flat(secs(state([{ name: 'MINE', prs: [pr({ title: 'a' }), pr({ title: 'b' })] }])), [ALL], {})
+
+  it('says so when the selection is really on the board', () => {
+    const r = rows()
+    expect(pick(r, r[1].uid)).toEqual({ row: r[1], chosen: true })
+  })
+
+  // switching tab lands on rows[0] of the new queue; marking that read claims you looked at it
+  it('falls back to the first row and says it was a guess', () => {
+    const r = rows()
+    expect(pick(r, 'a uid from a board that moved')).toEqual({ row: r[0], chosen: false })
+  })
+
+  it('an empty board is neither', () => {
+    expect(pick([], 'anything')).toEqual({ row: null, chosen: false })
   })
 })
 
@@ -330,6 +385,30 @@ describe('counts: what the status block reads', () => {
 
   it('is all zero on an empty board rather than throwing', () => {
     expect(counts(null).map(([, n]) => n)).toEqual([0, 0, 0, 0])
+  })
+})
+
+describe('visible: the filter box', () => {
+  const d = () =>
+    state([{ name: 'MINE', prs: [pr({ title: 'export job', repo: 'acme/web', author: 'bob', number: 42 })] }])
+  const hits = (q: string) => visible(d(), q, false, false)[0].prs.length
+
+  it('matches the title, the repo, the author and the number', () => {
+    expect([hits('export'), hits('acme'), hits('bob'), hits('#42')]).toEqual([1, 1, 1, 1])
+  })
+
+  it('ignores case', () => {
+    expect(hits('EXPORT')).toBe(1)
+  })
+
+  // a query of nothing but spaces is not a query; untrimmed it matched no row and emptied the board
+  it('is not narrowed by whitespace alone', () => {
+    expect(hits('   ')).toBe(1)
+    expect(hits('')).toBe(1)
+  })
+
+  it('leaves nothing when it matches nothing', () => {
+    expect(hits('nowhere near this')).toBe(0)
   })
 })
 

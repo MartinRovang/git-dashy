@@ -68,7 +68,7 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     },
     onPointerUp: () => (grab.current = null),
     onLostPointerCapture: () => (grab.current = null),
-    onDoubleClick: (e: ReactPointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+    onDoubleClick: (e: React.MouseEvent<HTMLDivElement>) => {
       if (!(e.target as HTMLElement).closest(noDrag)) setBox((b) => ({ ...b, max: !b.max }))
     },
   }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, pickBucket, selected, visible, walkBucket } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, pick, pickBucket, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -89,7 +89,7 @@ export default function App() {
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
   const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
-  const current = selected(rows, sel)
+  const { row: current, chosen } = pick(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
 
@@ -119,9 +119,11 @@ export default function App() {
     return () => clearTimeout(id)
   }, [flash])
 
+  // only a row you picked counts as read. The fallback selection is a guess — switching tab lands on
+  // the top of the new queue, and marking that read is a claim you looked at it.
   useEffect(() => {
-    if (current) markRead([current])
-  }, [current])
+    if (current && chosen) markRead([current])
+  }, [current, chosen])
 
   useEffect(() => {
     document.body.dataset.theme = data?.settings.theme || 'pencil'
@@ -638,10 +640,10 @@ export default function App() {
       ) : null}
       {menuAt ? (
         <ActsMenu
-          p={menuAt.p}
+          p={rows.find((r) => r.uid === menuAt.p.uid) || menuAt.p}
           d={detail?.url === menuAt.p.url ? detail : null}
           at={menuAt.at}
-          onAct={(name, target) => doAct(name, target)}
+          onAct={doAct}
           onClose={() => setMenuAt(null)}
         />
       ) : null}

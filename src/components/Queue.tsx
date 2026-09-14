@@ -1,8 +1,8 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { ALL, buckets, chips, inBucket, settings } from '../board'
-import { age, avatar, PALETTE, rowState, SECTION_EMPTY, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
+import { buckets, chips, emptyLine, inBucket } from '../board'
+import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
   data: StateData | null
@@ -165,7 +165,7 @@ export function Queue(p: Props) {
               key={b.key}
               className="tab"
               role="tab"
-              aria-selected={p.bucket.includes(b.key) || (b.key === ALL && !p.bucket.length)}
+              aria-selected={p.bucket.includes(b.key)}
               onClick={() => p.onBucket(b.key)}
             >
               {b.label}
@@ -217,30 +217,24 @@ export function Queue(p: Props) {
                 )
               : s.prs
           let seen: string | null = null
+          const named = shownSecs.length > 1
+          const hint = s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''
           return (
             <div key={s.name}>
               {/* ponytail: only the section NAME is redundant under a single tab — the tab says it.
                   The hint beside it is not: "3 need work · 2 waiting" is the one thing that row
                   carried that no tab does, and it vanished in the queue you opened to read it. */}
-              {(() => {
-                const named = shownSecs.length > 1
-                const hint = s.name === 'MINE' ? mineNote(s.prs) || SECTION_HINT[s.name] : SECTION_HINT[s.name] || ''
-                return named || hint ? (
-                  <div className="grp">
-                    {named ? <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>{s.name}</span> : null}
-                    <span className="hint">{hint}</span>
-                    <hr />
-                  </div>
-                ) : null
-              })()}
+              {named || hint ? (
+                <div className="grp">
+                  {named ? <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>{s.name}</span> : null}
+                  <span className="hint">{hint}</span>
+                  <hr />
+                </div>
+              ) : null}
               {s.error ? (
                 <div className="none err">{s.error.split('\n')[0]}</div>
               ) : !s.prs.length ? (
-                <div className="empty">
-                  {s.name === 'REVIEWED' && settings(d).window
-                    ? `Nothing reviewed in the last ${settings(d).window}h.`
-                    : SECTION_EMPTY[s.name] || 'Nothing here.'}
-                </div>
+                <div className="empty">{emptyLine(d, s.name, p.query, p.failing, p.drafts)}</div>
               ) : (
                 rows.map((row) => {
                   const label = row.team || ''

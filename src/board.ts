@@ -1,7 +1,7 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
 import type { CodeRow, Row, Section, StateData } from './types'
-import { rowState, tone } from './tokens'
+import { rowState, SECTION_EMPTY, tone } from './tokens'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
 
@@ -52,12 +52,14 @@ export function buckets(secs: VisSection[]): { key: string; label: string; n: nu
   ]
 }
 
-/** The sections the picked buckets show. More than one tab can be on at a time; ALL, or nothing
- *  picked, is every section.
+/** The sections the picked buckets show. More than one tab can be on at a time; ALL is every
+ *  section, and an empty pick is none.
  *
  * ponytail: a bucket that is not in `secs` contributes nothing rather than widening to ALL. The
  * server decides which sections exist, and a saved pick from a version that had more of them must
- * not silently show everything — an empty board says "that queue is gone", a full one says nothing.
+ * not silently show everything — an empty board shows the queue is gone. An empty pick is the same:
+ * nothing named, nothing shown. `pickBucket` never produces one, and the tab strip reads it the same
+ * way, so the two cannot disagree.
  * Order follows `secs`, never the order they were clicked, so the board does not reshuffle.
  */
 export function inBucket(secs: VisSection[], bucket: readonly string[]): VisSection[] {
@@ -88,9 +90,9 @@ export function forView(v: 'board' | 'graph', cur: Filters): Filters {
 /** The two filter chips over the bucket on screen, with the rule for when one goes dead.
  *
  * ponytail: counted over the BUCKET, not the whole board — a chip offering "3 failing" while you are
- * looking at a queue holding none of them is a number you cannot act on. A chip is dead only when
- * pressing it would bring nothing back: zero here, not itself on, and no OTHER filter hiding rows it
- * would have counted.
+ * looking at a queue holding none of them is a number you cannot act on. `secs` already has the other
+ * chip's filter applied, so the number is how many rows pressing THIS one would leave: a zero means
+ * the pair is empty, and a dead chip is the honest answer.
  */
 export function chips(
   secs: VisSection[],
@@ -102,9 +104,6 @@ export function chips(
   return [
     { key: 'failing' as const, label: 'CI failing', n: shown.filter((x) => tone(x.checks) === 'changes').length, on: failing },
     { key: 'drafts' as const, label: 'Drafts', n: shown.filter((x) => x.isDraft).length, on: drafts },
-    // dead only when pressing it would bring nothing back. `secs` has the other chip's filter applied
-    // already, which is the point: the number is how many rows pressing THIS one would leave, so a
-    // zero means the combination is empty and a dead chip is the honest answer.
   ].map((c) => ({ ...c, off: !c.n && !c.on }))
 }
 
@@ -116,14 +115,38 @@ export function walkBucket(keys: string[], cur: readonly string[], dir: 1 | -1):
   return [keys[((i < 0 ? 0 : i) + dir + keys.length) % keys.length]]
 }
 
+/** What an empty section says.
+ *
+ * ponytail: the per-queue line ("Nothing of yours is open.") is a claim about the queue, and a
+ * filter emptying the section makes it false — type `/foo` and MINE says you have nothing open. The
+ * queue line is only true when nothing is narrowing the board.
+ */
+export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean): string {
+  if (query.trim() || failing || drafts) return 'Nothing matches the filter.'
+  const win = settings(d).window
+  if (name === 'REVIEWED' && win) return `Nothing reviewed in the last ${win}h.`
+  return SECTION_EMPTY[name] || 'Nothing here.'
+}
+
 export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {
   return inBucket(secs, bucket)
     .flatMap((s) => s.prs)
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
+/** The selected row, and whether it is the one that was actually chosen.
+ *
+ * ponytail: the fallback exists so the board is never without a selection, but it is a guess, not a
+ * choice — and marking it read is a claim you looked at it. Switching tabs lands on rows[0] of the
+ * new queue, so every `[` and `]` step was marking the top PR of that queue read.
+ */
+export function pick(rows: Row[], sel: string): { row: Row | null; chosen: boolean } {
+  const found = rows.find((p) => p.uid === sel)
+  return { row: found || rows[0] || null, chosen: !!found }
+}
+
 export function selected(rows: Row[], sel: string): Row | null {
-  return rows.find((p) => p.uid === sel) || rows[0] || null
+  return pick(rows, sel).row
 }
 
 export function counts(d: StateData | null) {
