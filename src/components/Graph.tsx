@@ -16,7 +16,7 @@ import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
 type Hub = 'repo' | 'author'
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; galaxy: string; named?: boolean }
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; galaxy: string }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
@@ -107,6 +107,7 @@ export function Graph({ secs, sel, onSelect }: {
   // highlights rather than filters: dropping nodes would re-run the layout on every keystroke
   const [query, setQuery] = useState('')
   const view = useRef(zoomIdentity)
+  const capped = useRef(false)
   const latest = useRef({ rows, sel, onSelect, query, by })
   latest.current = { rows, sel, onSelect, query, by }
 
@@ -183,14 +184,18 @@ export function Graph({ secs, sel, onSelect }: {
     const { k, x, y } = view.current
     const w = svg.clientWidth / 2
     const h = svg.clientHeight / 2
-    const shown = (n: Node) => Math.abs(n.x! * k + x) < w && Math.abs(n.y! * k + y) < h
+    // padded: a title hangs below its node, so it stays while the node is just past the edge
+    const shown = (n: Node) => Math.abs(n.x! * k + x) < w + 40 && Math.abs(n.y! * k + y) < h + 40
     const prs = graph.current.nodes.filter((n) => n.kind === 'pr' && shown(n)).length
+    // hysteresis: a count hovering at LABELS while the layout settles would flip every title on and off together
+    if (prs > LABELS) capped.current = true
+    else if (prs < LABELS * 0.8) capped.current = false
     select(svg)
       .selectAll<SVGGElement, Node>('g.gnode')
       .each(function (n) {
         // at k <= .8 --label hides every title anyway
-        const named = k > 0.8 && shown(n) && (n.kind !== 'pr' || prs <= LABELS)
-        if (named !== n.named) this.classList.toggle('named', (n.named = named))
+        const named = k > 0.8 && shown(n) && (n.kind !== 'pr' || !capped.current)
+        if (named !== this.classList.contains('named')) this.classList.toggle('named', named)
       })
   }
 
