@@ -14,8 +14,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
-                      [--team KEY --agents-again]
-                      [--team KEY --agents-again]
+                      [--team KEY --agents-again|--publishing-again]
 
   --interval N   seconds between refreshes (default 300); i picks 1/2/5/10/15m
   --browser      open the dashboard in your browser instead of the desktop app (downloaded on first use)

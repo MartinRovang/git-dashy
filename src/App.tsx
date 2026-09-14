@@ -12,7 +12,7 @@ import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, span, tone } from './tokens'
-import type { Code, Detail, Row, StateData } from './types'
+import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useNow, useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
@@ -271,6 +271,15 @@ export default function App() {
   }
   const onPath = (which: 'L' | 'C') => void setPath(ctx, which)
   const onTeams = () => void teamsScreen(ctx, current)
+  // ponytail: forget the recorded answer, then ask. The prompt lists what has NO answer, so re-asking
+  // without forgetting first would draw nothing and read as a dead row.
+  const onAskAgain = (kind: string, key: string) =>
+    void (async () => {
+      const out = await ctx.call('/api/consent', { op: 'again', kind, key })
+      // ponytail: kind as well as key. launch_asks returns publishing first, so a team with both
+      // gates pending opened the publishing dialog from the row that said agents.md.
+      if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
+    })()
   const onModal = (name: string) => {
     if (name === 'drafts') void draftsScreen(ctx)
     else if (name === 'share') void shareScreen(ctx, current)
@@ -488,7 +497,7 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
+        <Sidebar data={data} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} onAskAgain={onAskAgain} />
         <div className="main">
           <div className="body">
             <div className="queue">
