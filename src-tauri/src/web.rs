@@ -98,13 +98,24 @@ pub fn payload(state: &State) -> Value {
         )
     };
     let cfg = config::get();
-    let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-    let summaries: HashMap<&str, &str> = sections
+    // ponytail: ONE resolver per frame, like the curses screen used to
+    let (resolve, (repos, owners)) = bind::resolver_and_maps();
+    // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
+    // REVIEWED is newest first, so the first one seen wins.
+    let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
+    let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
+    for p in sections
         .iter()
         .filter(|s| s.name == "REVIEWED")
         .flat_map(|s| s.prs.iter().flatten())
-        .filter_map(|p| p.review.as_ref().map(|r| (p.url.as_str(), r.summary.as_str())))
-        .collect();
+    {
+        if let Some(r) = &p.review {
+            logged.entry(p.url.as_str()).or_insert(r);
+            if !r.kind.is_empty() {
+                tags.entry(p.url.as_str()).or_insert(r);
+            }
+        }
+    }
     let mut out = Vec::new();
     for s in &sections {
         let mut rows = Vec::new();
@@ -118,8 +129,14 @@ pub fn payload(state: &State) -> Value {
             let (summary, review_at) = match (&s.name[..], &p.review) {
                 ("REVIEWED", Some(r)) => (r.summary.as_str(), r.at.as_str()),
                 ("REVIEWED", None) => ("", ""),
-                _ => (summaries.get(url).copied().unwrap_or(""), ""),
+                _ => (logged.get(url).map(|r| r.summary.as_str()).unwrap_or(""), ""),
             };
+            // a REVIEWED row carries its own review, when that one is tagged; else the url's newest tagged
+            let tagged = p
+                .review
+                .as_deref()
+                .filter(|r| !r.kind.is_empty())
+                .or_else(|| tags.get(url).copied());
             rows.push(json!({
                 "url": url,
                 "number": p.number,
@@ -140,12 +157,15 @@ pub fn payload(state: &State) -> Value {
                 "team": resolve(p.repo()),
                 "summary": summary,
                 "reviewAt": review_at,
+                "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
+                "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
             }));
         }
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
     }
     let names = team::joined();
+    let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
         "sections": out,
@@ -161,13 +181,18 @@ pub fn payload(state: &State) -> Value {
         "settings": snapshot(),
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
-                    "interval": config::INTERVALS, "theme": THEMES},
+                    "interval": config::INTERVALS, "theme": THEMES,
+                    "scopes": scopes},
         "knowledge": {
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
             "teams": names.iter().map(|k| json!({"key": k, "name": team::info(k).name, "arrived": arrived.get(k).copied().unwrap_or(0)})).collect::<Vec<_>>(),
             "teamError": team_error(),
             "notes": install::session_notes(),
+            // ponytail: a row you can act on, not a note you cannot — see memory::pending_answers.
+            "waiting": memory::pending_answers().into_iter()
+                .map(|(kind, key, what)| json!({"kind": kind, "key": key, "what": what}))
+                .collect::<Vec<_>>(),
         },
         "asks": asks,
         "notices": notices,
@@ -245,11 +270,11 @@ fn on_line(m: &Mark, file: usize, line: &crate::types::Line) -> bool {
     m.file == file && m.n != 0 && line.n == Some(m.n) && line.del.is_none()
 }
 
-/// The code tab as a flat list of rows, so the page can window it and jump between marks.
+/// The code viewer's diff as a flat list of rows, the review's comments under the lines they are about.
 ///
 /// ponytail: ported from the curses pane as-is. Every mark gets a row: on its line when the diff has
 /// that line, as an orphan when it does not; a finding is kept only if it can be read.
-pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value> {
+pub fn code_rows(files: &[DiffFile], marks: &[Mark]) -> Vec<Value> {
     let mut rows = Vec::new();
     let mut landed = vec![false; marks.len()];
     for (fi, f) in files.iter().enumerate() {
@@ -261,9 +286,6 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
                     json!({"kind": "line", "n": l.n, "sign": l.sign, "text": l.text, "del": l.del,
                                  "mark": diff::worst(l)}),
                 );
-                if !scoped {
-                    continue;
-                }
                 for (mi, m) in marks.iter().enumerate() {
                     if on_line(m, fi, l) {
                         rows.push(json!({"kind": "note", "mark": m.kind, "text": m.text}));
@@ -274,19 +296,17 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
         }
         rows.push(json!({"kind": "gap"}));
     }
-    if scoped {
-        for (mi, m) in marks.iter().enumerate() {
-            if landed[mi] {
-                continue;
-            }
-            // ponytail: `file` past the list is how a mark says the diff does not touch that file
-            let why = if m.file >= files.len() {
-                "not in this diff"
-            } else {
-                "line not in this diff"
-            };
-            rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
+    for (mi, m) in marks.iter().enumerate() {
+        if landed[mi] {
+            continue;
         }
+        // ponytail: `file` past the list is how a mark says the diff does not touch that file
+        let why = if m.file >= files.len() {
+            "not in this diff"
+        } else {
+            "line not in this diff"
+        };
+        rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
     }
     rows
 }
@@ -305,10 +325,11 @@ pub fn code(state: &State, pr: &Pr, scope: &str, context: usize) -> Value {
                       "empty": "no diff to show — GitHub could not read it, or nothing changed"});
     }
     let scoped = scope == "marks";
+    // the review's comments show in both scopes; the scope only decides how much code is around them
     let rows = if scoped {
-        code_rows(&diff::narrow(&files, context), &marks, true)
+        code_rows(&diff::narrow(&files, context), &marks)
     } else {
-        code_rows(&files, &marks, false)
+        code_rows(&files, &marks)
     };
     if scoped && rows.is_empty() {
         return json!({"url": pr.url, "pending": false, "rows": [],
@@ -437,27 +458,34 @@ pub fn dream_detail(summary: &str, before: &[(String, String)], new: &[(String, 
 }
 
 pub fn dream_result((summary, before, new): memory::Dream) -> Value {
-    let mut gone: Vec<&str> = new
+    // ponytail: everything the page is told comes from the same filter write() applies. The rows, the
+    // deletion count and the full diff all used the raw answer, so the panel could name a team file
+    // losing nine lines and then not touch it — a promise the apply drops. `theirs` is how many were
+    // read and left alone, because a file simply missing from the list reads as one never looked at.
+    let mine = memory::writable(&new);
+    let theirs = new.len() - mine.len();
+    let mut gone: Vec<&str> = mine
         .iter()
         .filter(|(n, t)| t.trim().is_empty() && !lookup(&before, n).trim().is_empty())
         .map(|(n, _)| n.as_str())
         .collect();
     gone.sort();
-    let mut names: Vec<&str> = new.iter().map(|(n, _)| n.as_str()).collect();
+    let mut names: Vec<&str> = mine.iter().map(|(n, _)| n.as_str()).collect();
     names.sort_by_key(|n| (!gone.contains(n), n.to_string()));
     let files: Vec<Value> = names
         .iter()
         .map(|n| {
             json!({"name": dream_name(n), "before": lookup(&before, n).lines().count(),
-                   "after": lookup(&new, n).lines().count(), "deleted": gone.contains(n)})
+                   "after": lookup(&mine, n).lines().count(), "deleted": gone.contains(n)})
         })
         .collect();
     let lost: usize = gone.iter().map(|n| lookup(&before, n).lines().count()).sum();
-    let new_obj: Map<String, Value> = new
+    let new_obj: Map<String, Value> = mine
         .iter()
         .map(|(n, t)| (n.clone(), Value::String(t.clone())))
         .collect();
-    json!({"summary": summary, "files": files, "lost": lost, "detail": dream_detail(&summary, &before, &new), "new": new_obj})
+    json!({"summary": summary, "files": files, "lost": lost, "theirs": theirs,
+           "detail": dream_detail(&summary, &before, &mine), "new": new_obj})
 }
 
 // ---------------------------------------------------------------- routes: GET
@@ -879,15 +907,6 @@ fn post_refresh(state: &State, _body: &Body) -> Out {
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.
 fn post_open(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
-    if truthy(body, "pre") {
-        let (at, _moved) = review::self_review_state(&pr);
-        if at == 0.0 {
-            return Err(no_prereview(&pr));
-        }
-        let path = review::self_review_path(pr.repo(), pr.number);
-        github::open_in_browser(&path.to_string_lossy());
-        return Ok(json!({"ok": true, "opened": path}));
-    }
     github::open_in_browser(&pr.url);
     Ok(json!({"ok": true, "opened": pr.url}))
 }
@@ -1147,18 +1166,19 @@ fn post_dream(_state: &State, body: &Body) -> Out {
             return Err(Fail::new(409, "no dream to apply"));
         };
         let dir = config::get().memory_dir;
-        team::pull_dir(&dir, "mine"); // a dream rewrites both sources, so both are pulled
-        team::pull();
+        // ponytail: YOUR dir only, on both legs. A dream rewrites nothing under a team checkout now, so
+        // pulling one first bought nothing and pushing one afterwards was worse: push_dir runs
+        // `git add -A`, so somebody else's pending team changes were committed under "dream cleanup",
+        // and its error could report "memory rewritten, but NOT committed" about a source the dream
+        // never touched.
+        team::pull_dir(&dir, "mine");
         let new: Vec<(String, String)> = new
             .iter()
             .map(|(n, t)| (n.clone(), t.as_str().unwrap_or("").to_string()))
             .collect();
         memory::write(&new)?;
         jobs().remove("dream");
-        let mut err = team::push_dir(&dir, "memory: dream cleanup", "mine");
-        if err.is_empty() {
-            err = team::push("memory: dream cleanup");
-        }
+        let err = team::push_dir(&dir, "memory: dream cleanup", "mine");
         let error = if err.is_empty() {
             String::new()
         } else {
@@ -1183,6 +1203,21 @@ fn post_request_review(state: &State, body: &Body) -> Out {
 /// Answer one launch-time ask: whether a team may receive facts, or its agents.md may reach sessions.
 fn post_consent(state: &State, body: &Body) -> Out {
     let (kind, key, yes) = (text(body, "kind"), text(body, "key"), truthy(body, "yes"));
+    // ponytail: "again" forgets the recorded answer so the ask comes back. The prompts list what has
+    // NO answer, so re-asking without forgetting first would draw nothing and read as a dead button.
+    if text(body, "op") == "again" {
+        match kind.as_str() {
+            "publishing" => memory::ask_publishing_again(&key),
+            "agents" => memory::ask_agents_again(&key),
+            _ => return Err(Fail::new(400, "kind must be publishing or agents")),
+        };
+        // ponytail: computed ONCE. It walks the draft queue and the fact files per team, which is not
+        // a thing to do twice in three lines.
+        let asks = launch_asks();
+        state.lock().asks = asks.clone();
+        state.wake();
+        return Ok(json!({"ok": true, "asks": asks}));
+    }
     match kind.as_str() {
         "publishing" => memory::allow_publishing(&key, yes),
         "agents" => memory::allow_agents(&key, &text(body, "text"), yes), // what was SHOWN is what gets recorded
@@ -1283,6 +1318,10 @@ fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
 /// the GitHub API: 0 would spin it flat out against your rate limit, and a string would break inside
 /// the refresh thread, where nothing is watching. Nothing lands until every key checked out.
 fn post_settings(state: &State, body: &Body) -> Out {
+    // every request has its own thread: without this, two posts copy the config, and the later save
+    // undoes the other's change. ponytail: one global lock, settings posts are rare and quick
+    static SAVING: Mutex<()> = Mutex::new(());
+    let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     let mut wake = false;
     if let Some(v) = body.get("interval") {
@@ -1375,7 +1414,10 @@ fn post_settings(state: &State, body: &Body) -> Out {
             _ => None,
         };
         match got {
-            Some(w) if config::WINDOWS.contains(&w) => c.window = w,
+            Some(w) if config::WINDOWS.contains(&w) => {
+                c.window = w;
+                wake |= !c.scopes.is_empty(); // TEAM searches within the window, so it has to refetch
+            }
             _ => {
                 return Err(Fail::new(
                     400,
@@ -1387,8 +1429,52 @@ fn post_settings(state: &State, body: &Body) -> Out {
     if body.contains_key("drafts") {
         c.drafts = truthy(body, "drafts");
     }
+    if let Some(v) = body.get("scopes") {
+        // ponytail: shape-checked, not checked against scope_options: an org you toggled stays on
+        // while its PRs are merged away. scope_terms drops anything it cannot put in a query.
+        let got: Option<Vec<String>> = v.as_array().and_then(|a| {
+            a.iter()
+                .map(|x| {
+                    x.as_str()
+                        .filter(|s| (s.starts_with("org:") || s.starts_with("team:")) && s.len() <= 100)
+                        .map(String::from)
+                })
+                .collect()
+        });
+        let Some(got) = got.filter(|g| g.len() <= 50) else {
+            return Err(Fail::new(
+                400,
+                "scopes must be a list of org:<owner> or team:<key>",
+            ));
+        };
+        // a scope already searched this session is filtered in the board, no fetch; a new one is fetched now
+        wake |= got.iter().any(|s| !github::fetched(s));
+        c.scopes = got;
+    }
+    if let Some(v) = body.get("read") {
+        // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+        let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
+            m.iter()
+                .map(|(u, t)| {
+                    t.as_str()
+                        .filter(|t| u.len() <= 512 && t.len() <= 64)
+                        .map(|t| (u.clone(), t.to_string()))
+                })
+                .collect()
+        });
+        let Some(got) = got else {
+            return Err(Fail::new(
+                400,
+                "read must be an object of url to updatedAt, at most 5000",
+            ));
+        };
+        c.read = got;
+    }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
+    }
+    if body.contains_key("keyhints") {
+        c.keyhints = truthy(body, "keyhints");
     }
     if body.contains_key("notify") {
         c.notify = truthy(body, "notify");
@@ -1834,6 +1920,38 @@ mod tests {
         }
         let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
         assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
+        // a re-review with no kind keeps the tag of the newest review that had one
+        {
+            let mut st = state.lock();
+            let pr = st.sections[0].prs.as_ref().unwrap()[0].clone();
+            let entry = |kind: &str, breaking: bool| Pr {
+                review: Some(Box::new(LogEntry {
+                    kind: kind.into(),
+                    breaking,
+                    ..Default::default()
+                })),
+                ..pr.clone()
+            };
+            st.sections.push(Section {
+                name: "REVIEWED".into(),
+                prs: Some(vec![
+                    entry("", false),
+                    entry("security", true),
+                    entry("docs", false),
+                ]), // newest first
+                err: None,
+            });
+        }
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        let (row, newest) = (&d["sections"][0]["prs"][0], &d["sections"][2]["prs"][0]);
+        assert_eq!(
+            (&row["kind"], &row["breaking"]),
+            (&json!("security"), &json!(true))
+        );
+        assert_eq!(
+            (&newest["kind"], &newest["breaking"]),
+            (&json!("security"), &json!(true))
+        );
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it
@@ -1903,16 +2021,6 @@ mod tests {
         assert_eq!(d["error"], "no such pr");
         let (code, d) = post(&format!("{base}/api/open"), json!({"url": "/etc/passwd"}), &token);
         assert_eq!((code, d["error"].as_str()), (404, Some("no such pr")));
-        // no pre-review file yet, so nothing to hand to the desktop either
-        assert_eq!(
-            post(
-                &format!("{base}/api/open"),
-                json!({"url": "u", "pre": true}),
-                &token
-            )
-            .0,
-            404
-        );
     }
 
     #[test]
@@ -2017,10 +2125,69 @@ mod tests {
             json!({"theme": "neon"}),
             json!({"voice": []}),
             json!({"window": 5}),
+            json!({"scopes": ["bogus"]}),
+            json!({"scopes": ["org:x", 3]}),
+            json!({"scopes": vec!["org:x"; 51]}),
+            json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
+            json!({"read": {"u": 1}}),
+            json!({"read": {"x".repeat(513): "t"}}),
+            json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
         ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }
         assert_eq!(config::get().theme, "nord");
+        // posts at once: none undoes another's change, and the file always parses
+        config::update(|c| c.model = "before".into());
+        std::thread::scope(|sc| {
+            for i in 0..8 {
+                let (base, token) = (&base, &token);
+                sc.spawn(move || {
+                    let body = if i % 2 == 0 {
+                        json!({"read": {format!("u{i}"): "t"}})
+                    } else {
+                        json!({"model": format!("m{i}")})
+                    };
+                    assert_eq!(post(&format!("{base}/api/settings"), body, token).0, 200);
+                });
+            }
+        });
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            (
+                saved["theme"].as_str(),
+                saved["read"].as_object().map(|m| m.len())
+            ),
+            (Some("nord"), Some(1))
+        );
+        assert!(saved["model"].as_str().is_some_and(|m| m.starts_with('m'))); // not reverted by a read post
+        assert_eq!(
+            post(
+                &format!("{base}/api/settings"),
+                json!({"scopes": ["team:k"]}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(config::get().scopes, ["team:k"]);
+        assert_eq!(
+            post(
+                &format!("{base}/api/settings"),
+                json!({"read": {"https://x/1": "t1"}}),
+                &token
+            )
+            .0,
+            200
+        );
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            (saved["read"]["https://x/1"].as_str(), saved["scopes"][0].as_str()),
+            (Some("t1"), Some("team:k"))
+        );
+        assert_eq!(
+            post(&format!("{base}/api/settings"), json!({"read": {"u": 3}}), &token).0,
+            400
+        );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port
@@ -2030,6 +2197,15 @@ mod tests {
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["hinted"], json!(true));
         assert_eq!(d["options"]["interval"], json!(config::INTERVALS));
+        // the key hints are on out of the box, and the switch is remembered the same way
+        assert_eq!(d["settings"]["keyhints"], json!(true));
+        post(
+            &format!("{base}/api/settings"),
+            json!({"keyhints": false}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["keyhints"], json!(false));
     }
 
     #[test]
@@ -2097,7 +2273,7 @@ mod tests {
                 file: usize::MAX,
             },
         ];
-        let kinds: Vec<&str> = code_rows(&files, &marks, true)
+        let kinds: Vec<&str> = code_rows(&files, &marks)
             .iter()
             .map(|r| r["kind"].as_str().unwrap().to_string())
             .collect::<Vec<_>>()
@@ -2109,13 +2285,142 @@ mod tests {
             kinds,
             ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]
         );
-        let rows = code_rows(&files, &marks, true);
+        let rows = code_rows(&files, &marks);
         assert_eq!(rows[7]["why"], "not in this diff");
-        let plain: Vec<String> = code_rows(&files, &marks, false)
+    }
+
+    #[test]
+    fn applying_a_dream_leaves_the_team_checkout_alone() {
+        // The apply used to pull and push every joined team around a write that cannot reach one.
+        // push_dir runs `git add -A`, so a teammate's unrelated working-tree state was committed under
+        // "memory: dream cleanup" — a commit nobody asked for, in a repo the dream never wrote to.
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.backups = root.join("backups");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::write(root.join("mine").join("general.md"), "- mine\n").unwrap();
+        let team_dir = root.join("teams").join("org-t");
+        std::fs::create_dir_all(team_dir.join("memory")).unwrap();
+        assert!(crate::team::init_history(&team_dir)); // a real checkout, so a commit would show
+        std::fs::write(team_dir.join("memory").join("general.md"), "- theirs\n").unwrap();
+        let commits = |d: &std::path::Path| {
+            std::process::Command::new("git")
+                .args(["-C", &d.to_string_lossy(), "log", "--oneline"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+                .unwrap_or(0)
+        };
+        let before = commits(&team_dir);
+
+        let state = State::new();
+        start_job("dream", move || {
+            Ok(dream_result((
+                "tidy".into(),
+                vec![("mine/general.md".into(), "- mine\n".into())],
+                vec![("mine/general.md".into(), "- mine, tidied\n".into())],
+            )))
+        });
+        for _ in 0..200 {
+            if job_of("dream").is_some_and(|j| !j.lock().unwrap().running) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let body: Body = serde_json::from_value(json!({"op": "apply"})).unwrap();
+        post_dream(&state, &body).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("mine").join("general.md")).unwrap(),
+            "- mine, tidied\n"
+        );
+        assert_eq!(
+            commits(&team_dir),
+            before,
+            "the dream committed in a team checkout"
+        );
+        // and the teammate's file is still sitting there uncommitted, which is theirs to deal with
+        assert_eq!(
+            std::fs::read_to_string(team_dir.join("memory").join("general.md")).unwrap(),
+            "- theirs\n"
+        );
+    }
+
+    #[test]
+    fn the_again_op_clears_the_answer_and_hands_back_the_ask() {
+        // Every other test calls memory::ask_*_again directly, so a typo in this match or a missing
+        // refresh of state.asks would pass. This is the route the knowledge-card row actually takes.
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams").join("org-t").join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("teams").join("org-t").join("memory")).unwrap();
+        memory::allow_publishing("org-t", false);
+        assert!(memory::unasked().is_empty());
+
+        let state = State::new();
+        let body: Body =
+            serde_json::from_value(json!({"op": "again", "kind": "publishing", "key": "org-t"})).unwrap();
+        let out = post_consent(&state, &body).unwrap();
+        let keys: Vec<&str> = out["asks"]
+            .as_array()
+            .unwrap()
             .iter()
-            .map(|r| r["kind"].as_str().unwrap().to_string())
+            .map(|a| a["key"].as_str().unwrap())
             .collect();
-        assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
+        assert_eq!(keys, ["org-t"]); // the ask is back, and the page is handed it
+        assert_eq!(state.lock().asks.len(), 1); // and the server's own copy agrees
+        assert_eq!(memory::unasked().len(), 1);
+
+        let bad: Body =
+            serde_json::from_value(json!({"op": "again", "kind": "nonsense", "key": "org-t"})).unwrap();
+        assert_eq!(post_consent(&state, &bad).unwrap_err().0, 400);
+    }
+
+    #[test]
+    fn dream_result_promises_only_what_the_apply_will_do() {
+        // The rows, the deletion count and the full diff all came off the raw answer, so the page
+        // could show a team file losing nine lines and then not touch it. `v` is the view somebody
+        // opens because they want to be careful, which makes it the worst place to say that.
+        let before = vec![
+            ("mine/general.md".to_string(), "- mine\n".to_string()),
+            (
+                "team:org-t/general.md".to_string(),
+                (0..9).map(|i| format!("- theirs {i}\n")).collect::<String>(),
+            ),
+        ];
+        let new = vec![
+            ("mine/general.md".to_string(), "- mine, tidied\n".to_string()),
+            ("team:org-t/general.md".to_string(), String::new()),
+        ];
+        let r = dream_result(("tidy".into(), before, new));
+        let names: Vec<&str> = r["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["mine/general"]);
+        assert_eq!(r["lost"].as_u64(), Some(0)); // the team's emptied file is not a deletion
+        assert_eq!(r["theirs"].as_u64(), Some(1)); // and the page says it was read and left alone
+        let detail = r["detail"].as_str().unwrap();
+        assert!(detail.contains("mine, tidied"), "{detail}");
+        assert!(!detail.contains("theirs"), "{detail}");
+        assert!(!r["new"]
+            .as_object()
+            .unwrap()
+            .contains_key("team:org-t/general.md"));
     }
 
     #[test]

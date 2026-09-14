@@ -20,13 +20,28 @@ export const SECTION_TONE: Record<string, string> = {
   MINE: 'var(--pink)',
   'REVIEW REQUESTED': 'var(--cyan)',
   ASSIGNED: 'var(--amber)',
+  TEAM: 'var(--violet)',
+  OTHER: 'var(--ink3)',
+  MERGED: 'var(--green)',
   REVIEWED: 'var(--dim)',
 }
 export const SECTION_HINT: Record<string, string> = {
   MINE: 'your open PRs',
   'REVIEW REQUESTED': 'waiting on you',
   ASSIGNED: 'owned by you',
+  TEAM: 'reviewed in your logs',
+  OTHER: 'no review in your logs',
+  MERGED: 'merged in your sources',
   REVIEWED: 'recently done',
+}
+/** What an empty bucket says when no filter is narrowing it — see board.emptyLine(). It names the
+ *  queue rather than saying "none", so an empty tab says which one is empty. */
+export const SECTION_EMPTY: Record<string, string> = {
+  MINE: 'Nothing of yours is open.',
+  'REVIEW REQUESTED': 'Nobody is waiting on your review.',
+  ASSIGNED: 'Nothing assigned to you.',
+  REVIEWED: 'Nothing reviewed yet.',
+  MERGED: 'No merged PR in your sources was updated in this window.',
 }
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }
 export const CHECK_TONE: Record<string, string> = {
@@ -55,6 +70,9 @@ export function age(iso: string): string {
 }
 
 export const every = (v: number) => (v < 60 || v % 60 ? `${v}s` : `${v / 60}m`)
+// history window in hours: 6h, 1d, 1w, 1mo, all
+export const span = (v: number | null) =>
+  v == null ? 'all' : v < 24 ? `${v}h` : v < 168 ? `${v / 24}d` : v < 720 ? `${v / 168}w` : `${Math.round(v / 720)}mo`
 export const elapsed = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`)
 
 export const when = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })

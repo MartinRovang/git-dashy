@@ -1,6 +1,6 @@
 // The screens the curses keys opened, ported from gui.html. Each drives the modal store imperatively
 // and mutates its modal in place, then repaint()s — the same shape as the vanilla openModal/paint pair.
-import { api, errorText, post } from './api'
+import { api, copyText, errorText, post } from './api'
 import type { Foot } from './modals'
 import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Ask, Row, StateData } from './types'
@@ -420,6 +420,16 @@ export async function dreamScreen(ctx: Ctx) {
               </span>
             </div>
           ))}
+          {/* the dream reads the team's files and rewrites none of them: say how many, or one simply
+              missing from the list reads as a file it never looked at. */}
+          {Number(res.theirs) > 0 && (
+            <div className="diffrow">
+              <span>
+                {String(res.theirs)} team file{Number(res.theirs) === 1 ? '' : 's'} read, none changed
+              </span>
+              <span />
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -460,12 +470,15 @@ export async function dreamScreen(ctx: Ctx) {
       if (out?.error) await notice(out.error)
       close(m)
     }
+    // nothing of yours to change: "accept and rewrite memory" offered a rewrite that cannot happen,
+    // and the keypress would still take a backup and a commit for it.
+    const nothing = (res!.files as Json[]).length === 0
     m.foot = [
-      ['y', gone.length ? `accept — DELETES ${gone.length} file${gone.length === 1 ? '' : 's'}` : 'accept and rewrite memory', accept, gone.length ? 'warn' : 'go'],
+      ...(nothing ? [] : [['y', gone.length ? `accept — DELETES ${gone.length} file${gone.length === 1 ? '' : 's'}` : 'accept and rewrite memory', accept, gone.length ? 'warn' : 'go']]),
       ['v', 'view full', () => viewer('the dream', String(res!.detail))],
-      ['n', 'discard', stop],
+      ['n', nothing ? 'close — nothing of yours to change' : 'discard', stop],
     ] as Foot[]
-    m.keys = { y: accept, v: m.foot[1][2], n: stop, Escape: stop }
+    m.keys = { ...Object.fromEntries(m.foot.map((f) => [f[0], f[2]])), Escape: stop }
     repaint()
   }
   poll()
@@ -490,23 +503,25 @@ export async function updateScreen(ctx: Ctx) {
 
 export function escMenu(ctx: Ctx) {
   let idx = 0
-  const items = (): [string, string, () => void | Promise<void>][] => {
+  // the fourth slot is the board key that does the same thing, where there is one
+  const items = (): [string, string, () => void | Promise<void>, string?][] => {
     const s = ctx.getData()?.settings || {}
     return [
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
-      ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
+      ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }, 'f'],
       ['Debug', '', () => { close(m); void debugScreen(ctx) }],
-      ['Quit', '', () => void ctx.quit()],
+      ['Quit', '', () => void ctx.quit(), 'q'],
     ]
   }
   const m = open({
     title: 'gitdashy',
     body: () =>
-      items().map(([l, v], i) => (
+      items().map(([l, v, , key], i) => (
         <div key={l} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
           <span className="tick">{i === idx ? '▸' : ''}</span>
           <span>{l}</span>
+          {key ? <kbd className="hint">{key}</kbd> : null}
           <em>{v}</em>
         </div>
       )),
@@ -534,8 +549,7 @@ export async function debugScreen(ctx: Ctx) {
     return
   }
   const text = JSON.stringify(await r.json(), null, 2)
-  // the same /api/copy the rest of the app uses, so a headless or wayland box still copies
-  const copy = () => void ctx.call('/api/copy', { text }, '✓ debug data copied')
+  const copy = async () => ctx.flash(await copyText(text, 'the debug data'))
   const m = viewer('debug', text, 'holds repo names, pr urls and config paths — read it before pasting it in public')
   m.keys!.y = copy
   m.foot!.unshift(['y', 'copy', copy, 'go'])

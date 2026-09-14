@@ -16,11 +16,23 @@ pub const MODELS: &[&str] = &["opus", "sonnet", "fable"];
 pub const EFFORTS: &[&str] = &["", "low", "medium", "high", "xhigh", "max"];
 pub const DEPTHS: &[&str] = &["adaptive", "low", "medium", "high"];
 pub const VOICES: &[&str] = &["review", "caveman", "bot"];
-pub const HUNTERS: &[&str] = &["ponytail", "security", "tests", "humanizer"];
+pub const HUNTERS: &[&str] = &["ponytail", "security", "tests", "perf", "humanizer"];
+/// What sort of change a review tags a PR as; the graph groups by it.
+pub const KINDS: &[&str] = &[
+    "feature",
+    "fix",
+    "security",
+    "perf",
+    "maintenance",
+    "refactor",
+    "docs",
+    "tests",
+    "deps",
+];
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.
-pub const WINDOWS: &[Option<u64>] = &[Some(1), Some(4), Some(6), None];
+pub const WINDOWS: &[Option<u64>] = &[Some(6), Some(24), Some(168), Some(720), None];
 pub const SPLASH_MIN: f64 = 1.0;
 
 /// Verdict -> the status string every row and log reader shows.
@@ -104,10 +116,18 @@ pub struct Config {
     pub sub: String,
     pub window: Option<u64>,
     pub drafts: bool,
+    /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
+    pub scopes: Vec<String>,
+    /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
+    /// localStorage because the webview's origin changes every launch (see `hinted`). The page keeps the newest.
+    pub read: HashMap<String, String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
     /// each time. Anything that must be remembered across launches belongs on this side.
     pub hinted: bool,
+    /// Show the key hint on every button and settings row. On by default; the sheet and the rail's
+    /// View group both switch it.
+    pub keyhints: bool,
     /// Runtime picks land here. `None` (demo) means never write.
     pub settings: Option<PathBuf>,
     /// Pre-reviews of your own PRs.
@@ -160,9 +180,12 @@ impl Default for Config {
             notify: std::env::var("PRS_NOTIFY").map(|v| v != "0").unwrap_or(true),
             theme: env_or("PRS_THEME", "pencil"),
             sub: "all".into(),
-            window: Some(4),
+            window: Some(24),
             drafts: false,
+            scopes: Vec::new(),
+            read: HashMap::new(),
             hinted: false,
+            keyhints: true,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
             backups: home().join(".prs_backups"),
@@ -190,7 +213,13 @@ pub struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyhints: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,47 +297,64 @@ pub fn update(f: impl FnOnce(&mut Config)) {
 /// Saved settings override the defaults; an env var or CLI flag still wins over the file.
 /// Also normalises the checklists: a box that no longer exists is dropped, and voice is never empty.
 pub fn load() {
-    let env = |v: &str| std::env::var_os(v).is_some();
     update(|c| {
         let saved = c.settings.as_deref().map(Saved::read).unwrap_or_default();
-        if let (Some(v), false) = (saved.model, env("PRS_MODEL")) {
-            c.model = v;
-        }
-        if let Some(v) = saved.interval {
-            c.interval = v;
-        }
-        if let Some(v) = saved.subs {
-            c.sub = v;
-        }
-        if let Some(v) = saved.window {
-            c.window = v;
-        }
-        if let Some(v) = saved.drafts {
-            c.drafts = v;
-        }
-        if let Some(v) = saved.hinted {
-            c.hinted = v;
-        }
-        if let (Some(v), false) = (saved.depth, env("PRS_DEPTH")) {
-            c.depth = v;
-        }
-        if let (Some(v), false) = (saved.effort, env("PRS_EFFORT")) {
-            c.effort = v;
-        }
-        if let (Some(v), false) = (saved.notify, env("PRS_NOTIFY")) {
-            c.notify = v;
-        }
-        if let (Some(v), false) = (saved.theme, env("PRS_THEME")) {
-            c.theme = v;
-        }
-        if let (Some(v), false) = (saved.voice, env("PRS_VOICE")) {
-            c.voice = v;
-        }
-        if let (Some(v), false) = (saved.hunter, env("PRS_HUNTER")) {
-            c.hunter = v;
-        }
-        normalise(c);
+        apply(c, saved, &|v| std::env::var_os(v).is_some());
     });
+}
+
+/// A saved file over a Config. Pure, and `env` is passed in, so this is the same code the tests run.
+///
+/// ponytail: this was the body of `load()`, which writes a process-global behind a lock and so was
+/// never driven by a test — every `if let Some(v)` here could be deleted and the suite stayed green.
+/// It is a function now because that is the only way the precedence below can be asserted.
+pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
+    if let (Some(v), false) = (saved.model, env("PRS_MODEL")) {
+        c.model = v;
+    }
+    if let Some(v) = saved.interval {
+        c.interval = v;
+    }
+    if let Some(v) = saved.subs {
+        c.sub = v;
+    }
+    if let Some(v) = saved.window {
+        c.window = v;
+    }
+    if let Some(v) = saved.drafts {
+        c.drafts = v;
+    }
+    if let Some(v) = saved.scopes {
+        c.scopes = v;
+    }
+    if let Some(v) = saved.read {
+        c.read = v;
+    }
+    if let Some(v) = saved.hinted {
+        c.hinted = v;
+    }
+    if let Some(v) = saved.keyhints {
+        c.keyhints = v;
+    }
+    if let (Some(v), false) = (saved.depth, env("PRS_DEPTH")) {
+        c.depth = v;
+    }
+    if let (Some(v), false) = (saved.effort, env("PRS_EFFORT")) {
+        c.effort = v;
+    }
+    if let (Some(v), false) = (saved.notify, env("PRS_NOTIFY")) {
+        c.notify = v;
+    }
+    if let (Some(v), false) = (saved.theme, env("PRS_THEME")) {
+        c.theme = v;
+    }
+    if let (Some(v), false) = (saved.voice, env("PRS_VOICE")) {
+        c.voice = v;
+    }
+    if let (Some(v), false) = (saved.hunter, env("PRS_HUNTER")) {
+        c.hunter = v;
+    }
+    normalise(c);
 }
 
 /// Drop checklist boxes that no longer exist; voice is never empty. The one place that rule lives.
@@ -328,7 +374,10 @@ pub fn snapshot(c: &Config) -> Saved {
         subs: Some(c.sub.clone()),
         window: Some(c.window),
         drafts: Some(c.drafts),
+        scopes: Some(c.scopes.clone()),
+        read: Some(c.read.clone()),
         hinted: Some(c.hinted),
+        keyhints: Some(c.keyhints),
         depth: Some(c.depth.clone()),
         effort: Some(c.effort.clone()),
         notify: Some(c.notify),
@@ -341,7 +390,10 @@ pub fn snapshot(c: &Config) -> Saved {
 /// Persist the settings. ponytail: `settings: None` (demo) means never write.
 pub fn save(values: &Saved) -> std::io::Result<()> {
     if let Some(p) = get().settings {
-        std::fs::write(p, serde_json::to_string_pretty(values).unwrap_or_default())?;
+        // a temp file renamed over: a write cut short never leaves half a file that reads back as {}
+        let tmp = p.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(values).unwrap_or_default())?;
+        std::fs::rename(tmp, p)?;
     }
     Ok(())
 }
@@ -367,6 +419,69 @@ mod tests {
         let text = serde_json::to_string(&s).unwrap();
         assert!(text.contains("\"window\":null"));
         assert!(!text.contains("model"));
+    }
+
+    /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
+    /// file leaves out must keep the default rather than being cleared.
+    #[test]
+    fn a_saved_file_reaches_every_setting() {
+        let none = |_: &str| false;
+        let json = r#"{
+            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
+            "hinted":true,"keyhints":false,"depth":"high","effort":"max","notify":true,
+            "theme":"nord","voice":["caveman"],"hunter":["security"]
+        }"#;
+        let saved: Saved = serde_json::from_str(json).unwrap();
+        let mut c = Config::default();
+        apply(&mut c, saved, &none);
+        assert_eq!(c.model, "sonnet");
+        assert_eq!(c.interval, 600);
+        assert_eq!(c.sub, "open");
+        assert_eq!(c.window, Some(168));
+        assert!(c.drafts);
+        assert_eq!(c.scopes, ["org:acme"]);
+        assert_eq!(c.read.get("u").map(String::as_str), Some("t"));
+        assert!(c.hinted);
+        assert!(!c.keyhints);
+        assert_eq!(c.depth, "high");
+        assert_eq!(c.effort, "max");
+        assert!(c.notify);
+        assert_eq!(c.theme, "nord");
+        assert_eq!(c.voice, vec!["caveman"]);
+        assert_eq!(c.hunter, vec!["security"]);
+    }
+
+    #[test]
+    fn an_empty_file_changes_nothing() {
+        let d = Config::default();
+        let mut c = Config::default();
+        apply(&mut c, Saved::default(), &|_| false);
+        assert_eq!(c.model, d.model);
+        assert_eq!(c.window, d.window);
+        assert_eq!(c.drafts, d.drafts);
+        assert_eq!(c.keyhints, d.keyhints);
+        assert_eq!(c.theme, d.theme);
+    }
+
+    /// An env var or a CLI flag beats the file, and only for the settings that say so.
+    #[test]
+    fn the_environment_beats_the_file() {
+        let set = |v: &str| ["PRS_MODEL", "PRS_THEME", "PRS_VOICE"].contains(&v);
+        let json = r#"{"model":"sonnet","theme":"nord","voice":["caveman"],"subs":"open","keyhints":false}"#;
+        let saved: Saved = serde_json::from_str(json).unwrap();
+        let mut c = Config {
+            model: "opus".into(),
+            theme: "pencil".into(),
+            voice: vec!["review".into()],
+            ..Default::default()
+        };
+        apply(&mut c, saved, &set);
+        assert_eq!(c.model, "opus", "PRS_MODEL was set, so the file must not win");
+        assert_eq!(c.theme, "pencil");
+        assert_eq!(c.voice, vec!["review"]);
+        // no env var guards these, so the file still reaches them
+        assert_eq!(c.sub, "open");
+        assert!(!c.keyhints);
     }
 
     #[test]

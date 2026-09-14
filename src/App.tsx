@@ -1,64 +1,98 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, errorText, post } from './api'
-import { flat, selected, visible } from './board'
+import { api, copyText, errorText, post } from './api'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
+import { Shortcuts } from './components/Shortcuts'
+import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
+import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
-import { TopBar } from './components/TopBar'
+import { Countdown, TopBar } from './components/TopBar'
 import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
-import { CONTEXTS, every, tone } from './tokens'
-import type { Code, Detail, Row, StateData } from './types'
-import { useNow, useStatePoll } from './usePoll'
+import { CONTEXTS, age, every, span, tone } from './tokens'
+import type { Ask, Code, Detail, Row, StateData } from './types'
+import { useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
 export default function App() {
   const [data, reload] = useStatePoll(2000)
-  const now = useNow(1000)
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
-  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  // ponytail: which queues the tabs are on, not which sections are folded. Any number of them stack
+  // by click; `[` and `]` walk one at a time and replace the pick.
+  const [bucket, setBucket] = useState<string[]>([ALL])
+  // ponytail: a FILTER over the bucket, not the `drafts` setting. That setting decides whether drafts
+  // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
+  // counts zero and goes flat, which is the honest state rather than a contradiction.
+  const [onlyDrafts, setOnlyDrafts] = useState(false)
+  // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
+  // settings unreachable without remembering a key; a narrow one still answers "which model".
+  const [railShut, setRailShut] = useState(false)
+  const [help, setHelp] = useState(false)
+  // the PR the actions popup is about, and where to put it. One state for both the pane's Options
+  // button and a right-click on a row.
+  const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // ponytail: session-only, like `expanded`; REVIEWED opens folded every launch
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
-  const [tab, setTab] = useState<'summary' | 'code'>('summary')
+  const [codeOpen, setCodeOpen] = useState(false)
+  // the viewer floats over a live board: keys go to whichever of the two was clicked last
+  const [codeFocus, setCodeFocus] = useState(false)
   const [scope, setScope] = useState('marks')
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  // the fetchedAt a history change was made on: until a newer fetch lands, the board is the old window
+  const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph'>('board')
-  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it.
-  // Cleared here, in the same update as the switch, so the graph lays out once and not twice.
+  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
+  // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
+  // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    if (v !== 'graph') return
-    setQuery('')
-    setFailing(false)
+    const f = forView(v, { query, failing, drafts: onlyDrafts, bucket })
+    setQuery(f.query)
+    setFailing(f.failing)
+    setOnlyDrafts(f.drafts)
+    setBucket(f.bucket)
+    // a node picked in the graph may sit in a folded section; open it so the board shows the selection
+    const at = current?.section || ''
+    if (v === 'board' && chosen && FOLDABLE.includes(at)) setUnfolded((u) => ({ ...u, [at]: true }))
   }
-  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
-  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
-  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
-  // everything unread, and reading is one keypress per row.
-  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
-  const [read, setRead] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
-    } catch {
-      return {}
-    }
-  })
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
+  // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
+  // `marked` is what this page has read; once set it wins over the polled copy for the page's life.
+  const [marked, setMarked] = useState<Record<string, string> | null>(null)
+  const read = useMemo(() => marked || data?.settings.read || {}, [marked, data])
+  const saveRead = useRef(0)
 
-  const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
-  const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
-  const total = secs.reduce((n, s) => n + s.prs.length, 0)
-  const current = selected(rows, sel)
+  const markRead = (prs: Row[]) => {
+    if (prs.every((p) => isRead(read, p))) return
+    const next = remember(read, prs)
+    setMarked(next)
+    // debounced: walking the list with j would otherwise rewrite the settings file per row
+    clearTimeout(saveRead.current)
+    saveRead.current = window.setTimeout(() => {
+      post('/api/settings', { read: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`read marks not saved: ${t}`))))
+        .catch(() => setFlash('read marks not saved'))
+    }, 500)
+  }
+
+  const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
+  // folds are the board's: in the graph a node of a folded section is still clickable, so nothing is folded there
+  const rows = useMemo(() => flat(secs, bucket, expanded, view === 'graph' ? UNFOLDED : unfolded), [secs, bucket, expanded, unfolded, view])
+  const { row: current, chosen } = pick(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
 
@@ -88,19 +122,11 @@ export default function App() {
     return () => clearTimeout(id)
   }, [flash])
 
+  // only a row you picked counts as read. The fallback selection is a guess — switching tab lands on
+  // the top of the new queue, and marking that read is a claim you looked at it.
   useEffect(() => {
-    if (!current) return
-    setRead((r) => {
-      if (r[current.url] === current.updatedAt) return r
-      const next = { ...r, [current.url]: current.updatedAt }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
-  }, [current])
+    if (current && chosen) markRead([current])
+  }, [current, chosen])
 
   useEffect(() => {
     document.body.dataset.theme = data?.settings.theme || 'pencil'
@@ -122,14 +148,7 @@ export default function App() {
       const start = e.clientX
       const w0 = box.offsetWidth
       // ponytail: writing --pane-w on :root re-inherits the custom property across the whole
-      // document, so a full-diff pane re-styles thousands of rows every frame. Write the width on
-      // the dragged box instead, and while the pane drags hide the diff: re-laying 8k lines is what
-      // makes the drag crawl, and a drag is not the time to do it. The scroll offset is restored on
-      // release. (60 frames over 8k rows: 2.9s rooted-var, 1.4s inline, 64ms frozen.)
-      const isPane = which === 'pane'
-      const scroller = isPane ? box.querySelector<HTMLElement>('.in') : null
-      const scrollTop = scroller?.scrollTop ?? 0
-      if (isPane) document.documentElement.classList.add('resizing-pane')
+      // document, so the width is written on the dragged box and only copied to :root on release.
       e.preventDefault()
       document.documentElement.classList.add('dragging')
       grip.classList.add('on')
@@ -155,10 +174,6 @@ export default function App() {
         grip.removeEventListener('pointerup', up)
         grip.removeEventListener('pointercancel', up)
         document.documentElement.classList.remove('dragging')
-        if (isPane) {
-          document.documentElement.classList.remove('resizing-pane')
-          if (scroller) requestAnimationFrame(() => (scroller.scrollTop = scrollTop))
-        }
         // keep the root var in step so a remounted pane or sidebar keeps the saved width
         document.documentElement.style.setProperty(`--${which}-w`, `${want}px`)
         try {
@@ -208,9 +223,9 @@ export default function App() {
     }
   }, [pane, url])
 
-  // The diff, only while the code tab is open.
+  // The diff, only while the code viewer is open.
   useEffect(() => {
-    if (!pane || !url || tab !== 'code') return
+    if (!url || !codeOpen) return
     let alive = true
     let timer: number | undefined
     const run = async () => {
@@ -230,12 +245,7 @@ export default function App() {
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [pane, url, tab, scope, context])
-
-  useEffect(() => {
-    if (tab !== 'code' || !diff || diff.pending) return
-    document.getElementById('jumpto')?.scrollIntoView({ block: 'center' })
-  }, [diff, at, tab])
+  }, [url, codeOpen, scope, context])
 
   async function call(path: string, body?: unknown, okMsg?: string) {
     const r = await post(path, body)
@@ -256,11 +266,12 @@ export default function App() {
       : name === 'interval'
         ? every(Number(value))
         : name === 'window'
-          ? value == null
-            ? 'all'
-            : `${value}h`
+          ? span(value as number | null)
           : String(value === '' ? 'default' : value)
-    await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    const from = data?.fetchedAt ?? null
+    const ok = await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    // the server only refetches a new window when a source is on; a failed POST refetches nothing
+    if (ok && name === 'window' && data?.settings?.scopes?.length) setRefetchFrom(from)
   }
 
   async function quit() {
@@ -284,11 +295,17 @@ export default function App() {
     if (on && data?.pending) includeExisting = await confirm(`Auto on. Also review the ${data.pending} already listed?`)
     call('/api/auto', { on, includeExisting }, on ? 'auto on' : 'auto off')
   }
-  const onJump = (name: string) => {
-    document.querySelector(`[data-fold="${name}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }
   const onPath = (which: 'L' | 'C') => void setPath(ctx, which)
   const onTeams = () => void teamsScreen(ctx, current)
+  // ponytail: forget the recorded answer, then ask. The prompt lists what has NO answer, so re-asking
+  // without forgetting first would draw nothing and read as a dead row.
+  const onAskAgain = (kind: string, key: string) =>
+    void (async () => {
+      const out = await ctx.call('/api/consent', { op: 'again', kind, key })
+      // ponytail: kind as well as key. launch_asks returns publishing first, so a team with both
+      // gates pending opened the publishing dialog from the row that said agents.md.
+      if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
+    })()
   const onModal = (name: string) => {
     if (name === 'drafts') void draftsScreen(ctx)
     else if (name === 'share') void shareScreen(ctx, current)
@@ -322,7 +339,7 @@ export default function App() {
       }
       const got = await r.json()
       const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
-      const copy = () => void call('/api/copy', { text: got.text }, '✓ pre-review copied')
+      const copy = async () => setFlash(await copyText(got.text, 'the pre-review'))
       m.keys!.y = copy
       m.foot!.unshift(['y', 'copy', copy, 'go'])
       repaint()
@@ -334,8 +351,7 @@ export default function App() {
 
   async function copyUrl(p: Row) {
     if (!p) return
-    const out = await call('/api/copy', { url: p.url })
-    if (out) setFlash(out.tool === 'terminal' ? `sent ${p.url} to the terminal — if nothing landed, install wl-clipboard or xclip` : `✓ copied ${p.url} (via ${out.tool})`)
+    setFlash(await copyText(p.url, p.url))
   }
 
   async function addReviewer(p: Row) {
@@ -371,15 +387,20 @@ export default function App() {
     )
   }
 
-  function doAct(name: string) {
-    if (!current) return
-    const p = current
+  function doAct(name: string, target?: Row | null) {
+    const p = target || current
+    if (!p) return
     const fns: Record<string, () => void> = {
       review: () => void review(p),
       pre: () => void preReview(p),
-      openpre: () => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'),
       view: () => {
-        if (detail?.review) viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
+        // the detail belongs to the selected PR, so only offer its review for that one
+        if (detail?.url === p.url && detail.review)
+          viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
+      },
+      code: () => {
+        setSel(p.uid)
+        openCode()
       },
       open: () => void call('/api/open', { url: p.url }),
       copy: () => void copyUrl(p),
@@ -393,6 +414,7 @@ export default function App() {
   function move(step: number) {
     if (!rows.length) return
     const i = rows.findIndex((r) => r.uid === selUid)
+    if (i < 0) return // the selection is not a row on screen: stay put rather than jump to the top
     const next = rows[Math.min(rows.length - 1, Math.max(0, i + step))]
     if (next) {
       setSel(next.uid)
@@ -410,14 +432,18 @@ export default function App() {
     else if (key === 'e') picker('Effort', o.effort, s.effort || '', (v) => v || 'default', (v) => on('effort', v))
     else if (key === 's') picker('Summaries', o.subs, s.subs || '', String, (v) => on('subs', v))
     else if (key === 't')
-      picker('History', o.window.map((v) => (v == null ? 'all' : String(v))), s.window == null ? 'all' : String(s.window), (v) => (v === 'all' ? 'all' : `${v}h`), (v) => on('window', v === 'all' ? null : +v))
+      picker('History', o.window.map((v) => (v == null ? 'all' : String(v))), s.window == null ? 'all' : String(s.window), (v) => (v === 'all' ? 'all' : span(+v)), (v) => on('window', v === 'all' ? null : +v))
     else if (key === 'i') picker('Refresh', o.interval.map(String), String(s.interval), (v) => every(+v), (v) => on('interval', +v))
     else if (key === 'x') picker('Voices', o.voice, s.voice || [], String, (v) => on('voice', v), true)
     else if (key === 'h') picker('Hunters', o.hunter, s.hunter || [], String, (v) => on('hunter', v), true)
+    else if (key === 'O') picker('Sources', o.scopes, s.scopes || [], String, (v) => on('scopes', v), true)
   }
 
   function handleKey(e: KeyboardEvent) {
     if (modalCount() > 0) return
+    // the actions popup owns the keyboard while it is up; it captures Escape itself so that
+    // dismissing it does not also open the app menu
+    if (menuAt) return
     const t = e.target as HTMLElement
     if (/input|textarea|select/i.test(t.tagName)) {
       if (e.key === 'Escape') {
@@ -436,28 +462,26 @@ export default function App() {
       fn()
     }
     const p = current
-    const code = !!(pane && tab === 'code' && p && detail?.url === p.url && detail?.review)
+    // while the viewer has focus, board keys do not reach the board; a click on the board hands them back
+    if (codeOpen && codeFocus && p) {
+      if (k === 'Escape' || k === 'q') return one(() => setCodeOpen(false))
+      const last = diff?.url === p.url && !diff.pending ? groups(diff.rows).length - 1 : 0
+      if (['j', 'n', 'ArrowDown'].includes(k)) return one(() => setAt((v) => Math.max(0, Math.min(last, v + 1))))
+      if (['k', 'N', 'ArrowUp'].includes(k)) return one(() => setAt((v) => Math.max(0, v - 1)))
+      if (k === 'D') return one(() => onScope(scope === 'marks' ? 'diff' : 'marks'))
+      if (k === 'c') return one(onCodeContext)
+      return
+    }
     if (k === 'j' || k === 'ArrowDown') return one(() => move(1))
     if (k === 'k' || k === 'ArrowUp') return one(() => move(-1))
-    if (code && ['D', 'n', 'N', 'c'].includes(k))
-      return one(() => {
-        if (k === 'D') {
-          setScope((v) => (v === 'marks' ? 'diff' : 'marks'))
-          setDiff(null)
-        } else if (k === 'c') {
-          onContext()
-          setDiff(null)
-        } else setAt((v) => v + (k === 'n' ? 1 : -1))
-      })
     if (k === 'f') return one(onRefresh)
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
-    if ('mdexhsti'.includes(k)) return one(() => pickSetting(k))
+    if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))
-    if (k === 'Y' && p) return one(() => void call('/api/open', { url: p.url, pre: true }, 'handed the pre-review to the desktop'))
     if (k === 'y' && p) return one(() => void copyUrl(p))
     if (k === 'g') return one(() => void memoryEditor(ctx, ''))
     if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))
@@ -465,8 +489,7 @@ export default function App() {
     if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
     if (k === 'W') return one(() => void draftsScreen(ctx))
     if (k === 'b' && p) return one(() => void bindScreen(p))
-    if (k === '1' || k === '2') return one(() => setTab(k === '1' ? 'summary' : 'code'))
-    if (k === 'Tab') return one(() => setTab((v) => (v === 'summary' ? 'code' : 'summary')))
+    if ((k === '2' || k === 'Tab') && p) return one(openCode)
     if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
@@ -474,17 +497,43 @@ export default function App() {
     if (k === 'v') return one(() => doAct('view'))
     if (k === 'r' && p) return one(() => void review(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
+    if (k === 'Escape' && help) return one(() => setHelp(false))
     if (k === 'Escape') return one(onMenu)
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
+    if (k === '?') return one(() => setHelp((v) => !v))
+    if (k === 'S') return one(() => setRailShut((v) => !v))
+    // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
+    // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
+    // the tabs are not rendered in graph view, so the keys that move them do nothing there
+    if ((k === '[' || k === ']') && view === 'board')
+      return one(() => setBucket((cur) => walkBucket(buckets(secs).map((b) => b.key), cur, k === ']' ? 1 : -1)))
   }
   keyRef.current = handleKey
+
+  function openCode() {
+    setAt(0)
+    setCodeOpen(true)
+    setCodeFocus(true)
+  }
+  // a stale diff of the old scope would flash its files before the new one lands
+  function onScope(v: string) {
+    setScope(v)
+    setAt(0)
+    setDiff(null)
+  }
+  function onCodeContext() {
+    onContext()
+    setDiff(null)
+  }
+
+  const refetching = isRefetching(refetchFrom, data)
 
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
   return (
-    <div id="app">
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+    <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -494,15 +543,25 @@ export default function App() {
         </div>
       ))}
       <div className="body">
-        <Sidebar data={data} secs={secs} onJump={onJump} setting={setting} onPath={onPath} onTeams={onTeams} onModal={onModal} />
+        <Sidebar
+          data={data}
+          setting={setting}
+          onPath={onPath}
+          onTeams={onTeams}
+          onModal={onModal}
+          onAuto={onAuto}
+          onAskAgain={onAskAgain}
+          collapsed={railShut}
+          onCollapse={() => setRailShut((v) => !v)}
+        />
         <div className="main">
           <div className="body">
             <div className="queue">
               {view === 'graph' ? (
                 <Graph
-                  // folded sections are left out: selected() only searches unfolded rows, so a node there
-                  // would select a uid it cannot find and open rows[0] instead
-                  secs={secs.filter((s) => !folded[s.name])}
+                  // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
+                  // filter with nothing on screen to see or clear it — the reason show() wipes the rest
+                  secs={secs}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)
@@ -514,22 +573,27 @@ export default function App() {
               <Queue
                 data={data}
                 secs={secs}
-                now={now}
                 sel={selUid}
                 read={read}
+                onReadAll={() => markRead(onScreen(secs, bucket, unfolded))}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
                 onFailing={() => setFailing((v) => !v)}
-                folded={folded}
+                drafts={onlyDrafts}
+                onDrafts={() => setOnlyDrafts((v) => !v)}
+                bucket={bucket}
+                onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
-                onFold={(name) => setFolded((f) => ({ ...f, [name]: !f[name] }))}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
+                unfolded={unfolded}
+                onFold={(name) => setUnfolded((f) => ({ ...f, [name]: !f[name] }))}
                 onSelect={(uid) => {
                   setSel(uid)
                   setAt(0)
                 }}
                 onOpen={() => setPane(true)}
+                onMenu={(row, at) => setMenuAt({ p: row, at })}
               />
               )}
             </div>
@@ -537,23 +601,64 @@ export default function App() {
               <Pane
                 p={current}
                 detail={detail}
-                diff={diff}
                 subs={data?.settings.subs || 'all'}
-                tab={tab}
-                scope={scope}
-                context={context}
-                at={at}
-                onTab={setTab}
-                onScope={setScope}
-                onContext={onContext}
-                onAt={setAt}
-                onAct={doAct}
+                onCode={openCode}
+                onOptions={(at) => current && setMenuAt({ p: current, at })}
                 onClose={() => setPane(false)}
               />
             ) : null}
           </div>
         </div>
       </div>
+      {codeOpen && current ? (
+        <CodeViewer
+          p={current}
+          c={diff?.url === current.url ? diff : null}
+          scope={scope}
+          context={context}
+          at={at}
+          onScope={onScope}
+          onContext={onCodeContext}
+          onAt={setAt}
+          focused={codeFocus}
+          onClose={() => setCodeOpen(false)}
+        />
+      ) : null}
+      <footer className="ft">
+        <span>j / k move</span>
+        <span>⏎ pane</span>
+        <span>r review</span>
+        <span>? all keys</span>
+        <div style={{ flex: 1 }} />
+        <div className="sync">
+          {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
+          <span>
+            {!data?.fetchedAt
+              ? 'fetching…'
+              : refetching
+                ? 'fetching PRs…'
+                : data?.fetching
+                  ? 'refreshing…'
+                  : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
+          </span>
+        </div>
+      </footer>
+      {help ? (
+        <Shortcuts
+          hints={data?.settings.keyhints !== false}
+          onHints={() => void setting('keyhints', data?.settings.keyhints === false)}
+          onClose={() => setHelp(false)}
+        />
+      ) : null}
+      {menuAt ? (
+        <ActsMenu
+          p={rows.find((r) => r.uid === menuAt.p.uid) || menuAt.p}
+          d={detail?.url === menuAt.p.url ? detail : null}
+          at={menuAt.at}
+          onAct={doAct}
+          onClose={() => setMenuAt(null)}
+        />
+      ) : null}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

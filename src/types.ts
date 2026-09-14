@@ -26,6 +26,9 @@ export type Pr = {
   team: string
   summary: string
   reviewAt: string
+  /** the newest review's tag: feature, fix, security...; "" when no review tagged it. */
+  kind: string
+  breaking: boolean
   pre: Pre
 }
 
@@ -46,6 +49,8 @@ export type Options = {
   window: (number | null)[]
   interval: number[]
   theme: string[]
+  /** "team:<key>" and "org:<owner>" the TEAM section can search. */
+  scopes: string[]
 }
 
 export type Knowledge = {
@@ -54,7 +59,11 @@ export type Knowledge = {
   teams: Team[]
   teamError: string
   notes: string[]
+  /** Team answers still holding something back. A row you can press, unlike a note. */
+  waiting?: Waiting[]
 }
+
+export type Waiting = { kind: string; key: string; what: string }
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
@@ -63,6 +72,8 @@ export type Settings = {
   window?: number | null
   drafts?: boolean
   hinted?: boolean
+  /** Show the key hint on every button and settings row. */
+  keyhints?: boolean
   subs?: string
   theme?: string
   notify?: boolean
@@ -71,6 +82,8 @@ export type Settings = {
   effort?: string
   voice?: string[]
   hunter?: string[]
+  scopes?: string[]
+  read?: Record<string, string>
   interval?: number
   [key: string]: unknown
 }

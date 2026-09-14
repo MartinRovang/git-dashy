@@ -40,12 +40,53 @@ pub fn graphql_url() -> String {
 pub struct Error(pub String);
 
 pub const SCOPE: &str = "PRS_API_REPO";
+/// Every scope toggled on this session. ponytail: kept searched after it is toggled off, so the board
+/// filters it away and back without a fetch; session-only, so a restart searches just what is saved.
+static FETCHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Most scopes one TEAM search carries. ponytail: a guess under GitHub's search length cap; the oldest
+/// toggled-off scope drops first, the saved ones never.
+const MAX_FETCHED: usize = 8;
+
+/// `fetched` plus every saved scope it lacks, trimmed to MAX_FETCHED by dropping the oldest scope that
+/// is no longer saved.
+fn merge_fetched(saved: &[String], fetched: &[String]) -> Vec<String> {
+    let mut f = fetched.to_vec();
+    f.extend(saved.iter().filter(|s| !fetched.contains(s)).cloned());
+    while f.len() > MAX_FETCHED {
+        let Some(i) = f.iter().position(|s| !saved.contains(s)) else {
+            break;
+        };
+        f.remove(i);
+    }
+    f
+}
+
+/// True when `scope` is already in the TEAM search, so toggling it on needs no refetch.
+pub fn fetched(scope: &str) -> bool {
+    FETCHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|s| s == scope)
+}
 pub const SCOPE_TEAM: &str = "PRS_API_TEAM";
 pub const SECTIONS: &[(&str, &str)] = &[
-    ("MINE", "author:{me}"),
-    ("REVIEW REQUESTED", "review-requested:{me}"),
-    ("ASSIGNED", "assignee:{me}"),
+    ("MINE", "is:open author:{me}"),
+    ("REVIEW REQUESTED", "is:open review-requested:{me}"),
+    ("ASSIGNED", "is:open assignee:{me}"),
+    // ponytail: open PRs in whatever orgs/teams are toggled on, so the board sees the team's work, not
+    // only what names me. Dropped from the query when nothing is on. Last, so dedup gives it the leftovers.
+    // Sorted, so the 100 it returns are the newest, not GitHub's best-match slice.
+    ("TEAM", "is:open {scope} sort:updated-desc"),
+    // merged PRs from the same sources and window, so the board shows what the team shipped
+    ("MERGED", "is:merged {scope} sort:updated-desc"),
 ];
+
+/// True for a section that searches the toggled-on sources, and so is not asked for when none is on.
+fn sourced(q: &str) -> bool {
+    q.contains("{scope}")
+}
 /// Search terms that choose WHERE to look, not what for.
 const QUALIFIERS: &[&str] = &["repo:", "user:", "org:", "owner:"];
 
@@ -364,11 +405,11 @@ pub fn me() -> Result<String, Error> {
     Ok(login)
 }
 
-// ponytail: ONE query for the whole dashboard: the three sections aliased, each carrying the row fields
-// and the review decision, reviewers, head commit and CI state that no list endpoint returns.
+// One page of one section's search: the row fields plus the review decision, reviewers, head commit and CI
+// state that no list endpoint returns, and pageInfo to walk the next page.
 // ponytail: no `... on Team { slug }`. That field needs read:org, and a token without it failed the WHOLE
 // query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
-const NODE: &str = "{ nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
+const NODE: &str = "{ pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
     author { login } repository { nameWithOwner name } headRefOid reviewDecision
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }
@@ -393,18 +434,175 @@ fn review_glyph(s: &str) -> &'static str {
     }
 }
 
-pub fn query(who: &str) -> String {
-    let parts: Vec<String> = SECTIONS
+/// PRs one request asks for, and the most one section keeps.
+/// ponytail: 20, measured: GitHub gives a query about 10s and answers a 502 past it. In a busy org 50 PRs
+/// with checks, diff stats and reviews ran past that and 25 took up to 7.5s. Pages, not fewer fields.
+const PAGE: usize = 20;
+const MOST: usize = 100;
+/// Seconds one page may take. GitHub gives up at about 10 and answers 502, so waiting longer only holds the
+/// tick: five sections of five pages at 60s each could keep `fetching` up for minutes.
+const PAGE_SECS: u64 = 20;
+
+/// The search string of every section to ask for, by its SECTIONS index.
+pub fn searches(who: &str, scope: &str) -> Vec<(usize, String)> {
+    SECTIONS
         .iter()
         .enumerate()
+        .filter(|(_, (_, q))| !(sourced(q) && scope.is_empty()))
         .map(|(i, (_, q))| {
-            format!(
-                "s{i}: search(query: \"is:pr is:open {}\", type: ISSUE, first: 100) {NODE}",
-                q.replace("{me}", who)
+            (
+                i,
+                format!("is:pr {}", q.replace("{me}", who).replace("{scope}", scope)),
             )
         })
+        .collect()
+}
+
+/// One page of one search, as a GraphQL document.
+pub fn page(search: &str, after: &str) -> String {
+    // a JSON string is a valid GraphQL string literal, so escaping is structural
+    let after = if after.is_empty() {
+        String::new()
+    } else {
+        format!(", after: {}", Value::String(after.into()))
+    };
+    format!(
+        "{{ s: search(query: {}, type: ISSUE, first: {PAGE}{after}) {NODE} }}",
+        Value::String(search.into())
+    )
+}
+
+/// Every page of `search` up to MOST, as `{"nodes": [...]}`. `get` runs one document (gql, or a test's).
+/// A failed first page is the section's error; a failed later page keeps what arrived, since the
+/// newest PRs come first and an error line would hide them.
+pub fn search_all(search: &str, get: impl Fn(&str) -> Result<Value, Error>) -> Result<Value, Error> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut after = String::new();
+    while nodes.len() < MOST {
+        let s = match get(&page(search, &after)) {
+            // search is non-null in GitHub's schema, so gql errs first today; a null must still never
+            // read as an empty section
+            Ok(d) if d["s"].is_null() && nodes.is_empty() => {
+                return Err(Error("search returned no data".into()))
+            }
+            Ok(d) => d["s"].clone(),
+            Err(e) if nodes.is_empty() => return Err(e),
+            Err(e) => {
+                log::debug!(
+                    "search page after {} failed, keeping {}: {}",
+                    after,
+                    nodes.len(),
+                    e.0
+                );
+                break;
+            }
+        };
+        nodes.extend(s["nodes"].as_array().cloned().unwrap_or_default());
+        after = str_at(&s, "/pageInfo/endCursor").to_string();
+        if !s
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || after.is_empty()
+        {
+            break;
+        }
+    }
+    nodes.truncate(MOST);
+    Ok(json!({ "nodes": nodes }))
+}
+
+/// A name safe to put inside the query's string literal: a login, owner/name, or team key.
+fn plain(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c))
+}
+
+/// The search terms for the toggled-on scopes: "org:x" as is, "team:k" as every repo and owner bound
+/// to k. GitHub ORs repeated org:/repo: terms, so this stays one search. "" when nothing is on.
+pub fn scope_terms(
+    scopes: &[String],
+    repos: &HashMap<String, String>,
+    owners: &HashMap<String, String>,
+) -> String {
+    let mut terms: Vec<String> = Vec::new();
+    let mut add = |t: String| {
+        if !terms.contains(&t) {
+            terms.push(t);
+        }
+    };
+    for s in scopes {
+        match s.split_once(':') {
+            Some(("org", o)) if plain(o) && !o.contains('/') => add(format!("org:{o}")),
+            Some(("team", k)) => {
+                // ponytail: sorted, so the query text (and a test) does not shuffle with HashMap order
+                let mut bound: Vec<String> = repos
+                    .iter()
+                    .filter(|(_, t)| *t == k)
+                    .map(|(r, _)| format!("repo:{r}"))
+                    .chain(
+                        owners
+                            .iter()
+                            .filter(|(_, t)| *t == k)
+                            .map(|(o, _)| format!("org:{o}")),
+                    )
+                    .filter(|t| plain(t.split_once(':').map(|x| x.1).unwrap_or("")))
+                    .collect();
+                bound.sort();
+                bound.into_iter().for_each(&mut add);
+            }
+            _ => {}
+        }
+    }
+    terms.join(" ")
+}
+
+/// The TEAM and MERGED searches held to the history window, like REVIEWED: only PRs touched in the last `window`
+/// hours. `None` is all time; "" stays "" so nothing toggled still means no search.
+pub fn within(scope: &str, window: Option<u64>, now: chrono::DateTime<chrono::Utc>) -> String {
+    match window {
+        Some(h) if !scope.is_empty() => {
+            let since = now - chrono::Duration::hours(h as i64);
+            format!("{scope} updated:>={}", since.format("%Y-%m-%dT%H:%M:%SZ"))
+        }
+        _ => scope.to_string(),
+    }
+}
+
+/// What the scope chips offer: every joined team, then every owner seen on the board, in the log or in
+/// a binding, then any saved scope none of those name, so a toggled-on one can always be toggled off.
+/// ponytail: not the viewer's org list, that needs read:org and the token usually lacks it.
+pub fn scope_options(
+    saved: &[String],
+    sections: &[Section],
+    teams: &[String],
+    repos: &HashMap<String, String>,
+    owners: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut orgs: Vec<String> = sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .map(|p| p.repo().split('/').next().unwrap_or("").to_lowercase())
+        .chain(
+            repos
+                .keys()
+                .map(|r| r.split('/').next().unwrap_or("").to_string()),
+        )
+        .chain(owners.keys().cloned())
+        .filter(|o| plain(o) && !o.contains('/'))
         .collect();
-    format!("{{ {} }}", parts.join(" "))
+    orgs.sort();
+    orgs.dedup();
+    teams
+        .iter()
+        .map(|t| format!("team:{t}"))
+        .chain(orgs.into_iter().map(|o| format!("org:{o}")))
+        .chain(saved.iter().cloned())
+        .fold(Vec::new(), |mut v: Vec<String>, o| {
+            if !v.contains(&o) {
+                v.push(o);
+            }
+            v
+        })
 }
 
 fn str_at<'a>(v: &'a Value, pointer: &str) -> &'a str {
@@ -619,18 +817,81 @@ pub fn fetch() -> Vec<Section> {
     if config::get().demo {
         return crate::demo::sections();
     }
-    let data = match me().and_then(|who| gql(&query(&who), 60)) {
-        Ok(d) => d,
+    let cfg = config::get();
+    let searched = {
+        let mut f = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+        *f = merge_fetched(&cfg.scopes, &f);
+        f.clone()
+    };
+    let scope = within(
+        &{
+            let (repos, owners) = crate::bind::maps();
+            scope_terms(&searched, &repos, &owners)
+        },
+        cfg.window,
+        chrono::Utc::now(),
+    );
+    let first_line = |e: &Error| {
+        e.0.trim()
+            .lines()
+            .next()
+            .filter(|l| !l.is_empty())
+            .unwrap_or("github unreachable")
+            .to_string()
+    };
+    let data = match me() {
+        Ok(who) => {
+            // ponytail: one request per section, all at once. One query holding every section ran past
+            // GitHub's time limit in a busy org, and its 502 blanked MINE along with TEAM.
+            let got: Vec<(usize, Result<Value, Error>)> = std::thread::scope(|t| {
+                let running: Vec<_> = searches(&who, &scope)
+                    .into_iter()
+                    .map(|(i, q)| (i, t.spawn(move || search_all(&q, |doc| gql(doc, PAGE_SECS)))))
+                    .collect();
+                running
+                    .into_iter()
+                    .map(|(i, h)| {
+                        (
+                            i,
+                            h.join().unwrap_or_else(|_| Err(Error("search panicked".into()))),
+                        )
+                    })
+                    .collect()
+            });
+            let mut data = serde_json::Map::new();
+            let mut errs: HashMap<usize, String> = HashMap::new();
+            for (i, r) in got {
+                match r {
+                    Ok(v) => {
+                        data.insert(format!("s{i}"), v);
+                    }
+                    Err(e) => {
+                        errs.insert(i, first_line(&e));
+                        data.insert(format!("s{i}"), Value::Null);
+                    }
+                }
+            }
+            if errs.keys().any(|i| sourced(SECTIONS[*i].1)) {
+                // ponytail: a scope that broke its search must not outlive being toggled off, so the next
+                // tick searches only what is saved
+                *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = config::get().scopes;
+                // fresh: `cfg` predates an untoggle
+            }
+            let mut out = sections_of(&Value::Object(data));
+            for s in out.iter_mut() {
+                if let Some(i) = SECTIONS.iter().position(|(n, _)| *n == s.name) {
+                    if let Some(e) = errs.remove(&i) {
+                        s.err = Some(e);
+                    }
+                }
+            }
+            out
+        }
         Err(e) => {
-            let msg = e.0.trim();
-            let err = msg
-                .lines()
-                .next()
-                .filter(|l| !l.is_empty())
-                .unwrap_or("github unreachable")
-                .to_string();
+            let err = first_line(&e);
             let mut out: Vec<Section> = SECTIONS
                 .iter()
+                .filter(|(_, q)| !sourced(q) || !scope.is_empty())
                 .map(|(name, _)| Section {
                     name: name.to_string(),
                     prs: None,
@@ -645,7 +906,7 @@ pub fn fetch() -> Vec<Section> {
             return out;
         }
     };
-    let mut out = sections_of(&data);
+    let mut out = data;
     // ponytail: not deduped, a reviewed PR may still be open above
     out.push(Section {
         name: "REVIEWED".into(),
@@ -655,11 +916,25 @@ pub fn fetch() -> Vec<Section> {
     out
 }
 
-/// The three SECTIONS from a dashboard query's `data`: deduped across sections, newest first.
+/// The SECTIONS from a dashboard query's `data`: deduped across sections, newest first.
 pub fn sections_of(data: &Value) -> Vec<Section> {
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
-    for (i, (name, _)) in SECTIONS.iter().enumerate() {
+    for (i, (name, q)) in SECTIONS.iter().enumerate() {
+        match data.get(format!("s{i}")) {
+            None if sourced(q) => continue, // nothing toggled on, so it was never asked for
+            Some(Value::Null) => {
+                // a failed search; fetch puts its message on it. An empty section must never stand in for
+                // a rejected one
+                out.push(Section {
+                    name: name.to_string(),
+                    prs: None,
+                    err: Some("search failed".into()),
+                });
+                continue;
+            }
+            _ => {}
+        }
         let mut prs: Vec<Pr> = Vec::new();
         for n in data
             .pointer(&format!("/s{i}/nodes"))
@@ -1093,15 +1368,137 @@ mod tests {
 
     #[test]
     fn query_asks_for_the_three_sections_under_my_own_login() {
-        let s = query("me");
-        assert!(!s.contains("@me"));
-        for (i, q) in ["author:me", "review-requested:me", "assignee:me"]
-            .iter()
-            .enumerate()
-        {
-            assert!(s.contains(&format!("s{i}: search(query: \"is:pr is:open {q}\"")));
-        }
-        assert!(s.contains("headRefOid") && s.contains("latestReviews"));
+        let s = searches("me", "");
+        assert_eq!(
+            s,
+            [
+                (0, "is:pr is:open author:me".to_string()),
+                (1, "is:pr is:open review-requested:me".to_string()),
+                (2, "is:pr is:open assignee:me".to_string())
+            ],
+            "no TEAM or MERGED search while nothing is toggled on"
+        );
+        let p = page(&s[0].1, "");
+        assert!(p.contains("search(query: \"is:pr is:open author:me\", type: ISSUE, first: 20)"));
+        assert!(p.contains("headRefOid") && p.contains("latestReviews") && p.contains("endCursor"));
+        assert!(page("x", "Y3Vy").contains("first: 20, after: \"Y3Vy\")"));
+    }
+
+    #[test]
+    fn a_search_pages_by_cursor_and_keeps_what_arrived_when_a_later_page_fails() {
+        let pages = std::cell::RefCell::new(Vec::new());
+        let page_of = |n: usize, next: bool| {
+            json!({"s": {"pageInfo": {"hasNextPage": next, "endCursor": format!("c{n}")},
+                         "nodes": (0..PAGE).map(|k| node(&format!("{n}-{k}"), json!({}))).collect::<Vec<_>>()}})
+        };
+        // three full pages then a failure: those kept, no error, cursors passed along
+        let got = search_all("q", |doc| {
+            pages.borrow_mut().push(doc.to_string());
+            match pages.borrow().len() {
+                n @ 1..=3 => Ok(page_of(n, true)),
+                _ => Err(Error("502 Bad Gateway".into())),
+            }
+        })
+        .unwrap();
+        assert_eq!(got["nodes"].as_array().unwrap().len(), 3 * PAGE);
+        assert!(pages.borrow()[1].contains("after: \"c1\"") && pages.borrow()[3].contains("after: \"c3\""));
+        // never more than MOST, and it stops when GitHub says there is no next page
+        assert_eq!(
+            search_all("q", |_| Ok(page_of(1, true))).unwrap()["nodes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            MOST
+        );
+        let calls = std::cell::Cell::new(0);
+        search_all("q", |_| {
+            calls.set(calls.get() + 1);
+            Ok(page_of(1, false))
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 1);
+        // a null search is an error, not an empty section
+        assert!(search_all("q", |_| Ok(json!({"s": null}))).is_err());
+        // a failed first page is the section's error
+        assert_eq!(
+            search_all("q", |_| Err(Error("502 Bad Gateway".into())))
+                .unwrap_err()
+                .0,
+            "502 Bad Gateway"
+        );
+    }
+
+    #[test]
+    fn team_scope_expands_to_one_ored_search_and_skips_junk() {
+        let repos = HashMap::from([
+            ("acme/api".to_string(), "core".to_string()),
+            ("x/y".to_string(), "other".to_string()),
+        ]);
+        let owners = HashMap::from([("acme".to_string(), "core".to_string())]);
+        let on = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            scope_terms(
+                &on(&["team:core", "org:acme", "org:a\" b", "team:nope"]),
+                &repos,
+                &owners
+            ),
+            "org:acme repo:acme/api"
+        );
+        assert_eq!(scope_terms(&[], &repos, &owners), "");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-14T12:00:00Z")
+            .unwrap()
+            .to_utc();
+        assert_eq!(
+            within("org:acme", Some(24), now),
+            "org:acme updated:>=2026-09-13T12:00:00Z"
+        );
+        assert_eq!(
+            (
+                within("org:acme", None, now).as_str(),
+                within("", Some(24), now).as_str()
+            ),
+            ("org:acme", "")
+        );
+        let q = searches("me", "org:acme");
+        assert_eq!(q[3], (3, "is:pr is:open org:acme sort:updated-desc".to_string()));
+        assert_eq!(
+            q[4],
+            (4, "is:pr is:merged org:acme sort:updated-desc".to_string())
+        );
+        assert!(page(&searches("me", "org:a\"b")[3].1, "")
+            .contains(r#""is:pr is:open org:a\"b sort:updated-desc""#));
+        let secs = sections_of(
+            &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}, "s4": {"nodes": []}}),
+        );
+        assert_eq!(
+            secs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["MINE", "REVIEW REQUESTED", "ASSIGNED", "TEAM", "MERGED"]
+        );
+        let opts = scope_options(
+            &on(&["org:gone", "org:acme"]),
+            &secs,
+            &["core".to_string()],
+            &repos,
+            &owners,
+        );
+        assert_eq!(opts, ["team:core", "org:a", "org:acme", "org:x", "org:gone"]);
+        let failed = sections_of(&json!({"s0": null, "s1": {"nodes": []}, "s2": {"nodes": []}}));
+        assert_eq!(
+            (failed[0].prs.is_none(), failed[0].err.as_deref(), failed.len()),
+            (true, Some("search failed"), 3)
+        );
+    }
+
+    #[test]
+    fn fetched_keeps_dropped_scopes_up_to_the_cap_and_never_drops_saved_ones() {
+        let v = |n: std::ops::Range<usize>| n.map(|i| format!("org:o{i}")).collect::<Vec<_>>();
+        // toggled off: still searched; toggled on: appended
+        assert_eq!(merge_fetched(&v(1..2), &v(0..1)), v(0..2));
+        // over the cap: the oldest unsaved goes first
+        let merged = merge_fetched(&v(8..9), &v(0..8));
+        assert_eq!(merged, [v(1..8), v(8..9)].concat());
+        // everything saved: nothing dropped
+        assert_eq!(merge_fetched(&v(0..10), &[]).len(), 10);
     }
 
     #[test]

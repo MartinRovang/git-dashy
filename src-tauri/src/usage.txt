@@ -14,8 +14,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
                       [--team KEY --connect URL] [--team KEY --cover TARGET | --uncover TARGET] [--leave KEY]
-                      [--team KEY --agents-again]
-                      [--team KEY --agents-again]
+                      [--team KEY --agents-again|--publishing-again]
 
   --interval N   seconds between refreshes (default 300); i picks 1/2/5/10/15m
   --browser      open the dashboard in your browser instead of the desktop app (downloaded on first use)
@@ -26,7 +25,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default medium, or $PRS_EFFORT); e picks
   --depth LEVEL  review depth: low, medium, high, adaptive (default adaptive, or $PRS_DEPTH); d picks
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
-  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, humanizer (or $PRS_HUNTER); h toggles
+  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, perf, humanizer (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
   --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
@@ -121,12 +120,12 @@ self-check makes one real claude call and proves the three things every review d
   under it. A unit test can assert the flags are passed; only this can tell you they are honoured.
 
 Keys: j/k move, ⏎ detail pane, r review (REVIEW REQUESTED), p pre-review your own PR posting nothing,
-v read the full review of the selected PR (any row that has one), Y open the pre-review, o open, y copy the URL,
+v read the full review of the selected PR (any row that has one), o open, y copy the URL,
 ␣ unfold/fold older reviews of the same PR, a auto, m model, d depth, e effort, x voices, h hunters, t REVIEWED history window, i interval, s summaries
 (each opens a picker: j/k moves, ⏎ picks, esc keeps), D show/hide drafts (hidden by default), ? show each setting's key,
 L local memory dir, C where all team checkouts live, n repo memory, g general memory (edited in the app),
-1/2 or Tab switch the pane between the review summary and the code it is about, G switch the board and the graph view,
-  in code: n/N next mark (or file), D marks-only vs the full diff, c context ±3/±8/none,
+2 or Tab open the code viewer (the review against the code it is about), G switch the board and the graph view,
+  in the viewer: j/k next/prev file, D marks-only vs the full diff, c context ±3/±8/none, Esc close,
 + request a review from a collaborator (MINE), b bind the selected repo to a team (1-8 pick, o whole owner, x unbind),
 P what the team knows from you (x forget it everywhere, t send one that never went), W what is waiting to become a fact (t accept, x drop, s scan for repeats), Z dream (Claude tidies all memory, you approve),
 T teams (1-8 open one, n start one, a join one; inside a team: e brief, d describe, c connect, o cover, x leave), u install the newest release, f refresh, esc menu (theme, notify, refresh, quit), q quit.

@@ -124,6 +124,11 @@ pub struct LogEntry {
     pub body: String,
     #[serde(default)]
     pub findings: Vec<Finding>,
+    /// One of config::KINDS, "" on entries logged before reviews were tagged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub breaking: bool,
 }
 
 /// What the reviewer answered, parsed out of the model's JSON.
@@ -141,6 +146,11 @@ pub struct Verdict {
     /// Facts the review proposes for memory.
     #[serde(default)]
     pub remember: Vec<String>,
+    /// What sort of change the PR is: one of config::KINDS, "other" when the model strays.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub breaking: bool,
     #[serde(default)]
     pub cost: Option<f64>,
     #[serde(default)]

@@ -142,11 +142,19 @@ pub fn reviewed() -> Vec<Pr> {
 }
 
 /// The newest entry for this PR url.
+///
+/// ponytail: a scan of the cached entries, cloning only the winner. It was reviewed().find(), which
+/// cloned and sorted every entry of every log for one lookup, and the pane asks this every 1.5s (#74).
+/// Same order as reviewed(): newest `at`, then later line; the earlier log wins a full tie.
 pub fn last(url: &str) -> Option<LogEntry> {
-    reviewed()
-        .into_iter()
-        .find(|p| p.url == url)
-        .and_then(|p| p.review.map(|b| *b))
+    let logs: Vec<_> = logs().iter().map(|p| entries(p)).collect();
+    let mut best: Option<(&LogEntry, usize)> = None;
+    for (i, e) in logs.iter().flat_map(|es| es.iter().enumerate()) {
+        if e.pr.url == url && best.is_none_or(|(b, j)| (&e.at, i) > (&b.at, j)) {
+            best = Some((e, i));
+        }
+    }
+    best.map(|(e, _)| e.clone())
 }
 
 /// "adaptive/medium $0.42 3m": depth[/effort] the review ran with, then what it cost; "" for old entries.
@@ -255,6 +263,8 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
         summary: v.summary.clone(),
         body: v.body.clone(),
         findings: findings(v),
+        kind: v.kind.clone(),
+        breaking: v.breaking,
     };
     // ponytail: into the log of the team this repo is BOUND to, and yours when it is bound to none. The
     // shared review log is how a teammate's review appears in your list; sending it to a team the repo
@@ -278,6 +288,9 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
 }
 
 /// Tag REVIEW REQUESTED rows already in the log and pushed to since as `prev`. Returns their urls.
+/// TEAM rows get the log's verdict too, from any log (a teammate's arrives by git pull): `status` when
+/// the head is the one reviewed, `prev` when it moved since. Never returned: auto must not review a PR
+/// that never asked me.
 /// ponytail: by head commit when both sides know it: updatedAt also moves on a comment, which is not a
 /// reason to review again. Timestamps only for entries logged before heads were.
 pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
@@ -292,10 +305,13 @@ pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    for p in sections
+    for (is_team, p) in sections
         .iter_mut()
-        .filter(|s| s.name == "REVIEW REQUESTED")
-        .flat_map(|s| s.prs.iter_mut().flatten())
+        .filter(|s| s.name == "REVIEW REQUESTED" || s.name == "TEAM")
+        .flat_map(|s| {
+            let is_team = s.name == "TEAM";
+            s.prs.iter_mut().flatten().map(move |p| (is_team, p))
+        })
     {
         let Some(e) = last.get(&p.url) else { continue };
         let changed = if !e.head.is_empty() {
@@ -310,8 +326,15 @@ pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
         } else {
             matches!((when(&p.updated_at), when(&e.at)), (Ok(a), Ok(b)) if a > b)
         };
-        if changed {
-            p.prev = format!("↻ re-review · was {}", config::status(&e.verdict).unwrap_or(""));
+        let was = config::status(&e.verdict).unwrap_or("");
+        if is_team {
+            if changed {
+                p.prev = format!("↻ changed since · was {was}");
+            } else {
+                p.status = was.to_string();
+            }
+        } else if changed {
+            p.prev = format!("↻ re-review · was {was}");
             out.push(p.url.clone());
         }
     }
@@ -475,6 +498,26 @@ mod tests {
             reviewed().iter().map(|p| p.url.as_str()).collect::<Vec<_>>(),
             ["c", "b", "a"]
         );
+        // last() scans instead of sorting, and must pick what reviewed() lists first: the later line
+        let later = verdict("request_changes", "no");
+        for (v, at) in [
+            (&v, "2020-01-01T00:00:01+00:00"),
+            (&later, "2020-01-01T00:00:01+00:00"),
+        ] {
+            log_review(
+                &Pr {
+                    url: "a".into(),
+                    ..pr()
+                },
+                "opus",
+                v,
+                Some(at),
+            )
+            .unwrap();
+        }
+        let first = reviewed().into_iter().find(|p| p.url == "a").unwrap();
+        assert_eq!(last("a").unwrap().verdict, first.review.unwrap().verdict);
+        assert_eq!(last("a").unwrap().verdict, "request_changes");
     }
 
     #[test]
@@ -542,6 +585,29 @@ mod tests {
         let rows = secs[0].prs.as_ref().unwrap();
         assert_eq!(rows[0].prev, "↻ re-review · was ✓ approved");
         assert!(rows[1].prev.is_empty() && rows[2].prev.is_empty());
+        // the same rows as TEAM: the verdict shows, but nothing is queued for auto
+        let rr = secs.remove(0);
+        secs.insert(
+            0,
+            Section {
+                name: "TEAM".into(),
+                ..rr
+            },
+        );
+        for p in secs[0].prs.iter_mut().flatten() {
+            p.prev.clear();
+        }
+        assert!(mark_rereviews(&mut secs).is_empty());
+        let rows = secs[0].prs.as_ref().unwrap();
+        assert_eq!(
+            (rows[0].prev.as_str(), rows[0].status.as_str()),
+            ("↻ changed since · was ✓ approved", "")
+        );
+        assert_eq!(
+            (rows[1].prev.as_str(), rows[1].status.as_str()),
+            ("", "~ commented")
+        );
+        assert!(rows[2].status.is_empty() && rows[2].prev.is_empty());
     }
 
     #[test]
