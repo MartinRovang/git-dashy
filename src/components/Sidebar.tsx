@@ -11,6 +11,7 @@ type Props = {
   onTeams: () => void
   onModal: (name: string) => void
   onAuto: () => void
+  onAskAgain: (kind: string, key: string) => void
   collapsed: boolean
   onCollapse: () => void
 }
@@ -67,10 +68,10 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onAskAgain, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
-  const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [] }
+  const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   const [open, setOpen] = useState<string>('agent')
   // ponytail: one group open at a time. Three expanded at 252px is a rail you scroll to read, and the
@@ -184,11 +185,13 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, co
           k="know"
           label="Knowledge"
           title={`Memory ${k.memory} · teams ${teams || 'none'}`}
-          summary={teams || 'no team'}
+          summary={[teams || 'no team', (k.waiting || []).length ? `${(k.waiting || []).length} asking` : ''].filter(Boolean).join(' · ')}
           digest={
             <>
               <Ln label="teams" value={teams || 'none'} off={!k.teams.length} />
-              <Ln label="memory" value="on" />
+              {/* ponytail: a pending consent gate is a nudge, so it survives the collapse as a count.
+                  Everything else in this digest is a setting; this one is the only thing asking. */}
+              <Ln label="asks" value={String((k.waiting || []).length)} off={!(k.waiting || []).length} />
             </>
           }
           open={open === 'know'}
@@ -215,6 +218,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, co
           {(k.notes || []).map((n, i) => (
             <div className="note" key={i}>
               ⚠ {n}
+            </div>
+          ))}
+          {/* What each consent gate is still holding back. Clicking one asks that question again. */}
+          {(k.waiting || []).map((w, i) => (
+            <div className="note link" key={`w${i}`} title="ask me again" onClick={() => onAskAgain(w.kind, w.key)}>
+              ⚠ {w.key}: {w.what} — ask again
             </div>
           ))}
           {/* ponytail: these OPEN things, they do not toggle. The design drew them as on/off tags

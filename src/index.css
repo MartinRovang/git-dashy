@@ -440,6 +440,9 @@
          color: var(--dim3); padding: 9px 0 3px; }
   .sub em { font-style: normal; color: var(--dim2); opacity: .55; }
   .fields .note { padding: 4px 0 0; }
+  /* main's consent rows are clickable notes, and nothing styled the .link half of that pair */
+  .note.link { cursor: pointer; }
+  .note.link:hover { color: var(--pink); text-decoration: underline; }
 
   /* a whole-row switch, for the two settings that are on or off and nothing else */
   .fld { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; margin-top: 8px; padding: 0 9px;
