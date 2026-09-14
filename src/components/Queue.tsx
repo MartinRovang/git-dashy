@@ -9,6 +9,7 @@ type Props = {
   now: number
   sel: string
   read: Record<string, string>
+  onReadAll: () => void
   query: string
   onQuery: (v: string) => void
   failing: boolean
@@ -117,6 +118,8 @@ export function Queue(p: Props) {
   const d = p.data
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
 
+  const unread = p.secs.flatMap((s) => s.prs).filter((x) => p.read[x.url] !== x.updatedAt).length
+
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
       <div className="list scroll">
@@ -148,6 +151,11 @@ export function Queue(p: Props) {
         <div className={`chip${p.failing ? ' on' : ''}`} onClick={p.onFailing}>
           CI failing <em>{failing}</em>
         </div>
+        {unread ? (
+          <div className="chip" onClick={p.onReadAll}>
+            read all <em>{unread}</em>
+          </div>
+        ) : null}
         <div style={{ flex: 1 }} />
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
           updated{' '}

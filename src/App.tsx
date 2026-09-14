@@ -58,10 +58,23 @@ export default function App() {
     }
   })
 
+  const markRead = (prs: Row[]) =>
+    setRead((r) => {
+      if (prs.every((p) => r[p.url] === p.updatedAt)) return r
+      const next = { ...r, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
+      try {
+        localStorage.setItem('dashy-read', JSON.stringify(next))
+      } catch {
+        /* storage unavailable */
+      }
+      return next
+    })
+
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
-  const current = selected(rows, sel)
+  // the graph draws folded sections too, so a node there selects a uid the folded list does not hold
+  const current = selected([...rows, ...secs.flatMap((s) => s.prs)], sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
 
@@ -92,17 +105,7 @@ export default function App() {
   }, [flash])
 
   useEffect(() => {
-    if (!current) return
-    setRead((r) => {
-      if (r[current.url] === current.updatedAt) return r
-      const next = { ...r, [current.url]: current.updatedAt }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
+    if (current) markRead([current])
   }, [current])
 
   useEffect(() => {
@@ -494,9 +497,7 @@ export default function App() {
             <div className="queue">
               {view === 'graph' ? (
                 <Graph
-                  // folded sections are left out: selected() only searches unfolded rows, so a node there
-                  // would select a uid it cannot find and open rows[0] instead
-                  secs={secs.filter((s) => !folded[s.name])}
+                  secs={secs}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)
@@ -511,6 +512,7 @@ export default function App() {
                 now={now}
                 sel={selUid}
                 read={read}
+                onReadAll={() => markRead(secs.flatMap((s) => s.prs))}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
