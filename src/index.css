@@ -312,7 +312,8 @@
   .graph .halos, .graph .gnames { pointer-events: none; }
   /* divided by the zoom, so a galaxy name stays the same size on screen however far you zoom */
   .graph .gnames text { font-size: calc(26px / var(--k)); font-weight: 700; text-anchor: middle; opacity: .85; paint-order: stroke; stroke: var(--bg); stroke-width: calc(4px / var(--k)); }
-  .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
+  /* non-scaling stroke: a line keeps 1px on screen without restyling every link on each zoom frame */
+  .graph line { stroke: var(--edge); stroke-width: 1px; vector-effect: non-scaling-stroke; transition: opacity .2s, stroke .2s; }
   .graph line.lit { stroke: var(--ink3); }
   .gnode { cursor: pointer; transition: opacity .2s; }
   .gnode circle { stroke-width: 1.5; transition: r .3s; }
