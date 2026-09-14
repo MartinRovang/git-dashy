@@ -11,11 +11,11 @@
           --serif: 'Cormorant Garamond', Georgia, 'Times New Roman', serif; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #17161a; color: var(--ink2); font-family: var(--mono); user-select: none; }
   @keyframes smudge-in { from { opacity: 0; filter: blur(6px); } to { opacity: 1; filter: blur(0); } }
-  @keyframes graphite-spin { to { transform: rotate(360deg); } }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   .wrap { position: relative; height: 100vh; display: grid; place-items: center; padding: 40px 28px; box-sizing: border-box; overflow: hidden;
           background: radial-gradient(120% 90% at 50% 18%, #262329 0%, #1b191d 45%, #121113 100%); }
   /* ponytail: paper tooth, grain and a vignette, three static layers. Animating them repaints the
-     whole window every frame, which the software webview on Linux stutters the spinner for. */
+     whole window every frame, which the software webview on Linux stutters the shimmer for. */
   .tooth { position: absolute; inset: -20%; pointer-events: none; opacity: 0.5; mix-blend-mode: soft-light;
            background-image: repeating-linear-gradient(38deg, rgba(255,246,230,0.055) 0 1px, transparent 1px 7px),
                              repeating-linear-gradient(-52deg, rgba(255,246,230,0.03) 0 1px, transparent 1px 11px); }
@@ -30,25 +30,18 @@
        color: var(--ink); text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 26px rgba(240,231,217,0.12); }
   .rule { width: 220px; height: 10px; margin-top: 10px; opacity: 0.5;
           background: radial-gradient(60% 100% at 50% 0%, rgba(232,222,206,0.5), transparent 72%); }
-  .status { margin: 6px 0 0; font-size: 11px; font-weight: 300; letter-spacing: 0.42em; text-transform: uppercase; color: #8e8578; }
   .bar { width: 100%; margin-top: min(52px, 5vh); display: flex; flex-direction: column; gap: 10px; }
-  .track { position: relative; height: 7px; background: rgba(232,222,206,0.07); box-shadow: inset 0 0 0 1px rgba(232,222,206,0.1); }
+  .track { position: relative; height: 18px; background: rgba(232,222,206,0.07); box-shadow: inset 0 0 0 1px rgba(232,222,206,0.1); }
+  .pct { align-self: flex-end; font-size: 10px; letter-spacing: 0.2em; color: var(--ink3); }
   .fill { position: absolute; inset: 0 auto 0 0; width: 0; box-shadow: 0 0 14px rgba(240,231,217,0.14);
-          background-image: repeating-linear-gradient(52deg, rgba(240,231,217,0.92) 0 1.5px, rgba(240,231,217,0.28) 1.5px 4px);
+          background-image: repeating-linear-gradient(52deg, rgba(240,231,217,0.92) 0 2.5px, rgba(240,231,217,0.28) 2.5px 6px);
           transition: width 0.45s cubic-bezier(0.3,0.8,0.3,1); }
-  .legend { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 0.2em; color: var(--ink3); }
-  .steps { width: 100%; margin-top: min(42px, 4vh); display: flex; flex-direction: column; }
-  .step { display: flex; align-items: center; gap: 14px; padding: 11px 2px; border-top: 1px solid rgba(232,222,206,0.07);
-          font-size: 13px; font-weight: 300; color: var(--dim); }
-  .step i { width: 11px; height: 11px; flex: none; border-radius: 50%; box-sizing: border-box; border: 1px solid rgba(232,222,206,0.35); }
-  .step b { flex: 1; font-weight: 300; letter-spacing: 0.02em; }
-  .step s { text-decoration: none; font-size: 11px; letter-spacing: 0.18em; color: #9e9587; }
-  /* running: the ring is drawn open and turns; done: it is filled with hatching */
-  .step.run { color: var(--ink); }
-  .step.run i { border-color: rgba(232,222,206,0.6); border-top-color: transparent; animation: graphite-spin 0.9s linear infinite; }
-  .step.ok { color: #d6ccbd; }
-  .step.ok i { background-image: repeating-linear-gradient(48deg, rgba(240,231,217,0.9) 0 1px, rgba(240,231,217,0.25) 1px 3px); }
-  .foot { margin: min(46px, 4vh) 0 0; font-family: var(--serif); font-style: italic; font-size: 15px; color: var(--ink3); }
+  /* one line, the current step; the text shimmers while it runs and settles when everything is done */
+  .steps { margin: min(42px, 4vh) 0 0; font-size: 13px; font-weight: 300; letter-spacing: 0.02em;
+           color: transparent; -webkit-background-clip: text; background-clip: text; background-size: 200% 100%;
+           background-image: linear-gradient(90deg, #8e8578 35%, #fff8ec 50%, #8e8578 65%); animation: shimmer 1.6s linear infinite; }
+  .steps.ok { color: #d6ccbd; background: none; animation: none; }
+  .foot { margin: min(96px, 9vh) 0 0; font-family: var(--serif); font-style: italic; font-size: 15px; color: var(--ink3); text-align: center; }
   .err { display: none; font-size: 12px; line-height: 1.6; color: #c07a68; white-space: pre-wrap; text-align: center; }
   body.failed .err { display: block; }
   body.failed .bar, body.failed .steps, body.failed .foot { display: none; }
@@ -63,41 +56,48 @@
     <div class="mark"><img src="head.png" alt="" /></div>
     <h1>gitdashy</h1>
     <div class="rule"></div>
-    <p class="status" id="status">starting</p>
     <div class="bar">
       <div class="track"><div class="fill" id="fill"></div></div>
-      <div class="legend"><span id="hint">warming up</span><span id="pct">000</span></div>
+      <span class="pct" id="pct">000</span>
     </div>
-    <div class="steps" id="steps"></div>
-    <p class="foot">sketching your pull requests</p>
+    <p class="steps" id="steps"></p>
+    <p class="foot" id="foot"></p>
     <p class="err" id="err"></p>
   </div>
 </div>
 <script>
 // ponytail: the server and the socket are up before this page can load — the window is built after
-// them — so those two start ticked and only the first fetch is left running. The shell says
-// gitdashy-done when the fetch lands; the bar fills within a phase but never to the top, so it only
-// reaches 100% when that signal checks the last step off, just before the handover.
-const STEPS = ["spawn_server", "await_socket", "fetch_pull_requests"];
+// them — so those two flick past and the line settles on the fetch. The shell says gitdashy-done when
+// the fetch lands; the bar fills within a phase but never to the top, so it only reaches 100% on that
+// signal, just before the handover.
+const STEPS = ["spawn_server", "await_socket", "sketching your pull requests"];
 const stepsEl = document.getElementById("steps");
-stepsEl.innerHTML = STEPS.map(s => `<div class="step"><i></i><b>${s}</b><s>queued</s></div>`).join("");
-const rows = [...stepsEl.children];
 let active = STEPS.length, t0 = Date.now();
 
-// ponytail: the rows only change when `active` does, so they are written once per change instead of
-// on every tick — restyling the spinning ring that often stutters it.
-function paint() {
-  rows.forEach((r, i) => {
-    const st = i < active - 1 ? "ok" : i === active - 1 ? "run" : "";
-    r.className = "step " + st;
-    r.lastChild.textContent = st === "ok" ? "done" : st === "run" ? "running" : "queued";
-  });
+function show(text, el = stepsEl) {
+  el.textContent = text;
+  el.animate([{ opacity: 0, filter: "blur(3px)" }, { opacity: 1, filter: "blur(0)" }], 350);
 }
+const flicks = STEPS.map((s, i) => setTimeout(() => show(s), i * 500));
+
+const QUOTES = [
+  "For the dead travel fast.",
+  "Beware; for I am fearless, and therefore powerful.",
+  "Nothing is so painful to the human mind as a great and sudden change.",
+  "Deep into that darkness peering, long I stood there wondering, fearing.",
+  "All that we see or seem is but a dream within a dream.",
+  "Man is not truly one, but truly two.",
+  "Each of us has Heaven and Hell in him.",
+  "Be with me always, take any form, drive me mad!",
+];
+let q = Math.floor(Math.random() * QUOTES.length);
+show(QUOTES[q], document.getElementById("foot"));
+setInterval(() => show(QUOTES[q = (q + 1) % QUOTES.length], document.getElementById("foot")), 5000);
+
 function bar(pct) {
   document.getElementById("fill").style.width = pct.toFixed(1) + "%";
   document.getElementById("pct").textContent = String(Math.round(pct)).padStart(3, "0");
 }
-paint();
 
 const timer = setInterval(() => {
   const dt = Date.now() - t0;
@@ -107,15 +107,15 @@ const timer = setInterval(() => {
 function done() {
   clearInterval(timer);
   bar(100);
-  rows.forEach((r) => { r.className = "step ok"; r.lastChild.textContent = "done"; });
-  document.getElementById("status").textContent = "ready";
-  document.getElementById("hint").textContent = "ready";
+  flicks.forEach(clearTimeout);
+  stepsEl.className = "steps ok";
+  show("ready");
 }
 
 function fail(msg) {
   clearInterval(timer);
+  flicks.forEach(clearTimeout);
   document.body.className = "failed";
-  document.getElementById("status").textContent = "could not start";
   document.getElementById("err").textContent = msg;
 }
 
