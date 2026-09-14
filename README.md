@@ -66,8 +66,12 @@ gitdashy remember "the viewer owns mask state"   # file what a coding session le
 gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
-The list is a table — `age · repo · pr · title · author · state` — with your own PRs in their own
-section and the other three collapsed into `QUEUES`, one line each while they are empty. Beside it, `⏎`
+The list is a table — `age · repo · pr · title · author · state` — and above it one tab per queue:
+`all`, `mine`, `review requested`, `assigned`, `reviewed`, each with its count. **Tabs stack**: click a
+second one and both queues show, each under its own header; clicking the last one off falls back to
+`all`. Beside the tabs, `CI failing` and `Drafts` narrow whatever the tabs are showing, each counting only
+what is on screen; press one again to clear it. `[` and `]` walk
+one tab at a time and replace the pick. Beside it, `⏎`
 opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
 found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
 
@@ -103,6 +107,7 @@ button somewhere on the page.
 |-----|------|
 | `j` / `k`, `↑` / `↓` | move |
 | `o` | open the PR in your browser |
+| right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens, `2` `Tab` among them |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
@@ -121,13 +126,13 @@ button somewhere on the page.
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
 | `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer |
-| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header counts down to the next one) |
+| `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
 | `n` | edit this repo's review memory in the app |
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
-| `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
+| `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
 | `j` `k` `D` `c` `Esc` | in the code viewer (after clicking into it): next/prev file, marks-only vs full diff, how much context, close. Click the board and its keys come back, with the viewer following the selected PR |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
@@ -135,12 +140,16 @@ button somewhere on the page.
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
 | `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
+| `S` | collapse the left rail to 106px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
+| `[` `]` | previous / next queue tab |
+| `?` | the shortcut window: every key, grouped. It floats over the board — drag its header, resize its corner, leave it open while you try them. Its **show key hints** switch, also in the rail's View group, prints each key on the button or settings row it belongs to; on by default |
 | `Esc` | the menu: theme, notifications, refresh, quit |
 | `q` | quit |
 
 `m` `d` `e` `s` `t` `i` open a picker: `j`/`k` moves, `Enter` picks, `Esc` keeps. `x` and `h` open a checklist
-that stays open while you toggle. The sidebar's AGENT, VIEW and KNOWLEDGE cards hold the same settings as
-dropdowns and chips, so nothing needs a key.
+that stays open while you toggle. The left rail holds the same settings as dropdowns and chips, in three
+groups — Agent, View, Knowledge — so nothing needs a key. A shut group still says what it is set to, and
+`S` shuts the whole rail to a column of digests that names every setting and its value.
 
 ## Installing
 
@@ -644,7 +653,12 @@ Open `http://localhost:1420/?token=dev`. The port matters.
 
 ```sh
 pnpm install && pnpm build   # web.rs embeds dist/, so the frontend must exist before cargo
+pnpm test                    # vitest, over the pure functions in src/board.ts
 cd src-tauri && cargo test
 ```
+
+`pnpm test` covers what the board derives from server data: which sections a bucket shows, how the
+older runs of a reviewed PR fold, and how the two draft rules compose. Anything that needs a browser
+is not tested — there is no DOM harness, and the layout is still checked by looking at it.
 
 Created by Martin Soria Røvang.

@@ -7,9 +7,9 @@
 // notes; switch the drawing to canvas if a board ever gets big enough for SVG to stutter.
 import { drag } from 'd3-drag'
 import type { Simulation, SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
-import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
+import { forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
-import { zoom } from 'd3-zoom'
+import { zoom, zoomIdentity } from 'd3-zoom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
@@ -20,6 +20,11 @@ type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string;
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
+
+// most PR titles drawn at once: past this many on screen they are unreadable and SVG text is what makes WebKit crawl
+const LABELS = 120
+// clear space kept between two galaxies' outermost nodes; the halos pad 50 on each side, so their glows just meet
+const GAP = 100
 
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 // a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
@@ -101,6 +106,8 @@ export function Graph({ secs, sel, onSelect }: {
   const graph = useRef<{ nodes: Node[]; links: Link[] }>({ nodes: [], links: [] })
   // highlights rather than filters: dropping nodes would re-run the layout on every keystroke
   const [query, setQuery] = useState('')
+  const view = useRef(zoomIdentity)
+  const capped = useRef(false)
   const latest = useRef({ rows, sel, onSelect, query, by })
   latest.current = { rows, sel, onSelect, query, by }
 
@@ -169,6 +176,29 @@ export function Graph({ secs, sel, onSelect }: {
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
   }
 
+  // Titles only for nodes on screen, and PR titles only while few enough are. Runs every tick, so it touches
+  // the DOM only for nodes whose answer changed.
+  const cull = () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const { k, x, y } = view.current
+    const w = svg.clientWidth / 2
+    const h = svg.clientHeight / 2
+    // padded: a title hangs below its node, so it stays while the node is just past the edge
+    const shown = (n: Node) => Math.abs(n.x! * k + x) < w + 40 && Math.abs(n.y! * k + y) < h + 40
+    const prs = graph.current.nodes.filter((n) => n.kind === 'pr' && shown(n)).length
+    // hysteresis: a count hovering at LABELS while the layout settles would flip every title on and off together
+    if (prs > LABELS) capped.current = true
+    else if (prs < LABELS * 0.8) capped.current = false
+    select(svg)
+      .selectAll<SVGGElement, Node>('g.gnode')
+      .each(function (n) {
+        // at k <= .8 --label hides every title anyway
+        const named = k > 0.8 && shown(n) && (n.kind !== 'pr' || !capped.current)
+        if (named !== this.classList.contains('named')) this.classList.toggle('named', named)
+      })
+  }
+
   // Structure: rebuilt when the set of PRs changes. Nodes that survive keep their position.
   useEffect(() => {
     const svg = svgRef.current
@@ -176,14 +206,16 @@ export function Graph({ secs, sel, onSelect }: {
     const old = new Map(graph.current.nodes.map((n) => [n.id, n]))
     const { rows, by } = latest.current
     const g = build(rows, by)
-    // Each galaxy gets its own spot on a wide ring and its nodes are pulled there, so galaxies sit apart
-    // instead of untangling from one pile in the middle. A new node spawns at its galaxy's spot.
+    // A new node spawns where its galaxy already is, or for a new galaxy (or a regroup) at its own spot on a ring,
+    // so galaxies start apart instead of untangling from one pile in the middle. The galaxy force below does the rest.
     const galaxies = [...new Set(rows.map((r) => galaxyOf(r, by)))].sort()
     // a lone galaxy sits in the middle
     const ring = galaxies.length > 1 ? 90 * Math.sqrt(galaxies.length) : 0
     const spot = new Map(galaxies.map((c, i) => {
       const a = (2 * Math.PI * i) / galaxies.length
-      return [c, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
+      const mates = lastBy.current === by ? [...old.values()].filter((n) => n.galaxy === c) : []
+      if (!mates.length) return [c, { x: ring * Math.cos(a), y: ring * Math.sin(a) }]
+      return [c, { x: mates.reduce((t, n) => t + n.x!, 0) / mates.length, y: mates.reduce((t, n) => t + n.y!, 0) / mates.length }]
     }))
     for (const n of g.nodes) {
       const was = old.get(n.id)
@@ -278,29 +310,61 @@ export function Graph({ secs, sel, onSelect }: {
     // galaxy membership is fixed until the next rebuild; the tick only moves the centroids
     const area = new Map<string, Node[]>()
     for (const n of g.nodes) (area.get(n.galaxy) || area.set(n.galaxy, []).get(n.galaxy)!).push(n)
+    // each galaxy's centre and reach (its farthest node), measured every tick; the halos draw it
+    let at = new Map<string, { cx: number; cy: number; r: number }>()
+    // A force per galaxy: its nodes are drawn to its centre, the whole board drifts to the middle, and two galaxies
+    // closer than their reach plus GAP are pushed apart. The push is not cooled by alpha, like forceCollide,
+    // so when the layout settles no two galaxies overlap.
+    // ponytail: O(galaxies²) per tick, fine for tens of galaxies; a quadtree if a board ever has hundreds
+    const pull = (alpha: number) => {
+      at = new Map(galaxies.map((d) => {
+        const ns = area.get(d) ?? []
+        const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
+        const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
+        return [d, { cx, cy, r: Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy))) }]
+      }))
+      const push = new Map(galaxies.map((d) => [d, { x: 0, y: 0 }]))
+      for (let i = 0; i < galaxies.length; i++) {
+        for (let j = i + 1; j < galaxies.length; j++) {
+          const a = at.get(galaxies[i])!
+          const b = at.get(galaxies[j])!
+          const dx = b.cx - a.cx
+          const dy = b.cy - a.cy
+          const d = Math.hypot(dx, dy) || 1
+          const over = a.r + b.r + GAP - d
+          if (over <= 0) continue
+          const pa = push.get(galaxies[i])!
+          const pb = push.get(galaxies[j])!
+          pa.x -= (dx / d) * over * 0.1
+          pa.y -= (dy / d) * over * 0.1
+          pb.x += (dx / d) * over * 0.1
+          pb.y += (dy / d) * over * 0.1
+        }
+      }
+      for (const n of g.nodes) {
+        const c = at.get(n.galaxy)!
+        const p = push.get(n.galaxy)!
+        n.vx! += p.x + ((c.cx - n.x!) * 0.08 - n.x! * 0.02) * alpha
+        n.vy! += p.y + ((c.cy - n.y!) * 0.08 - n.y! * 0.02) * alpha
+      }
+    }
     const s = (sim.current ||= forceSimulation<Node, Link>())
     s.nodes(g.nodes)
       // hubs push harder than PRs, so the hubs inside a galaxy spread out around its spot
-      .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
+      // short range: inside a galaxy only; the galaxy force keeps galaxies apart, a long reach would fling big ones far
+      .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)).distanceMax(300))
       .force('link', forceLink<Node, Link>(g.links).distance(60))
-      // ?? 0: s.nodes() above re-initialises the previous tab's forces, whose spots don't know these galaxies
-      .force('x', forceX<Node>((n) => spot.get(n.galaxy)?.x ?? 0).strength(0.08))
-      .force('y', forceY<Node>((n) => spot.get(n.galaxy)?.y ?? 0).strength(0.08))
+      .force('galaxy', pull)
       .on('tick', () => {
-        const at = new Map(galaxies.map((d) => {
-          const ns = area.get(d) ?? []
-          const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
-          const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
-          return [d, { cx, cy, r: 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy))) }]
-        }))
-        halo.attr('cx', (d) => at.get(d)!.cx).attr('cy', (d) => at.get(d)!.cy).attr('r', (d) => at.get(d)!.r)
-        gname.attr('x', (d) => at.get(d)!.cx).attr('y', (d) => at.get(d)!.cy - at.get(d)!.r * 0.6)
+        halo.attr('cx', (d) => at.get(d)!.cx).attr('cy', (d) => at.get(d)!.cy).attr('r', (d) => at.get(d)!.r + 50)
+        gname.attr('x', (d) => at.get(d)!.cx).attr('y', (d) => at.get(d)!.cy - (at.get(d)!.r + 50) * 0.6)
         link
           .attr('x1', (l) => l.source.x!)
           .attr('y1', (l) => l.source.y!)
           .attr('x2', (l) => l.target.x!)
           .attr('y2', (l) => l.target.y!)
         node.attr('transform', (n) => `translate(${n.x},${n.y})`)
+        cull()
       })
     paint()
     // a regroup sends every PR to a new hub: full heat, or they stall halfway there
@@ -335,7 +399,10 @@ export function Graph({ secs, sel, onSelect }: {
     const svg = svgRef.current
     if (!svg) return
     const root = select(svg)
-    const fit = () => root.attr('viewBox', `${-svg.clientWidth / 2} ${-svg.clientHeight / 2} ${svg.clientWidth} ${svg.clientHeight}`)
+    const fit = () => {
+      root.attr('viewBox', `${-svg.clientWidth / 2} ${-svg.clientHeight / 2} ${svg.clientWidth} ${svg.clientHeight}`)
+      cull()
+    }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(svg)
@@ -343,6 +410,8 @@ export function Graph({ secs, sel, onSelect }: {
       .scaleExtent([0.25, 4])
       .on('zoom', ({ transform }) => {
         root.select('g.world').attr('transform', transform.toString())
+        view.current = transform
+        cull()
         svg.style.setProperty('--label', String(Math.min(1, Math.max(0, (transform.k - 0.8) * 2))))
         svg.style.setProperty('--k', String(transform.k))
       })

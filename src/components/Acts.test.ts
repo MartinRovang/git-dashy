@@ -1,0 +1,78 @@
+import { describe, expect, it } from 'vitest'
+import type { Detail, Row } from '../types'
+import { acts } from './Acts'
+
+function row(over: Partial<Row> = {}): Row {
+  return {
+    url: 'https://x/1',
+    number: 1,
+    title: 't',
+    repo: 'acme/web',
+    author: 'bob',
+    updatedAt: '',
+    isDraft: false,
+    status: '',
+    prev: '',
+    checks: '',
+    reviewers: '',
+    review: '',
+    busy: false,
+    team: '',
+    summary: '',
+    reviewAt: '',
+    kind: '',
+    breaking: false,
+    pre: null,
+    uid: 'u',
+    section: 'REVIEW REQUESTED',
+    older: [],
+    ...over,
+  }
+}
+
+const keys = (p: Row, d: Detail | null = null) => acts(p, d).map(([, , , , , act]) => act)
+const one = (p: Row, name: string) => acts(p, null).find(([, , , , , act]) => act === name)
+
+describe('acts: what one PR offers', () => {
+  it('every row can be opened, copied, bound and have its memory edited', () => {
+    for (const section of ['REVIEW REQUESTED', 'MINE', 'ASSIGNED', 'REVIEWED']) {
+      expect(keys(row({ section }))).toEqual(expect.arrayContaining(['code', 'open', 'copy', 'bind', 'memory']))
+    }
+  })
+
+  it('only a review-requested row offers the review', () => {
+    expect(keys(row({ section: 'REVIEW REQUESTED' }))).toContain('review')
+    expect(keys(row({ section: 'MINE' }))).not.toContain('review')
+    expect(keys(row({ section: 'REVIEWED' }))).not.toContain('review')
+  })
+
+  it('only your own row offers the pre-review and a reviewer request', () => {
+    expect(keys(row({ section: 'MINE' }))).toEqual(expect.arrayContaining(['pre', 'reviewer']))
+    expect(keys(row({ section: 'ASSIGNED' }))).not.toContain('pre')
+    expect(keys(row({ section: 'ASSIGNED' }))).not.toContain('reviewer')
+  })
+
+  // the two states that must not start a second run on the same head
+  it('the review is dead once it is running or already done', () => {
+    const rr = (over: Partial<Row>) => one(row({ section: 'REVIEW REQUESTED', ...over }), 'review')
+    expect(rr({})?.[4]).toBe(false)
+    expect(rr({ busy: true })?.[4]).toBe(true)
+    expect(rr({ review: '✓ approved' })?.[4]).toBe(true)
+    // a review string with no verdict glyph is not a verdict, so the row is still reviewable
+    expect(rr({ review: 'reviewing…' })?.[4]).toBe(false)
+  })
+
+  it('says what the pre-review would do, so a stale one is not silently reopened', () => {
+    const label = (over: Partial<Row>) => one(row({ section: 'MINE', ...over }), 'pre')?.[2]
+    expect(label({})).toBe('Pre-review')
+    expect(label({ pre: { at: 1, moved: false } })).toBe('Read the pre-review')
+    expect(label({ pre: { at: 1, moved: true } })).toBe('Re-run the pre-review')
+  })
+
+  // the detail belongs to the selected PR, so a right-click elsewhere passes null and loses this row
+  it('offers the full review only when its detail is to hand', () => {
+    expect(keys(row())).not.toContain('view')
+    const d = { url: 'https://x/1', review: { model: 'opus' } } as unknown as Detail
+    expect(keys(row(), d)).toContain('view')
+  })
+})
