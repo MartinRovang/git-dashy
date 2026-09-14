@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -75,7 +75,7 @@ export default function App() {
   const saveRead = useRef(0)
 
   const markRead = (prs: Row[]) => {
-    if (prs.every((p) => read[p.url] === p.updatedAt)) return
+    if (prs.every((p) => isRead(read, p))) return
     const next = remember(read, prs)
     setMarked(next)
     // debounced: walking the list with j would otherwise rewrite the settings file per row

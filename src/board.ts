@@ -179,13 +179,23 @@ export function flat(
   return onScreen(secs, bucket, unfolded).flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
+/** Read when the mark is at or past the row's updatedAt. ISO times compare as strings; a PR that moves
+ *  past its mark is unread again. */
+export function isRead(read: Record<string, string>, p: Pick<Row, 'url' | 'updatedAt'>): boolean {
+  const at = read[p.url]
+  return at !== undefined && at >= p.updatedAt
+}
+
 /** The read map with `prs` marked at their current updatedAt, keeping only the `keep` newest.
  *
  * ponytail: pruned by age, not by what is on the board, since a narrower window or a scope turned off
  * would forget marks for PRs that come back. The server caps at 5000.
  */
 export function remember(read: Record<string, string>, prs: Pick<Row, 'url' | 'updatedAt'>[], keep = 2000): Record<string, string> {
-  const all = { ...read, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
+  const all = { ...read }
+  // forward only: one url sits in two sections with two times (a MERGED row carries GitHub's, its REVIEWED
+  // row the log's), and marking one must not rewind the other to unread
+  for (const p of prs) if (!isRead(all, p)) all[p.url] = p.updatedAt
   return Object.fromEntries(Object.entries(all).sort((a, b) => b[1].localeCompare(a[1])).slice(0, keep))
 }
 

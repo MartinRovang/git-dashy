@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
 
 let n = 0
 
@@ -487,6 +487,17 @@ describe('TEAM sources', () => {
 })
 
 describe('remember', () => {
+  it('never rewinds a mark, so one PR in two sections does not flip between read and unread', () => {
+    const merged = { url: 'u', updatedAt: '2026-09-14T13:00:00Z' } // GitHub's time on the MERGED row
+    const reviewed = { url: 'u', updatedAt: '2026-09-14T12:00:00Z' } // the log's time on its REVIEWED row
+    const r = remember({}, [merged])
+    expect(isRead(r, merged) && isRead(r, reviewed)).toBe(true)
+    expect(remember(r, [reviewed])).toEqual(r)
+    // a PR that moves past its mark is unread again
+    expect(isRead(r, { url: 'u', updatedAt: '2026-09-14T14:00:00Z' })).toBe(false)
+    expect(isRead({}, merged)).toBe(false)
+  })
+
   it('marks at the current updatedAt, keeps marks off the board, drops the oldest past the cap', () => {
     const read = { a: '2026-01-01', b: '2026-03-01', c: '2026-02-01' }
     expect(remember(read, [{ url: 'a', updatedAt: '2026-04-01' }])).toEqual({ a: '2026-04-01', b: '2026-03-01', c: '2026-02-01' })
