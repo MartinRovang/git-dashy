@@ -172,10 +172,10 @@ export function Queue(p: Props) {
           <span className="fi" aria-hidden="true">
             ≡
           </span>
-          <button className="chip" aria-pressed={p.failing} disabled={!failing && !p.failing} onClick={p.onFailing}>
+          <button className="chip" aria-pressed={p.failing} disabled={!failing && !p.failing && !p.drafts} onClick={p.onFailing}>
             CI failing <b>{failing}</b>
           </button>
-          <button className="chip" aria-pressed={p.drafts} disabled={!drafts && !p.drafts} onClick={p.onDrafts}>
+          <button className="chip" aria-pressed={p.drafts} disabled={!drafts && !p.drafts && !p.failing} onClick={p.onDrafts}>
             Drafts <b>{drafts}</b>
           </button>
           {unread ? (

@@ -3,7 +3,7 @@ import { api, errorText, post } from './api'
 import { ALL, buckets, flat, groups, inBucket, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
-import { Shortcuts } from './components/Shortcuts'
+import { shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
@@ -32,7 +32,6 @@ export default function App() {
   // ponytail: the rail shuts to a 92px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
-  const [help, setHelp] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
@@ -54,6 +53,7 @@ export default function App() {
     if (v !== 'graph') return
     setQuery('')
     setFailing(false)
+    setOnlyDrafts(false)
   }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
@@ -82,8 +82,6 @@ export default function App() {
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
   const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
-  const total = secs.reduce((n, s) => n + s.prs.length, 0)
-  // the graph draws folded sections too, so a node there selects a uid the folded list does not hold
   const current = selected(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
@@ -396,7 +394,7 @@ export default function App() {
   function move(step: number) {
     if (!rows.length) return
     const i = rows.findIndex((r) => r.uid === selUid)
-    if (i < 0) return // a graph node in a folded section: no row to step from, so stay put rather than jump to the top
+    if (i < 0) return // the selection is not a row on screen: stay put rather than jump to the top
     const next = rows[Math.min(rows.length - 1, Math.max(0, i + step))]
     if (next) {
       setSel(next.uid)
@@ -440,11 +438,6 @@ export default function App() {
       fn()
     }
     const p = current
-    // the shortcut sheet is not a ModalHost dialog, so it swallows board keys itself
-    if (help) {
-      if (k === 'Escape' || k === 'q' || k === '?') return one(() => setHelp(false))
-      return
-    }
     // while the viewer has focus, board keys do not reach the board; a click on the board hands them back
     if (codeOpen && codeFocus && p) {
       if (k === 'Escape' || k === 'q') return one(() => setCodeOpen(false))
@@ -483,7 +476,7 @@ export default function App() {
     if (k === 'Escape') return one(onMenu)
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
-    if (k === '?') return one(() => setHelp(true))
+    if (k === '?') return one(shortcuts)
     if (k === 'S') return one(() => setRailShut((v) => !v))
     // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
@@ -518,7 +511,7 @@ export default function App() {
 
   return (
     <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp(true)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} secs={secs} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={shortcuts} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -623,7 +616,6 @@ export default function App() {
           </span>
         </div>
       </footer>
-      {help ? <Shortcuts onClose={() => setHelp(false)} /> : null}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

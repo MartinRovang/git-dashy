@@ -35,7 +35,6 @@ function Ln({ label, value, off }: { label: string; value: string; off?: boolean
 function Group({
   k,
   label,
-  title,
   summary,
   digest,
   open,
@@ -45,7 +44,6 @@ function Group({
 }: {
   k: string
   label: string
-  title: string
   summary: string
   digest: React.ReactNode
   open: boolean
@@ -55,7 +53,15 @@ function Group({
 }) {
   return (
     <div className={`sgrp${open && !collapsed ? ' open' : ''}`} data-k={k}>
-      <button className="summary" title={title} aria-expanded={open && !collapsed} onClick={onToggle}>
+      {/* ponytail: on the narrow rail the fields cannot render, so the click opens the rail ONTO this
+          group instead of toggling a body nobody can see. A button that hovers and does nothing is
+          worse than no button. */}
+      <button
+        className="summary"
+        title={collapsed ? `${label} — open the rail here` : undefined}
+        aria-expanded={open && !collapsed}
+        onClick={onToggle}
+      >
         <span className="car">▶</span>
         <span className="ic">{k.toUpperCase()}</span>
         <span className="icv">{digest}</span>
@@ -76,7 +82,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const [open, setOpen] = useState<string>('agent')
   // ponytail: one group open at a time. Three expanded at 252px is a rail you scroll to read, and the
   // summary line exists so the shut ones still answer for themselves.
-  const flip = (name: string) => setOpen((cur) => (cur === name ? '' : name))
+  const flip = (name: string) => {
+    if (collapsed) {
+      // the rail is 92px: the fields have nowhere to render, so widen it and land on this group
+      setOpen(name)
+      onCollapse()
+      return
+    }
+    setOpen((cur) => (cur === name ? '' : name))
+  }
   const teams = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : '')).join(', ')
   const win = s.window == null ? 'all' : span(s.window)
 
@@ -101,7 +115,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           k="agent"
           label="Agent"
-          title={`Reviewing with ${[s.model, s.depth, s.effort].filter(Boolean).join(', ')} · ${(s.voice || []).join(', ') || 'no voices'}`}
           summary={[s.model, s.depth, s.effort].filter(Boolean).join(' · ')}
           digest={
             <>
@@ -143,7 +156,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           k="view"
           label="View"
-          title={`Showing ${s.subs} summaries from ${win}, refreshing ${every(s.interval || 0)}, drafts ${s.drafts ? 'shown' : 'hidden'}`}
           summary={`${win} history · ${every(s.interval || 0)}`}
           digest={
             <>
@@ -184,7 +196,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           k="know"
           label="Knowledge"
-          title={`Memory ${k.memory} · teams ${teams || 'none'}`}
           summary={[teams || 'no team', (k.waiting || []).length ? `${(k.waiting || []).length} asking` : ''].filter(Boolean).join(' · ')}
           digest={
             <>
