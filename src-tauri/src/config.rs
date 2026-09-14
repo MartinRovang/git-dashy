@@ -16,7 +16,7 @@ pub const MODELS: &[&str] = &["opus", "sonnet", "fable"];
 pub const EFFORTS: &[&str] = &["", "low", "medium", "high", "xhigh", "max"];
 pub const DEPTHS: &[&str] = &["adaptive", "low", "medium", "high"];
 pub const VOICES: &[&str] = &["review", "caveman", "bot"];
-pub const HUNTERS: &[&str] = &["ponytail", "security", "tests", "humanizer"];
+pub const HUNTERS: &[&str] = &["ponytail", "security", "tests", "perf", "humanizer"];
 /// What sort of change a review tags a PR as; the graph groups by it.
 pub const KINDS: &[&str] = &[
     "feature",

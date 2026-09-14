@@ -1,5 +1,5 @@
 // The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to hubs, by default
-// one for its repo and one for its author, so shared repos and authors pull together. The group-by tabs
+// one for its repo, so each repo is a star of its PRs. The group-by tabs
 // swap the hubs for the PR's author, kind (from its review) or review state. PRs are sized by lines
 // changed and colored by review state. Drag nodes, scroll to zoom, hover to light up neighbours.
 //
@@ -40,10 +40,12 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
 
 /** The hubs a PR links to, first one first: that one is its cluster. */
 function hubsOf(r: Row, by: Group): [Hub, string][] {
-  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
+  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one.
+  // In author mode such a PR then clusters on its repo, the only hub it has left.
   const author: [Hub, string][] = r.author ? [['author', r.author]] : []
-  if (by === 'repo') return [['repo', r.repo], ...author]
-  if (by === 'author') return author
+  // repo is a plain star, the repo with its PRs around it; author clusters by author and keeps the repos
+  if (by === 'repo') return [['repo', r.repo]]
+  if (by === 'author') return [...author, ['repo', r.repo]]
   if (by === 'kind') return [['kind', tagOf(r).kind]]
   return [['state', rowState(r).key]]
 }
@@ -116,7 +118,7 @@ export function Graph({ secs, sel, onSelect }: {
     // a hub grows with its PRs against the busiest hub, so the busiest hub is drawn largest
     const busiest = Math.max(1, ...graph.current.nodes.map((n) => (n.kind === 'pr' ? 0 : n.degree)))
     const radius = (n: Node) => {
-      if (n.kind !== 'pr') return 5 + 15 * Math.sqrt(n.degree / busiest)
+      if (n.kind !== 'pr') return 8 + 22 * Math.sqrt(n.degree / busiest)
       return 4 + 10 * Math.sqrt(lines(byUrl.get(n.id)) / max)
     }
     const fg = (n: Node) => (PALETTE[rowState(byUrl.get(n.id)!).key] || PALETTE.idle).fg
@@ -234,7 +236,7 @@ export function Graph({ secs, sel, onSelect }: {
     s.nodes(g.nodes)
       // hubs push harder than PRs and the pull to the centre is gentle, so repo clusters sit apart
       .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
-      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.primary && by === 'repo' ? 40 : l.primary ? 60 : 90)))
+      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.primary && by === 'repo' ? 70 : l.primary ? 60 : 90)))
       .force('x', forceX(0).strength(0.025))
       .force('y', forceY(0).strength(0.025))
       .on('tick', () => {
@@ -343,12 +345,12 @@ export function Graph({ secs, sel, onSelect }: {
             {k}
           </span>
         ))}
-        {by !== 'author' && by !== 'state' && (
+        {by !== 'state' && (
           <span>
-            <i style={{ background: 'var(--dim2)' }} /> {by}
+            <i style={{ background: 'var(--dim2)' }} /> {by === 'kind' ? 'kind' : 'repo'}
           </span>
         )}
-        {(by === 'repo' || by === 'author') && (
+        {by === 'author' && (
           <span>
             <svg className="gperson" viewBox="-1 -1 2 2">
               <path d={PERSON} />
@@ -361,7 +363,7 @@ export function Graph({ secs, sel, onSelect }: {
             <i className="gbreak" /> breaking
           </span>
         )}
-        <span>size = lines changed · scroll to zoom · drag to move</span>
+        <span>hub size = PRs · PR size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>
   )
