@@ -20,12 +20,16 @@ export const SECTION_TONE: Record<string, string> = {
   MINE: 'var(--pink)',
   'REVIEW REQUESTED': 'var(--cyan)',
   ASSIGNED: 'var(--amber)',
+  TEAM: 'var(--violet)',
+  OTHER: 'var(--ink3)',
   REVIEWED: 'var(--dim)',
 }
 export const SECTION_HINT: Record<string, string> = {
   MINE: 'your open PRs',
   'REVIEW REQUESTED': 'waiting on you',
   ASSIGNED: 'owned by you',
+  TEAM: 'reviewed, from your sources',
+  OTHER: 'nobody has reviewed yet',
   REVIEWED: 'recently done',
 }
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }

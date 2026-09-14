@@ -9,7 +9,14 @@ export function settings(d: StateData | null) {
   return d?.settings || {}
 }
 
-/** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box. */
+/** A TEAM row's source is on: its owner's org chip, or the team its repo is bound to. */
+function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
+  return scopes.includes(`org:${p.repo.split('/')[0].toLowerCase()}`) || (!!p.team && scopes.includes(`team:${p.team}`))
+}
+
+/** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
+ *  TEAM is filtered by the sources toggles here, not by a refetch, and splits in two: rows the logs know a
+ *  review of stay TEAM, the rest are OTHER. */
 export function visible(d: StateData | null, query: string, failing: boolean): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
@@ -21,10 +28,16 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
       .filter((p) => {
         if (!s.drafts && p.isDraft && !p.busy && !p.review) return false // a draft under review stays visible
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
+        if (sec.name === 'TEAM' && (!inScope(p, s.scopes || []) || (cutoff && new Date(p.updatedAt).getTime() < cutoff))) return false
         if (failing && tone(p.checks) !== 'changes') return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
       })
+    if (sec.name === 'TEAM') {
+      const known = (p: Row) => !!(p.status || p.prev || p.review || p.busy)
+      out.push({ ...sec, prs: rows.filter(known) }, { ...sec, name: 'OTHER', prs: rows.filter((p) => !known(p)) })
+      continue
+    }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
   }
   return out

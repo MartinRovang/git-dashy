@@ -40,6 +40,18 @@ pub fn graphql_url() -> String {
 pub struct Error(pub String);
 
 pub const SCOPE: &str = "PRS_API_REPO";
+/// Every scope toggled on this session. ponytail: kept searched after it is toggled off, so the board
+/// filters it away and back without a fetch; session-only, so a restart searches just what is saved.
+static FETCHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// True when `scope` is already in the TEAM search, so toggling it on needs no refetch.
+pub fn fetched(scope: &str) -> bool {
+    FETCHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|s| s == scope)
+}
 pub const SCOPE_TEAM: &str = "PRS_API_TEAM";
 pub const SECTIONS: &[(&str, &str)] = &[
     ("MINE", "author:{me}"),
@@ -455,6 +467,18 @@ pub fn scope_terms(
     terms.join(" ")
 }
 
+/// The TEAM search held to the history window, like REVIEWED: only PRs touched in the last `window`
+/// hours. `None` is all time; "" stays "" so nothing toggled still means no search.
+pub fn within(scope: &str, window: Option<u64>, now: chrono::DateTime<chrono::Utc>) -> String {
+    match window {
+        Some(h) if !scope.is_empty() => {
+            let since = now - chrono::Duration::hours(h as i64);
+            format!("{scope} updated:>={}", since.format("%Y-%m-%dT%H:%M:%SZ"))
+        }
+        _ => scope.to_string(),
+    }
+}
+
 /// What the scope chips offer: every joined team, then every owner seen on the board, in the log or in
 /// a binding. ponytail: not the viewer's org list, that needs read:org and the token usually lacks it.
 pub fn scope_options(
@@ -697,7 +721,23 @@ pub fn fetch() -> Vec<Section> {
         return crate::demo::sections();
     }
     let cfg = config::get();
-    let scope = scope_terms(&cfg.scopes, &crate::bind::bindings(), &crate::bind::owners());
+    let scope = within(
+        &scope_terms(
+            &{
+                let mut f = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+                for s in &cfg.scopes {
+                    if !f.contains(s) {
+                        f.push(s.clone());
+                    }
+                }
+                f.clone()
+            },
+            &crate::bind::bindings(),
+            &crate::bind::owners(),
+        ),
+        cfg.window,
+        chrono::Utc::now(),
+    );
     let data = match me().and_then(|who| gql(&query(&who, &scope), 60)) {
         Ok(d) => d,
         Err(e) => {
@@ -1205,6 +1245,20 @@ mod tests {
             "org:acme repo:acme/api"
         );
         assert_eq!(scope_terms(&[], &repos, &owners), "");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-14T12:00:00Z")
+            .unwrap()
+            .to_utc();
+        assert_eq!(
+            within("org:acme", Some(24), now),
+            "org:acme updated:>=2026-09-13T12:00:00Z"
+        );
+        assert_eq!(
+            (
+                within("org:acme", None, now).as_str(),
+                within("", Some(24), now).as_str()
+            ),
+            ("org:acme", "")
+        );
         let q = query("me", "org:acme");
         assert!(q.contains("s3: search(query: \"is:pr is:open org:acme\""));
         let secs = sections_of(

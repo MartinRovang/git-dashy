@@ -1409,7 +1409,10 @@ fn post_settings(state: &State, body: &Body) -> Out {
             _ => None,
         };
         match got {
-            Some(w) if config::WINDOWS.contains(&w) => c.window = w,
+            Some(w) if config::WINDOWS.contains(&w) => {
+                c.window = w;
+                wake = true; // TEAM searches within the window, so it has to refetch
+            }
             _ => {
                 return Err(Fail::new(
                     400,
@@ -1439,8 +1442,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
                 "scopes must be a list of org:<owner> or team:<key>",
             ));
         };
+        // a scope already searched this session is filtered in the board, no fetch; a new one is fetched now
+        wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
-        wake = true; // the board should show the new scope now, not at the next interval
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
