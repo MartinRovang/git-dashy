@@ -1,4 +1,5 @@
 import type { Row, StateData } from '../types'
+import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
 import { ALL, buckets, inBucket, settings } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_EMPTY, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
@@ -6,9 +7,9 @@ import { age, avatar, PALETTE, rowState, SECTION_EMPTY, SECTION_HINT, SECTION_TO
 type Props = {
   data: StateData | null
   secs: VisSection[]
-  now: number
   sel: string
   read: Record<string, string>
+  onReadAll: () => void
   query: string
   onQuery: (v: string) => void
   failing: boolean
@@ -117,11 +118,16 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
+  // running: not read here, but a running row's elapsed label (rowState) only moves when this re-renders
+  const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const shown = inBucket(p.secs, p.bucket).flatMap((s) => s.prs)
   const failing = shown.filter((x) => tone(x.checks) === 'changes').length
   // ponytail: counted over the BUCKET, not the whole board. The chip sits beside the tabs and filters
   // what they show, so a count of rows you are not looking at is a number that cannot be acted on.
   const drafts = shown.filter((x) => x.isDraft).length
+
+  // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
+  const unread = new Set(shown.filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
@@ -131,7 +137,7 @@ export function Queue(p: Props) {
             <img src="/head.png" alt="" />
           </div>
           <div style={{ color: 'var(--amber)', fontWeight: 600 }}>
-            {SPINNER[Math.floor(p.now / 125) % SPINNER.length]} fetching pull requests…
+            {SPINNER[Math.floor(now / 125) % SPINNER.length]} fetching pull requests…
           </div>
           <div className="mono" style={{ fontSize: 11 }}>
             created by
@@ -172,6 +178,11 @@ export function Queue(p: Props) {
           <button className="chip" aria-pressed={p.drafts} disabled={!drafts && !p.drafts} onClick={p.onDrafts}>
             Drafts <b>{drafts}</b>
           </button>
+          {unread ? (
+            <button className="chip" onClick={p.onReadAll}>
+              Read all <b>{unread}</b>
+            </button>
+          ) : null}
           {p.failing || p.drafts ? (
             <button
               className="chip clr"

@@ -93,6 +93,15 @@ pub const HUNTER: &[(&str, &str)] = &[
          Nothing found: `Covered.`",
     ),
     (
+        "perf",
+        "\n\nAppend a section `---\n**Perf**`: hunt ONLY runtime cost the change adds. Say how often the code runs \
+         (per request, poll, render, frame, tick, item) and what it grows with before calling it heavy: N+1 calls, \
+         O(n²) over data that grows, parse/clone/regex/serialise repeated on every call, blocking I/O or subprocesses \
+         on a hot or UI thread, polling or re-rendering while nothing changed, caches and logs that never shrink. \
+         No micro-optimisations of code that runs once. One line per finding, \
+         `file:L<n>: <class>: what it costs, how often. the cheaper way.` Nothing found: `Light enough.`",
+    ),
+    (
         "humanizer",
         "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds to the application: \
          user-facing strings, docs, comments. Never the PR description, title or commit messages. \

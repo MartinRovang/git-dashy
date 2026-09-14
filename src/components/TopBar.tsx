@@ -1,9 +1,9 @@
 import { Pinata } from './Pinata'
+import { useNow } from '../usePoll'
 import type { StateData } from '../types'
 
 type Props = {
   data: StateData | null
-  now: number
   total: number
   onRefresh: () => void
   onAuto: () => void
@@ -15,11 +15,16 @@ type Props = {
   onView: (v: 'board' | 'graph') => void
 }
 
+/** "Ns" to the next refresh: the only ticking text, so only it re-renders every second, not its bar. */
+export function Countdown({ at, interval }: { at: number; interval: number }) {
+  const now = useNow(1000)
+  return <>{Math.max(0, Math.round(interval - (now / 1000 - at)))}s</>
+}
+
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
+export function TopBar({ data: d, total, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
   const running = d?.running || 0
   const repos = new Set((d?.sections || []).flatMap((s) => s.prs || []).map((p) => p.repo)).size
-  const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
     <div className="top">
       <button className="logo" title="play the intro" aria-label="toggle the player" onClick={onLogo}>
@@ -64,7 +69,7 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         </div>
       ) : (
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          {!d?.fetchedAt ? 'fetching…' : d?.fetching ? 'refreshing…' : `refresh in ${left}s`}
+          {!d?.fetchedAt ? 'fetching…' : d?.fetching ? 'refreshing…' : <>refresh in <Countdown at={d.fetchedAt} interval={d.interval} /></>}
         </div>
       )}
       <span className="ib" title="refresh now (f)" onClick={onRefresh}>
