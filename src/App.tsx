@@ -8,18 +8,17 @@ import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
-import { TopBar } from './components/TopBar'
+import { Countdown, TopBar } from './components/TopBar'
 import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span, tone } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
-import { useNow, useStatePoll } from './usePoll'
+import { useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
 export default function App() {
   const [data, reload] = useStatePoll(2000)
-  const now = useNow(1000)
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
@@ -69,6 +68,18 @@ export default function App() {
     }
   })
 
+  const markRead = (prs: Row[]) =>
+    setRead((r) => {
+      if (prs.every((p) => r[p.url] === p.updatedAt)) return r
+      const next = { ...r, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
+      try {
+        localStorage.setItem('dashy-read', JSON.stringify(next))
+      } catch {
+        /* storage unavailable */
+      }
+      return next
+    })
+
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
   const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
   const current = selected(rows, sel)
@@ -102,17 +113,7 @@ export default function App() {
   }, [flash])
 
   useEffect(() => {
-    if (!current) return
-    setRead((r) => {
-      if (r[current.url] === current.updatedAt) return r
-      const next = { ...r, [current.url]: current.updatedAt }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
+    if (current) markRead([current])
   }, [current])
 
   useEffect(() => {
@@ -393,6 +394,7 @@ export default function App() {
   function move(step: number) {
     if (!rows.length) return
     const i = rows.findIndex((r) => r.uid === selUid)
+    if (i < 0) return // the selection is not a row on screen: stay put rather than jump to the top
     const next = rows[Math.min(rows.length - 1, Math.max(0, i + step))]
     if (next) {
       setSel(next.uid)
@@ -550,9 +552,9 @@ export default function App() {
               <Queue
                 data={data}
                 secs={secs}
-                now={now}
                 sel={selUid}
                 read={read}
+                onReadAll={() => markRead(inBucket(secs, bucket).flatMap((s) => s.prs))}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
@@ -611,7 +613,7 @@ export default function App() {
               ? 'fetching…'
               : data?.fetching
                 ? 'refreshing…'
-                : `synced ${age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in ${Math.max(0, Math.round((data.interval || 0) - (now / 1000 - data.fetchedAt)))}s`}
+                : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
           </span>
         </div>
       </footer>

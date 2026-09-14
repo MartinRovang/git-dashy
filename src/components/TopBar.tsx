@@ -1,4 +1,5 @@
 import { Pinata } from './Pinata'
+import { useNow } from '../usePoll'
 import type { StateData } from '../types'
 import type { VisSection } from '../board'
 
@@ -14,6 +15,12 @@ type Props = {
   onLogo: () => void
   view: 'board' | 'graph'
   onView: (v: 'board' | 'graph') => void
+}
+
+/** "Ns" to the next refresh: the only ticking text, so only it re-renders every second, not its bar. */
+export function Countdown({ at, interval }: { at: number; interval: number }) {
+  const now = useNow(1000)
+  return <>{Math.max(0, Math.round(interval - (now / 1000 - at)))}s</>
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
