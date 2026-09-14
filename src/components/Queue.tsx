@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket, onScreen } from '../board'
+import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket, isRead, onScreen } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -134,7 +134,7 @@ export function Queue(p: Props) {
   const shown = onScreen(p.secs, p.bucket, p.unfolded)
 
   // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
-  const unread = new Set(shown.filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size
+  const unread = new Set(shown.filter((x) => !isRead(p.read, x)).map((x) => x.url)).size
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
@@ -264,7 +264,7 @@ export function Queue(p: Props) {
                       <PrRow
                         p={row}
                         sel={p.sel}
-                        unread={p.read[row.url] !== row.updatedAt}
+                        unread={!isRead(p.read, row)}
                         expanded={p.expanded}
                         onExpand={p.onExpand}
                         onSelect={p.onSelect}
