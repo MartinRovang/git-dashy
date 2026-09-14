@@ -83,7 +83,7 @@ export function CodeViewer({
           <kbd className="hint">D</kbd>marks only
         </span>
         <span className={`tab${scoped ? '' : ' on'}`} onClick={() => onScope('diff')}>
-          full diff
+          <kbd className="hint">D</kbd>full diff
         </span>
         {scoped ? (
           <span className="tab" onClick={onContext}>
@@ -92,6 +92,7 @@ export function CodeViewer({
         ) : null}
         <span className="ib" title="close (esc)" onClick={onClose}>
           ×
+          <kbd className="hint">esc</kbd>
         </span>
       </div>
       {!c || c.pending ? (

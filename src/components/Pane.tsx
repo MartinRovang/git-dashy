@@ -70,6 +70,7 @@ export function Pane({
         </button>
         <span className="ib" title="hide the pane (⏎)" onClick={onClose}>
           ×
+          <kbd className="hint">⏎</kbd>
         </span>
       </div>
       <div className="in scroll">

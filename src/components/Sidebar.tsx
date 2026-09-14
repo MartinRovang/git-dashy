@@ -125,6 +125,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
       <div className="sh">
         <button className="iconbtn" title={collapsed ? 'Expand sidebar (S)' : 'Collapse sidebar (S)'} onClick={onCollapse}>
           ≡
+          {collapsed ? null : <kbd className="hint">S</kbd>}
         </button>
       </div>
 
@@ -159,16 +160,17 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <Select value={s.effort || ''} options={o.effort} show={(v) => v || 'default'} onChange={(v) => setting('effort', v)} />
           </Row>
           <div className="sub">
-            voices <em>active</em>
+            <kbd className="hint">x</kbd> voices <em>active</em>
           </div>
           <Chips values={s.voice || []} options={o.voice} onToggle={(v) => setting('voice', toggle(s.voice || [], v))} />
           <div className="sub">
-            hunters <em>active</em>
+            <kbd className="hint">h</kbd> hunters <em>active</em>
           </div>
           <Chips values={s.hunter || []} options={o.hunter} onToggle={(v) => setting('hunter', toggle(s.hunter || [], v))} />
           {/* ponytail: auto lives with the agent now, which is what it configures. The top bar keeps
               its switch too — it is the one setting you flip mid-session without opening anything. */}
           <button className="fld" aria-pressed={!!d?.auto} onClick={onAuto}>
+            <kbd className="hint">a</kbd>
             <span>Auto-run on new PRs</span>
             <span className="sw" />
           </button>
@@ -194,6 +196,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <Select value={s.subs || ''} options={o.subs} show={(v) => v} onChange={(v) => setting('subs', v)} />
           </Row>
           <button className="fld" aria-pressed={!!s.drafts} onClick={() => setting('drafts', !s.drafts)}>
+            <kbd className="hint">D</kbd>
             <span>Show drafts</span>
             <span className="sw" />
           </button>
@@ -276,7 +279,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             {([['drafts', 'waiting', 'W'], ['share', 'shared', 'P'], ['dream', 'dream', 'Z'], ['general', 'general', 'g']] as const).map(
               ([name, label, key]) => (
                 <button className="tag" key={name} onClick={() => onModal(name)}>
-                  {label} <kbd>{key}</kbd>
+                  {label} <kbd className="hint">{key}</kbd>
                 </button>
               ),
             )}

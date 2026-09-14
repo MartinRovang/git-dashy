@@ -503,23 +503,25 @@ export async function updateScreen(ctx: Ctx) {
 
 export function escMenu(ctx: Ctx) {
   let idx = 0
-  const items = (): [string, string, () => void | Promise<void>][] => {
+  // the fourth slot is the board key that does the same thing, where there is one
+  const items = (): [string, string, () => void | Promise<void>, string?][] => {
     const s = ctx.getData()?.settings || {}
     return [
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
-      ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }],
+      ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }, 'f'],
       ['Debug', '', () => { close(m); void debugScreen(ctx) }],
-      ['Quit', '', () => void ctx.quit()],
+      ['Quit', '', () => void ctx.quit(), 'q'],
     ]
   }
   const m = open({
     title: 'gitdashy',
     body: () =>
-      items().map(([l, v], i) => (
+      items().map(([l, v, , key], i) => (
         <div key={l} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
           <span className="tick">{i === idx ? '▸' : ''}</span>
           <span>{l}</span>
+          {key ? <kbd className="hint">{key}</kbd> : null}
           <em>{v}</em>
         </div>
       )),

@@ -76,6 +76,7 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, on
   const twist = n ? (
     <div
       className="twist"
+      title={`${n + 1} reviews of this PR — space, or click`}
       onClick={(e) => {
         e.stopPropagation()
         onExpand(p.url)
@@ -161,6 +162,7 @@ export function Queue(p: Props) {
       <div className="bar">
         {/* ponytail: the tabs ARE the section headers now. One queue at a time, so the thing that used
             to be a fold caret is the thing that picks what you are looking at. */}
+        <kbd className="hint" title="previous / next queue">[ ]</kbd>
         <div className="tabs scroll" role="tablist">
           {buckets(p.secs).map((b) => (
             <button
@@ -205,9 +207,7 @@ export function Queue(p: Props) {
         </div>
         <div className="grow" />
         <label className="search">
-          <span className="mono" style={{ fontSize: 12, color: 'var(--dim3)' }}>
-            /
-          </span>
+          <kbd className="hint">/</kbd>
           <input id="q" value={p.query} placeholder="filter by title, repo, author" onChange={(e) => p.onQuery(e.target.value)} />
         </label>
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>

@@ -65,8 +65,9 @@
   .toggle.on .track i { margin-left: 10px; }
   .toggle span { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--dim2); }
   .toggle.on span { color: var(--green); }
-  .ib { height: 26px; width: 30px; border-radius: 6px; border: 1px solid var(--edge); background: var(--bg4); color: var(--ink3);
-        display: grid; place-items: center; cursor: pointer; font-size: 14px; }
+  .ib { height: 26px; min-width: 30px; padding: 0 6px; gap: 5px; border-radius: 6px; border: 1px solid var(--edge);
+        background: var(--bg4); color: var(--ink3);
+        display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
   .ib:hover { border-color: var(--dim3); color: var(--ink); }
 
   .body { flex: 1; min-height: 0; display: flex; }
@@ -393,9 +394,9 @@
      when this rail is shut. */
   .sh { height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end;
         padding: 0 8px; border-bottom: 1px solid var(--line); }
-  .iconbtn { margin-left: auto; width: 26px; height: 26px; flex-shrink: 0; border-radius: 6px;
+  .iconbtn { margin-left: auto; min-width: 26px; height: 26px; flex-shrink: 0; gap: 5px; padding: 0 5px; border-radius: 6px;
              border: 1px solid transparent; background: none; color: var(--dim); font: inherit; font-size: 14px;
-             display: grid; place-items: center; cursor: pointer; }
+             display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .iconbtn:hover { background: var(--bg4); border-color: var(--edge); color: var(--ink); }
   .side.shut .sh { padding: 0; justify-content: center; }
 
@@ -444,8 +445,8 @@
 
   .fields { padding: 0 10px 10px; display: flex; flex-direction: column; }
   .fields .chips { justify-content: flex-start; margin-top: 2px; }
-  .sub { display: flex; gap: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
-         color: var(--dim3); padding: 9px 0 3px; }
+  .sub { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px;
+         letter-spacing: .1em; color: var(--dim3); padding: 9px 0 3px; }
   .sub em { font-style: normal; color: var(--dim2); opacity: .55; }
   .fields .note { padding: 4px 0 0; }
   /* main's consent rows are clickable notes, and nothing styled the .link half of that pair */
@@ -457,7 +458,8 @@
          border-radius: 7px; border: 1px solid var(--edge); background: var(--bg4); color: var(--ink2);
          font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
   .fld:hover { border-color: var(--dim3); }
-  .fld span { flex: 1; min-width: 0; }
+  .fld > span:not(.sw) { flex: 1; min-width: 0; }
+  .fld kbd { flex-shrink: 0; }
   .fld .sw { flex: none; position: relative; width: 26px; height: 14px; border-radius: 8px;
              background: var(--edge); transition: background .15s; }
   .fld .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px;
@@ -599,3 +601,15 @@
   .pane > .bar .lab { flex-shrink: 0; }
   .pane > .bar .branch { font-size: 11.5px; color: var(--ink3); min-width: 0;
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* a control and the key that does the same thing, side by side */
+  .views { display: flex; align-items: center; gap: 6px; }
+
+  /* a menu row's key hint keeps its column when the hints are off, so the labels stay aligned */
+  .acts .ai kbd.hint + b { margin-left: 0; }
+  .hidekeys .acts .ai { padding-left: 12px; }
+  /* the search keeps its box when its "/" hint goes */
+  .hidekeys .search { padding-left: 13px; }
+
+  /* the Esc menu names the board key that does the same thing, before the current value */
+  .modal .opt kbd.hint { margin-left: 6px; }

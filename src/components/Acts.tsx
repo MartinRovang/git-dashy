@@ -105,7 +105,7 @@ export function ActsMenu({
             onAct(act, p)
           }}
         >
-          <kbd>{k}</kbd>
+          <kbd className="hint">{k}</kbd>
           <b>{label}</b>
           <em>{note}</em>
         </button>

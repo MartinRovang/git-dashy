@@ -51,12 +51,15 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
             pointed at less than you thought. */}
         <span>{repos} repo{repos === 1 ? '' : 's'}</span>
       </div>
-      <div className="vtabs" title="switch view (G)">
-        {(['board', 'graph'] as const).map((v) => (
-          <button key={v} className={view === v ? 'on' : ''} onClick={() => onView(v)}>
-            {v}
-          </button>
-        ))}
+      <div className="views" title="switch view (G)">
+        <div className="vtabs">
+          {(['board', 'graph'] as const).map((v) => (
+            <button key={v} className={view === v ? 'on' : ''} onClick={() => onView(v)}>
+              {v}
+            </button>
+          ))}
+        </div>
+        <kbd className="hint">G</kbd>
       </div>
       <div style={{ flex: 1 }} />
       {d?.update ? (
@@ -74,19 +77,22 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
       ) : null}
       <span className="ib" title="refresh now (f)" onClick={onRefresh}>
         ⟳
+        <kbd className="hint">f</kbd>
       </span>
-      <div className={`toggle${d?.auto ? ' on' : ''}`} onClick={onAuto}>
+      <div className={`toggle${d?.auto ? ' on' : ''}`} title="auto-run on new PRs (a)" onClick={onAuto}>
         <div className="track">
           <i />
         </div>
         <span>AUTO</span>
+        <kbd className="hint">a</kbd>
       </div>
       <Pinata />
       <button className="ghost" title="keyboard shortcuts (?)" onClick={onHelp}>
-        <kbd>?</kbd> shortcuts
+        <kbd className="hint">?</kbd> shortcuts
       </button>
       <span className="ib" title="menu (esc)" onClick={onMenu}>
         ☰
+        <kbd className="hint">esc</kbd>
       </span>
     </div>
   )

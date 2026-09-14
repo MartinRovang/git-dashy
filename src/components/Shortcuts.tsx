@@ -113,6 +113,7 @@ export function Shortcuts({ hints, onHints, onClose }: { hints: boolean; onHints
         <div style={{ flex: 1 }} />
         <button className="iconbtn" onClick={onClose} title="close (esc)">
           ✕
+          <kbd className="hint">esc</kbd>
         </button>
       </div>
       <div className="keys scroll">
