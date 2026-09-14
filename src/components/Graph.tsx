@@ -18,11 +18,10 @@ import type { Row } from '../types'
 type Hub = 'repo' | 'author' | 'kind' | 'state'
 // repo: the repo a PR or repo hub belongs to, what the author tab pulls together and haloes
 type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; repo?: string }
-type Link = SimulationLinkDatum<Node> & { source: Node; target: Node; primary: boolean }
+type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
 
-const SEP = ' › '
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 // a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
 const PERSON = 'M-.3,-.32a.3,.3 0 1,0 .6,0a.3,.3 0 1,0 -.6,0ZM-.62,.62Q-.62,.06 0,.06Q.62,.06 .62,.62Z'
@@ -40,15 +39,15 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
   return { kind: r.kind || guess || 'untagged', breaking: !!r.breaking || !!m?.[3] }
 }
 
-/** The chain of hubs a PR hangs off, nearest first: PR -> first -> second. The last one is its cluster. */
+/** The hubs a PR links to. */
 function hubsOf(r: Row, by: Group): [Hub, string][] {
   // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one.
   // In author mode such a PR then clusters on its repo, the only hub it has left.
   const author: [Hub, string][] = r.author ? [['author', r.author]] : []
-  // repo is a plain star, the repo with its PRs around it; author is a tree, author -> their repos -> their PRs,
-  // so each author gets their own node per repo (the id carries the author, the label drops it)
+  // repo is a plain star, the repo with its PRs around it; author is a star per author, with no repo node:
+  // the repo is the coloured cloud its PRs are pulled into
   if (by === 'repo') return [['repo', r.repo]]
-  if (by === 'author') return r.author ? [['repo', `${r.author}${SEP}${r.repo}`], ...author] : [['repo', r.repo]]
+  if (by === 'author') return r.author ? author : [['repo', r.repo]]
   if (by === 'kind') return [['kind', tagOf(r).kind]]
   return [['state', rowState(r).key]]
 }
@@ -57,27 +56,22 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   const hubs = new Map<string, Node>()
   const nodes: Node[] = []
   const links: Link[] = []
-  const drawn = new Set<string>()
   for (const r of rows) {
     // the title labels a PR; repo and number are in the tooltip
     const label = r.title.length > 40 ? r.title.slice(0, 39) + '…' : r.title
     const pr: Node = { id: r.url, kind: 'pr', label, degree: 2, repo: r.repo }
     nodes.push(pr)
-    let prev = pr
-    hubsOf(r, by).forEach(([kind, label], i) => {
+    for (const [kind, label] of hubsOf(r, by)) {
       const id = `${kind}:${label}`
       let h = hubs.get(id)
       if (!h) {
-        h = { id, kind, label: label.split(SEP).pop()!, degree: 0, repo: kind === 'repo' ? r.repo : undefined }
+        h = { id, kind, label, degree: 0, repo: kind === 'repo' ? r.repo : undefined }
         hubs.set(id, h)
         nodes.push(h)
       }
-      // a hub counts every PR under it, but a hub-to-hub link is drawn once
       h.degree++
-      if (!drawn.has(`${prev.id}>${id}`)) links.push({ source: prev, target: h, primary: i === 0 })
-      drawn.add(`${prev.id}>${id}`)
-      prev = h
-    })
+      links.push({ source: pr, target: h })
+    }
   }
   return { nodes, links }
 }
@@ -122,7 +116,7 @@ export function Graph({ secs, sel, onSelect }: {
       for (const [kind, label] of hubsOf(r, latest.current.by)) hits.add(`${kind}:${label}`)
     }
     select(svg).classed('search', !!q)
-    select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is its PR, or the hub below in a chain
+    select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
     const max = Math.max(1, ...rows.map(lines))
     // a hub grows with its PRs against the busiest hub, so the busiest hub is drawn largest
     const busiest = Math.max(1, ...graph.current.nodes.map((n) => (n.kind === 'pr' ? 0 : n.degree)))
@@ -176,7 +170,7 @@ export function Graph({ secs, sel, onSelect }: {
     // A new node spawns by its cluster's hub, and each cluster gets its own spot on a wide ring, so they
     // start apart instead of untangling from one pile in the middle. A second hub starts by its first PR's.
     // the author tab clusters on repo, not author: one repo's nodes share an area whoever wrote them
-    const cluster = (r: Row) => (by === 'author' ? `repo:${r.repo}` : (hubsOf(r, by).at(-1)?.join(':') ?? 'none'))
+    const cluster = (r: Row) => (by === 'author' ? `repo:${r.repo}` : (hubsOf(r, by)[0]?.join(':') ?? 'none'))
     const clusters = [...new Set(rows.map(cluster))].sort()
     const ring = 90 * Math.sqrt(clusters.length)
     const spot = new Map(clusters.map((c, i) => {
@@ -218,10 +212,16 @@ export function Graph({ secs, sel, onSelect }: {
       .style('color', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 55%)`)
     const halo = world
       .select('g.halos')
-      .selectAll<SVGCircleElement, string>('circle')
+      .selectAll<SVGGElement, string>('g')
       .data(repos, (d) => d)
-      .join('circle')
-      .style('fill', (d) => `url(#${gid(d)})`)
+      .join((enter) => {
+        const e = enter.append('g')
+        e.append('circle')
+        e.append('text')
+        return e
+      })
+    halo.select('circle').style('fill', (d) => `url(#${gid(d)})`)
+    halo.select('text').text((d) => d).style('fill', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 65%)`)
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
@@ -269,7 +269,7 @@ export function Graph({ secs, sel, onSelect }: {
     s.nodes(g.nodes)
       // hubs push harder than PRs and the pull to the centre is gentle, so repo clusters sit apart
       .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
-      .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.primary && by === 'repo' ? 70 : l.primary ? 60 : 90)))
+      .force('link', forceLink<Node, Link>(g.links).distance(by === 'repo' ? 70 : 60))
       // in the author tab a repo's nodes are pulled to that repo's spot, authors float between their repos
       .force('x', forceX<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.x : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
       .force('y', forceY<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.y : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
@@ -282,7 +282,8 @@ export function Graph({ secs, sel, onSelect }: {
             const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
             const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
             const r = 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy)))
-            select(this).attr('cx', cx).attr('cy', cy).attr('r', r)
+            select(this).select('circle').attr('cx', cx).attr('cy', cy).attr('r', r)
+            select(this).select('text').attr('x', cx).attr('y', cy - r * 0.6)
           })
         }
         link
@@ -393,7 +394,7 @@ export function Graph({ secs, sel, onSelect }: {
             {k}
           </span>
         ))}
-        {by !== 'state' && (
+        {(by === 'repo' || by === 'kind') && (
           <span>
             <i style={{ background: 'var(--dim2)' }} /> {by === 'kind' ? 'kind' : 'repo'}
           </span>

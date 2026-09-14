@@ -335,7 +335,8 @@
   .graph svg { flex: 1; min-height: 0; width: 100%; cursor: grab; }
   .graph svg:active { cursor: grabbing; }
   .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); pointer-events: none; }
-  .graph .halos circle { pointer-events: none; }
+  .graph .halos { pointer-events: none; }
+  .graph .halos text { font-size: 28px; font-weight: 700; text-anchor: middle; opacity: .55; }
   .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
   .graph line.lit { stroke: var(--ink3); }
   .gnode { cursor: pointer; transition: opacity .2s; }
