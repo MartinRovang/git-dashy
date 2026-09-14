@@ -21,15 +21,6 @@
                              repeating-linear-gradient(-52deg, rgba(255,246,230,0.03) 0 1px, transparent 1px 11px); }
   .grain { position: absolute; inset: 0; pointer-events: none; opacity: 0.5; mix-blend-mode: overlay; background-size: 180px 180px;
            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"); }
-  /* ponytail: six meteors, each a 1px line moved only by transform and opacity, so the compositor
-     carries them instead of repainting the window. More of them if the Linux webview keeps up. */
-  .meteors i { position: absolute; top: var(--y); left: var(--x); width: 150px; height: 1px; opacity: 0; transform-origin: left;
-               background: linear-gradient(90deg, rgba(255,248,236,0.9), rgba(240,231,217,0.25) 35%, transparent);
-               animation: meteor var(--d) linear var(--w) infinite; }
-  @keyframes meteor { 0% { opacity: 0; transform: rotate(-35deg) translateX(0); }
-                      2% { opacity: 1; }
-                      12% { opacity: 0; transform: rotate(-35deg) translateX(-700px); }
-                      100% { opacity: 0; transform: rotate(-35deg) translateX(-700px); } }
   .vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 180px 60px rgba(8,7,9,0.85); }
   .card { position: relative; width: 100%; max-width: 560px; display: flex; flex-direction: column; align-items: center;
           animation: smudge-in 1.4s ease-out both; }
@@ -60,14 +51,6 @@
 <div class="wrap">
   <div class="tooth"></div>
   <div class="grain"></div>
-  <div class="meteors">
-    <i style="--x:78%;--y:6%;--d:9s;--w:0.8s"></i>
-    <i style="--x:104%;--y:22%;--d:13s;--w:3.5s"></i>
-    <i style="--x:52%;--y:-4%;--d:11s;--w:6.2s"></i>
-    <i style="--x:96%;--y:48%;--d:15s;--w:9s"></i>
-    <i style="--x:30%;--y:10%;--d:12s;--w:11.5s"></i>
-    <i style="--x:88%;--y:-2%;--d:10s;--w:4.8s"></i>
-  </div>
   <div class="vignette"></div>
   <div class="card">
     <div class="mark"><img src="head.png" alt="" /></div>
