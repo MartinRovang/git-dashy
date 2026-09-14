@@ -405,8 +405,8 @@ pub fn me() -> Result<String, Error> {
     Ok(login)
 }
 
-// ponytail: ONE query for the whole dashboard: the three sections aliased, each carrying the row fields
-// and the review decision, reviewers, head commit and CI state that no list endpoint returns.
+// One page of one section's search: the row fields plus the review decision, reviewers, head commit and CI
+// state that no list endpoint returns, and pageInfo to walk the next page.
 // ponytail: no `... on Team { slug }`. That field needs read:org, and a token without it failed the WHOLE
 // query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
 const NODE: &str = "{ pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
@@ -439,6 +439,9 @@ fn review_glyph(s: &str) -> &'static str {
 /// with checks, diff stats and reviews ran past that and 25 took up to 7.5s. Pages, not fewer fields.
 const PAGE: usize = 20;
 const MOST: usize = 100;
+/// Seconds one page may take. GitHub gives up at about 10 and answers 502, so waiting longer only holds the
+/// tick: five sections of five pages at 60s each could keep `fetching` up for minutes.
+const PAGE_SECS: u64 = 20;
 
 /// The search string of every section to ask for, by its SECTIONS index.
 pub fn searches(who: &str, scope: &str) -> Vec<(usize, String)> {
@@ -477,6 +480,11 @@ pub fn search_all(search: &str, get: impl Fn(&str) -> Result<Value, Error>) -> R
     let mut after = String::new();
     while nodes.len() < MOST {
         let s = match get(&page(search, &after)) {
+            // search is non-null in GitHub's schema, so gql errs first today; a null must still never
+            // read as an empty section
+            Ok(d) if d["s"].is_null() && nodes.is_empty() => {
+                return Err(Error("search returned no data".into()))
+            }
             Ok(d) => d["s"].clone(),
             Err(e) if nodes.is_empty() => return Err(e),
             Err(e) => {
@@ -838,7 +846,7 @@ pub fn fetch() -> Vec<Section> {
             let got: Vec<(usize, Result<Value, Error>)> = std::thread::scope(|t| {
                 let running: Vec<_> = searches(&who, &scope)
                     .into_iter()
-                    .map(|(i, q)| (i, t.spawn(move || search_all(&q, |doc| gql(doc, 60)))))
+                    .map(|(i, q)| (i, t.spawn(move || search_all(&q, |doc| gql(doc, PAGE_SECS)))))
                     .collect();
                 running
                     .into_iter()
@@ -1409,6 +1417,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(calls.get(), 1);
+        // a null search is an error, not an empty section
+        assert!(search_all("q", |_| Ok(json!({"s": null}))).is_err());
         // a failed first page is the section's error
         assert_eq!(
             search_all("q", |_| Err(Error("502 Bad Gateway".into())))

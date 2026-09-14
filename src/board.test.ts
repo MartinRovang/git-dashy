@@ -496,6 +496,11 @@ describe('remember', () => {
     // a PR that moves past its mark is unread again
     expect(isRead(r, { url: 'u', updatedAt: '2026-09-14T14:00:00Z' })).toBe(false)
     expect(isRead({}, merged)).toBe(false)
+    // the log writes +00:00 and GitHub Z: the same second is read either way, a later one is not
+    const log = { u: '2026-09-14T13:00:00+00:00' }
+    expect(isRead(log, merged)).toBe(true)
+    expect(isRead(log, { url: 'u', updatedAt: '2026-09-14T13:00:01Z' })).toBe(false)
+    expect(isRead(remember(log, [merged]), { url: 'u', updatedAt: '2026-09-14T12:59:59+00:00' })).toBe(true)
   })
 
   it('marks at the current updatedAt, keeps marks off the board, drops the oldest past the cap', () => {

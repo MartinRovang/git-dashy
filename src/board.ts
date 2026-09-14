@@ -179,11 +179,14 @@ export function flat(
   return onScreen(secs, bucket, unfolded).flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
-/** Read when the mark is at or past the row's updatedAt. ISO times compare as strings; a PR that moves
- *  past its mark is unread again. */
+/** Read when the mark is at or past the row's updatedAt; a PR that moves past its mark is unread again.
+ *  Compared as times, not strings: REVIEWED rows carry the log's `+00:00` and GitHub rows `Z`. A time that
+ *  does not parse (an empty updatedAt) falls back to the string. */
 export function isRead(read: Record<string, string>, p: Pick<Row, 'url' | 'updatedAt'>): boolean {
   const at = read[p.url]
-  return at !== undefined && at >= p.updatedAt
+  if (at === undefined) return false
+  const [a, b] = [Date.parse(at), Date.parse(p.updatedAt)]
+  return Number.isNaN(a) || Number.isNaN(b) ? at >= p.updatedAt : a >= b
 }
 
 /** The read map with `prs` marked at their current updatedAt, keeping only the `keep` newest.

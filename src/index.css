@@ -327,7 +327,7 @@
   .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
-  /* search dims harder than hover: you typed to find something, so the rest should all but vanish */
+  /* search dims non-matches more than hover does */
   .graph svg.search:not(.focus) .gnode:not(.hit), .graph svg.search:not(.focus) line:not(.hit) { opacity: .05; }
   .graph svg.search .halos circle:not(.hit), .graph svg.search .gnames text:not(.hit) { opacity: .1; }
   .graph svg.focus .halos, .graph svg.focus .gnames { opacity: .3; }
