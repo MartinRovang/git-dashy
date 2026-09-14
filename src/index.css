@@ -102,7 +102,7 @@
   .queue { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .bar { height: 56px; flex-shrink: 0; border-bottom: 1px solid var(--line); display: flex; align-items: center;
          gap: 10px; padding: 0 18px; }
-  .search { display: flex; align-items: center; gap: 8px; height: 32px; width: 300px; padding: 0 11px;
+  .search { display: flex; align-items: center; gap: 8px; height: 32px; width: 300px; max-width: 100%; padding: 0 11px;
             border-radius: 7px; background: var(--bg3); border: 1px solid var(--line); }
   .search input { flex: 1; background: transparent; border: none; outline: none; color: var(--ink);
                   font-family: var(--sans); font-size: 12.5px; min-width: 0; }
@@ -498,9 +498,13 @@
   .ghost:hover { background: var(--bg4); border-color: var(--edge); color: var(--ink2); }
 
   /* ---- the queue's bar: one tab per section, then the filters ---- */
-  .queue > .bar { height: 46px; gap: 12px; }
-  .tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .tabs::-webkit-scrollbar { display: none; }
+  /* ponytail: the bar grows instead of scrolling sideways. A queue you cannot see is a queue you
+     forget you have, and a horizontal scroller hides the rightmost tab with nothing saying so. At a
+     wide window this is one 46px row and looks identical. */
+  .queue > .bar { height: auto; min-height: 46px; gap: 8px 12px; flex-wrap: wrap; padding: 7px 18px; }
+  .tabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
+  /* the spacer that pushes search to the right only does so while everything fits on one row */
+  .queue > .bar > .grow { flex: 1 1 0; min-width: 0; }
   .tabs .tab { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid transparent; background: none;
                font: inherit; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--dim2);
                display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }

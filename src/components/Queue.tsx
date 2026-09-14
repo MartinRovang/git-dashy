@@ -195,7 +195,7 @@ export function Queue(p: Props) {
             </button>
           ) : null}
         </div>
-        <div style={{ flex: 1 }} />
+        <div className="grow" />
         <label className="search">
           <span className="mono" style={{ fontSize: 12, color: 'var(--dim3)' }}>
             /
