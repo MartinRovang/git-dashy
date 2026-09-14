@@ -22,6 +22,7 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
   const out: VisSection[] = []
+  let other: VisSection | null = null // last, below REVIEWED
   for (const sec of d?.sections || []) {
     const rows: Row[] = (sec.prs || [])
       .map((p, i) => ({ ...p, uid: `${sec.name}/${i}/${p.url}`, section: sec.name, older: [] }))
@@ -35,11 +36,13 @@ export function visible(d: StateData | null, query: string, failing: boolean): V
       })
     if (sec.name === 'TEAM') {
       const known = (p: Row) => !!(p.status || p.prev || p.review || p.busy)
-      out.push({ ...sec, prs: rows.filter(known) }, { ...sec, name: 'OTHER', prs: rows.filter((p) => !known(p)) })
+      out.push({ ...sec, prs: rows.filter(known) })
+      other = { ...sec, name: 'OTHER', prs: rows.filter((p) => !known(p)) }
       continue
     }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
   }
+  if (other) out.push(other)
   return out
 }
 
