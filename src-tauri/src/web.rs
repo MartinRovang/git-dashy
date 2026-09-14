@@ -181,7 +181,7 @@ pub fn payload(state: &State) -> Value {
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
                     "interval": config::INTERVALS, "theme": THEMES,
-                    "scopes": github::scope_options(&sections, &names, &bind::bindings(), &bind::owners())},
+                    "scopes": github::scope_options(&cfg.scopes, &sections, &names, &bind::bindings(), &bind::owners())},
         "knowledge": {
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
@@ -2103,6 +2103,8 @@ mod tests {
             json!({"window": 5}),
             json!({"scopes": ["bogus"]}),
             json!({"scopes": ["org:x", 3]}),
+            json!({"scopes": vec!["org:x"; 51]}),
+            json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
         ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }

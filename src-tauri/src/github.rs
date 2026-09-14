@@ -503,8 +503,10 @@ pub fn within(scope: &str, window: Option<u64>, now: chrono::DateTime<chrono::Ut
 }
 
 /// What the scope chips offer: every joined team, then every owner seen on the board, in the log or in
-/// a binding. ponytail: not the viewer's org list, that needs read:org and the token usually lacks it.
+/// a binding, then any saved scope none of those name, so a toggled-on one can always be toggled off.
+/// ponytail: not the viewer's org list, that needs read:org and the token usually lacks it.
 pub fn scope_options(
+    saved: &[String],
     sections: &[Section],
     teams: &[String],
     repos: &HashMap<String, String>,
@@ -528,7 +530,13 @@ pub fn scope_options(
         .iter()
         .map(|t| format!("team:{t}"))
         .chain(orgs.into_iter().map(|o| format!("org:{o}")))
-        .collect()
+        .chain(saved.iter().cloned())
+        .fold(Vec::new(), |mut v: Vec<String>, o| {
+            if !v.contains(&o) {
+                v.push(o);
+            }
+            v
+        })
 }
 
 fn str_at<'a>(v: &'a Value, pointer: &str) -> &'a str {
@@ -744,22 +752,22 @@ pub fn fetch() -> Vec<Section> {
         return crate::demo::sections();
     }
     let cfg = config::get();
+    let searched = {
+        let mut f = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
+        *f = merge_fetched(&cfg.scopes, &f);
+        f.clone()
+    };
     let scope = within(
-        &scope_terms(
-            &{
-                let mut f = FETCHED.lock().unwrap_or_else(|e| e.into_inner());
-                *f = merge_fetched(&cfg.scopes, &f);
-                f.clone()
-            },
-            &crate::bind::bindings(),
-            &crate::bind::owners(),
-        ),
+        &scope_terms(&searched, &crate::bind::bindings(), &crate::bind::owners()),
         cfg.window,
         chrono::Utc::now(),
     );
     let data = match me().and_then(|who| gql(&query(&who, &scope), 60)) {
         Ok(d) => d,
         Err(e) => {
+            // ponytail: a scope that broke the query must not outlive being toggled off, so the next
+            // tick searches only what is saved
+            *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = cfg.scopes.clone();
             let msg = e.0.trim();
             let err = msg
                 .lines()
@@ -799,8 +807,19 @@ pub fn sections_of(data: &Value) -> Vec<Section> {
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for (i, (name, _)) in SECTIONS.iter().enumerate() {
-        if *name == "TEAM" && data.get(format!("s{i}")).is_none() {
-            continue; // nothing toggled on, so it was never asked for
+        match data.get(format!("s{i}")) {
+            None if *name == "TEAM" => continue, // nothing toggled on, so it was never asked for
+            Some(Value::Null) => {
+                // an errored alias; gql fails the whole call for a non-null search today, but an empty
+                // section must never stand in for a rejected one
+                out.push(Section {
+                    name: name.to_string(),
+                    prs: None,
+                    err: Some("search failed".into()),
+                });
+                continue;
+            }
+            _ => {}
         }
         let mut prs: Vec<Pr> = Vec::new();
         for n in data
@@ -1288,8 +1307,19 @@ mod tests {
             secs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
             ["MINE", "REVIEW REQUESTED", "ASSIGNED", "TEAM"]
         );
-        let opts = scope_options(&secs, &["core".to_string()], &repos, &owners);
-        assert_eq!(opts, ["team:core", "org:a", "org:acme", "org:x"]);
+        let opts = scope_options(
+            &on(&["org:gone", "org:acme"]),
+            &secs,
+            &["core".to_string()],
+            &repos,
+            &owners,
+        );
+        assert_eq!(opts, ["team:core", "org:a", "org:acme", "org:x", "org:gone"]);
+        let failed = sections_of(&json!({"s0": null, "s1": {"nodes": []}, "s2": {"nodes": []}}));
+        assert_eq!(
+            (failed[0].prs.is_none(), failed[0].err.as_deref(), failed.len()),
+            (true, Some("search failed"), 3)
+        );
     }
 
     #[test]

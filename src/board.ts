@@ -38,7 +38,7 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
     if (sec.name === 'TEAM') {
       const known = (p: Row) => !!(p.status || p.prev || p.review || p.busy)
       out.push({ ...sec, prs: rows.filter(known) })
-      other = { ...sec, name: 'OTHER', error: '', prs: rows.filter((p) => !known(p)) }
+      other = { ...sec, name: 'OTHER', error: '', prs: rows.filter((p) => !known(p)).map((p) => ({ ...p, section: 'OTHER', uid: p.uid.replace(/^TEAM\//, 'OTHER/') })) }
       continue
     }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })

@@ -28,7 +28,7 @@ export const SECTION_HINT: Record<string, string> = {
   MINE: 'your open PRs',
   'REVIEW REQUESTED': 'waiting on you',
   ASSIGNED: 'owned by you',
-  TEAM: 'reviewed, from your sources',
+  TEAM: 'reviewed in your logs',
   OTHER: 'no review in your logs',
   REVIEWED: 'recently done',
 }
