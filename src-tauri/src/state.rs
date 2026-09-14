@@ -432,11 +432,12 @@ impl State {
             } else {
                 t0
             };
-            let ticked = now(); // the gap below counts from here: a failed tick's base is its START
-                                // ponytail: `base + interval` is evaluated per slice, and `interval` is the reason.
-                                // Hoisting it into a variable above the loop is the natural way to write this and silently
-                                // breaks `i`: the settings screen changes the interval and does NOT wake the loop, so
-                                // dropping 30m to 1m waited out the remaining 29 instead of refetching now.
+            // ponytail: `base + interval` is evaluated per slice, and `interval` is the reason.
+            // Hoisting it into a variable above the loop is the natural way to write this and silently
+            // breaks `i`: the settings screen changes the interval and does NOT wake the loop, so
+            // dropping 30m to 1m waited out the remaining 29 instead of refetching now.
+            // `ticked` is for the wake gap below: a failed tick's base is its START, not its end.
+            let ticked = now();
             while !wake.wait(Duration::from_secs(1)) && now() < base + config::get().interval as f64 {
                 // 1s slices, so a change to either side takes effect within the second
             }
