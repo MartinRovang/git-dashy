@@ -405,11 +405,11 @@ pub fn me() -> Result<String, Error> {
     Ok(login)
 }
 
-// ponytail: ONE query for the whole dashboard: the three sections aliased, each carrying the row fields
-// and the review decision, reviewers, head commit and CI state that no list endpoint returns.
+// One page of one section's search: the row fields plus the review decision, reviewers, head commit and CI
+// state that no list endpoint returns, and pageInfo to walk the next page.
 // ponytail: no `... on Team { slug }`. That field needs read:org, and a token without it failed the WHOLE
 // query, so CI, status and reviewers all vanished. Team review requests are simply not shown.
-const NODE: &str = "{ nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
+const NODE: &str = "{ pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url updatedAt isDraft additions deletions
     author { login } repository { nameWithOwner name } headRefOid reviewDecision
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 20) { totalCount nodes { requestedReviewer { ... on User { login } } } }
@@ -434,23 +434,82 @@ fn review_glyph(s: &str) -> &'static str {
     }
 }
 
-pub fn query(who: &str, scope: &str) -> String {
-    let parts: Vec<String> = SECTIONS
+/// PRs one request asks for, and the most one section keeps.
+/// ponytail: 20, measured: GitHub gives a query about 10s and answers a 502 past it. In a busy org 50 PRs
+/// with checks, diff stats and reviews ran past that and 25 took up to 7.5s. Pages, not fewer fields.
+const PAGE: usize = 20;
+const MOST: usize = 100;
+/// Seconds one page may take. GitHub gives up at about 10 and answers 502, so waiting longer only holds the
+/// tick: five sections of five pages at 60s each could keep `fetching` up for minutes.
+const PAGE_SECS: u64 = 20;
+
+/// The search string of every section to ask for, by its SECTIONS index.
+pub fn searches(who: &str, scope: &str) -> Vec<(usize, String)> {
+    SECTIONS
         .iter()
         .enumerate()
         .filter(|(_, (_, q))| !(sourced(q) && scope.is_empty()))
         .map(|(i, (_, q))| {
-            format!(
-                "s{i}: search(query: {}, type: ISSUE, first: 100) {NODE}",
-                // a JSON string is a valid GraphQL string literal, so escaping is structural
-                Value::String(format!(
-                    "is:pr {}",
-                    q.replace("{me}", who).replace("{scope}", scope)
-                ))
+            (
+                i,
+                format!("is:pr {}", q.replace("{me}", who).replace("{scope}", scope)),
             )
         })
-        .collect();
-    format!("{{ {} }}", parts.join(" "))
+        .collect()
+}
+
+/// One page of one search, as a GraphQL document.
+pub fn page(search: &str, after: &str) -> String {
+    // a JSON string is a valid GraphQL string literal, so escaping is structural
+    let after = if after.is_empty() {
+        String::new()
+    } else {
+        format!(", after: {}", Value::String(after.into()))
+    };
+    format!(
+        "{{ s: search(query: {}, type: ISSUE, first: {PAGE}{after}) {NODE} }}",
+        Value::String(search.into())
+    )
+}
+
+/// Every page of `search` up to MOST, as `{"nodes": [...]}`. `get` runs one document (gql, or a test's).
+/// A failed first page is the section's error; a failed later page keeps what arrived, since the
+/// newest PRs come first and an error line would hide them.
+pub fn search_all(search: &str, get: impl Fn(&str) -> Result<Value, Error>) -> Result<Value, Error> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut after = String::new();
+    while nodes.len() < MOST {
+        let s = match get(&page(search, &after)) {
+            // search is non-null in GitHub's schema, so gql errs first today; a null must still never
+            // read as an empty section
+            Ok(d) if d["s"].is_null() && nodes.is_empty() => {
+                return Err(Error("search returned no data".into()))
+            }
+            Ok(d) => d["s"].clone(),
+            Err(e) if nodes.is_empty() => return Err(e),
+            Err(e) => {
+                log::debug!(
+                    "search page after {} failed, keeping {}: {}",
+                    after,
+                    nodes.len(),
+                    e.0
+                );
+                break;
+            }
+        };
+        nodes.extend(s["nodes"].as_array().cloned().unwrap_or_default());
+        after = str_at(&s, "/pageInfo/endCursor").to_string();
+        if !s
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || after.is_empty()
+        {
+            break;
+        }
+    }
+    nodes.truncate(MOST);
+    Ok(json!({ "nodes": nodes }))
 }
 
 /// A name safe to put inside the query's string literal: a login, owner/name, or team key.
@@ -772,19 +831,64 @@ pub fn fetch() -> Vec<Section> {
         cfg.window,
         chrono::Utc::now(),
     );
-    let data = match me().and_then(|who| gql(&query(&who, &scope), 60)) {
-        Ok(d) => d,
+    let first_line = |e: &Error| {
+        e.0.trim()
+            .lines()
+            .next()
+            .filter(|l| !l.is_empty())
+            .unwrap_or("github unreachable")
+            .to_string()
+    };
+    let data = match me() {
+        Ok(who) => {
+            // ponytail: one request per section, all at once. One query holding every section ran past
+            // GitHub's time limit in a busy org, and its 502 blanked MINE along with TEAM.
+            let got: Vec<(usize, Result<Value, Error>)> = std::thread::scope(|t| {
+                let running: Vec<_> = searches(&who, &scope)
+                    .into_iter()
+                    .map(|(i, q)| (i, t.spawn(move || search_all(&q, |doc| gql(doc, PAGE_SECS)))))
+                    .collect();
+                running
+                    .into_iter()
+                    .map(|(i, h)| {
+                        (
+                            i,
+                            h.join().unwrap_or_else(|_| Err(Error("search panicked".into()))),
+                        )
+                    })
+                    .collect()
+            });
+            let mut data = serde_json::Map::new();
+            let mut errs: HashMap<usize, String> = HashMap::new();
+            for (i, r) in got {
+                match r {
+                    Ok(v) => {
+                        data.insert(format!("s{i}"), v);
+                    }
+                    Err(e) => {
+                        errs.insert(i, first_line(&e));
+                        data.insert(format!("s{i}"), Value::Null);
+                    }
+                }
+            }
+            if errs.keys().any(|i| sourced(SECTIONS[*i].1)) {
+                // ponytail: a scope that broke its search must not outlive being toggled off, so the next
+                // tick searches only what is saved
+                *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = config::get().scopes;
+                // fresh: `cfg` predates an untoggle
+            }
+            let mut out = sections_of(&Value::Object(data));
+            for s in out.iter_mut() {
+                if let Some(i) = SECTIONS.iter().position(|(n, _)| *n == s.name) {
+                    if let Some(e) = errs.remove(&i) {
+                        s.err = Some(e);
+                    }
+                }
+            }
+            out
+        }
         Err(e) => {
-            // ponytail: a scope that broke the query must not outlive being toggled off, so the next
-            // tick searches only what is saved
-            *FETCHED.lock().unwrap_or_else(|e| e.into_inner()) = config::get().scopes; // fresh: `cfg` predates an untoggle
-            let msg = e.0.trim();
-            let err = msg
-                .lines()
-                .next()
-                .filter(|l| !l.is_empty())
-                .unwrap_or("github unreachable")
-                .to_string();
+            let err = first_line(&e);
             let mut out: Vec<Section> = SECTIONS
                 .iter()
                 .filter(|(_, q)| !sourced(q) || !scope.is_empty())
@@ -802,7 +906,7 @@ pub fn fetch() -> Vec<Section> {
             return out;
         }
     };
-    let mut out = sections_of(&data);
+    let mut out = data;
     // ponytail: not deduped, a reviewed PR may still be open above
     out.push(Section {
         name: "REVIEWED".into(),
@@ -820,8 +924,8 @@ pub fn sections_of(data: &Value) -> Vec<Section> {
         match data.get(format!("s{i}")) {
             None if sourced(q) => continue, // nothing toggled on, so it was never asked for
             Some(Value::Null) => {
-                // an errored alias; gql fails the whole call for a non-null search today, but an empty
-                // section must never stand in for a rejected one
+                // a failed search; fetch puts its message on it. An empty section must never stand in for
+                // a rejected one
                 out.push(Section {
                     name: name.to_string(),
                     prs: None,
@@ -1264,16 +1368,64 @@ mod tests {
 
     #[test]
     fn query_asks_for_the_three_sections_under_my_own_login() {
-        let s = query("me", "");
-        assert!(!s.contains("s3:"), "no TEAM search while nothing is toggled on");
-        assert!(!s.contains("@me"));
-        for (i, q) in ["author:me", "review-requested:me", "assignee:me"]
-            .iter()
-            .enumerate()
-        {
-            assert!(s.contains(&format!("s{i}: search(query: \"is:pr is:open {q}\"")));
-        }
-        assert!(s.contains("headRefOid") && s.contains("latestReviews"));
+        let s = searches("me", "");
+        assert_eq!(
+            s,
+            [
+                (0, "is:pr is:open author:me".to_string()),
+                (1, "is:pr is:open review-requested:me".to_string()),
+                (2, "is:pr is:open assignee:me".to_string())
+            ],
+            "no TEAM or MERGED search while nothing is toggled on"
+        );
+        let p = page(&s[0].1, "");
+        assert!(p.contains("search(query: \"is:pr is:open author:me\", type: ISSUE, first: 20)"));
+        assert!(p.contains("headRefOid") && p.contains("latestReviews") && p.contains("endCursor"));
+        assert!(page("x", "Y3Vy").contains("first: 20, after: \"Y3Vy\")"));
+    }
+
+    #[test]
+    fn a_search_pages_by_cursor_and_keeps_what_arrived_when_a_later_page_fails() {
+        let pages = std::cell::RefCell::new(Vec::new());
+        let page_of = |n: usize, next: bool| {
+            json!({"s": {"pageInfo": {"hasNextPage": next, "endCursor": format!("c{n}")},
+                         "nodes": (0..PAGE).map(|k| node(&format!("{n}-{k}"), json!({}))).collect::<Vec<_>>()}})
+        };
+        // three full pages then a failure: those kept, no error, cursors passed along
+        let got = search_all("q", |doc| {
+            pages.borrow_mut().push(doc.to_string());
+            match pages.borrow().len() {
+                n @ 1..=3 => Ok(page_of(n, true)),
+                _ => Err(Error("502 Bad Gateway".into())),
+            }
+        })
+        .unwrap();
+        assert_eq!(got["nodes"].as_array().unwrap().len(), 3 * PAGE);
+        assert!(pages.borrow()[1].contains("after: \"c1\"") && pages.borrow()[3].contains("after: \"c3\""));
+        // never more than MOST, and it stops when GitHub says there is no next page
+        assert_eq!(
+            search_all("q", |_| Ok(page_of(1, true))).unwrap()["nodes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            MOST
+        );
+        let calls = std::cell::Cell::new(0);
+        search_all("q", |_| {
+            calls.set(calls.get() + 1);
+            Ok(page_of(1, false))
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 1);
+        // a null search is an error, not an empty section
+        assert!(search_all("q", |_| Ok(json!({"s": null}))).is_err());
+        // a failed first page is the section's error
+        assert_eq!(
+            search_all("q", |_| Err(Error("502 Bad Gateway".into())))
+                .unwrap_err()
+                .0,
+            "502 Bad Gateway"
+        );
     }
 
     #[test]
@@ -1307,14 +1459,14 @@ mod tests {
             ),
             ("org:acme", "")
         );
-        let q = query("me", "org:acme");
-        assert!(q.contains("s3: search(query: \"is:pr is:open org:acme sort:updated-desc\""));
-        assert!(q.contains("s4: search(query: \"is:pr is:merged org:acme sort:updated-desc\""));
-        assert!(
-            !query("me", "").contains("s4:"),
-            "no MERGED search while nothing is toggled on"
+        let q = searches("me", "org:acme");
+        assert_eq!(q[3], (3, "is:pr is:open org:acme sort:updated-desc".to_string()));
+        assert_eq!(
+            q[4],
+            (4, "is:pr is:merged org:acme sort:updated-desc".to_string())
         );
-        assert!(query("me", "org:a\"b").contains(r#""is:pr is:open org:a\"b sort:updated-desc""#));
+        assert!(page(&searches("me", "org:a\"b")[3].1, "")
+            .contains(r#""is:pr is:open org:a\"b sort:updated-desc""#));
         let secs = sections_of(
             &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}, "s4": {"nodes": []}}),
         );
