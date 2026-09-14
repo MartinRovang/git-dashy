@@ -407,6 +407,7 @@ export default function App() {
     else if (key === 'i') picker('Refresh', o.interval.map(String), String(s.interval), (v) => every(+v), (v) => on('interval', +v))
     else if (key === 'x') picker('Voices', o.voice, s.voice || [], String, (v) => on('voice', v), true)
     else if (key === 'h') picker('Hunters', o.hunter, s.hunter || [], String, (v) => on('hunter', v), true)
+    else if (key === 'O') picker('Sources', o.scopes, s.scopes || [], String, (v) => on('scopes', v), true)
   }
 
   function handleKey(e: KeyboardEvent) {
@@ -445,7 +446,7 @@ export default function App() {
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
-    if ('mdexhsti'.includes(k)) return one(() => pickSetting(k))
+    if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))

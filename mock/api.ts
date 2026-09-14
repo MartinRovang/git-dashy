@@ -212,7 +212,7 @@ function buildPayload() {
     running: S.rows.filter((r) => r.busy).length,
     update: '',
     settings: { ...S.settings },
-    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES },
+    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
     knowledge: {
       memory: '~/.prs_memory',
       store: '',

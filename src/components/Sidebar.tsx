@@ -15,7 +15,7 @@ type Props = {
 /** The left rail: the session's counts, then the agent, view and knowledge cards. */
 export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAskAgain }: Props) {
   const s = d?.settings || {}
-  const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
+  const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   return (
@@ -62,6 +62,13 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAskAgain
           <b className={`link${s.drafts ? ' on' : ''}`} onClick={() => setting('drafts', !s.drafts)}>
             {s.drafts ? 'shown' : 'hidden'}
           </b>
+        </Row>
+        <Row k="O" label="sources">
+          {o.scopes.length ? (
+            <Chips values={s.scopes || []} options={o.scopes} onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))} />
+          ) : (
+            <b style={{ color: 'var(--dim2)' }}>none seen yet</b>
+          )}
         </Row>
         <Row k="t" label="history">
           <Select

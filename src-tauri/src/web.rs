@@ -180,7 +180,8 @@ pub fn payload(state: &State) -> Value {
         "settings": snapshot(),
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
-                    "interval": config::INTERVALS, "theme": THEMES},
+                    "interval": config::INTERVALS, "theme": THEMES,
+                    "scopes": github::scope_options(&sections, &names, &bind::bindings(), &bind::owners())},
         "knowledge": {
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
@@ -1419,6 +1420,27 @@ fn post_settings(state: &State, body: &Body) -> Out {
     }
     if body.contains_key("drafts") {
         c.drafts = truthy(body, "drafts");
+    }
+    if let Some(v) = body.get("scopes") {
+        // ponytail: shape-checked, not checked against scope_options: an org you toggled stays on
+        // while its PRs are merged away. scope_terms drops anything it cannot put in a query.
+        let got: Option<Vec<String>> = v.as_array().and_then(|a| {
+            a.iter()
+                .map(|x| {
+                    x.as_str()
+                        .filter(|s| s.starts_with("org:") || s.starts_with("team:"))
+                        .map(String::from)
+                })
+                .collect()
+        });
+        let Some(got) = got else {
+            return Err(Fail::new(
+                400,
+                "scopes must be a list of org:<owner> or team:<key>",
+            ));
+        };
+        c.scopes = got;
+        wake = true; // the board should show the new scope now, not at the next interval
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");

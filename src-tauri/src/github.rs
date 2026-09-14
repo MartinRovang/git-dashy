@@ -45,6 +45,9 @@ pub const SECTIONS: &[(&str, &str)] = &[
     ("MINE", "author:{me}"),
     ("REVIEW REQUESTED", "review-requested:{me}"),
     ("ASSIGNED", "assignee:{me}"),
+    // ponytail: open PRs in whatever orgs/teams are toggled on, so the board sees the team's work, not
+    // only what names me. Dropped from the query when nothing is on. Last, so dedup gives it the leftovers.
+    ("TEAM", "{scope}"),
 ];
 /// Search terms that choose WHERE to look, not what for.
 const QUALIFIERS: &[&str] = &["repo:", "user:", "org:", "owner:"];
@@ -393,18 +396,92 @@ fn review_glyph(s: &str) -> &'static str {
     }
 }
 
-pub fn query(who: &str) -> String {
+pub fn query(who: &str, scope: &str) -> String {
     let parts: Vec<String> = SECTIONS
         .iter()
         .enumerate()
+        .filter(|(_, (_, q))| !(q.contains("{scope}") && scope.is_empty()))
         .map(|(i, (_, q))| {
             format!(
                 "s{i}: search(query: \"is:pr is:open {}\", type: ISSUE, first: 100) {NODE}",
-                q.replace("{me}", who)
+                q.replace("{me}", who).replace("{scope}", scope)
             )
         })
         .collect();
     format!("{{ {} }}", parts.join(" "))
+}
+
+/// A name safe to put inside the query's string literal: a login, owner/name, or team key.
+fn plain(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c))
+}
+
+/// The search terms for the toggled-on scopes: "org:x" as is, "team:k" as every repo and owner bound
+/// to k. GitHub ORs repeated org:/repo: terms, so this stays one search. "" when nothing is on.
+pub fn scope_terms(
+    scopes: &[String],
+    repos: &HashMap<String, String>,
+    owners: &HashMap<String, String>,
+) -> String {
+    let mut terms: Vec<String> = Vec::new();
+    let mut add = |t: String| {
+        if !terms.contains(&t) {
+            terms.push(t);
+        }
+    };
+    for s in scopes {
+        match s.split_once(':') {
+            Some(("org", o)) if plain(o) && !o.contains('/') => add(format!("org:{o}")),
+            Some(("team", k)) => {
+                // ponytail: sorted, so the query text (and a test) does not shuffle with HashMap order
+                let mut bound: Vec<String> = repos
+                    .iter()
+                    .filter(|(_, t)| *t == k)
+                    .map(|(r, _)| format!("repo:{r}"))
+                    .chain(
+                        owners
+                            .iter()
+                            .filter(|(_, t)| *t == k)
+                            .map(|(o, _)| format!("org:{o}")),
+                    )
+                    .filter(|t| plain(t.split_once(':').map(|x| x.1).unwrap_or("")))
+                    .collect();
+                bound.sort();
+                bound.into_iter().for_each(&mut add);
+            }
+            _ => {}
+        }
+    }
+    terms.join(" ")
+}
+
+/// What the scope chips offer: every joined team, then every owner seen on the board, in the log or in
+/// a binding. ponytail: not the viewer's org list, that needs read:org and the token usually lacks it.
+pub fn scope_options(
+    sections: &[Section],
+    teams: &[String],
+    repos: &HashMap<String, String>,
+    owners: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut orgs: Vec<String> = sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .map(|p| p.repo().split('/').next().unwrap_or("").to_lowercase())
+        .chain(
+            repos
+                .keys()
+                .map(|r| r.split('/').next().unwrap_or("").to_string()),
+        )
+        .chain(owners.keys().cloned())
+        .filter(|o| plain(o) && !o.contains('/'))
+        .collect();
+    orgs.sort();
+    orgs.dedup();
+    teams
+        .iter()
+        .map(|t| format!("team:{t}"))
+        .chain(orgs.into_iter().map(|o| format!("org:{o}")))
+        .collect()
 }
 
 fn str_at<'a>(v: &'a Value, pointer: &str) -> &'a str {
@@ -619,7 +696,9 @@ pub fn fetch() -> Vec<Section> {
     if config::get().demo {
         return crate::demo::sections();
     }
-    let data = match me().and_then(|who| gql(&query(&who), 60)) {
+    let cfg = config::get();
+    let scope = scope_terms(&cfg.scopes, &crate::bind::bindings(), &crate::bind::owners());
+    let data = match me().and_then(|who| gql(&query(&who, &scope), 60)) {
         Ok(d) => d,
         Err(e) => {
             let msg = e.0.trim();
@@ -631,6 +710,7 @@ pub fn fetch() -> Vec<Section> {
                 .to_string();
             let mut out: Vec<Section> = SECTIONS
                 .iter()
+                .filter(|(name, _)| *name != "TEAM" || !scope.is_empty())
                 .map(|(name, _)| Section {
                     name: name.to_string(),
                     prs: None,
@@ -660,6 +740,9 @@ pub fn sections_of(data: &Value) -> Vec<Section> {
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for (i, (name, _)) in SECTIONS.iter().enumerate() {
+        if *name == "TEAM" && data.get(format!("s{i}")).is_none() {
+            continue; // nothing toggled on, so it was never asked for
+        }
         let mut prs: Vec<Pr> = Vec::new();
         for n in data
             .pointer(&format!("/s{i}/nodes"))
@@ -1093,7 +1176,8 @@ mod tests {
 
     #[test]
     fn query_asks_for_the_three_sections_under_my_own_login() {
-        let s = query("me");
+        let s = query("me", "");
+        assert!(!s.contains("s3:"), "no TEAM search while nothing is toggled on");
         assert!(!s.contains("@me"));
         for (i, q) in ["author:me", "review-requested:me", "assignee:me"]
             .iter()
@@ -1102,6 +1186,36 @@ mod tests {
             assert!(s.contains(&format!("s{i}: search(query: \"is:pr is:open {q}\"")));
         }
         assert!(s.contains("headRefOid") && s.contains("latestReviews"));
+    }
+
+    #[test]
+    fn team_scope_expands_to_one_ored_search_and_skips_junk() {
+        let repos = HashMap::from([
+            ("acme/api".to_string(), "core".to_string()),
+            ("x/y".to_string(), "other".to_string()),
+        ]);
+        let owners = HashMap::from([("acme".to_string(), "core".to_string())]);
+        let on = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            scope_terms(
+                &on(&["team:core", "org:acme", "org:a\" b", "team:nope"]),
+                &repos,
+                &owners
+            ),
+            "org:acme repo:acme/api"
+        );
+        assert_eq!(scope_terms(&[], &repos, &owners), "");
+        let q = query("me", "org:acme");
+        assert!(q.contains("s3: search(query: \"is:pr is:open org:acme\""));
+        let secs = sections_of(
+            &json!({"s0": {"nodes": []}, "s1": {"nodes": []}, "s2": {"nodes": []}, "s3": {"nodes": [node("t", json!({}))]}}),
+        );
+        assert_eq!(
+            secs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["MINE", "REVIEW REQUESTED", "ASSIGNED", "TEAM"]
+        );
+        let opts = scope_options(&secs, &["core".to_string()], &repos, &owners);
+        assert_eq!(opts, ["team:core", "org:a", "org:acme", "org:x"]);
     }
 
     #[test]
