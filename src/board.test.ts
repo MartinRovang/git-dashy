@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
 
 let n = 0
 
@@ -404,6 +404,15 @@ describe('counts: what the status block reads', () => {
     expect(got.commented).toBe(1)
   })
 
+  it('does not count a TEAM or MERGED verdict twice beside its REVIEWED row', () => {
+    const d = state([
+      { name: 'MERGED', prs: [pr({ review: '✓ approved' })] },
+      { name: 'TEAM', prs: [pr({ review: '✓ approved' })] },
+      { name: 'REVIEWED', prs: [pr({ review: '✓ approved' })] },
+    ])
+    expect(Object.fromEntries(counts(d).map(([l, n]) => [l, n])).approved).toBe(1)
+  })
+
   it('is all zero on an empty board rather than throwing', () => {
     expect(counts(null).map(([, n]) => n)).toEqual([0, 0, 0, 0])
   })
@@ -461,6 +470,17 @@ describe('TEAM sources', () => {
     expect(v[1].prs[0].section).toBe('OTHER')
     const known = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', status: '✓ approved' })] }], on))
     expect(known.map((s) => s.name)).toEqual(['TEAM'])
+    // MERGED follows the same sources, lands at the bottom below OTHER, and starts folded
+    const m = secs(state([
+      { name: 'TEAM', prs: [pr({ repo: 'acme/b', title: 'new' })] },
+      { name: 'MERGED', prs: [pr({ repo: 'acme/m', title: 'shipped' }), pr({ repo: 'other/x', title: 'off' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+    ], on))
+    expect(m.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', []], ['REVIEWED', ['r']], ['OTHER', ['new']], ['MERGED', ['shipped']]])
+    expect(flat(m, [ALL], {}).map((p) => p.title)).toEqual([])
+    expect(flat(m, ['MERGED'], {}).map((p) => p.title)).toEqual(['shipped'])
+    // the graph resolves clicks with nothing folded
+    expect(flat(m, [ALL], {}, UNFOLDED).map((p) => p.title)).toEqual(['r', 'new', 'shipped'])
     // every source off: no empty TEAM left behind
     expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
   })
