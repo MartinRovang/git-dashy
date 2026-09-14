@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, pick, pickBucket, visible, walkBucket } from './board'
+import { api, copyText, errorText, post } from './api'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -38,6 +38,8 @@ export default function App() {
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // ponytail: session-only, like `expanded`; REVIEWED opens folded every launch
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
   const [video, setVideo] = useState(false)
@@ -61,34 +63,33 @@ export default function App() {
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
     setBucket(f.bucket)
+    // a node picked in the graph may sit in a folded section; open it so the board shows the selection
+    const at = current?.section || ''
+    if (v === 'board' && chosen && FOLDABLE.includes(at)) setUnfolded((u) => ({ ...u, [at]: true }))
   }
-  // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
-  // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
-  // webview's origin changes and its storage starts empty. A fresh launch therefore opens with
-  // everything unread, and reading is one keypress per row.
-  // ponytail: no server-side seen-map for that. See the `arrived` note in state.rs.
-  const [read, setRead] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('dashy-read') || '{}')
-    } catch {
-      return {}
-    }
-  })
+  // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
+  // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
+  // `marked` is what this page has read; once set it wins over the polled copy for the page's life.
+  const [marked, setMarked] = useState<Record<string, string> | null>(null)
+  const read = useMemo(() => marked || data?.settings.read || {}, [marked, data])
+  const saveRead = useRef(0)
 
-  const markRead = (prs: Row[]) =>
-    setRead((r) => {
-      if (prs.every((p) => r[p.url] === p.updatedAt)) return r
-      const next = { ...r, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
-      try {
-        localStorage.setItem('dashy-read', JSON.stringify(next))
-      } catch {
-        /* storage unavailable */
-      }
-      return next
-    })
+  const markRead = (prs: Row[]) => {
+    if (prs.every((p) => read[p.url] === p.updatedAt)) return
+    const next = remember(read, prs)
+    setMarked(next)
+    // debounced: walking the list with j would otherwise rewrite the settings file per row
+    clearTimeout(saveRead.current)
+    saveRead.current = window.setTimeout(() => {
+      post('/api/settings', { read: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`read marks not saved: ${t}`))))
+        .catch(() => setFlash('read marks not saved'))
+    }, 500)
+  }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
-  const rows = useMemo(() => flat(secs, bucket, expanded), [secs, bucket, expanded])
+  // folds are the board's: in the graph a node of a folded section is still clickable, so nothing is folded there
+  const rows = useMemo(() => flat(secs, bucket, expanded, view === 'graph' ? UNFOLDED : unfolded), [secs, bucket, expanded, unfolded, view])
   const { row: current, chosen } = pick(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''
@@ -333,7 +334,7 @@ export default function App() {
       }
       const got = await r.json()
       const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
-      const copy = () => void call('/api/copy', { text: got.text }, '✓ pre-review copied')
+      const copy = async () => setFlash(await copyText(got.text, 'the pre-review'))
       m.keys!.y = copy
       m.foot!.unshift(['y', 'copy', copy, 'go'])
       repaint()
@@ -345,8 +346,7 @@ export default function App() {
 
   async function copyUrl(p: Row) {
     if (!p) return
-    const out = await call('/api/copy', { url: p.url })
-    if (out) setFlash(out.tool === 'terminal' ? `sent ${p.url} to the terminal — if nothing landed, install wl-clipboard or xclip` : `✓ copied ${p.url} (via ${out.tool})`)
+    setFlash(await copyText(p.url, p.url))
   }
 
   async function addReviewer(p: Row) {
@@ -431,6 +431,7 @@ export default function App() {
     else if (key === 'i') picker('Refresh', o.interval.map(String), String(s.interval), (v) => every(+v), (v) => on('interval', +v))
     else if (key === 'x') picker('Voices', o.voice, s.voice || [], String, (v) => on('voice', v), true)
     else if (key === 'h') picker('Hunters', o.hunter, s.hunter || [], String, (v) => on('hunter', v), true)
+    else if (key === 'O') picker('Sources', o.scopes, s.scopes || [], String, (v) => on('scopes', v), true)
   }
 
   function handleKey(e: KeyboardEvent) {
@@ -472,7 +473,7 @@ export default function App() {
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
-    if ('mdexhsti'.includes(k)) return one(() => pickSetting(k))
+    if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))
@@ -567,7 +568,7 @@ export default function App() {
                 secs={secs}
                 sel={selUid}
                 read={read}
-                onReadAll={() => markRead(inBucket(secs, bucket).flatMap((s) => s.prs))}
+                onReadAll={() => markRead(onScreen(secs, bucket, unfolded))}
                 query={query}
                 onQuery={setQuery}
                 failing={failing}
@@ -578,6 +579,8 @@ export default function App() {
                 onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
+                unfolded={unfolded}
+                onFold={(name) => setUnfolded((f) => ({ ...f, [name]: !f[name] }))}
                 onSelect={(uid) => {
                   setSel(uid)
                   setAt(0)

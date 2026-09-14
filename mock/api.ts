@@ -215,7 +215,7 @@ function buildPayload() {
     running: S.rows.filter((r) => r.busy).length,
     update: '',
     settings: { ...S.settings },
-    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES },
+    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
     knowledge: {
       memory: '~/.prs_memory',
       store: '',
@@ -349,7 +349,7 @@ function postReview(b: Body) {
 
 function postSettings(b: Body) {
   const s = S.settings
-  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'hinted', 'keyhints']) {
+  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
     if (k in b) s[k] = b[k]
   }
   return json(200, { ok: true })

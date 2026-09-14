@@ -49,6 +49,7 @@ const KEYS: [string, [string, string][]][] = [
       ['t', 'History window'],
       ['i', 'Refresh interval'],
       ['D', 'Show or hide draft PRs'],
+      ['O', 'Sources for the TEAM section'],
     ],
   ],
   [

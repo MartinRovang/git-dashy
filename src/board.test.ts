@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, pick, pickBucket, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
 
 let n = 0
 
@@ -46,7 +46,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     update: '',
     // drafts on by default so a test that is not about drafts is not silently filtered
     settings: { drafts: true, ...settings },
-    options: { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] },
+    options: { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] },
     knowledge: { memory: '', store: '', teams: [], teamError: '', notes: [] },
     asks: [],
     notices: [],
@@ -160,6 +160,27 @@ describe('flat', () => {
     ]))
     expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['a', 'b', 'c'])
     expect(flat(v, ['ASSIGNED'], {}).map((r) => r.title)).toEqual(['b', 'c'])
+  })
+
+  it('counts only what is on screen: a folded section is not marked read', () => {
+    const v = secs(state([
+      { name: 'MINE', prs: [pr({ title: 'a' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+    ]))
+    expect(onScreen(v, [ALL]).map((r) => r.title)).toEqual(['a'])
+    expect(onScreen(v, [ALL], { REVIEWED: true }).map((r) => r.title)).toEqual(['a', 'r'])
+  })
+
+  it('folds REVIEWED and OTHER while they share the board, never under its own tab', () => {
+    const v = secs(state([
+      { name: 'MINE', prs: [pr({ title: 'a' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+      { name: 'OTHER', prs: [pr({ title: 'o' })] },
+    ]))
+    expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['a'])
+    expect(flat(v, [ALL], {}, { REVIEWED: true }).map((r) => r.title)).toEqual(['a', 'r'])
+    expect(flat(v, ['OTHER'], {}).map((r) => r.title)).toEqual(['o'])
+    expect(flat(v, ['REVIEWED'], {}).map((r) => r.title)).toEqual(['r'])
   })
 
   it('expands a row’s older runs only when that row is expanded', () => {
@@ -383,6 +404,15 @@ describe('counts: what the status block reads', () => {
     expect(got.commented).toBe(1)
   })
 
+  it('does not count a TEAM or MERGED verdict twice beside its REVIEWED row', () => {
+    const d = state([
+      { name: 'MERGED', prs: [pr({ review: '✓ approved' })] },
+      { name: 'TEAM', prs: [pr({ review: '✓ approved' })] },
+      { name: 'REVIEWED', prs: [pr({ review: '✓ approved' })] },
+    ])
+    expect(Object.fromEntries(counts(d).map(([l, n]) => [l, n])).approved).toBe(1)
+  })
+
   it('is all zero on an empty board rather than throwing', () => {
     expect(counts(null).map(([, n]) => n)).toEqual([0, 0, 0, 0])
   })
@@ -422,5 +452,44 @@ describe('visible: the CI filter', () => {
 
   it('on, only the failing one does — a repo with no checks is not failing', () => {
     expect(visible(d(), '', true, false)[0].prs.map((p) => p.title)).toEqual(['red'])
+  })
+})
+
+describe('TEAM sources', () => {
+  it('matches an org chip by owner, a team chip by binding, and hides an unbound repo', () => {
+    expect(inScope({ repo: 'Acme/api', team: '' }, ['org:acme'])).toBe(true)
+    expect(inScope({ repo: 'x/y', team: 'core' }, ['team:core'])).toBe(true)
+    // unbound under a team-bound owner: pick() gave it no team, so the team chip does not claim it
+    expect(inScope({ repo: 'acme/forgotten', team: '' }, ['team:core'])).toBe(false)
+  })
+
+  it('splits TEAM into logged verdicts and OTHER, and drops an empty OTHER', () => {
+    const on = { scopes: ['org:acme'] }
+    const v = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', title: 'seen', status: '✓ approved' }), pr({ repo: 'acme/b', title: 'new' }), pr({ repo: 'other/c', title: 'off' })] }], on))
+    expect(v.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', ['seen']], ['OTHER', ['new']]])
+    expect(v[1].prs[0].section).toBe('OTHER')
+    const known = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', status: '✓ approved' })] }], on))
+    expect(known.map((s) => s.name)).toEqual(['TEAM'])
+    // MERGED follows the same sources, lands at the bottom below OTHER, and starts folded
+    const m = secs(state([
+      { name: 'TEAM', prs: [pr({ repo: 'acme/b', title: 'new' })] },
+      { name: 'MERGED', prs: [pr({ repo: 'acme/m', title: 'shipped' }), pr({ repo: 'other/x', title: 'off' })] },
+      { name: 'REVIEWED', prs: [pr({ title: 'r' })] },
+    ], on))
+    expect(m.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', []], ['REVIEWED', ['r']], ['OTHER', ['new']], ['MERGED', ['shipped']]])
+    expect(flat(m, [ALL], {}).map((p) => p.title)).toEqual([])
+    expect(flat(m, ['MERGED'], {}).map((p) => p.title)).toEqual(['shipped'])
+    // the graph resolves clicks with nothing folded
+    expect(flat(m, [ALL], {}, UNFOLDED).map((p) => p.title)).toEqual(['r', 'new', 'shipped'])
+    // every source off: no empty TEAM left behind
+    expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
+  })
+})
+
+describe('remember', () => {
+  it('marks at the current updatedAt, keeps marks off the board, drops the oldest past the cap', () => {
+    const read = { a: '2026-01-01', b: '2026-03-01', c: '2026-02-01' }
+    expect(remember(read, [{ url: 'a', updatedAt: '2026-04-01' }])).toEqual({ a: '2026-04-01', b: '2026-03-01', c: '2026-02-01' })
+    expect(remember(read, [{ url: 'd', updatedAt: '2026-05-01' }], 2)).toEqual({ d: '2026-05-01', b: '2026-03-01' })
   })
 })

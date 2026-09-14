@@ -288,6 +288,9 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
 }
 
 /// Tag REVIEW REQUESTED rows already in the log and pushed to since as `prev`. Returns their urls.
+/// TEAM rows get the log's verdict too, from any log (a teammate's arrives by git pull): `status` when
+/// the head is the one reviewed, `prev` when it moved since. Never returned: auto must not review a PR
+/// that never asked me.
 /// ponytail: by head commit when both sides know it: updatedAt also moves on a comment, which is not a
 /// reason to review again. Timestamps only for entries logged before heads were.
 pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
@@ -302,10 +305,13 @@ pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    for p in sections
+    for (is_team, p) in sections
         .iter_mut()
-        .filter(|s| s.name == "REVIEW REQUESTED")
-        .flat_map(|s| s.prs.iter_mut().flatten())
+        .filter(|s| s.name == "REVIEW REQUESTED" || s.name == "TEAM")
+        .flat_map(|s| {
+            let is_team = s.name == "TEAM";
+            s.prs.iter_mut().flatten().map(move |p| (is_team, p))
+        })
     {
         let Some(e) = last.get(&p.url) else { continue };
         let changed = if !e.head.is_empty() {
@@ -320,8 +326,15 @@ pub fn mark_rereviews(sections: &mut [Section]) -> Vec<String> {
         } else {
             matches!((when(&p.updated_at), when(&e.at)), (Ok(a), Ok(b)) if a > b)
         };
-        if changed {
-            p.prev = format!("↻ re-review · was {}", config::status(&e.verdict).unwrap_or(""));
+        let was = config::status(&e.verdict).unwrap_or("");
+        if is_team {
+            if changed {
+                p.prev = format!("↻ changed since · was {was}");
+            } else {
+                p.status = was.to_string();
+            }
+        } else if changed {
+            p.prev = format!("↻ re-review · was {was}");
             out.push(p.url.clone());
         }
     }
@@ -572,6 +585,29 @@ mod tests {
         let rows = secs[0].prs.as_ref().unwrap();
         assert_eq!(rows[0].prev, "↻ re-review · was ✓ approved");
         assert!(rows[1].prev.is_empty() && rows[2].prev.is_empty());
+        // the same rows as TEAM: the verdict shows, but nothing is queued for auto
+        let rr = secs.remove(0);
+        secs.insert(
+            0,
+            Section {
+                name: "TEAM".into(),
+                ..rr
+            },
+        );
+        for p in secs[0].prs.iter_mut().flatten() {
+            p.prev.clear();
+        }
+        assert!(mark_rereviews(&mut secs).is_empty());
+        let rows = secs[0].prs.as_ref().unwrap();
+        assert_eq!(
+            (rows[0].prev.as_str(), rows[0].status.as_str()),
+            ("↻ changed since · was ✓ approved", "")
+        );
+        assert_eq!(
+            (rows[1].prev.as_str(), rows[1].status.as_str()),
+            ("", "~ commented")
+        );
+        assert!(rows[2].status.is_empty() && rows[2].prev.is_empty());
     }
 
     #[test]
