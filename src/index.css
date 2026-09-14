@@ -348,6 +348,8 @@
   .gnode.hub { cursor: grab; }
   .gnode.hub circle { filter: saturate(.4); }
   .gnode.hub text { fill: var(--dim); opacity: min(1, calc(var(--label) * 2)); font-size: calc(12px / var(--k)); }
+  /* WebKit lays out every drawn SVG text on each tick, so a title is drawn only where the code names it (on screen, few enough) or it is lit */
+  .gnode:not(.named, .sel, .lit, .hit) text { display: none; }
   .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }

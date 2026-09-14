@@ -9,17 +9,20 @@ import { drag } from 'd3-drag'
 import type { Simulation, SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 import { select } from 'd3-selection'
-import { zoom } from 'd3-zoom'
+import { zoom, zoomIdentity } from 'd3-zoom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
 type Hub = 'repo' | 'author'
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; galaxy: string }
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; galaxy: string; named?: boolean }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
+
+// most PR titles drawn at once: past this many on screen they are unreadable and SVG text is what makes WebKit crawl
+const LABELS = 120
 
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 // a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
@@ -101,6 +104,7 @@ export function Graph({ secs, sel, onSelect }: {
   const graph = useRef<{ nodes: Node[]; links: Link[] }>({ nodes: [], links: [] })
   // highlights rather than filters: dropping nodes would re-run the layout on every keystroke
   const [query, setQuery] = useState('')
+  const view = useRef(zoomIdentity)
   const latest = useRef({ rows, sel, onSelect, query, by })
   latest.current = { rows, sel, onSelect, query, by }
 
@@ -167,6 +171,25 @@ export function Graph({ secs, sel, onSelect }: {
         return tagOf(byUrl.get(n.id)!).breaking ? 'var(--red)' : fg(n)
       })
     sim.current?.force('collide', forceCollide<Node>((n) => radius(n) + 3))
+  }
+
+  // Titles only for nodes on screen, and PR titles only while few enough are. Runs every tick, so it touches
+  // the DOM only for nodes whose answer changed.
+  const cull = () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const { k, x, y } = view.current
+    const w = svg.clientWidth / 2
+    const h = svg.clientHeight / 2
+    const shown = (n: Node) => Math.abs(n.x! * k + x) < w && Math.abs(n.y! * k + y) < h
+    const prs = graph.current.nodes.filter((n) => n.kind === 'pr' && shown(n)).length
+    select(svg)
+      .selectAll<SVGGElement, Node>('g.gnode')
+      .each(function (n) {
+        // at k <= .8 --label hides every title anyway
+        const named = k > 0.8 && shown(n) && (n.kind !== 'pr' || prs <= LABELS)
+        if (named !== n.named) this.classList.toggle('named', (n.named = named))
+      })
   }
 
   // Structure: rebuilt when the set of PRs changes. Nodes that survive keep their position.
@@ -301,6 +324,7 @@ export function Graph({ secs, sel, onSelect }: {
           .attr('x2', (l) => l.target.x!)
           .attr('y2', (l) => l.target.y!)
         node.attr('transform', (n) => `translate(${n.x},${n.y})`)
+        cull()
       })
     paint()
     // a regroup sends every PR to a new hub: full heat, or they stall halfway there
@@ -335,7 +359,10 @@ export function Graph({ secs, sel, onSelect }: {
     const svg = svgRef.current
     if (!svg) return
     const root = select(svg)
-    const fit = () => root.attr('viewBox', `${-svg.clientWidth / 2} ${-svg.clientHeight / 2} ${svg.clientWidth} ${svg.clientHeight}`)
+    const fit = () => {
+      root.attr('viewBox', `${-svg.clientWidth / 2} ${-svg.clientHeight / 2} ${svg.clientWidth} ${svg.clientHeight}`)
+      cull()
+    }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(svg)
@@ -343,6 +370,8 @@ export function Graph({ secs, sel, onSelect }: {
       .scaleExtent([0.25, 4])
       .on('zoom', ({ transform }) => {
         root.select('g.world').attr('transform', transform.toString())
+        view.current = transform
+        cull()
         svg.style.setProperty('--label', String(Math.min(1, Math.max(0, (transform.k - 0.8) * 2))))
         svg.style.setProperty('--k', String(transform.k))
       })
