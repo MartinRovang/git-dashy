@@ -199,7 +199,6 @@ fn ask_claude(
     // child an environment built from scratch: PATH and the token still arrive.
     cmd.current_dir(&here)
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let out = run(cmd, prompt, Duration::from_secs(timeout_secs));
@@ -218,7 +217,10 @@ fn ask_claude(
 
 /// stdout of a finished, successful command; Err on a non-zero exit or once `timeout` passes (killed).
 fn run(mut cmd: Command, input: &str, timeout: Duration) -> Result<String> {
-    let mut child = cmd.spawn().context("claude: could not start")?;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("claude: could not start")?;
     let mut stdin = child.stdin.take().expect("piped");
     let input = input.to_string();
     // a thread, so a prompt bigger than the pipe buffer cannot block on a child that is not reading yet;
@@ -514,16 +516,12 @@ mod tests {
     #[test]
     fn run_kills_a_command_that_outlives_its_timeout() {
         let mut cmd = Command::new("sleep");
-        cmd.arg("5")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.arg("5").stdout(Stdio::piped()).stderr(Stdio::piped());
         let started = Instant::now();
         assert!(run(cmd, "", Duration::from_millis(200)).is_err());
         assert!(started.elapsed() < Duration::from_secs(3));
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "echo out; echo err >&2; exit 3"])
-            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         assert!(run(cmd, "", Duration::from_secs(5))
@@ -532,11 +530,16 @@ mod tests {
             .contains("err"));
         // the prompt arrives on stdin, whole, past both argv's 128 KB cap and the pipe buffer
         let mut cmd = Command::new("wc");
-        cmd.arg("-c")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.arg("-c").stdout(Stdio::piped()).stderr(Stdio::piped());
         let big = "x".repeat(200_000);
         assert_eq!(run(cmd, &big, Duration::from_secs(5)).unwrap().trim(), "200000");
+        // a child that exits without reading: the writer gets EPIPE, run neither hangs nor panics
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exit 0"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let started = Instant::now();
+        assert_eq!(run(cmd, &big, Duration::from_secs(5)).unwrap(), "");
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 }

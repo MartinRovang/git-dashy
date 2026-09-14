@@ -432,10 +432,11 @@ impl State {
             } else {
                 t0
             };
-            // ponytail: `base + interval` is evaluated per slice, and `interval` is the reason.
-            // Hoisting it into a variable above the loop is the natural way to write this and silently
-            // breaks `i`: the settings screen changes the interval and does NOT wake the loop, so
-            // dropping 30m to 1m waited out the remaining 29 instead of refetching now.
+            let ticked = now(); // the gap below counts from here: a failed tick's base is its START
+                                // ponytail: `base + interval` is evaluated per slice, and `interval` is the reason.
+                                // Hoisting it into a variable above the loop is the natural way to write this and silently
+                                // breaks `i`: the settings screen changes the interval and does NOT wake the loop, so
+                                // dropping 30m to 1m waited out the remaining 29 instead of refetching now.
             while !wake.wait(Duration::from_secs(1)) && now() < base + config::get().interval as f64 {
                 // 1s slices, so a change to either side takes effect within the second
             }
@@ -443,8 +444,9 @@ impl State {
             // mirrors and a fetch. Auto-review finishing ten PRs ran ten of them back to back (#73). Holding
             // a wake until WAKE_GAP after the last tick lands a burst as one. Ceiling: `f` right after a
             // tick waits out the rest of the gap; a fetch-only wake is the upgrade if that is felt.
-            while now() < base + WAKE_GAP {
-                std::thread::sleep(Duration::from_millis(250));
+            let hold = ticked + WAKE_GAP - now();
+            if hold > 0.0 {
+                std::thread::sleep(Duration::from_secs_f64(hold));
             }
             wake.clear();
         }
