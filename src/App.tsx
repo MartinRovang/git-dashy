@@ -13,12 +13,11 @@ import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, every, span, tone } from './tokens'
 import type { Code, Detail, Row, StateData } from './types'
-import { useNow, useStatePoll } from './usePoll'
+import { useStatePoll } from './usePoll'
 
 /** The dashboard: one poll of /api/state, the queue derived from it, and the pane's second request. */
 export default function App() {
   const [data, reload] = useStatePoll(2000)
-  const now = useNow(1000)
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
@@ -60,6 +59,7 @@ export default function App() {
 
   const secs = useMemo(() => visible(data, query, failing), [data, query, failing])
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
+  const graphSecs = useMemo(() => secs.filter((s) => !folded[s.name]), [secs, folded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
   const current = selected(rows, sel)
   const selUid = current?.uid || ''
@@ -478,7 +478,7 @@ export default function App() {
 
   return (
     <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} now={now} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} total={total} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -496,7 +496,7 @@ export default function App() {
                 <Graph
                   // folded sections are left out: selected() only searches unfolded rows, so a node there
                   // would select a uid it cannot find and open rows[0] instead
-                  secs={secs.filter((s) => !folded[s.name])}
+                  secs={graphSecs}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)
@@ -508,7 +508,6 @@ export default function App() {
               <Queue
                 data={data}
                 secs={secs}
-                now={now}
                 sel={selUid}
                 read={read}
                 query={query}

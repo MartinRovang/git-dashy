@@ -1,4 +1,5 @@
 import type { Row, StateData } from '../types'
+import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
 import { settings } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
@@ -6,7 +7,6 @@ import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, to
 type Props = {
   data: StateData | null
   secs: VisSection[]
-  now: number
   sel: string
   read: Record<string, string>
   query: string
@@ -115,6 +115,7 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
+  const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
 
   if (d && !d.fetchedAt && !d.sections?.length) {
@@ -125,7 +126,7 @@ export function Queue(p: Props) {
             <img src="/head.png" alt="" />
           </div>
           <div style={{ color: 'var(--amber)', fontWeight: 600 }}>
-            {SPINNER[Math.floor(p.now / 125) % SPINNER.length]} fetching pull requests…
+            {SPINNER[Math.floor(now / 125) % SPINNER.length]} fetching pull requests…
           </div>
           <div className="mono" style={{ fontSize: 11 }}>
             created by

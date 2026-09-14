@@ -1,9 +1,9 @@
 import { Pinata } from './Pinata'
+import { useNow } from '../usePoll'
 import type { StateData } from '../types'
 
 type Props = {
   data: StateData | null
-  now: number
   total: number
   onRefresh: () => void
   onAuto: () => void
@@ -15,7 +15,8 @@ type Props = {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onLogo, view, onView }: Props) {
+export function TopBar({ data: d, total, onRefresh, onAuto, onMenu, onUpdate, onLogo, view, onView }: Props) {
+  const now = useNow(1000)
   const running = d?.running || 0
   const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
   return (
