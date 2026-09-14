@@ -3,6 +3,7 @@
 //!
 //! Module map mirrors the Python it replaced (dashy/core/*.py): each file here names its source.
 
+pub mod autorev;
 pub mod bind;
 pub mod cli;
 pub mod config;

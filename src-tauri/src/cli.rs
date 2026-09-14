@@ -12,7 +12,8 @@ use serde_json::Value;
 use crate::config::{self, VERSION};
 use crate::types::{Pr, Repository};
 use crate::{
-    bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge, memory,
+    autorev, bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge,
+    memory,
 };
 use crate::{mirror, review as review_mod, team};
 
@@ -40,6 +41,7 @@ const COMMANDS: &[&str] = &[
     "setup",
     "init",
     "bind",
+    "auto",
     "friction",
     "api",
     "drafts",
@@ -144,6 +146,16 @@ pub enum Command {
         forget: bool,
         #[arg(long)]
         owner: Option<String>,
+        #[arg(long)]
+        list: bool,
+    },
+    /// Which repos auto-review is armed for. No arguments reports.
+    Auto {
+        repo: Option<String>,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        off: bool,
         #[arg(long)]
         list: bool,
     },
@@ -608,6 +620,81 @@ fn reads(repo: &str, label: &str) -> String {
         "  reviews of {label} read: {whose}{}",
         if text.is_empty() { " (nothing to read)" } else { "" }
     )
+}
+
+/// Which repos auto-review is armed for.
+///
+/// ponytail: a bare `gitdashy auto` REPORTS, the same rule `bind` has. Naming no repo and asking for
+/// no change is a question, and answering it by arming whatever directory you are standing in is a
+/// write nobody asked for.
+fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: bool) -> i32 {
+    let on = !off;
+    let show = || {
+        let rows = autorev::scope().listed();
+        if rows.is_empty() {
+            println!("  auto-review covers every repo on the board — name one to narrow it");
+            return;
+        }
+        println!(
+            "{}",
+            rows.iter()
+                .map(|(t, v)| format!(
+                    "  {t:<36}  →  {}",
+                    if *v { "auto-review" } else { "not auto-reviewed" }
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        println!("  every other repo is left alone while anything is armed");
+    };
+    if let Some(owner) = owner.filter(|o| !o.is_empty()) {
+        let err = autorev::set_owner(&owner, on);
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+        println!(
+            "gitdashy: {}/* {}  (a repo of its own still overrides it)",
+            bind_mod::owner_key(&owner),
+            if on {
+                "is auto-reviewed"
+            } else {
+                "is not auto-reviewed"
+            }
+        );
+        return 0;
+    }
+    let positional = positional.filter(|p| !p.is_empty());
+    // ponytail: a positional we cannot read is a TYPO, not an absence — the same trap bind() names.
+    // Falling through to this directory's origin would arm the repo you happen to be standing in and
+    // report success with the wrong name.
+    let named = match &positional {
+        Some(p) if p.contains('/') => p.clone(),
+        Some(typo) => {
+            return fail(format!(
+                "gitdashy: {} is not owner/name — auto takes a full slug, or --owner OWNER",
+                pyrepr(typo)
+            ))
+        }
+        None => String::new(),
+    };
+    if list || named.is_empty() {
+        show();
+        return 0;
+    }
+    let err = autorev::set(&named, on);
+    if !err.is_empty() {
+        return fail(format!("gitdashy: {err}"));
+    }
+    println!(
+        "gitdashy: {named} {}",
+        if on {
+            "is auto-reviewed"
+        } else {
+            "is not auto-reviewed"
+        }
+    );
+    show();
+    0
 }
 
 /// Bind a repo to a team, so reviews of it are told that team's brief and no other.
@@ -1412,6 +1499,12 @@ pub fn run(args: Vec<String>) -> i32 {
             owner,
             list,
         }) => bind(repo, team, forget, owner, list),
+        Some(Command::Auto {
+            repo,
+            owner,
+            off,
+            list,
+        }) => auto_cmd(repo, owner, off, list),
         Some(Command::Friction {
             claude_hook,
             repo,

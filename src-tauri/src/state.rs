@@ -10,7 +10,8 @@ use log::{debug, error, info};
 
 use crate::types::{Detail, DiffFile, Finding, Mark, Pr, Section};
 use crate::{
-    config, diff, github, heartbeat, install, log as review_log, memory, mirror, review, team, update,
+    autorev, config, diff, github, heartbeat, install, log as review_log, memory, mirror, review, team,
+    update,
 };
 
 /// The desktop popup's icon. Python pointed notify-send at dashy/notify.png on disk; the binary
@@ -137,6 +138,25 @@ impl Inner {
             .cloned()
             .collect()
     }
+}
+
+/// The review-requested PRs auto should start on this tick.
+///
+/// Three conditions, and each has cost a bug: new since auto was switched on (or it reviews the
+/// backlog you were already ignoring), no verdict and none in flight (or it reviews the same head
+/// twice), and in a repo auto is armed for (or one `a` reviews every repo the token can see).
+///
+/// ponytail: a function because the loop it came from is inside tick(), which fetches. Nothing could
+/// drive it, and `armed` is the third condition to be added there — the first two were never tested.
+fn auto_starts(
+    rr: Vec<Pr>,
+    baseline: &HashSet<String>,
+    reviews: &HashMap<String, String>,
+    armed: &dyn Fn(&str) -> bool,
+) -> Vec<Pr> {
+    rr.into_iter()
+        .filter(|p| !baseline.contains(&p.url) && !reviews.contains_key(&p.url) && armed(p.repo()))
+        .collect()
 }
 
 /// Drop every entry the predicate names, so one PR keeps one entry, not one per push or review.
@@ -664,11 +684,13 @@ impl State {
             }
             inner.pending = inner.pending_rr();
             match (&inner.auto, &inner.auto_baseline) {
-                (true, Some(baseline)) => inner
-                    .rr_prs()
-                    .into_iter()
-                    .filter(|p| !baseline.contains(&p.url) && !inner.reviews.contains_key(&p.url))
-                    .collect(),
+                (true, Some(baseline)) => {
+                    // ponytail: one read of the store for the whole tick. Asking per row would
+                    // reopen the file once per PR, and two rows in one tick could get different
+                    // answers if a click landed between them.
+                    let armed = autorev::resolver();
+                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &*armed)
+                }
                 _ => Vec::new(),
             }
         };
@@ -831,6 +853,57 @@ mod tests {
         let mut gone = pr("u");
         gone.author = None;
         assert!(notify_cmd(&gone, "ASSIGNED").is_none()); // a deleted account; notify() swallows this
+    }
+
+    /// A PR in a named repo, so the armed-scope leg can be aimed.
+    fn pr_in(url: &str, repo: &str) -> Pr {
+        let mut p = pr(url);
+        p.repository.name_with_owner = repo.into();
+        p.repository.name = repo.split('/').next_back().unwrap_or(repo).into();
+        p
+    }
+
+    fn started(
+        rr: Vec<Pr>,
+        baseline: &[&str],
+        reviewed: &[&str],
+        armed: &dyn Fn(&str) -> bool,
+    ) -> Vec<String> {
+        let b: HashSet<String> = baseline.iter().map(|s| s.to_string()).collect();
+        let r: HashMap<String, String> = reviewed
+            .iter()
+            .map(|s| (s.to_string(), "✓".to_string()))
+            .collect();
+        auto_starts(rr, &b, &r, armed)
+            .into_iter()
+            .map(|p| p.url)
+            .collect()
+    }
+
+    #[test]
+    fn auto_starts_what_is_new_and_unreviewed_in_an_armed_repo() {
+        let every = |_: &str| true;
+        let rr = || vec![pr_in("new", "a/b"), pr_in("old", "a/b"), pr_in("done", "a/b")];
+        assert_eq!(started(rr(), &[], &[], &every), ["new", "old", "done"]);
+        assert_eq!(started(rr(), &["old"], &[], &every), ["new", "done"]);
+        assert_eq!(started(rr(), &["old"], &["done"], &every), ["new"]);
+    }
+
+    /// The whole point of the store: one `a` must not review every repo the token can see.
+    #[test]
+    fn auto_skips_a_repo_it_is_not_armed_for() {
+        let only_b = |repo: &str| repo == "a/b";
+        let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
+        assert_eq!(started(rr, &[], &[], &only_b), ["mine"]);
+    }
+
+    #[test]
+    fn auto_starts_nothing_when_nothing_is_armed() {
+        let none = |_: &str| false;
+        assert_eq!(
+            started(vec![pr_in("mine", "a/b")], &[], &[], &none),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

@@ -19,7 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update,
+    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, team,
+    textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -173,6 +174,8 @@ pub fn payload(state: &State) -> Value {
         "fetching": fetching,
         "error": error,
         "auto": auto,
+        // where auto is armed: [] means every repo, so the rail can say which of the two it is
+        "autoScope": autorev::scope().listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -891,6 +894,19 @@ fn post_review(state: &State, body: &Body) -> Out {
 }
 
 fn post_auto(state: &State, body: &Body) -> Out {
+    // arming one repo or owner is a scope change, not the master switch; `repo` says which
+    let repo = text(body, "repo");
+    if !repo.is_empty() {
+        let on = truthy(body, "on");
+        let err = if truthy(body, "owner") {
+            autorev::set_owner(&owner_of(&repo), on)
+        } else {
+            autorev::set(&repo, on)
+        };
+        fail_if(err)?;
+        state.wake();
+        return Ok(json!({"ok": true}));
+    }
     // ponytail: include_existing only when the page says so: it asks first, with the count, as `a` did.
     state.set_auto(truthy(body, "on"), truthy(body, "includeExisting"));
     Ok(json!({"ok": true}))
@@ -1957,6 +1973,56 @@ mod tests {
             )
             .0,
             404
+        );
+    }
+
+    /// The route carries two different jobs on one path: the master switch, and the per-repo scope.
+    /// A body with no `repo` must still be the switch, or turning auto on would arm nothing.
+    #[test]
+    fn the_auto_route_arms_a_repo_without_touching_the_switch() {
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.autorev = d.path().join("autorev"));
+        let (base, token, state) = served();
+
+        post(&format!("{base}/api/auto"), json!({"on": true}), &token);
+        assert!(state.lock().auto, "no repo named, so this is the master switch");
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoScope"],
+            json!([])
+        );
+
+        post(&format!("{base}/api/auto"), json!({"on": false}), &token);
+        assert!(!state.lock().auto);
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "on": true}),
+            &token,
+        );
+        assert!(!state.lock().auto, "arming a repo must not flip the switch");
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoScope"],
+            json!([{"target": "acme/api", "on": true}])
+        );
+        assert!(autorev::armed("acme/api") && !autorev::armed("other/thing"));
+
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "owner": true, "on": true}),
+            &token,
+        );
+        assert!(
+            autorev::armed("acme/web"),
+            "the owner rule reaches a sibling repo"
+        );
+
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "notes", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("notes is not an owner/name"))
         );
     }
 
