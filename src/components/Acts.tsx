@@ -26,6 +26,7 @@ function acts(p: Row, d: Detail | null): Act[] {
       'pre',
     ])
   if (d?.review) out.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
+  out.push(['2', '', 'View the code', 'diff and marks', false, 'code'])
   out.push(['o', '', 'Open in browser', 'github', false, 'open'])
   out.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
   if (mine) out.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])

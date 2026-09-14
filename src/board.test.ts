@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, flat, inBucket, selected, visible } from './board'
+import { ALL, buckets, flat, inBucket, pickBucket, selected, visible } from './board'
 
-// A PR with every field the filters read, so a test can change one and mean it.
+let n = 0
+
+// A PR with every field the filters read, so a test can change one and mean it. The url counts up
+// rather than being random, so two boards built the same way really are equal.
 function pr(over: Partial<Pr> = {}): Pr {
   return {
-    url: `https://x/${Math.random()}`,
+    url: `https://x/${++n}`,
     number: 1,
     title: 'a title',
     repo: 'acme/web',
@@ -85,16 +88,65 @@ describe('inBucket', () => {
     ]))
 
   it('ALL is every section', () => {
-    expect(inBucket(v(), ALL).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
+    expect(inBucket(v(), [ALL]).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
   })
 
   it('a named bucket is that section alone', () => {
-    expect(inBucket(v(), 'ASSIGNED').map((s) => s.name)).toEqual(['ASSIGNED'])
+    expect(inBucket(v(), ['ASSIGNED']).map((s) => s.name)).toEqual(['ASSIGNED'])
   })
 
   // the documented anti-fallback: a bucket the server no longer sends must NOT widen to everything
   it('an unknown bucket yields nothing rather than falling back to ALL', () => {
-    expect(inBucket(v(), 'RETIRED')).toEqual([])
+    expect(inBucket(v(), ['RETIRED'])).toEqual([])
+  })
+
+  it('holds more than one queue at a time', () => {
+    expect(inBucket(v(), ['ASSIGNED', 'MINE']).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
+  })
+
+  // the order is the server's, so adding a tab never reshuffles the rows already on screen
+  it('keeps section order whatever order the tabs were picked in', () => {
+    const board = v()
+    expect(inBucket(board, ['ASSIGNED', 'MINE'])).toEqual(inBucket(board, ['MINE', 'ASSIGNED']))
+  })
+
+  it('ALL alongside a section still means every section', () => {
+    expect(inBucket(v(), [ALL, 'MINE']).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
+  })
+
+  it('an empty pick is every section, not none', () => {
+    expect(inBucket(v(), []).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
+  })
+
+  it('an unknown name alongside a real one contributes nothing', () => {
+    expect(inBucket(v(), ['RETIRED', 'MINE']).map((s) => s.name)).toEqual(['MINE'])
+  })
+})
+
+describe('pickBucket', () => {
+  it('All replaces whatever was picked', () => {
+    expect(pickBucket(['MINE', 'ASSIGNED'], ALL)).toEqual([ALL])
+  })
+
+  it('a section clicked from All replaces All rather than joining it', () => {
+    expect(pickBucket([ALL], 'MINE')).toEqual(['MINE'])
+  })
+
+  it('a second section stacks onto the first', () => {
+    expect(pickBucket(['MINE'], 'ASSIGNED')).toEqual(['MINE', 'ASSIGNED'])
+  })
+
+  it('clicking a picked section takes it out', () => {
+    expect(pickBucket(['MINE', 'ASSIGNED'], 'MINE')).toEqual(['ASSIGNED'])
+  })
+
+  it('taking the last one out falls back to All rather than leaving an empty board', () => {
+    expect(pickBucket(['MINE'], 'MINE')).toEqual([ALL])
+  })
+
+  it('never repeats a section', () => {
+    expect(pickBucket(['MINE'], 'MINE').filter((b) => b === 'MINE')).toEqual([])
+    expect(pickBucket(['MINE', 'ASSIGNED'], 'ASSIGNED')).toEqual(['MINE'])
   })
 })
 
@@ -104,16 +156,16 @@ describe('flat', () => {
       { name: 'MINE', prs: [pr({ title: 'a' })] },
       { name: 'ASSIGNED', prs: [pr({ title: 'b' }), pr({ title: 'c' })] },
     ]))
-    expect(flat(v, ALL, {}).map((r) => r.title)).toEqual(['a', 'b', 'c'])
-    expect(flat(v, 'ASSIGNED', {}).map((r) => r.title)).toEqual(['b', 'c'])
+    expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['a', 'b', 'c'])
+    expect(flat(v, ['ASSIGNED'], {}).map((r) => r.title)).toEqual(['b', 'c'])
   })
 
   it('expands a row’s older runs only when that row is expanded', () => {
     const url = 'https://x/42'
     const d = state([{ name: 'REVIEWED', prs: [pr({ url, title: 'new' }), pr({ url, title: 'old' })] }])
     const v = secs(d)
-    expect(flat(v, ALL, {}).map((r) => r.title)).toEqual(['new'])
-    expect(flat(v, ALL, { [url]: true }).map((r) => r.title)).toEqual(['new', 'old'])
+    expect(flat(v, [ALL], {}).map((r) => r.title)).toEqual(['new'])
+    expect(flat(v, [ALL], { [url]: true }).map((r) => r.title)).toEqual(['new', 'old'])
   })
 
   it('still expands older runs inside a named bucket, not only in ALL', () => {
@@ -122,7 +174,7 @@ describe('flat', () => {
       { name: 'MINE', prs: [pr()] },
       { name: 'REVIEWED', prs: [pr({ url, title: 'new' }), pr({ url, title: 'old' })] },
     ]))
-    expect(flat(v, 'REVIEWED', { [url]: true }).map((r) => r.title)).toEqual(['new', 'old'])
+    expect(flat(v, ['REVIEWED'], { [url]: true }).map((r) => r.title)).toEqual(['new', 'old'])
   })
 })
 
@@ -161,7 +213,7 @@ describe('visible: the drafts rules compose', () => {
 
 describe('selected', () => {
   it('falls back to the first row when the selection is gone', () => {
-    const rows = flat(secs(state([{ name: 'MINE', prs: [pr({ title: 'a' }), pr({ title: 'b' })] }])), ALL, {})
+    const rows = flat(secs(state([{ name: 'MINE', prs: [pr({ title: 'a' }), pr({ title: 'b' })] }])), [ALL], {})
     expect(selected(rows, rows[1].uid)?.title).toBe('b')
     expect(selected(rows, 'a uid from a board that moved')?.title).toBe('a')
     expect(selected([], 'anything')).toBeNull()

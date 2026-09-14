@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, groups, inBucket, selected, visible } from './board'
+import { ALL, buckets, flat, groups, inBucket, pickBucket, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { shortcuts } from './components/Shortcuts'
@@ -25,7 +25,7 @@ export default function App() {
   const [failing, setFailing] = useState(false)
   // ponytail: which bucket the tabs are on, not which sections are folded. The board shows one queue
   // at a time now, so "what is on screen" is one string rather than a map of what is hidden.
-  const [bucket, setBucket] = useState<string>(ALL)
+  const [bucket, setBucket] = useState<string[]>([ALL])
   // ponytail: a FILTER over the bucket, not the `drafts` setting. That setting decides whether drafts
   // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
   // counts zero and goes flat, which is the honest state rather than a contradiction.
@@ -388,6 +388,7 @@ export default function App() {
         if (detail?.url === p.url && detail.review)
           viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
+      code: openCode,
       open: () => void call('/api/open', { url: p.url }),
       copy: () => void copyUrl(p),
       reviewer: () => void addReviewer(p),
@@ -494,8 +495,9 @@ export default function App() {
       return one(() =>
         setBucket((cur) => {
           const keys = buckets(secs).map((b) => b.key)
-          const i = Math.max(0, keys.indexOf(cur))
-          return keys[(i + (k === ']' ? 1 : keys.length - 1)) % keys.length]
+          // the brackets walk one tab at a time and replace the pick; two at once is a click
+          const i = Math.max(0, keys.indexOf(cur.length === 1 ? cur[0] : ALL))
+          return [keys[(i + (k === ']' ? 1 : keys.length - 1)) % keys.length]]
         }),
       )
   }
@@ -571,7 +573,7 @@ export default function App() {
                 drafts={onlyDrafts}
                 onDrafts={() => setOnlyDrafts((v) => !v)}
                 bucket={bucket}
-                onBucket={setBucket}
+                onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
                 onExpand={(u) => setExpanded((e) => ({ ...e, [u]: !e[u] }))}
                 onSelect={(uid) => {

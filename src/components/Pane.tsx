@@ -53,27 +53,21 @@ export function Pane({
     <div className="pane">
       <div className="grip" data-grip="pane" />
       <div className="bar">
-        <span className="lab">SELECTED PR</span>
-        <span className="tab" onClick={onCode}>
-          <kbd className="hint">2</kbd>view code
+        <span className="lab">SELECTED</span>
+        <span className="branch mono" title={d?.branch || ''}>
+          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : `#${p.number}`}
         </span>
-        {/* ponytail: the actions were seven rows at the foot of a scrolling pane, so the one you
-            wanted was usually below the fold. In the header they are one click from anywhere in it,
-            and the same list answers a right-click on a row in the queue. */}
+        <div style={{ flex: 1 }} />
         <button
           className="tab opt"
           aria-haspopup="menu"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect()
-            onOptions({ x: r.left, y: r.bottom + 6 })
+            onOptions({ x: r.right, y: r.bottom + 6 })
           }}
         >
           options <span className="car">▾</span>
         </button>
-        <div style={{ flex: 1 }} />
-        <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : ''}
-        </div>
         <span className="ib" title="hide the pane (⏎)" onClick={onClose}>
           ×
         </span>

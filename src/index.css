@@ -590,3 +590,8 @@
                       border: 1px solid color-mix(in srgb, var(--pink) 50%, transparent);
                       background: color-mix(in srgb, var(--pink) 12%, transparent);
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* the pane header: what is selected, then one button for everything you can do to it */
+  .pane > .bar .lab { flex-shrink: 0; }
+  .pane > .bar .branch { font-size: 11.5px; color: var(--ink3); min-width: 0;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

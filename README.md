@@ -67,9 +67,10 @@ gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 ```
 
 The list is a table — `age · repo · pr · title · author · state` — and above it one tab per queue:
-`all`, `mine`, `review requested`, `assigned`, `reviewed`, each with its count. `all` stacks them under
-their own headers; any other tab shows that queue alone. Beside the tabs, `CI failing` and `Drafts` narrow
-whatever the tab is showing. `[` and `]` walk the tabs. Beside it, `⏎`
+`all`, `mine`, `review requested`, `assigned`, `reviewed`, each with its count. **Tabs stack**: click a
+second one and both queues show, each under its own header; clicking the last one off falls back to
+`all`. Beside the tabs, `CI failing` and `Drafts` narrow whatever the tabs are showing. `[` and `]` walk
+one tab at a time and replace the pick. Beside it, `⏎`
 opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
 found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
 
@@ -105,7 +106,7 @@ button somewhere on the page.
 |-----|------|
 | `j` / `k`, `↑` / `↓` | move |
 | `o` | open the PR in your browser |
-| right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens |
+| right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens, `2` `Tab` among them |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |

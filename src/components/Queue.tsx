@@ -16,7 +16,7 @@ type Props = {
   onFailing: () => void
   drafts: boolean
   onDrafts: () => void
-  bucket: string
+  bucket: string[]
   onBucket: (name: string) => void
   expanded: Record<string, boolean>
   onExpand: (url: string) => void
@@ -127,7 +127,8 @@ export function Queue(p: Props) {
   const d = p.data
   // running: not read here, but a running row's elapsed label (rowState) only moves when this re-renders
   const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
-  const shown = inBucket(p.secs, p.bucket).flatMap((s) => s.prs)
+  const shownSecs = inBucket(p.secs, p.bucket)
+  const shown = shownSecs.flatMap((s) => s.prs)
   const failing = shown.filter((x) => tone(x.checks) === 'changes').length
   // ponytail: counted over the BUCKET, not the whole board. The chip sits beside the tabs and filters
   // what they show, so a count of rows you are not looking at is a number that cannot be acted on.
@@ -166,7 +167,7 @@ export function Queue(p: Props) {
               key={b.key}
               className="tab"
               role="tab"
-              aria-selected={b.key === p.bucket}
+              aria-selected={p.bucket.includes(b.key) || (b.key === ALL && !p.bucket.length)}
               onClick={() => p.onBucket(b.key)}
             >
               {b.label}
@@ -217,7 +218,7 @@ export function Queue(p: Props) {
         </div>
       </div>
       <div className="list scroll">
-        {inBucket(p.secs, p.bucket).map((s) => {
+        {shownSecs.map((s) => {
           const labels = new Set(s.prs.map((x) => x.team || ''))
           const rows =
             labels.size > 1
@@ -228,9 +229,10 @@ export function Queue(p: Props) {
           let seen: string | null = null
           return (
             <div key={s.name}>
-              {/* ponytail: the section name still appears in the ALL bucket, because there it is the
-                  only thing saying which queue a row came from. Inside one bucket the tab says it. */}
-              {p.bucket === ALL ? (
+              {/* ponytail: the section name appears whenever more than one queue is on screen,
+                  because there it is the only thing saying which one a row came from. With a single
+                  tab picked, the tab says it. */}
+              {shownSecs.length > 1 ? (
                 <div className="grp">
                   <span style={{ color: SECTION_TONE[s.name] || 'var(--dim)' }}>{s.name}</span>
                   <span className="hint">

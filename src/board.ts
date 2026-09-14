@@ -52,17 +52,27 @@ export function buckets(secs: VisSection[]): { key: string; label: string; n: nu
   ]
 }
 
-/** The sections one bucket shows. ALL is every section; anything else is the one that matches.
+/** The sections the picked buckets show. More than one tab can be on at a time; ALL, or nothing
+ *  picked, is every section.
  *
- * ponytail: a bucket that is not in `secs` yields nothing rather than falling back to ALL. The server
- * decides which sections exist, and a saved bucket from a version that had more of them must not
- * silently widen to everything — an empty board says "that queue is gone", a full one says nothing.
+ * ponytail: a bucket that is not in `secs` contributes nothing rather than widening to ALL. The
+ * server decides which sections exist, and a saved pick from a version that had more of them must
+ * not silently show everything — an empty board says "that queue is gone", a full one says nothing.
+ * Order follows `secs`, never the order they were clicked, so the board does not reshuffle.
  */
-export function inBucket(secs: VisSection[], bucket: string): VisSection[] {
-  return bucket === ALL ? secs : secs.filter((s) => s.name === bucket)
+export function inBucket(secs: VisSection[], bucket: readonly string[]): VisSection[] {
+  if (!bucket.length || bucket.includes(ALL)) return secs
+  return secs.filter((s) => bucket.includes(s.name))
 }
 
-export function flat(secs: VisSection[], bucket: string, expanded: Record<string, boolean>): Row[] {
+/** Click a tab: All replaces the pick, a section toggles into it, and emptying it falls back to All. */
+export function pickBucket(bucket: readonly string[], key: string): string[] {
+  if (key === ALL) return [ALL]
+  const rest = bucket.filter((b) => b !== ALL && b !== key)
+  return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
+}
+
+export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {
   return inBucket(secs, bucket)
     .flatMap((s) => s.prs)
     .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
