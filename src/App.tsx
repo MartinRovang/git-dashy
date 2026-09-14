@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, visible, walkBucket } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, remember, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -66,22 +66,22 @@ export default function App() {
   }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
   // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
-  // `marked` is what this page read since the last save landed; it wins over the polled copy.
+  // `marked` is what this page has read; once set it wins over the polled copy for the page's life.
   const [marked, setMarked] = useState<Record<string, string> | null>(null)
   const read = useMemo(() => marked || data?.settings.read || {}, [marked, data])
+  const saveRead = useRef(0)
 
   const markRead = (prs: Row[]) => {
     if (prs.every((p) => read[p.url] === p.updatedAt)) return
-    const secs = data?.sections || []
-    const onBoard = new Set(secs.flatMap((s) => (s.prs || []).map((p) => p.url)))
-    // pruned to what is on the board, so the file does not keep every PR ever opened; not while a
-    // section failed, or one bad fetch would forget everything in it
-    const prune = secs.every((s) => !s.error)
-    const next = Object.fromEntries(
-      Object.entries({ ...read, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }).filter(([u]) => !prune || onBoard.has(u)),
-    )
+    const next = remember(read, prs)
     setMarked(next)
-    post('/api/settings', { read: next })
+    // debounced: walking the list with j would otherwise rewrite the settings file per row
+    clearTimeout(saveRead.current)
+    saveRead.current = window.setTimeout(() => {
+      post('/api/settings', { read: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`read marks not saved: ${t}`))))
+        .catch(() => setFlash('read marks not saved'))
+    }, 500)
   }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])

@@ -1318,6 +1318,10 @@ fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
 /// the GitHub API: 0 would spin it flat out against your rate limit, and a string would break inside
 /// the refresh thread, where nothing is watching. Nothing lands until every key checked out.
 fn post_settings(state: &State, body: &Body) -> Out {
+    // every request has its own thread: without this, two posts copy the config, and the later save
+    // undoes the other's change. ponytail: one global lock, settings posts are rare and quick
+    static SAVING: Mutex<()> = Mutex::new(());
+    let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     let mut wake = false;
     if let Some(v) = body.get("interval") {
@@ -1448,10 +1452,14 @@ fn post_settings(state: &State, body: &Body) -> Out {
         c.scopes = got;
     }
     if let Some(v) = body.get("read") {
-        // ponytail: capped, not pruned here; the page drops urls no longer on the board before it sends
+        // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
         let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
             m.iter()
-                .map(|(u, t)| t.as_str().map(|t| (u.clone(), t.to_string())))
+                .map(|(u, t)| {
+                    t.as_str()
+                        .filter(|t| u.len() <= 512 && t.len() <= 64)
+                        .map(|t| (u.clone(), t.to_string()))
+                })
                 .collect()
         });
         let Some(got) = got else {
@@ -2121,10 +2129,37 @@ mod tests {
             json!({"scopes": ["org:x", 3]}),
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
+            json!({"read": {"u": 1}}),
+            json!({"read": {"x".repeat(513): "t"}}),
+            json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
         ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }
         assert_eq!(config::get().theme, "nord");
+        // posts at once: none undoes another's change, and the file always parses
+        config::update(|c| c.model = "before".into());
+        std::thread::scope(|sc| {
+            for i in 0..8 {
+                let (base, token) = (&base, &token);
+                sc.spawn(move || {
+                    let body = if i % 2 == 0 {
+                        json!({"read": {format!("u{i}"): "t"}})
+                    } else {
+                        json!({"model": format!("m{i}")})
+                    };
+                    assert_eq!(post(&format!("{base}/api/settings"), body, token).0, 200);
+                });
+            }
+        });
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            (
+                saved["theme"].as_str(),
+                saved["read"].as_object().map(|m| m.len())
+            ),
+            (Some("nord"), Some(1))
+        );
+        assert!(saved["model"].as_str().is_some_and(|m| m.starts_with('m'))); // not reverted by a read post
         assert_eq!(
             post(
                 &format!("{base}/api/settings"),

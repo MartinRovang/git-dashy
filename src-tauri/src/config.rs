@@ -118,8 +118,8 @@ pub struct Config {
     pub drafts: bool,
     /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
     pub scopes: Vec<String>,
-    /// url -> the updatedAt that was read, so a PR that moves goes unread again. Here, not in localStorage:
-    /// the webview's origin is new every launch (see `hinted`). The page prunes it to the PRs on the board.
+    /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
+    /// localStorage because the webview's origin changes every launch (see `hinted`). The page keeps the newest.
     pub read: HashMap<String, String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
@@ -390,7 +390,10 @@ pub fn snapshot(c: &Config) -> Saved {
 /// Persist the settings. ponytail: `settings: None` (demo) means never write.
 pub fn save(values: &Saved) -> std::io::Result<()> {
     if let Some(p) = get().settings {
-        std::fs::write(p, serde_json::to_string_pretty(values).unwrap_or_default())?;
+        // a temp file renamed over: a write cut short never leaves half a file that reads back as {}
+        let tmp = p.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(values).unwrap_or_default())?;
+        std::fs::rename(tmp, p)?;
     }
     Ok(())
 }
