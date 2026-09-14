@@ -177,6 +177,16 @@ export function flat(
   return onScreen(secs, bucket, unfolded).flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
+/** The read map with `prs` marked at their current updatedAt, keeping only the `keep` newest.
+ *
+ * ponytail: pruned by age, not by what is on the board, since a narrower window or a scope turned off
+ * would forget marks for PRs that come back. The server caps at 5000.
+ */
+export function remember(read: Record<string, string>, prs: Pick<Row, 'url' | 'updatedAt'>[], keep = 2000): Record<string, string> {
+  const all = { ...read, ...Object.fromEntries(prs.map((p) => [p.url, p.updatedAt])) }
+  return Object.fromEntries(Object.entries(all).sort((a, b) => b[1].localeCompare(a[1])).slice(0, keep))
+}
+
 /** The selected row, and whether it is the one that was actually chosen.
  *
  * ponytail: the fallback exists so the board is never without a selection, but it is a guess, not a

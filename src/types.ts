@@ -83,6 +83,7 @@ export type Settings = {
   voice?: string[]
   hunter?: string[]
   scopes?: string[]
+  read?: Record<string, string>
   interval?: number
   [key: string]: unknown
 }

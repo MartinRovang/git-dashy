@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket } from './board'
 
 let n = 0
 
@@ -472,5 +472,13 @@ describe('TEAM sources', () => {
     expect(flat(m, ['MERGED'], {}).map((p) => p.title)).toEqual(['shipped'])
     // every source off: no empty TEAM left behind
     expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
+  })
+})
+
+describe('remember', () => {
+  it('marks at the current updatedAt, keeps marks off the board, drops the oldest past the cap', () => {
+    const read = { a: '2026-01-01', b: '2026-03-01', c: '2026-02-01' }
+    expect(remember(read, [{ url: 'a', updatedAt: '2026-04-01' }])).toEqual({ a: '2026-04-01', b: '2026-03-01', c: '2026-02-01' })
+    expect(remember(read, [{ url: 'd', updatedAt: '2026-05-01' }], 2)).toEqual({ d: '2026-05-01', b: '2026-03-01' })
   })
 })
