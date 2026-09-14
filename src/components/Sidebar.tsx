@@ -75,7 +75,7 @@ function Group({
   children: React.ReactNode
 }) {
   return (
-    <div className={`sgrp${open && !collapsed ? ' open' : ''}`} data-k={k}>
+    <div className={`sgrp${open && !collapsed ? ' open' : ''}`}>
       {/* ponytail: on the narrow rail the fields cannot render, so the click opens the rail ONTO this
           group instead of toggling a body nobody can see. A button that hovers and does nothing is
           worse than no button. */}

@@ -2,14 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { Detail, Row } from '../types'
 import { tone } from '../tokens'
 
-type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
+export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
 /** Everything you can do to one PR, in the order you reach for it. One list, three surfaces: the
  *  pane's Options button, a right-click on a row, and the keys in handleKey.
  *
  *  `d` is the detail of the SELECTED PR, so a right-click on some other row passes null and loses
  *  only the rows that need it — the full review, and the team the bind would use. */
-function acts(p: Row, d: Detail | null): Act[] {
+export function acts(p: Row, d: Detail | null): Act[] {
   const out: Act[] = []
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'

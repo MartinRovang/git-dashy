@@ -78,7 +78,7 @@ const KEYS: [string, [string, string][]][] = [
     'App',
     [
       ['S', 'Collapse the sidebar'],
-      ['?', 'This window; it stays open'],
+      ['?', 'Keyboard shortcuts'],
       ['f', 'Refresh now'],
       ['u', 'Update, when a newer release exists'],
       ['⎋', 'The menu: theme, notifications, quit'],

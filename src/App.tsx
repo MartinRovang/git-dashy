@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, pickBucket, selected, visible } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, pickBucket, selected, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -56,8 +56,7 @@ export default function App() {
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    const f = forView(v)
-    if (!f) return
+    const f = forView(v, { query, failing, drafts: onlyDrafts, bucket })
     setQuery(f.query)
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
@@ -500,14 +499,7 @@ export default function App() {
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
     // the tabs are not rendered in graph view, so the keys that move them do nothing there
     if ((k === '[' || k === ']') && view === 'board')
-      return one(() =>
-        setBucket((cur) => {
-          const keys = buckets(secs).map((b) => b.key)
-          // the brackets walk one tab at a time and replace the pick; two at once is a click
-          const i = Math.max(0, keys.indexOf(cur.length === 1 ? cur[0] : ALL))
-          return [keys[(i + (k === ']' ? 1 : keys.length - 1)) % keys.length]]
-        }),
-      )
+      return one(() => setBucket((cur) => walkBucket(buckets(secs).map((b) => b.key), cur, k === ']' ? 1 : -1)))
   }
   keyRef.current = handleKey
 

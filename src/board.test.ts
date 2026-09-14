@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, flat, forView, inBucket, pickBucket, selected, visible } from './board'
+import { ALL, buckets, chips, counts, flat, forView, inBucket, pickBucket, selected, visible, walkBucket } from './board'
 
 let n = 0
 
@@ -53,7 +53,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
   }
 }
 
-const secs = (d: StateData) => visible(d, '', false, false)
+const secs = (d: StateData, failing = false, drafts = false) => visible(d, '', failing, drafts)
 
 describe('buckets', () => {
   it('puts All in front and its count is every section summed', () => {
@@ -112,10 +112,6 @@ describe('inBucket', () => {
 
   it('ALL alongside a section still means every section', () => {
     expect(inBucket(v(), [ALL, 'MINE']).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
-  })
-
-  it('an empty pick is every section, not none', () => {
-    expect(inBucket(v(), []).map((s) => s.name)).toEqual(['MINE', 'ASSIGNED'])
   })
 
   it('an unknown name alongside a real one contributes nothing', () => {
@@ -221,34 +217,62 @@ describe('selected', () => {
 })
 
 describe('forView: the graph draws the whole board', () => {
+  const dirty = { query: 'api', failing: true, drafts: true, bucket: ['MINE'] }
+
   it('switching to the graph clears every part of the filter row', () => {
     // the bucket is the one that bit: a node outside the pick resolved to a uid flat() never made,
     // and selected() answered with rows[0] — the pane opened on some other PR
-    expect(forView('graph')).toEqual({ query: '', failing: false, drafts: false, bucket: [ALL] })
+    expect(forView('graph', dirty)).toEqual({ query: '', failing: false, drafts: false, bucket: [ALL] })
   })
 
   it('switching back to the board changes nothing, so your tab survives the round trip', () => {
-    expect(forView('board')).toBeNull()
+    expect(forView('board', dirty)).toBe(dirty)
+  })
+})
+
+describe('walkBucket', () => {
+  const keys = [ALL, 'MINE', 'ASSIGNED']
+
+  it('steps one tab and replaces the pick', () => {
+    expect(walkBucket(keys, [ALL], 1)).toEqual(['MINE'])
+    expect(walkBucket(keys, ['MINE'], 1)).toEqual(['ASSIGNED'])
+    expect(walkBucket(keys, ['MINE'], -1)).toEqual([ALL])
+  })
+
+  it('wraps at both ends', () => {
+    expect(walkBucket(keys, ['ASSIGNED'], 1)).toEqual([ALL])
+    expect(walkBucket(keys, [ALL], -1)).toEqual(['ASSIGNED'])
+  })
+
+  // a stacked pick is on no single tab, so the walk starts from All rather than guessing
+  it('collapses a stacked pick to one tab', () => {
+    expect(walkBucket(keys, ['MINE', 'ASSIGNED'], 1)).toEqual(['MINE'])
+    expect(walkBucket(keys, ['MINE', 'ASSIGNED'], -1)).toEqual(['ASSIGNED'])
+  })
+
+  it('leaves a pick the server no longer has a tab for alone rather than throwing', () => {
+    expect(walkBucket([], ['MINE'], 1)).toEqual(['MINE'])
+    expect(walkBucket(keys, ['RETIRED'], 1)).toEqual(['MINE'])
   })
 })
 
 describe('chips', () => {
   const board = () =>
-    secs(state([
-      { name: 'MINE', prs: [pr({ checks: '✗' }), pr({ isDraft: true }), pr()] },
+    state([
+      { name: 'MINE', prs: [pr({ checks: '✗' }), pr({ isDraft: true }), pr({ isDraft: true, checks: '✗' })] },
       { name: 'ASSIGNED', prs: [pr({ checks: '✗' }), pr({ checks: '✗' })] },
-    ]))
+    ])
   const by = (bucket: string[], failing = false, drafts = false) =>
-    Object.fromEntries(chips(board(), bucket, failing, drafts).map((c) => [c.key, c]))
+    Object.fromEntries(chips(secs(board(), failing, drafts), bucket, failing, drafts).map((c) => [c.key, c]))
 
   it('counts over the bucket on screen, not the whole board', () => {
-    expect(by([ALL]).failing.n).toBe(3)
-    expect(by(['MINE']).failing.n).toBe(1)
+    expect(by([ALL]).failing.n).toBe(4)
+    expect(by(['MINE']).failing.n).toBe(2)
     expect(by(['ASSIGNED']).failing.n).toBe(2)
   })
 
   it('counts drafts the same way', () => {
-    expect(by([ALL]).drafts.n).toBe(1)
+    expect(by([ALL]).drafts.n).toBe(2)
     expect(by(['ASSIGNED']).drafts.n).toBe(0)
   })
 
@@ -262,9 +286,20 @@ describe('chips', () => {
 
   // the pair has to be combinable in either order: a zero here may only be zero because the OTHER
   // filter is hiding the rows this one would have counted
-  it('stays live while the other filter is on, whatever this count says', () => {
-    expect(by(['ASSIGNED'], true, false).drafts.n).toBe(0)
-    expect(by(['ASSIGNED'], true, false).drafts.off).toBe(false)
+  // A review read "CI failing on makes Drafts read 0" as a wrong number. It is not: the count is how
+  // many rows pressing the chip would LEAVE, and filtering to drafts then counting drafts is the
+  // same set as counting drafts first. These four pin that, so the claim is not re-raised.
+  it('reads the same whether its own filter is on or off', () => {
+    expect(by([ALL], false, false).drafts.n).toBe(2)
+    expect(by([ALL], false, true).drafts.n).toBe(2)
+    expect(by([ALL], false, false).failing.n).toBe(4)
+    expect(by([ALL], true, false).failing.n).toBe(4)
+  })
+
+  it('shows what the pair would leave, not what one of them would', () => {
+    // MINE holds one failing non-draft, one plain draft, and one draft that is also failing
+    expect(by(['MINE'], true, false).drafts.n).toBe(1)
+    expect(by(['MINE'], false, true).failing.n).toBe(1)
   })
 
   it('reports on for the filter that is on', () => {

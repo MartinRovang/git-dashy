@@ -61,9 +61,7 @@ export function buckets(secs: VisSection[]): { key: string; label: string; n: nu
  * Order follows `secs`, never the order they were clicked, so the board does not reshuffle.
  */
 export function inBucket(secs: VisSection[], bucket: readonly string[]): VisSection[] {
-  // an empty pick is the same as ALL. `pickBucket` never produces one, but this is an exported
-  // function over a list, so the sane answer to "no filter" is "no filtering", not "nothing".
-  if (!bucket.length || bucket.includes(ALL)) return secs
+  if (bucket.includes(ALL)) return secs
   return secs.filter((s) => bucket.includes(s.name))
 }
 
@@ -74,15 +72,17 @@ export function pickBucket(bucket: readonly string[], key: string): string[] {
   return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
 }
 
-/** What the filter row becomes when the view changes, or null to leave it alone.
+export type Filters = { query: string; failing: boolean; drafts: boolean; bucket: string[] }
+
+/** The filter row after a view switch: cleared for the graph, untouched for the board.
  *
  * ponytail: the graph has no filter row of its own, so a narrowed board there is a filter you can
  * neither see nor clear — and a node outside the pick resolves to a uid `flat()` never produced,
- * which `selected()` then answers with rows[0]. This lives here, out of the component, because it is
- * the rule that keeps every graph node clickable and `show()` has no harness of its own.
+ * which `selected()` then answers with rows[0]. It lives here because `show()` has no harness and
+ * this is the third field that has been forgotten in it.
  */
-export function forView(v: 'board' | 'graph'): { query: string; failing: boolean; drafts: boolean; bucket: string[] } | null {
-  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : null
+export function forView(v: 'board' | 'graph', cur: Filters): Filters {
+  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : cur
 }
 
 /** The two filter chips over the bucket on screen, with the rule for when one goes dead.
@@ -99,11 +99,21 @@ export function chips(
   drafts: boolean,
 ): { key: 'failing' | 'drafts'; label: string; n: number; on: boolean; off: boolean }[] {
   const shown = inBucket(secs, bucket).flatMap((s) => s.prs)
-  const rows = [
-    { key: 'failing' as const, label: 'CI failing', n: shown.filter((x) => tone(x.checks) === 'changes').length, on: failing, other: drafts },
-    { key: 'drafts' as const, label: 'Drafts', n: shown.filter((x) => x.isDraft).length, on: drafts, other: failing },
-  ]
-  return rows.map(({ other, ...c }) => ({ ...c, off: !c.n && !c.on && !other }))
+  return [
+    { key: 'failing' as const, label: 'CI failing', n: shown.filter((x) => tone(x.checks) === 'changes').length, on: failing },
+    { key: 'drafts' as const, label: 'Drafts', n: shown.filter((x) => x.isDraft).length, on: drafts },
+    // dead only when pressing it would bring nothing back. `secs` has the other chip's filter applied
+    // already, which is the point: the number is how many rows pressing THIS one would leave, so a
+    // zero means the combination is empty and a dead chip is the honest answer.
+  ].map((c) => ({ ...c, off: !c.n && !c.on }))
+}
+
+/// `[` and `]`: one tab at a time, replacing the pick.
+export function walkBucket(keys: string[], cur: readonly string[], dir: 1 | -1): string[] {
+  if (!keys.length) return [...cur]
+  // a stacked pick has no single place in the strip, so the walk starts from All
+  const i = keys.indexOf(cur.length === 1 ? cur[0] : ALL)
+  return [keys[((i < 0 ? 0 : i) + dir + keys.length) % keys.length]]
 }
 
 export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {

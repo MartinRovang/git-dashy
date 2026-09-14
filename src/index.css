@@ -194,18 +194,6 @@
   .find .tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.1em; }
   .find .loc { font-family: var(--mono); font-size: 11px; color: var(--dim2); }
   .find p { font-size: 13px; line-height: 1.55; color: var(--ink2); margin: 4px 0 0; text-wrap: pretty; }
-  .act { height: 38px; border-radius: 8px; border: 1px solid var(--edge); background: var(--bg3); display: flex;
-         align-items: center; gap: 10px; padding: 0 12px; cursor: pointer; }
-  .act:hover { background: var(--bg4); border-color: var(--dim3); }
-  .act b { font-size: 13px; font-weight: 500; color: var(--ink2); }
-  .act em { font-style: normal; font-size: 11.5px; color: var(--dim3); margin-left: auto; white-space: nowrap; }
-  .act.go { background: var(--pink); border-color: var(--pink); }
-  .act.go:hover { filter: brightness(1.1); }
-  .act.go kbd { color: rgba(20,16,23,0.6); background: rgba(20,16,23,0.18); }
-  .act.go b { color: #241021; font-weight: 600; }
-  .act.go em { font-family: var(--mono); color: rgba(36,16,33,0.6); }
-  .act.off { opacity: 0.45; pointer-events: none; }
-
   /* code tab */
   /* ponytail: one horizontal scroller for the whole diff, not one per line. A scroll container per line
      is a layer each and made a long diff crawl; moving it up keeps long lines reachable and cheap. */
@@ -537,7 +525,6 @@
   .grp .hint { font-family: var(--sans); font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--dim3); }
   .grp hr { flex: 1; height: 1px; margin: 0; border: 0; background: var(--line2); }
   .empty { display: flex; align-items: baseline; gap: 10px; padding: 8px 18px 14px 46px; font-size: 12.5px; color: var(--dim2); }
-  .empty b { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; color: var(--green); }
 
   /* ---- the footer: the keys you need while reading, and how fresh the board is ---- */
   .ft { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 14px;
@@ -611,7 +598,6 @@
   .views { display: flex; align-items: center; gap: 6px; }
 
   /* a menu row's key hint keeps its column when the hints are off, so the labels stay aligned */
-  .acts .ai kbd.hint + b { margin-left: 0; }
   .hidekeys .acts .ai { padding-left: 12px; }
   /* the search keeps its box when its "/" hint goes */
   .hidekeys .search { padding-left: 13px; }
