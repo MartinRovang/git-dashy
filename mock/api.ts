@@ -79,6 +79,7 @@ const S = {
     theme: 'pencil',
     notify: false,
     hinted: true,
+    keyhints: true,
     subs: 'all',
     model: 'opus',
     depth: 'adaptive',
@@ -340,7 +341,7 @@ function postReview(b: Body) {
 
 function postSettings(b: Body) {
   const s = S.settings
-  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'hinted']) {
+  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'hinted', 'keyhints']) {
     if (k in b) s[k] = b[k]
   }
   return json(200, { ok: true })

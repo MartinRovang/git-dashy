@@ -3,7 +3,7 @@ import { api, errorText, post } from './api'
 import { ALL, buckets, flat, groups, inBucket, pickBucket, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
-import { shortcuts } from './components/Shortcuts'
+import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
@@ -33,6 +33,7 @@ export default function App() {
   // ponytail: the rail shuts to a 92px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
+  const [help, setHelp] = useState(false)
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
@@ -483,10 +484,11 @@ export default function App() {
     if (k === 'v') return one(() => doAct('view'))
     if (k === 'r' && p) return one(() => void review(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
+    if (k === 'Escape' && help) return one(() => setHelp(false))
     if (k === 'Escape') return one(onMenu)
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
-    if (k === '?') return one(shortcuts)
+    if (k === '?') return one(() => setHelp((v) => !v))
     if (k === 'S') return one(() => setRailShut((v) => !v))
     // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
@@ -522,8 +524,8 @@ export default function App() {
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
   return (
-    <div id="app" onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={secs} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={shortcuts} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+    <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
+      <TopBar data={data} secs={secs} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -629,6 +631,13 @@ export default function App() {
           </span>
         </div>
       </footer>
+      {help ? (
+        <Shortcuts
+          hints={data?.settings.keyhints !== false}
+          onHints={() => void setting('keyhints', data?.settings.keyhints === false)}
+          onClose={() => setHelp(false)}
+        />
+      ) : null}
       {menuAt ? (
         <ActsMenu
           p={menuAt.p}

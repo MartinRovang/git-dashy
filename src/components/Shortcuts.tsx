@@ -1,4 +1,4 @@
-import { close, open } from '../modals'
+import { useFloatBox, type Box } from '../float'
 
 /** Every key the dashboard answers to, grouped the way you reach for them.
  *
@@ -78,24 +78,50 @@ const KEYS: [string, [string, string][]][] = [
     'App',
     [
       ['S', 'Collapse the sidebar'],
+      ['?', 'This window — leave it open while you try them'],
       ['f', 'Refresh now'],
       ['u', 'Update, when a newer release exists'],
-      ['?', 'This sheet'],
       ['⎋', 'The menu: theme, notifications, quit'],
       ['q', 'Quit'],
     ],
   ],
 ]
 
-/** Open the sheet. It goes on the modal stack, so Esc, the scrim click and the board's key guard
- *  all work the way every other dialog's do — and nothing can open underneath it and steal the keys. */
-export function shortcuts() {
-  const m = open({
-    title: 'Keyboard shortcuts',
-    sub: 'every key the board answers to',
-    side: true,
-    body: () => (
-      <div className="keys">
+/** The keys, as a window you can leave open while you try them.
+ *
+ * ponytail: it was a modal drawer, which meant reading a key, closing it, pressing the key, and
+ * opening it again. A floating window sits beside the board instead — it takes no keys of its own
+ * beyond Escape, and it lives on the code viewer's layer, under any dialog, so nothing can open
+ * behind it and steal the keyboard.
+ */
+const KEY = 'dashy-keys-box'
+
+function initialBox(): Box {
+  const W = window.innerWidth
+  const H = window.innerHeight
+  const w = Math.min(430, Math.round(W * 0.9))
+  const h = Math.min(560, Math.round(H * 0.78))
+  return { x: Math.max(8, W - w - 28), y: Math.max(8, Math.round((H - h) / 2)), w, h, max: false }
+}
+
+export function Shortcuts({ hints, onHints, onClose }: { hints: boolean; onHints: () => void; onClose: () => void }) {
+  const { box, el, drag, style } = useFloatBox(KEY, initialBox, '.iconbtn, .fld')
+  return (
+    <div ref={el} className={`fw${box.max ? ' max' : ''}`} style={style} role="dialog" aria-label="Keyboard shortcuts">
+      <div className="bar" title="drag to move, double-click to maximize" {...drag}>
+        <b>Keyboard shortcuts</b>
+        <div style={{ flex: 1 }} />
+        <button className="iconbtn" onClick={onClose} title="close (esc)">
+          ✕
+        </button>
+      </div>
+      <div className="keys scroll">
+        {/* the same switch as the rail's View group, here because this is where you read a key and
+            then want to see it on the thing it belongs to */}
+        <button className="fld" aria-pressed={hints} onClick={onHints}>
+          <span>Show these keys on the buttons</span>
+          <span className="sw" />
+        </button>
         {KEYS.map(([group, rows]) => (
           <div className="kgrp" key={group}>
             <span>{group}</span>
@@ -108,8 +134,6 @@ export function shortcuts() {
           </div>
         ))}
       </div>
-    ),
-    foot: [['Esc', 'close', () => close(m)]],
-  })
-  m.keys = { Escape: () => close(m), '?': () => close(m) }
+    </div>
+  )
 }

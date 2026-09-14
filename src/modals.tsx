@@ -11,8 +11,6 @@ export type Modal = {
   title: string
   sub?: string
   wide?: boolean
-  /** Render as a right-hand drawer rather than a centred dialog. Same stack, same keys. */
-  side?: boolean
   dismiss?: boolean
   body: () => ReactNode
   foot?: Foot[]
@@ -227,12 +225,12 @@ export function ModalHost() {
       {stack.map((m) => (
         <div
           key={m.id}
-          className={`veil${m.side ? ' side' : ''}`}
+          className="veil"
           onClick={(e) => {
             if (e.target === e.currentTarget && m.dismiss !== false) close(m)
           }}
         >
-          <div className={`modal${m.wide ? ' wide' : ''}${m.side ? ' sheet' : ''}`}>
+          <div className={`modal${m.wide ? ' wide' : ''}`}>
             <div className="mh">
               <b>{m.title}</b>
               {m.sub ? <em>{m.sub}</em> : null}

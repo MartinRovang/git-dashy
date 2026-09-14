@@ -120,6 +120,7 @@ button somewhere on the page.
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
+| | **show key hints** (in the rail's View group, and in the `?` window) prints each key on the button or settings row it belongs to. On by default |
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
@@ -141,7 +142,7 @@ button somewhere on the page.
 | `u` | shown when a newer release exists — opens the update panel |
 | `S` | collapse the left rail to 92px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
 | `[` `]` | previous / next queue tab |
-| `?` | the shortcut sheet: every key, grouped |
+| `?` | the shortcut window: every key, grouped. It floats over the board — drag its header, resize its corner, leave it open while you try them. It also carries the **show key hints** switch |
 | `Esc` | the menu: theme, notifications, refresh, quit |
 | `q` | quit |
 

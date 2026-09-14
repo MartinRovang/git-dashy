@@ -183,6 +183,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <Ln label="history" value={win} />
               <Ln label="refresh" value={every(s.interval || 0)} />
               <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
+              <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
             </>
           }
           open={!!open.view}
@@ -194,6 +195,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           </Row>
           <button className="fld" aria-pressed={!!s.drafts} onClick={() => setting('drafts', !s.drafts)}>
             <span>Show drafts</span>
+            <span className="sw" />
+          </button>
+          {/* ponytail: .hidekeys has been in the stylesheet with nothing setting it. This is the
+              switch it was waiting for, and the sheet carries the same one. */}
+          <button className="fld" aria-pressed={s.keyhints !== false} onClick={() => setting('keyhints', s.keyhints === false)}>
+            <span>Show key hints</span>
             <span className="sw" />
           </button>
           <Row k="t" label="history">
