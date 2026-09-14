@@ -24,6 +24,9 @@ type Group = (typeof GROUPS)[number]
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 // a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
 const PERSON = 'M-.3,-.32a.3,.3 0 1,0 .6,0a.3,.3 0 1,0 -.6,0ZM-.62,.62Q-.62,.06 0,.06Q.62,.06 .62,.62Z'
+// a closed book, GitHub's repo glyph, same box; evenodd cuts the spine and the page edge out of the cover
+const BOOK = 'M-.5,-.6H.5V.6H-.5ZM-.3,-.48H-.22V.22H-.3ZM-.3,.34H.38V.46H-.3Z'
+const ICON: Record<Hub, string> = { author: PERSON, repo: BOOK }
 
 // A title's conventional-commit prefix, for PRs no review has tagged yet: `feat(api)!: ...`
 const PREFIX: Record<string, string> = {
@@ -136,10 +139,11 @@ export function Graph({ secs, sel, onSelect }: {
       .classed('breaking', (n) => !!byUrl.get(n.id) && tagOf(byUrl.get(n.id)!).breaking)
     node.select('text').attr('y', (n) => radius(n) + 3)
     node
-      .select('path.person')
-      .attr('display', (n) => (n.kind === 'author' ? null : 'none'))
-      .attr('transform', (n) => `scale(${radius(n) * 0.75})`)
-      .style('fill', (n) => avatar(n.label))
+      .select('path.icon')
+      .attr('display', (n) => (n.kind === 'pr' ? 'none' : null))
+      .attr('d', (n) => (n.kind === 'pr' ? null : ICON[n.kind]))
+      .attr('transform', (n) => `scale(${radius(n) * (n.kind === 'repo' ? 0.6 : 0.75)})`)
+      .style('fill', (n) => (n.kind === 'author' ? avatar(n.label) : 'var(--ink3)'))
     node.select('title').text((n) => {
       const r = byUrl.get(n.id)
       if (!r) return n.label
@@ -230,7 +234,7 @@ export function Graph({ secs, sel, onSelect }: {
       .join((enter) => {
         const e = enter.append('g').attr('class', 'gnode')
         e.append('circle')
-        e.append('path').attr('class', 'person').attr('d', PERSON)
+        e.append('path').attr('class', 'icon').attr('fill-rule', 'evenodd')
         e.append('text')
         e.append('title')
         return e
@@ -390,12 +394,15 @@ export function Graph({ secs, sel, onSelect }: {
         ))}
         {by !== 'repo' && (
           <span>
-            <i style={{ background: 'var(--dim2)' }} /> repo
+            <svg className="gicon" viewBox="-1 -1 2 2">
+              <path d={BOOK} fillRule="evenodd" />
+            </svg>{' '}
+            repo
           </span>
         )}
         {by === 'repo' && (
           <span>
-            <svg className="gperson" viewBox="-1 -1 2 2">
+            <svg className="gicon" viewBox="-1 -1 2 2">
               <path d={PERSON} />
             </svg>{' '}
             author
