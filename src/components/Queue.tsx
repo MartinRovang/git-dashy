@@ -118,7 +118,8 @@ export function Queue(p: Props) {
   const d = p.data
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
 
-  const unread = p.secs.flatMap((s) => s.prs).filter((x) => p.read[x.url] !== x.updatedAt).length
+  // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
+  const unread = new Set(p.secs.flatMap((s) => s.prs).filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (

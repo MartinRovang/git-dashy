@@ -74,7 +74,7 @@ export default function App() {
   const rows = useMemo(() => flat(secs, folded, expanded), [secs, folded, expanded])
   const total = secs.reduce((n, s) => n + s.prs.length, 0)
   // the graph draws folded sections too, so a node there selects a uid the folded list does not hold
-  const current = selected([...rows, ...secs.flatMap((s) => s.prs)], sel)
+  const current = selected(rows, sel, secs.flatMap((s) => s.prs))
   const selUid = current?.uid || ''
   const url = current?.url || ''
 

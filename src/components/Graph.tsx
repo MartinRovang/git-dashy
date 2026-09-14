@@ -361,7 +361,7 @@ export function Graph({ secs, sel, onSelect }: {
             <i className="gbreak" /> breaking
           </span>
         )}
-        <span>{by === 'author' ? 'author & repo' : by} size = PRs · PR size = lines changed · scroll to zoom · drag to move</span>
+        <span>hub size = PRs · PR size = lines changed · scroll to zoom · drag to move</span>
       </div>
     </div>
   )
