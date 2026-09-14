@@ -202,12 +202,6 @@ export function Queue(p: Props) {
           <kbd className="hint">/</kbd>
           <input id="q" value={p.query} placeholder="filter by title, repo, author" onChange={(e) => p.onQuery(e.target.value)} />
         </label>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          updated{' '}
-          {d?.fetchedAt
-            ? ((a: string) => (a === 'now' ? 'just now' : a + ' ago'))(age(new Date(d.fetchedAt * 1000).toISOString()))
-            : 'never'}
-        </div>
       </div>
       <div className="list scroll">
         {shownSecs.map((s) => {

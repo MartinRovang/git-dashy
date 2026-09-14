@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -52,6 +52,8 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  // the fetchedAt a history change was made on: until a newer fetch lands, the board is the old window
+  const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
@@ -266,7 +268,10 @@ export default function App() {
         : name === 'window'
           ? span(value as number | null)
           : String(value === '' ? 'default' : value)
-    await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    const from = data?.fetchedAt ?? null
+    const ok = await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
+    // the server only refetches a new window when a source is on; a failed POST refetches nothing
+    if (ok && name === 'window' && data?.settings?.scopes?.length) setRefetchFrom(from)
   }
 
   async function quit() {
@@ -522,6 +527,8 @@ export default function App() {
     setDiff(null)
   }
 
+  const refetching = isRefetching(refetchFrom, data)
+
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
   return (
@@ -624,13 +631,15 @@ export default function App() {
         <span>? all keys</span>
         <div style={{ flex: 1 }} />
         <div className="sync">
-          <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />
+          {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>
             {!data?.fetchedAt
               ? 'fetching…'
-              : data?.fetching
-                ? 'refreshing…'
-                : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
+              : refetching
+                ? 'fetching PRs…'
+                : data?.fetching
+                  ? 'refreshing…'
+                  : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
           </span>
         </div>
       </footer>
