@@ -34,7 +34,7 @@ export const SECTION_EMPTY: Record<string, string> = {
   MINE: 'Nothing of yours is open.',
   'REVIEW REQUESTED': 'Nobody is waiting on your review.',
   ASSIGNED: 'Nothing assigned to you.',
-  REVIEWED: 'Nothing reviewed in the window.',
+  REVIEWED: 'Nothing reviewed yet.',
 }
 export const FINDING_TONE: Record<string, string> = { blocking: 'var(--red)', note: 'var(--amber)', nit: 'var(--cyan)' }
 export const CHECK_TONE: Record<string, string> = {

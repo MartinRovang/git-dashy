@@ -1,10 +1,11 @@
 import { Pinata } from './Pinata'
 import type { StateData } from '../types'
+import type { VisSection } from '../board'
 
 type Props = {
   data: StateData | null
-  now: number
-  total: number
+  /** What the filters left on screen — the counts beside the brand describe this, not the raw board. */
+  secs: VisSection[]
   onRefresh: () => void
   onAuto: () => void
   onMenu: () => void
@@ -16,10 +17,13 @@ type Props = {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
+export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
   const running = d?.running || 0
-  const repos = new Set((d?.sections || []).flatMap((s) => s.prs || []).map((p) => p.repo)).size
-  const left = d?.fetchedAt ? Math.max(0, Math.round(d.interval - (now / 1000 - d.fetchedAt))) : 0
+  // ponytail: both numbers come off the same list. Counting PRs after the filters and repos before
+  // them read as "3 PRs · 12 repos", which is two answers to one question.
+  const shown = secs.flatMap((x) => x.prs)
+  const total = shown.length
+  const repos = new Set(shown.map((p) => p.repo)).size
   return (
     <div className="top">
       <button className="logo" title="play the intro" aria-label="toggle the player" onClick={onLogo}>
@@ -62,11 +66,7 @@ export function TopBar({ data: d, now, total, onRefresh, onAuto, onMenu, onUpdat
         <div className="pill err" title={d.error}>
           ✗ refresh failed: {d.error.slice(0, 40)}
         </div>
-      ) : (
-        <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          {!d?.fetchedAt ? 'fetching…' : d?.fetching ? 'refreshing…' : `refresh in ${left}s`}
-        </div>
-      )}
+      ) : null}
       <span className="ib" title="refresh now (f)" onClick={onRefresh}>
         ⟳
       </span>

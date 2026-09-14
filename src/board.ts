@@ -10,7 +10,7 @@ export function settings(d: StateData | null) {
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box. */
-export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts = false): VisSection[] {
+export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
