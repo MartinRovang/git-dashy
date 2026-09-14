@@ -631,7 +631,7 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     let on = !off;
     let show = || {
         for line in autorev::report(&autorev::scope()) {
-            println!("  {}", line.trim_start());
+            println!("{line}");
         }
     };
     // ponytail: BEFORE every write. --list is a read-only question, and bind() learned this one

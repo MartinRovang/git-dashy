@@ -96,6 +96,10 @@ pub struct Inner {
     pub diffing: HashSet<DiffKey>,
     /// RR urls present when auto was switched on; None while auto is off.
     pub auto_baseline: Option<HashSet<String>>,
+    /// The auto-review scope as of the last tick, so the tick can see what just became covered.
+    /// None until the first tick, which counts as "everything was covered" — `set_auto` has already
+    /// baselined by then.
+    pub auto_scope: Option<autorev::Scope>,
     /// ponytail: the PR's updatedAt (or head) when a finished status was last seen. A verdict
     /// describes one revision; once the PR moves, it is stale and must stop masking what GitHub now says.
     pub seen_at: HashMap<String, String>,
@@ -142,6 +146,21 @@ impl Inner {
             .cloned()
             .collect()
     }
+}
+
+/// The urls that just came into scope: listed now, not covered before, covered now.
+///
+/// They join the baseline, so widening never fires a batch — whoever widened it. `a` asks before
+/// reviewing a backlog and shows the count; arming a repo goes through no such gate, and the writer
+/// may be another process entirely, which is why this is the tick's job and not the route's.
+///
+/// ponytail: a function, because the block it came from is inside tick(), which fetches. The route
+/// used to do this and the CLI path fired the batch anyway.
+fn newly_covered(rr: &[Pr], prev: &autorev::Scope, now: &autorev::Scope) -> Vec<String> {
+    rr.iter()
+        .filter(|p| !prev.armed(p.repo()) && now.armed(p.repo()))
+        .map(|p| p.url.clone())
+        .collect()
 }
 
 /// The review-requested PRs auto should start on this tick.
@@ -341,35 +360,7 @@ impl State {
         }
     }
 
-    /// Treat what is already listed in the repos `newly` names as seen by auto.
-    ///
-    /// ponytail: widening the scope must not fire a batch. `a` asks before reviewing a backlog and
-    /// shows the count; arming a repo goes through no such gate, so the PRs already on the board
-    /// there join the baseline and only what arrives afterwards starts.
-    pub fn seen_by_auto(&self, newly: &dyn Fn(&str) -> bool) {
-        let mut inner = self.lock();
-        let urls: Vec<String> = inner
-            .rr_prs()
-            .into_iter()
-            .filter(|p| newly(p.repo()))
-            .map(|p| p.url.clone())
-            .collect();
-        if let Some(b) = inner.auto_baseline.as_mut() {
-            b.extend(urls);
-        }
-    }
-
     /// Review-requested PRs with no verdict or review in flight.
-    pub fn pending_rr(&self) -> Vec<Pr> {
-        let scope = autorev::scope();
-        let inner = self.lock();
-        inner
-            .rr_prs()
-            .into_iter()
-            .filter(|p| !inner.reviews.contains_key(&p.url) && scope.armed(p.repo()))
-            .collect()
-    }
-
     /// The thread's landing: the row's status, nothing spinning, nothing kept.
     fn finish(&self, url: &str, status: String) {
         {
@@ -632,6 +623,10 @@ impl State {
         // longer than GRACE made a healthy dashboard read as dead until it came round again, and one
         // slow team pull is enough at a 120s git timeout. So the tick beats again at the end.
         heartbeat::beat(interval);
+        // ponytail: one read of the store for the whole tick, and OUTSIDE the lock — asking per row
+        // would reopen the file once per PR, two rows in one tick could disagree if a click landed
+        // between them, and none of that IO needs the state mutex held.
+        let scope = autorev::scope();
         let new: Vec<Pr> = {
             let mut inner = self.lock();
             inner.sections = data.clone();
@@ -705,11 +700,16 @@ impl State {
                     }
                 }
             }
-            // ponytail: one read of the store for the whole tick. Asking per row would reopen the
-            // file once per PR, and two rows in one tick could get different answers if a click
-            // landed between them. Both the count and the starts read this one.
-            let scope = autorev::scope();
             inner.pending = inner.pending_rr(&|r| scope.armed(r));
+            // ponytail: HERE, not in the route that writes the store. `gitdashy auto` is a separate
+            // process, so the dashboard learns about a widened scope by reading the file on the next
+            // tick — and suppressing the batch in post_auto left the CLI path firing the very batch
+            // the route was careful to avoid. The tick is where every writer converges.
+            let prev = inner.auto_scope.replace(scope.clone()).unwrap_or_default();
+            let newly = newly_covered(&inner.rr_prs(), &prev, &scope);
+            if let Some(b) = inner.auto_baseline.as_mut() {
+                b.extend(newly);
+            }
             match (&inner.auto, &inner.auto_baseline) {
                 (true, Some(baseline)) => {
                     auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
@@ -941,6 +941,79 @@ mod tests {
         assert_eq!(st.lock().pending_rr(&only_b), ["mine"]);
     }
 
+    /// The invariant the CLI path broke: the dashboard learns about a widened scope by reading the
+    /// file on the next tick, so whoever widened it, what is already listed there must not start.
+    #[test]
+    fn widening_the_scope_baselines_what_is_already_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        // the third repo is covered by NEITHER scope: it must not join the baseline just because
+        // the previous scope did not cover it either
+        let rr = vec![
+            pr_in("mine", "a/b"),
+            pr_in("theirs", "other/thing"),
+            pr_in("untouched", "third/one"),
+        ];
+
+        crate::autorev::set("a/b", true);
+        let narrow = crate::autorev::scope();
+        crate::autorev::set("other/thing", true);
+        let wide = crate::autorev::scope();
+
+        assert_eq!(newly_covered(&rr, &narrow, &wide), ["theirs"]);
+        // and with that url in the baseline, the tick starts nothing
+        assert_eq!(
+            started(rr.clone(), &["theirs"], &[], &|r| wide.armed(r)),
+            ["mine"]
+        );
+        assert_eq!(
+            started(rr, &["theirs", "mine"], &[], &|r| wide.armed(r)),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn narrowing_the_scope_covers_nothing_new() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
+        let everywhere = crate::autorev::scope(); // nothing armed
+        crate::autorev::set("a/b", true);
+        let narrow = crate::autorev::scope();
+        assert_eq!(newly_covered(&rr, &everywhere, &narrow), Vec::<String>::new());
+    }
+
+    /// The first tick has no previous scope. Treating that as "everything was covered" is what keeps
+    /// it from baselining the whole board out from under the `a` the user just pressed.
+    #[test]
+    fn the_first_tick_covers_nothing_new() {
+        let rr = vec![pr_in("mine", "a/b")];
+        let now = autorev::Scope::default();
+        assert_eq!(
+            newly_covered(&rr, &autorev::Scope::default(), &now),
+            Vec::<String>::new()
+        );
+    }
+
+    /// Arming while auto is off must leave the baseline None, so a later `a` still snapshots
+    /// normally rather than finding a half-filled set.
+    #[test]
+    fn baselining_does_nothing_while_auto_is_off() {
+        let st = State::new();
+        assert!(st.lock().auto_baseline.is_none());
+        let mut inner = st.lock();
+        let newly = vec!["u".to_string()];
+        if let Some(b) = inner.auto_baseline.as_mut() {
+            b.extend(newly);
+        }
+        assert!(
+            inner.auto_baseline.is_none(),
+            "nothing to extend while auto is off"
+        );
+    }
+
     #[test]
     fn auto_starts_nothing_when_nothing_is_armed() {
         let none = |_: &str| false;
@@ -959,10 +1032,7 @@ mod tests {
             None,
         )];
         st.lock().reviews.insert("done".into(), "✓ approved".into());
-        assert_eq!(
-            st.pending_rr().iter().map(|p| p.url.as_str()).collect::<Vec<_>>(),
-            ["old"]
-        );
+        assert_eq!(st.lock().pending_rr(&|_| true), ["old"]);
         st.set_auto(true, false);
         assert_eq!(st.lock().auto_baseline.clone().unwrap().len(), 2);
         assert!(!st.lock().wake.is_set());

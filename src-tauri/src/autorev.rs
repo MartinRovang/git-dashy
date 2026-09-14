@@ -36,7 +36,7 @@ fn read() -> String {
 }
 
 /// Every live decision: repo -> armed, owner -> armed.
-#[derive(Default, Debug, PartialEq)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub struct Scope {
     pub repos: HashMap<String, bool>,
     pub owners: HashMap<String, bool>,
@@ -57,13 +57,18 @@ impl Scope {
     }
 
     /// Whether auto reviews `repo`. A repo row beats an owner row beats the default.
+    ///
+    /// ponytail: a repo this cannot name is never auto-reviewed, armed or not. It used to follow
+    /// the default, so a row whose nameWithOwner failed to come back was reviewed unattended while
+    /// nothing was armed and skipped once something was — behaviour that flipped with the store.
+    /// Reviewing something we cannot name is the half that costs other people.
     pub fn armed(&self, repo: &str) -> bool {
-        if self.everywhere() {
-            return true;
-        }
         let r = key(repo);
         if r.is_empty() {
             return false;
+        }
+        if self.everywhere() {
+            return true;
         }
         if let Some(v) = self.repos.get(&r) {
             return *v;
@@ -72,7 +77,7 @@ impl Scope {
         *self.owners.get(o).unwrap_or(&false)
     }
 
-    /// What to show: (target, armed), repos then owners, each sorted. Owners read back as `acme/*`.
+    /// What to show: (target, armed), owners then repos, each sorted. Owners read back as `acme/*`.
     pub fn listed(&self) -> Vec<(String, bool)> {
         let mut repos: Vec<(String, bool)> = self.repos.iter().map(|(k, v)| (k.clone(), *v)).collect();
         let mut owners: Vec<(String, bool)> =
@@ -126,7 +131,7 @@ pub fn report(s: &Scope) -> Vec<String> {
     let rows = s.listed();
     let mut out = Vec::new();
     if s.everywhere() {
-        out.push("auto-review covers every repo on the board; name one to narrow it".to_string());
+        out.push("  auto-review covers every repo on the board; name one to narrow it".to_string());
     }
     out.extend(rows.iter().map(|(t, v)| {
         format!(
@@ -135,16 +140,16 @@ pub fn report(s: &Scope) -> Vec<String> {
         )
     }));
     if s.everywhere() && !rows.is_empty() {
-        out.push("nothing is armed, so the rows above do not apply yet".to_string());
+        out.push("  nothing is armed, so the rows above do not apply yet".to_string());
     } else if !s.everywhere() {
-        out.push("every other repo is left alone".to_string());
+        out.push("  every other repo is left alone".to_string());
     }
     out
 }
 
 /// Add one line: the fields, then the `auto` flag as a bare JSON bool.
 fn append(fields: &[(&str, &str)], on: bool) -> String {
-    bind::append_to(store(), fields, &[("auto", on.to_string())])
+    bind::append_to(store(), fields, Some(("auto", on)))
 }
 
 /// Arm or disarm one repo. Returns "" or why it did not.
@@ -312,17 +317,20 @@ mod tests {
         let (_g, _d) = fresh();
         assert_eq!(
             report(&scope()),
-            vec!["auto-review covers every repo on the board; name one to narrow it"]
+            vec!["  auto-review covers every repo on the board; name one to narrow it"]
         );
 
         set("acme/web", false);
         let lines = report(&scope());
         assert_eq!(
-            lines[0],
+            lines[0].trim(),
             "auto-review covers every repo on the board; name one to narrow it"
         );
         assert!(lines[1].contains("acme/web"));
-        assert_eq!(lines[2], "nothing is armed, so the rows above do not apply yet");
+        assert_eq!(
+            lines[2].trim(),
+            "nothing is armed, so the rows above do not apply yet"
+        );
         assert!(!lines.iter().any(|l| l.contains("left alone")), "{lines:?}");
     }
 
@@ -333,7 +341,7 @@ mod tests {
         let lines = report(&scope());
         assert!(!lines[0].contains("covers every repo"), "{lines:?}");
         assert!(lines[0].contains("acme/api"));
-        assert_eq!(lines.last().unwrap(), "every other repo is left alone");
+        assert_eq!(lines.last().unwrap().trim(), "every other repo is left alone");
     }
 
     /// The owner question the CLI prints from: an owner row that is off while nothing is armed still
@@ -355,6 +363,18 @@ mod tests {
         set_owner("acme", true);
         assert!(scope().armed_owner("acme"));
         assert!(!scope().armed_owner("nope"));
+    }
+
+    /// A repo this cannot name is never auto-reviewed. It used to follow the default, so the same
+    /// unnamed row was reviewed while nothing was armed and skipped once something was.
+    #[test]
+    fn a_repo_it_cannot_name_is_never_auto_reviewed() {
+        let (_g, _d) = fresh();
+        assert!(scope().everywhere());
+        assert!(!scope().armed(""));
+        assert!(!scope().armed("notes"));
+        set("acme/api", true);
+        assert!(!scope().armed(""));
     }
 
     #[test]

@@ -264,11 +264,14 @@ fn repr(s: &str) -> String {
 ///
 /// ponytail: takes the path so autorev.rs can use it. Both stores are one JSON object per line,
 /// last line wins on read, and one writer is one place for the escaping and the never-panic rule.
-pub(crate) fn append_to(p: PathBuf, fields: &[(&str, &str)], extra: &[(&str, String)]) -> String {
+/// ponytail: `flag` is a typed bool, not a raw string spliced in. A generic "extra JSON" channel
+/// existed for one boolean and would write whatever it was handed unescaped — correct today, a
+/// corrupted append-only store the first time someone passed it text.
+pub(crate) fn append_to(p: PathBuf, fields: &[(&str, &str)], flag: Option<(&str, bool)>) -> String {
     let line = fields
         .iter()
         .map(|(k, v)| format!("{}: {}", dumps(k), dumps(v)))
-        .chain(extra.iter().map(|(k, raw)| format!("{}: {}", dumps(k), raw)))
+        .chain(flag.map(|(k, b)| format!("{}: {}", dumps(k), b)))
         .collect::<Vec<_>>()
         .join(", ");
     let parent = p
@@ -289,7 +292,7 @@ pub(crate) fn append_to(p: PathBuf, fields: &[(&str, &str)], extra: &[(&str, Str
 }
 
 fn append(fields: &[(&str, &str)]) -> String {
-    append_to(store(), fields, &[])
+    append_to(store(), fields, None)
 }
 
 /// Bind `repo` to team `to`. Returns "" or why it did not.
