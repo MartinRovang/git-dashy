@@ -120,7 +120,7 @@ button somewhere on the page.
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
-| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / humanizer |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the header counts down to the next one) |
 | `n` | edit this repo's review memory in the app |
 | `g` | edit the general review memory in the app |
@@ -184,6 +184,7 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
 over-engineering, `security` only security, `tests` only missing or toothless tests,
+`perf` only runtime cost the change adds (work repeated per poll, render or request, N+1, growth with no bound),
 `humanizer` only AI-sounding prose the change adds to the application: user-facing strings, docs
 and comments, never the PR description.
 The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
