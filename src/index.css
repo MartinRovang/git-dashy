@@ -387,7 +387,7 @@
   /* ponytail: the drag grip sits at right:-3px, so a plain overflow:hidden clips half of it and all
      of its dragging highlight. Clip the scroll axis only. */
   .side { padding: 0; gap: 0; overflow-x: visible; overflow-y: clip; }
-  .side.shut { width: 92px; }
+  .side.shut { width: 106px; }
 
   /* just the collapse button: the top bar owns the wordmark and the version, and it stays on screen
      when this rail is shut. */
@@ -421,25 +421,25 @@
   /* the collapsed digest: hidden on the wide rail, the whole content of the narrow one */
   .ic, .icv { display: none; }
   .side.shut .sgrp, .side.shut .sgrp.open { background: none; border-color: transparent; }
-  .side.shut .summary { grid-template-columns: 1fr; padding: 7px 6px 9px; }
+  .side.shut .summary { grid-template-columns: 1fr; padding: 8px 7px 11px; }
   .side.shut .summary:hover { background: var(--bg3); }
   .side.shut .car, .side.shut .lb, .side.shut .sv { display: none; }
-  /* the group's name, as a heading over its own block rather than a floating word */
-  .side.shut .ic { display: block; width: 100%; font-family: var(--mono); font-size: 9px; font-weight: 700;
+  /* the group's name, as a heading over its own block rather than a floating word. It hangs on the
+     same left edge as the setting names below it, so the column has one edge and not two. */
+  .side.shut .ic { display: block; margin-left: -3px; width: calc(100% + 3px);
+                   font-family: var(--mono); font-size: 9px; font-weight: 700;
                    letter-spacing: 0.14em; color: var(--ink3); text-align: left;
-                   padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .side.shut .icv { display: flex; flex-direction: column; gap: 7px; margin-top: 7px; min-width: 0; }
-  /* ponytail: label over value read as one column of eight floating words. The rule on the left ties
-     each pair together and separates it from its neighbour, which is the whole question the narrow
-     rail is asked: which of these is the setting and which is what it is set to. */
-  .icv .ln { display: flex; flex-direction: column; min-width: 0; line-height: 1.25;
-             padding-left: 6px; border-left: 2px solid var(--line); }
-  .icv .ln em { font-family: var(--mono); font-style: normal; font-size: 8px; font-weight: 600;
-                letter-spacing: .1em; text-transform: uppercase; color: var(--dim3); }
-  .icv .ln s { text-decoration: none; font-family: var(--mono); font-size: 10.5px; color: var(--ink);
+                   padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .side.shut .icv { display: flex; flex-direction: column; gap: 11px; margin-top: 9px; min-width: 0; }
+  /* ponytail: the pair is held together by the indent, not by a rule both halves shared — a pipe
+     down the side of a label and its value gives them the same left edge, which is exactly what made
+     eight of these read as one column. The name hangs left, what it is set to steps in under it. */
+  .icv .ln { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+  .icv .ln em { margin-left: -3px; font-family: var(--mono); font-style: normal; font-size: 8px;
+                font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--dim3); }
+  .icv .ln s { margin-top: 2px; padding-left: 9px; text-decoration: none; font-family: var(--mono);
+               font-size: 10.5px; color: var(--ink);
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* a setting that is off is dim AND its rule goes away, so an active one is what the eye lands on */
-  .icv .ln:has(s.off) { border-left-color: var(--line2); }
   .icv .ln s.off { color: var(--dim2); font-style: italic; }
 
   .fields { padding: 0 10px 10px; display: flex; flex-direction: column; }
@@ -583,7 +583,8 @@
 
   /* a multi-value setting in the collapsed digest, as the badges the expanded rail already uses.
      Stacked, never joined: at 92px a comma list is a truncated one. */
-  .icv .ln .pills { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; margin-top: 2px; min-width: 0; max-width: 100%; }
+  .icv .ln .pills { display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+                    margin-top: 3px; padding-left: 9px; min-width: 0; max-width: 100%; }
   .icv .ln .pills i { max-width: 100%; font-family: var(--mono); font-style: normal; font-size: 9.5px; line-height: 1.4;
                       padding: 0 6px; border-radius: 9px; color: var(--pink);
                       border: 1px solid color-mix(in srgb, var(--pink) 50%, transparent);
