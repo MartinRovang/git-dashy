@@ -103,7 +103,6 @@ button somewhere on the page.
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
-| `Y` | open the selected PR's pre-review with whatever the desktop uses for `.md` |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
@@ -125,9 +124,9 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
-| `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state |
-| `1` `2` `Tab` | the pane's two faces: the review summary, or the review **against the code it is about** |
-| `n` `N` `D` `c` | in the code tab: next/prev mark (or file), marks-only vs full diff, how much context |
+| `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
+| `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
+| `j` `k` `D` `c` `Esc` | in the code viewer (after clicking into it): next/prev file, marks-only vs full diff, how much context, close. Click the board and its keys come back, with the viewer following the selected PR |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
@@ -182,7 +181,8 @@ them at runtime; the header's `reviewer` group shows them as `depth <depth>` and
 least one; untick `review` and the voices you left ticked are the whole review. `--hunter A,B` (or
 `PRS_HUNTER`) adds lenses, each appending a section of its own findings: `ponytail` hunts only
 over-engineering, `security` only security, `tests` only missing or toothless tests,
-`humanizer` only AI-sounding prose in the description, docs, comments and user-facing strings.
+`humanizer` only AI-sounding prose the change adds to the application: user-facing strings, docs
+and comments, never the PR description.
 The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
 them at runtime.
 

@@ -23,8 +23,9 @@ fn pr_at(n: u64, title: &str, repo: &str, author: &str, hours: f64, draft: bool,
         title: title.into(),
         url: format!("https://github.com/{repo}/pull/{n}"),
         is_draft: draft,
-        additions: Some(62 + n % 40),
-        deletions: Some(14 + n % 9),
+        // a wide spread of diff sizes, so the graph's node sizes visibly differ
+        additions: Some([6, 30, 90, 240, 600, 1400, 3200][n as usize % 7]),
+        deletions: Some([2, 12, 40, 110, 300, 700, 1500][n as usize % 7]),
         repository: Repository {
             name_with_owner: repo.into(),
             name: repo.split('/').nth(1).unwrap_or("").into(),
@@ -56,7 +57,7 @@ fn fixtures() -> &'static Fixtures {
     static F: OnceLock<Fixtures> = OnceLock::new();
     F.get_or_init(|| {
         let now = now();
-        let mut m1 = pr_at(101, "Add retry to webhook client", "acme/api", "alice", 2.0, false, now);
+        let mut m1 = pr_at(101, "feat: add retry to webhook client", "acme/api", "alice", 2.0, false, now);
         m1.status = "· awaiting review".into();
         m1.reviewers = "✓bob ·carol".into();
         m1.checks = "✓".into();
@@ -74,9 +75,9 @@ fn fixtures() -> &'static Fixtures {
         let mut r1 = pr_at(212, "Fix off-by-one in pagination", "acme/web", "bob", 1.0, false, now);
         r1.checks = "✗".into();
         r1.reviewers = "~erin ·me".into();
-        let mut r2 = pr_at(207, "Cache user lookups in session middleware", "acme/web", "carol", 5.0, false, now);
+        let mut r2 = pr_at(207, "perf: cache user lookups in session middleware", "acme/web", "carol", 5.0, false, now);
         r2.checks = "●".into();
-        let r3 = pr_at(55, "Rotate signing keys and bump KMS alias", "acme/infra", "dave", 48.0, false, now);
+        let r3 = pr_at(55, "chore(infra)!: rotate signing keys and bump KMS alias", "acme/infra", "dave", 48.0, false, now);
         let finding = |kind: &str, loc: &str, text: &str| {
             serde_json::json!({"kind": kind, "loc": loc, "text": text})
         };
@@ -88,6 +89,7 @@ fn fixtures() -> &'static Fixtures {
                     verdict: "request_changes".into(),
                     summary: "Splits auth middleware into token parsing and policy checks.".into(),
                     body: "- `api/auth.py:40` policy check runs before the token is validated".into(),
+                    kind: "refactor".into(),
                     ..Default::default()
                 },
             ),
@@ -97,6 +99,8 @@ fn fixtures() -> &'static Fixtures {
                     verdict: "approve".into(),
                     summary: "Splits auth middleware into token parsing and policy checks.".into(),
                     body: "LGTM. Clean split, existing tests still cover both paths.".into(),
+                    kind: "refactor".into(),
+                    breaking: true,
                     findings: vec![
                         finding("note", "api/auth.py:40", "policy.check now runs on the parsed user; the old order is gone"),
                         finding("nit", "api/handlers.py:12", "the retry helper is unused after this change"),
@@ -112,6 +116,7 @@ fn fixtures() -> &'static Fixtures {
                     body: "- `infra/s3.tf:31` rule also matches the `backups/` prefix, would delete backups after 30d\n\
                            - no plan output attached"
                         .into(),
+                    kind: "maintenance".into(),
                     ..Default::default()
                 },
             ),
@@ -121,9 +126,9 @@ fn fixtures() -> &'static Fixtures {
             rr: vec![r1, r2, r3],
             // 3rd refresh, exercises auto
             late: pr_at(213, "Hotfix: null check in export job", "acme/web", "bob", 0.0, false, now),
-            assigned: vec![pr_at(300, "Flaky integration test in CI", "acme/api", "erin", 72.0, false, now)],
+            assigned: vec![pr_at(300, "test: fix the flaky integration test in CI", "acme/api", "erin", 72.0, false, now)],
             // 2nd refresh, desktop notification
-            late_assigned: pr_at(301, "Bump base image to fix CVE", "acme/infra", "erin", 0.0, false, now),
+            late_assigned: pr_at(301, "security: bump base image to fix CVE", "acme/infra", "erin", 0.0, false, now),
             seed,
         }
     })
@@ -182,6 +187,8 @@ pub fn install() {
             summary: v.summary.clone(),
             body: v.body.clone(),
             findings: findings(v),
+            kind: v.kind.clone(),
+            breaking: v.breaking,
         };
         text.push_str(&serde_json::to_string(&entry).unwrap_or_default());
         text.push('\n');
@@ -236,6 +243,7 @@ pub fn review(pr: &Pr, model: &str) -> String {
             verdict: "approve".into(),
             summary: "Fixes pagination when the page index is zero.".into(),
             body: "LGTM, regression test added.".into(),
+            kind: "fix".into(),
             ..Default::default()
         }),
         Some(Verdict {
@@ -244,12 +252,15 @@ pub fn review(pr: &Pr, model: &str) -> String {
             body:
                 "- `web/session.py:88` cache never invalidated on logout\n- missing test for cache miss path"
                     .into(),
+            kind: "feature".into(),
             ..Default::default()
         }),
         Some(Verdict {
             verdict: "comment".into(),
             summary: "Rotates the signing keys and points the KMS alias at the new key.".into(),
             body: "Unsure whether old tokens must stay valid during rollover; please confirm.".into(),
+            kind: "maintenance".into(),
+            breaking: true,
             ..Default::default()
         }),
         None,

@@ -255,6 +255,8 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
         summary: v.summary.clone(),
         body: v.body.clone(),
         findings: findings(v),
+        kind: v.kind.clone(),
+        breaking: v.breaking,
     };
     // ponytail: into the log of the team this repo is BOUND to, and yours when it is bound to none. The
     // shared review log is how a teammate's review appears in your list; sending it to a team the repo

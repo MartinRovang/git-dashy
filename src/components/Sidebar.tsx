@@ -1,13 +1,10 @@
 import type { StateData } from '../types'
-import type { VisSection } from '../board'
 import { counts } from '../board'
-import { every, SECTION_TONE } from '../tokens'
+import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
 type Props = {
   data: StateData | null
-  secs: VisSection[]
-  onJump: (name: string) => void
   setting: (name: string, value: unknown) => void
   onPath: (which: 'L' | 'C') => void
   onTeams: () => void
@@ -15,25 +12,14 @@ type Props = {
   onAskAgain: (kind: string, key: string) => void
 }
 
-/** The left rail: sections to jump to, the session's counts, then the agent, view and knowledge cards. */
-export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onModal, onAskAgain }: Props) {
+/** The left rail: the session's counts, then the agent, view and knowledge cards. */
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAskAgain }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   return (
     <div className="side scroll">
-      <div className="cap">WORKSPACE</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {secs.map((sec) => (
-          <div key={sec.name} className="nav" onClick={() => onJump(sec.name)}>
-            <i style={{ background: SECTION_TONE[sec.name] || 'var(--dim3)' }} />
-            <b>{sec.name.toLowerCase()}</b>
-            <em>{sec.prs.length}</em>
-          </div>
-        ))}
-      </div>
-      <div className="rule" />
       <div className="cap">SESSION</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {counts(d).map(([l, n, c]) => (
@@ -81,7 +67,7 @@ export function Sidebar({ data: d, secs, onJump, setting, onPath, onTeams, onMod
           <Select
             value={s.window == null ? 'all' : String(s.window)}
             options={o.window.map((v) => (v == null ? 'all' : String(v)))}
-            show={(v) => (v === 'all' ? 'all' : `${v}h`)}
+            show={(v) => (v === 'all' ? 'all' : span(+v))}
             onChange={(v) => setting('window', v === 'all' ? null : +v)}
           />
         </Row>

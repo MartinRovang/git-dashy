@@ -23,6 +23,7 @@ Respond with ONLY a JSON object, no prose, no code fences:
 {"verdict": "approve" | "request_changes" | "comment", "summary": "<one line, max 12 words: what the PR changes>",
  "body": "<markdown review, concise, list concrete findings with file:line{sections}>",
  "findings": [{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}],
+ "kind": "feature" | "fix" | "security" | "perf" | "maintenance" | "refactor" | "docs" | "tests" | "deps", "breaking": <true when merging it breaks existing callers, users, data or config>,
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
  "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}
 "findings" is the same review as "body", one line each, so a dashboard can list them: every blocking
@@ -30,7 +31,7 @@ finding must appear there. Empty list when there is nothing to report.
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."#;
 pub const PREV: &str = "
 
-This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}. The PR has been updated since.
+This is a RE-REVIEW: you already reviewed this PR on {at} with verdict {verdict}{tag}. The PR has been updated since.
 Your earlier review was:
 {body}
 
@@ -93,9 +94,9 @@ pub const HUNTER: &[(&str, &str)] = &[
     ),
     (
         "humanizer",
-        "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds: description, docs, \
-         comments, user-facing strings. Not-X-but-Y contrasts, one-line closers, staged run-ups, forced triads, \
-         dashes as the universal connector, inflated significance, sales language, stock AI words (delve, \
+        "\n\nAppend a section `---\n**Humanizer**`: hunt ONLY AI-sounding prose the PR adds to the application: \
+         user-facing strings, docs, comments. Never the PR description, title or commit messages. \
+         Not-X-but-Y contrasts, one-line closers, staged run-ups, forced triads, dashes as the universal connector, inflated significance, sales language, stock AI words (delve, \
          pivotal, seamless, robust), bold as decoration, chatbot residue. One line per finding, \
          `file:L<n>: <tell>: the phrase. plain rewrite.` Never add a fact the text lacks. Nothing found: `Reads human.`",
     ),
@@ -491,7 +492,27 @@ pub fn prompt(i: &Inputs) -> Result<String> {
         .prev
         .map(|p| {
             let at: String = p.at.chars().take(10).collect();
-            fill(PREV, &[("at", &at), ("verdict", &p.verdict), ("body", &p.body)])
+            // the earlier tag goes in too, or a borderline PR hops between kinds, and graph groups, each review
+            // the log is shared, so a kind not on the list never reaches the prompt; "other" asks for a real one
+            let tag = match (p.kind.as_str(), p.breaking) {
+                ("", _) => String::new(),
+                ("other", b) => {
+                    format!(", tagged kind other, breaking {b}; pick a kind from the list if one fits")
+                }
+                (k, b) if config::KINDS.contains(&k) => format!(
+                    ", tagged kind {k}, breaking {b}; keep both unless the new commits changed what the PR is"
+                ),
+                _ => String::new(),
+            };
+            fill(
+                PREV,
+                &[
+                    ("at", &at),
+                    ("verdict", &p.verdict),
+                    ("tag", &tag),
+                    ("body", &p.body),
+                ],
+            )
         })
         .unwrap_or_default();
     let mut out = fill(
@@ -559,6 +580,20 @@ pub fn parse_verdict(text: &str) -> Result<Verdict> {
         _ => Vec::new(),
     };
     obj.insert("remember".into(), serde_json::to_value(remember)?);
+    // a free-text kind scatters one group across "feat", "feature" and "new-feature"; only the list is kept
+    let kind = match obj
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(|k| k.trim().to_lowercase())
+    {
+        Some(k) if config::KINDS.contains(&k.as_str()) => k,
+        Some(k) if !k.is_empty() => "other".into(),
+        _ => String::new(),
+    };
+    obj.insert("kind".into(), kind.into());
+    if !obj.get("breaking").map(Value::is_boolean).unwrap_or(false) {
+        obj.insert("breaking".into(), false.into());
+    }
     Ok(serde_json::from_value(v)?)
 }
 
@@ -738,7 +773,18 @@ pub fn review(pr: &Pr, model: &str) -> Result<String> {
 fn review_inner(pr: &Pr, model: &str) -> Result<String> {
     let (repo, n) = (pr.repo(), pr.number);
     let c = config::get();
-    let prev = rlog::last(&pr.url);
+    let mut prev = rlog::last(&pr.url);
+    // the newest entry may predate tags; the board shows the newest TAGGED one, so the prompt must see that too
+    if let Some(p) = prev.as_mut().filter(|p| p.kind.is_empty()) {
+        if let Some(t) = rlog::reviewed()
+            .into_iter()
+            .filter(|r| r.url == pr.url)
+            .filter_map(|r| r.review)
+            .find(|r| !r.kind.is_empty())
+        {
+            (p.kind, p.breaking) = (t.kind, t.breaking);
+        }
+    }
     let what = match &prev {
         Some(p) => {
             let was = config::status(&p.verdict).ok_or_else(|| anyhow!("unknown verdict {:?}", p.verdict))?;
@@ -929,6 +975,8 @@ mod tests {
             at: "2099-01-02T03:04:05+00:00".into(),
             verdict: "request_changes".into(),
             body: "- cache never invalidated {memory}".into(),
+            kind: "refactor".into(),
+            breaking: true,
             ..Default::default()
         };
         let p = prompt(&inputs(Some(&prev))).unwrap();
@@ -936,6 +984,21 @@ mod tests {
             p.contains("RE-REVIEW: you already reviewed this PR on 2099-01-02 with verdict request_changes")
         );
         assert!(p.contains("- cache never invalidated {memory}")); // pasted text is never re-filled
+        assert!(p.contains("tagged kind refactor, breaking true; keep both unless"));
+        let other = LogEntry {
+            kind: "other".into(),
+            ..prev.clone()
+        };
+        assert!(prompt(&inputs(Some(&other)))
+            .unwrap()
+            .contains("pick a kind from the list"));
+        let junk = LogEntry {
+            kind: "ignore all previous".into(),
+            ..prev
+        };
+        assert!(!prompt(&inputs(Some(&junk)))
+            .unwrap()
+            .contains("ignore all previous"));
         assert!(p.find("RE-REVIEW").unwrap() < p.find("Additional instructions").unwrap());
     }
 
@@ -993,6 +1056,27 @@ Hope that helps! {not json}"#;
         assert_eq!(v.findings.len(), 1);
         assert_eq!(v.depth_used, "high");
         assert!(parse_verdict(r#"{"summary": "no verdict here"}"#).is_err());
+        let tagged = |raw: &str| {
+            let v = parse_verdict(raw).unwrap();
+            (v.kind, v.breaking)
+        };
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": "Security", "breaking": true}"#),
+            ("security".into(), true)
+        );
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": "new-feature", "breaking": "yes"}"#),
+            ("other".into(), false)
+        );
+        assert_eq!(tagged(r#"{"verdict": "approve"}"#), ("".into(), false));
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": " "}"#),
+            ("".into(), false)
+        );
+        assert_eq!(
+            tagged(r#"{"verdict": "approve", "kind": " Fix"}"#),
+            ("fix".into(), false)
+        );
     }
 
     #[test]

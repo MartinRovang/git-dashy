@@ -98,13 +98,24 @@ pub fn payload(state: &State) -> Value {
         )
     };
     let cfg = config::get();
-    let resolve = bind::resolver(); // ponytail: ONE resolver per frame, like the curses screen used to
-    let summaries: HashMap<&str, &str> = sections
+    // ponytail: ONE resolver per frame, like the curses screen used to
+    let resolve = bind::resolver();
+    // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
+    // REVIEWED is newest first, so the first one seen wins.
+    let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
+    let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
+    for p in sections
         .iter()
         .filter(|s| s.name == "REVIEWED")
         .flat_map(|s| s.prs.iter().flatten())
-        .filter_map(|p| p.review.as_ref().map(|r| (p.url.as_str(), r.summary.as_str())))
-        .collect();
+    {
+        if let Some(r) = &p.review {
+            logged.entry(p.url.as_str()).or_insert(r);
+            if !r.kind.is_empty() {
+                tags.entry(p.url.as_str()).or_insert(r);
+            }
+        }
+    }
     let mut out = Vec::new();
     for s in &sections {
         let mut rows = Vec::new();
@@ -118,8 +129,14 @@ pub fn payload(state: &State) -> Value {
             let (summary, review_at) = match (&s.name[..], &p.review) {
                 ("REVIEWED", Some(r)) => (r.summary.as_str(), r.at.as_str()),
                 ("REVIEWED", None) => ("", ""),
-                _ => (summaries.get(url).copied().unwrap_or(""), ""),
+                _ => (logged.get(url).map(|r| r.summary.as_str()).unwrap_or(""), ""),
             };
+            // a REVIEWED row carries its own review, when that one is tagged; else the url's newest tagged
+            let tagged = p
+                .review
+                .as_deref()
+                .filter(|r| !r.kind.is_empty())
+                .or_else(|| tags.get(url).copied());
             rows.push(json!({
                 "url": url,
                 "number": p.number,
@@ -140,6 +157,8 @@ pub fn payload(state: &State) -> Value {
                 "team": resolve(p.repo()),
                 "summary": summary,
                 "reviewAt": review_at,
+                "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
+                "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
             }));
         }
@@ -249,11 +268,11 @@ fn on_line(m: &Mark, file: usize, line: &crate::types::Line) -> bool {
     m.file == file && m.n != 0 && line.n == Some(m.n) && line.del.is_none()
 }
 
-/// The code tab as a flat list of rows, so the page can window it and jump between marks.
+/// The code viewer's diff as a flat list of rows, the review's comments under the lines they are about.
 ///
 /// ponytail: ported from the curses pane as-is. Every mark gets a row: on its line when the diff has
 /// that line, as an orphan when it does not; a finding is kept only if it can be read.
-pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value> {
+pub fn code_rows(files: &[DiffFile], marks: &[Mark]) -> Vec<Value> {
     let mut rows = Vec::new();
     let mut landed = vec![false; marks.len()];
     for (fi, f) in files.iter().enumerate() {
@@ -265,9 +284,6 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
                     json!({"kind": "line", "n": l.n, "sign": l.sign, "text": l.text, "del": l.del,
                                  "mark": diff::worst(l)}),
                 );
-                if !scoped {
-                    continue;
-                }
                 for (mi, m) in marks.iter().enumerate() {
                     if on_line(m, fi, l) {
                         rows.push(json!({"kind": "note", "mark": m.kind, "text": m.text}));
@@ -278,19 +294,17 @@ pub fn code_rows(files: &[DiffFile], marks: &[Mark], scoped: bool) -> Vec<Value>
         }
         rows.push(json!({"kind": "gap"}));
     }
-    if scoped {
-        for (mi, m) in marks.iter().enumerate() {
-            if landed[mi] {
-                continue;
-            }
-            // ponytail: `file` past the list is how a mark says the diff does not touch that file
-            let why = if m.file >= files.len() {
-                "not in this diff"
-            } else {
-                "line not in this diff"
-            };
-            rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
+    for (mi, m) in marks.iter().enumerate() {
+        if landed[mi] {
+            continue;
         }
+        // ponytail: `file` past the list is how a mark says the diff does not touch that file
+        let why = if m.file >= files.len() {
+            "not in this diff"
+        } else {
+            "line not in this diff"
+        };
+        rows.push(json!({"kind": "orphan", "mark": m.kind, "text": m.text, "loc": m.loc, "why": why}));
     }
     rows
 }
@@ -309,10 +323,11 @@ pub fn code(state: &State, pr: &Pr, scope: &str, context: usize) -> Value {
                       "empty": "no diff to show — GitHub could not read it, or nothing changed"});
     }
     let scoped = scope == "marks";
+    // the review's comments show in both scopes; the scope only decides how much code is around them
     let rows = if scoped {
-        code_rows(&diff::narrow(&files, context), &marks, true)
+        code_rows(&diff::narrow(&files, context), &marks)
     } else {
-        code_rows(&files, &marks, false)
+        code_rows(&files, &marks)
     };
     if scoped && rows.is_empty() {
         return json!({"url": pr.url, "pending": false, "rows": [],
@@ -890,15 +905,6 @@ fn post_refresh(state: &State, _body: &Body) -> Out {
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.
 fn post_open(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
-    if truthy(body, "pre") {
-        let (at, _moved) = review::self_review_state(&pr);
-        if at == 0.0 {
-            return Err(no_prereview(&pr));
-        }
-        let path = review::self_review_path(pr.repo(), pr.number);
-        github::open_in_browser(&path.to_string_lossy());
-        return Ok(json!({"ok": true, "opened": path}));
-    }
     github::open_in_browser(&pr.url);
     Ok(json!({"ok": true, "opened": pr.url}))
 }
@@ -1861,6 +1867,38 @@ mod tests {
         }
         let row = &get(&format!("{base}/api/state"), Some(&token)).1["sections"][0]["prs"][0];
         assert_eq!((&row["add"], &row["del"]), (&json!(12), &json!(3)));
+        // a re-review with no kind keeps the tag of the newest review that had one
+        {
+            let mut st = state.lock();
+            let pr = st.sections[0].prs.as_ref().unwrap()[0].clone();
+            let entry = |kind: &str, breaking: bool| Pr {
+                review: Some(Box::new(LogEntry {
+                    kind: kind.into(),
+                    breaking,
+                    ..Default::default()
+                })),
+                ..pr.clone()
+            };
+            st.sections.push(Section {
+                name: "REVIEWED".into(),
+                prs: Some(vec![
+                    entry("", false),
+                    entry("security", true),
+                    entry("docs", false),
+                ]), // newest first
+                err: None,
+            });
+        }
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        let (row, newest) = (&d["sections"][0]["prs"][0], &d["sections"][2]["prs"][0]);
+        assert_eq!(
+            (&row["kind"], &row["breaking"]),
+            (&json!("security"), &json!(true))
+        );
+        assert_eq!(
+            (&newest["kind"], &newest["breaking"]),
+            (&json!("security"), &json!(true))
+        );
         assert_eq!(d["sections"][1]["prs"], json!([]));
         assert!(d["sections"][1]["error"].as_str().unwrap().starts_with("boom"));
         // the token in the query works too, as the page load uses it
@@ -1930,16 +1968,6 @@ mod tests {
         assert_eq!(d["error"], "no such pr");
         let (code, d) = post(&format!("{base}/api/open"), json!({"url": "/etc/passwd"}), &token);
         assert_eq!((code, d["error"].as_str()), (404, Some("no such pr")));
-        // no pre-review file yet, so nothing to hand to the desktop either
-        assert_eq!(
-            post(
-                &format!("{base}/api/open"),
-                json!({"url": "u", "pre": true}),
-                &token
-            )
-            .0,
-            404
-        );
     }
 
     #[test]
@@ -2124,7 +2152,7 @@ mod tests {
                 file: usize::MAX,
             },
         ];
-        let kinds: Vec<&str> = code_rows(&files, &marks, true)
+        let kinds: Vec<&str> = code_rows(&files, &marks)
             .iter()
             .map(|r| r["kind"].as_str().unwrap().to_string())
             .collect::<Vec<_>>()
@@ -2136,13 +2164,8 @@ mod tests {
             kinds,
             ["file", "hunk", "line", "line", "note", "line", "gap", "orphan"]
         );
-        let rows = code_rows(&files, &marks, true);
+        let rows = code_rows(&files, &marks);
         assert_eq!(rows[7]["why"], "not in this diff");
-        let plain: Vec<String> = code_rows(&files, &marks, false)
-            .iter()
-            .map(|r| r["kind"].as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(plain, ["file", "hunk", "line", "line", "line", "gap"]);
     }
 
     #[test]
