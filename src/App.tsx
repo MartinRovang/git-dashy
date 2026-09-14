@@ -52,6 +52,8 @@ export default function App() {
   const [context, setContext] = useState<number>(CONTEXTS[0])
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
+  // the fetchedAt a history change was made on: until a newer fetch lands, the board is the old window
+  const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
@@ -266,6 +268,7 @@ export default function App() {
         : name === 'window'
           ? span(value as number | null)
           : String(value === '' ? 'default' : value)
+    if (name === 'window') setRefetchFrom(data?.fetchedAt ?? null)
     await call('/api/settings', { [name]: value }, `${name} is now ${shown}`)
   }
 
@@ -587,6 +590,7 @@ export default function App() {
                 }}
                 onOpen={() => setPane(true)}
                 onMenu={(row, at) => setMenuAt({ p: row, at })}
+                refetching={refetchFrom != null && !!data?.fetching && data.fetchedAt === refetchFrom}
               />
               )}
             </div>

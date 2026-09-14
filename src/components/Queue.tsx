@@ -25,6 +25,7 @@ type Props = {
   onSelect: (uid: string) => void
   onOpen: () => void
   onMenu: (row: Row, at: { x: number; y: number }) => void
+  refetching: boolean
 }
 
 function mineNote(prs: Row[]): string {
@@ -203,10 +204,19 @@ export function Queue(p: Props) {
           <input id="q" value={p.query} placeholder="filter by title, repo, author" onChange={(e) => p.onQuery(e.target.value)} />
         </label>
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          updated{' '}
-          {d?.fetchedAt
-            ? ((a: string) => (a === 'now' ? 'just now' : a + ' ago'))(age(new Date(d.fetchedAt * 1000).toISOString()))
-            : 'never'}
+          {p.refetching ? (
+            <>
+              {/* ponytail: sections land all at once when every page is in, so a spinner and not a count */}
+              <span className="spinner" /> fetching PRs…
+            </>
+          ) : (
+            <>
+              updated{' '}
+              {d?.fetchedAt
+                ? ((a: string) => (a === 'now' ? 'just now' : a + ' ago'))(age(new Date(d.fetchedAt * 1000).toISOString()))
+                : 'never'}
+            </>
+          )}
         </div>
       </div>
       <div className="list scroll">

@@ -352,6 +352,14 @@ function postSettings(b: Body) {
   for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
     if (k in b) s[k] = b[k]
   }
+  if ('window' in b) {
+    // like the app: a new window refetches, and every section's pages take a while
+    S.fetching = true
+    setTimeout(() => {
+      S.fetching = false
+      S.fetchedAt = secs()
+    }, 4000)
+  }
   return json(200, { ok: true })
 }
 
