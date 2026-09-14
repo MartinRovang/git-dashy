@@ -201,7 +201,7 @@ export function Graph({ secs, sel, onSelect }: {
     const world = root.select<SVGGElement>('g.world')
     // a soft glow per repo behind its area, author tab only. A radial gradient per repo fades each disc out;
     // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
-    const repos = by === 'author' ? [...new Set(rows.map((r) => r.repo))] : []
+    const repos = by === 'author' ? [...new Set(rows.map((r) => r.repo))].sort() : []
     const gid = (d: string) => `ghalo-${repos.indexOf(d)}`
     root
       .select('defs')
@@ -209,12 +209,13 @@ export function Graph({ secs, sel, onSelect }: {
       .data(repos, (d) => d)
       .join((enter) => {
         const e = enter.append('radialGradient')
-        e.append('stop').attr('offset', '0%').style('stop-color', 'currentColor').style('stop-opacity', 0.22)
+        e.append('stop').attr('offset', '0%').style('stop-color', 'currentColor').style('stop-opacity', 0.35)
         e.append('stop').attr('offset', '100%').style('stop-color', 'currentColor').style('stop-opacity', 0)
         return e
       })
       .attr('id', gid)
-      .style('color', (d) => avatar(d)) // the stops paint currentColor, inherited from here
+      // saturated hues a golden angle apart, so neighbouring repos never share a colour; the stops paint currentColor
+      .style('color', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 55%)`)
     const halo = world
       .select('g.halos')
       .selectAll<SVGCircleElement, string>('circle')
