@@ -2,6 +2,7 @@
 // with no backend. Interactive: mutations change in-memory state roughly like the real handlers. Not modelled:
 // the drafts recurrence gate (promote just removes the draft) and the Host/token guard.
 // Active when no backend answers on :7777; force with DASHY_MOCK=1, disable with DASHY_MOCK=0.
+// DASHY_MOCK_N=400 adds that many synthetic PRs, to try the graph on a big board.
 import { get as httpGet } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
@@ -109,6 +110,9 @@ const memoryText: Record<string, string> = {
   'acme/web': '# acme/web\n\n- session middleware is shared with the admin app\n',
 }
 
+const SYNTH_PREFIX = ['feat: ', 'fix: ', 'chore: ', 'docs: ', '']
+const SYNTH_SECTION = ['MINE', 'REVIEW REQUESTED', 'ASSIGNED', 'REVIEWED']
+
 function seed() {
   const m1 = mkPr(101, 'Add retry to webhook client', 'acme/api', 'alice', 2, 'MINE')
   m1.status = '· awaiting review'
@@ -126,6 +130,10 @@ function seed() {
   const v1 = mkPr(180, 'Refactor auth middleware', 'acme/api', 'frank', 3, 'REVIEWED')
   const v2 = mkPr(44, 'Add S3 lifecycle rules', 'acme/infra', 'grace', 5, 'REVIEWED')
   S.rows = [m1, m2, r1, r2, r3, a1, v1, v2]
+  for (let i = 0; i < Number(process.env.DASHY_MOCK_N || 0); i++) {
+    const title = SYNTH_PREFIX[i % SYNTH_PREFIX.length] + 'synthetic change number ' + i
+    S.rows.push(mkPr(1000 + i, title, `acme/r${i % 25}`, `dev${(i * 7) % 40}`, i % 90, SYNTH_SECTION[i % SYNTH_SECTION.length]))
+  }
   S.binding = { 'acme/api': 'acme', 'acme/web': 'acme', 'acme/infra': 'acme' }
   S.reviewInfo[v1.url] = {
     verdict: 'approve',

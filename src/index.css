@@ -321,6 +321,9 @@
   .graph svg { flex: 1; min-height: 0; width: 100%; cursor: grab; }
   .graph svg:active { cursor: grabbing; }
   .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); pointer-events: none; }
+  .graph .halos, .graph .gnames { pointer-events: none; }
+  /* divided by the zoom, so a galaxy name stays the same size on screen however far you zoom */
+  .graph .gnames text { font-size: calc(26px / var(--k)); font-weight: 700; text-anchor: middle; opacity: .85; paint-order: stroke; stroke: var(--bg); stroke-width: calc(4px / var(--k)); }
   .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
   .graph line.lit { stroke: var(--ink3); }
   .gnode { cursor: pointer; transition: opacity .2s; }
@@ -331,10 +334,13 @@
   .gnode.hub { cursor: grab; }
   .gnode.hub circle { filter: saturate(.4); }
   .gnode.hub text { fill: var(--dim); opacity: min(1, calc(var(--label) * 2)); font-size: calc(12px / var(--k)); }
+  /* WebKit lays out every drawn SVG text on each tick, so a title is drawn only where the code names it (on screen, few enough) or it is lit */
+  .gnode:not(.named, .sel, .lit, .hit) text { display: none; }
   .gnode.sel circle { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
   .graph svg.search:not(.focus) .gnode:not(.hit), .graph svg.search:not(.focus) line:not(.hit) { opacity: .15; }
+  .graph svg.search .halos circle:not(.hit), .graph svg.search .gnames text:not(.hit), .graph svg.focus .halos, .graph svg.focus .gnames { opacity: .3; }
   .graph svg.search .gnode.hit text { opacity: 1; fill: var(--ink); }
   .gbadge { display: flex; flex-direction: column; gap: 6px; }
   .gbadge .search { pointer-events: auto; background: var(--bg); }
@@ -344,8 +350,8 @@
   .glegend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line2); }
   .glegend span { display: flex; align-items: center; gap: 5px; }
   .glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
-  .gnode path.person { pointer-events: none; }
-  .glegend .gperson { width: 11px; height: 11px; fill: var(--ink3); }
+  .gnode path.icon { pointer-events: none; }
+  .glegend .gicon { width: 11px; height: 11px; fill: var(--ink3); }
 
   /* ponytail: React mounts into #root, so it needs the full height the vanilla #app assumed. */
   #root { height: 100%; }
