@@ -138,6 +138,22 @@ impl Inner {
             .map(|p| p.url)
             .collect()
     }
+    /// Take up a new auto-review scope: whatever it newly covers joins the baseline, so widening
+    /// never fires a batch — whoever widened it, and from whichever process.
+    ///
+    /// ponytail: a method rather than four lines in tick(), because the test for it was otherwise
+    /// a copy of those lines asserting that `None.as_mut()` does nothing, which no change to this
+    /// crate could ever fail.
+    pub fn absorb_scope(&mut self, scope: &autorev::Scope) {
+        // no previous scope is the first tick: everything counted as covered, and set_auto has
+        // already baselined by then, so nothing here is new
+        let prev = self.auto_scope.replace(scope.clone()).unwrap_or_default();
+        let newly = newly_covered(&self.rr_prs(), &prev, scope);
+        if let Some(b) = self.auto_baseline.as_mut() {
+            b.extend(newly);
+        }
+    }
+
     fn rr_prs(&self) -> Vec<Pr> {
         self.sections
             .iter()
@@ -149,6 +165,7 @@ impl Inner {
 }
 
 /// The urls that just came into scope: listed now, not covered before, covered now.
+///
 ///
 /// They join the baseline, so widening never fires a batch — whoever widened it. `a` asks before
 /// reviewing a backlog and shows the count; arming a repo goes through no such gate, and the writer
@@ -343,9 +360,14 @@ impl State {
 
     /// include_existing: review what is already listed too, not just what shows up later.
     pub fn set_auto(&self, on: bool, include_existing: bool) {
+        // ponytail: the scope is read HERE too, so the next tick sees no widening. Without it, a
+        // scope armed from the CLI seconds earlier still looked new to that tick, which folded the
+        // very PRs just consented to into the baseline — fewer ran than the count asked about.
+        let scope = autorev::scope();
         let wake = {
             let mut inner = self.lock();
             inner.auto = on;
+            inner.auto_scope = Some(scope);
             inner.auto_baseline = if !on {
                 None
             } else if include_existing {
@@ -360,7 +382,6 @@ impl State {
         }
     }
 
-    /// Review-requested PRs with no verdict or review in flight.
     /// The thread's landing: the row's status, nothing spinning, nothing kept.
     fn finish(&self, url: &str, status: String) {
         {
@@ -705,11 +726,7 @@ impl State {
             // process, so the dashboard learns about a widened scope by reading the file on the next
             // tick — and suppressing the batch in post_auto left the CLI path firing the very batch
             // the route was careful to avoid. The tick is where every writer converges.
-            let prev = inner.auto_scope.replace(scope.clone()).unwrap_or_default();
-            let newly = newly_covered(&inner.rr_prs(), &prev, &scope);
-            if let Some(b) = inner.auto_baseline.as_mut() {
-                b.extend(newly);
-            }
+            inner.absorb_scope(&scope);
             match (&inner.auto, &inner.auto_baseline) {
                 (true, Some(baseline)) => {
                     auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
@@ -985,32 +1002,130 @@ mod tests {
         assert_eq!(newly_covered(&rr, &everywhere, &narrow), Vec::<String>::new());
     }
 
-    /// The first tick has no previous scope. Treating that as "everything was covered" is what keeps
-    /// it from baselining the whole board out from under the `a` the user just pressed.
+    /// The genuine None branch: absorb_scope on a State that has never taken one. Passing two
+    /// defaults to newly_covered() never reached `unwrap_or_default()` at all.
     #[test]
-    fn the_first_tick_covers_nothing_new() {
-        let rr = vec![pr_in("mine", "a/b")];
-        let now = autorev::Scope::default();
-        assert_eq!(
-            newly_covered(&rr, &autorev::Scope::default(), &now),
-            Vec::<String>::new()
+    fn the_first_scope_a_state_takes_covers_nothing_new() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b")]),
+            None,
+        )];
+        st.set_auto(true, true); // an empty baseline, and everything listed consented to
+        assert!(st.lock().auto_scope.is_some(), "set_auto takes the scope up too");
+
+        let mut inner = st.lock();
+        assert!(inner.auto_baseline.clone().unwrap().is_empty());
+        inner.absorb_scope(&crate::autorev::scope());
+        assert!(
+            inner.auto_baseline.clone().unwrap().is_empty(),
+            "the scope did not move, so nothing was baselined out of the consent just given"
         );
     }
 
     /// Arming while auto is off must leave the baseline None, so a later `a` still snapshots
     /// normally rather than finding a half-filled set.
     #[test]
-    fn baselining_does_nothing_while_auto_is_off() {
+    fn absorbing_a_scope_does_nothing_while_auto_is_off() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
         let st = State::new();
-        assert!(st.lock().auto_baseline.is_none());
-        let mut inner = st.lock();
-        let newly = vec!["u".to_string()];
-        if let Some(b) = inner.auto_baseline.as_mut() {
-            b.extend(newly);
-        }
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        crate::autorev::set("a/b", true);
+        st.lock().absorb_scope(&crate::autorev::scope());
+        crate::autorev::set("other/thing", true);
+        st.lock().absorb_scope(&crate::autorev::scope());
         assert!(
-            inner.auto_baseline.is_none(),
-            "nothing to extend while auto is off"
+            st.lock().auto_baseline.is_none(),
+            "auto is off, so there is no baseline to fill"
+        );
+
+        st.set_auto(true, false); // a later `a` still snapshots normally
+        assert_eq!(st.lock().auto_baseline.clone().unwrap().len(), 2);
+    }
+
+    /// The scope must ADVANCE, not just be read. Left on the first one, a repo armed at one tick
+    /// stays "newly covered" at every later tick, so PRs arriving in it keep joining the baseline
+    /// and auto never starts anything there again.
+    #[test]
+    fn a_repo_stops_being_new_once_its_scope_has_been_taken_up() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b")]),
+            None,
+        )];
+        st.set_auto(true, true);
+
+        crate::autorev::set("other/thing", true); // widen
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        st.lock().absorb_scope(&crate::autorev::scope());
+        assert_eq!(
+            st.lock().auto_baseline.clone().unwrap().len(),
+            1,
+            "what other/thing already had joins the baseline once"
+        );
+
+        // a NEW PR arrives in that same repo on a later tick; the scope has not moved, so it starts
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![
+                pr_in("mine", "a/b"),
+                pr_in("theirs", "other/thing"),
+                pr_in("fresh", "other/thing"),
+            ]),
+            None,
+        )];
+        st.lock().absorb_scope(&crate::autorev::scope());
+        let seen = st.lock().auto_baseline.clone().unwrap();
+        assert!(
+            !seen.contains("fresh"),
+            "a repo armed earlier is not newly covered again; its new PRs must start"
+        );
+    }
+
+    /// The seam the consent count sat on: `a` reads the scope too, so a repo armed from the CLI
+    /// seconds earlier does not look new to the next tick and get baselined out of what was asked.
+    #[test]
+    fn what_was_just_consented_to_is_not_baselined_away() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        crate::autorev::set("other/thing", true); // the CLI widens it
+        st.set_auto(true, true); // then `a`, with the count that widening produced
+
+        st.lock().absorb_scope(&crate::autorev::scope());
+        assert!(
+            st.lock().auto_baseline.clone().unwrap().is_empty(),
+            "the tick must not baseline what the prompt had already counted"
         );
     }
 

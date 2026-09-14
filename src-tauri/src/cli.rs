@@ -657,7 +657,7 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         None => String::new(),
     };
     if !named.is_empty() && owner.is_some() {
-        return fail("gitdashy: name a repo or --owner OWNER, not both");
+        return fail("gitdashy: name a repo or an owner, not both");
     }
     if let Some(owner) = owner {
         let err = autorev::set_owner(&owner, on);
@@ -678,6 +678,11 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         return 0;
     }
     if named.is_empty() {
+        // ponytail: --off with nothing to turn off silently reported, so a mistyped command looked
+        // like it had worked. A flag that changes nothing is a question that was asked wrong.
+        if off {
+            return fail("gitdashy: --off needs a repo or --owner OWNER");
+        }
         show();
         return 0;
     }
@@ -1609,6 +1614,11 @@ mod tests {
         assert_eq!(
             auto_cmd(Some("acme/api".into()), Some("beta".into()), false, false),
             1
+        );
+        assert_eq!(
+            auto_cmd(None, None, true, false),
+            1,
+            "--off with nothing to turn off is a question asked wrong, not a report"
         );
         assert_eq!(
             auto_cmd(Some("not-a-slug".into()), Some("acme".into()), false, false),

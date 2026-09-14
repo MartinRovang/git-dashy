@@ -913,6 +913,12 @@ fn post_auto(state: &State, body: &Body) -> Out {
         let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
             return Err(Fail::new(400, "a scope change needs on: true or on: false"));
         };
+        // ponytail: the same answer `auto_cmd` gives. It silently preferred `owner` and dropped
+        // `repo`, so the two surfaces resolved one body two ways, and #86's toggle is written
+        // against this one.
+        if !repo.is_empty() && !owner.is_empty() {
+            return Err(Fail::new(400, "name a repo or an owner, not both"));
+        }
         fail_if(if owner.is_empty() {
             autorev::set(&repo, on)
         } else {
@@ -2117,6 +2123,21 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (400, Some("a scope change needs on: true or on: false"))
+        );
+
+        // both at once resolves one way here and another in the CLI unless it is refused
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "owner": "beta", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("name a repo or an owner, not both"))
+        );
+        assert!(
+            !autorev::scope().listed().iter().any(|(t, _)| t == "beta/*"),
+            "the refused body wrote nothing"
         );
 
         let (code, body) = post(

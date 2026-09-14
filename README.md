@@ -426,14 +426,14 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
 
-The board spans whatever the token can see, so with nothing armed auto covers every repo on it. `gitdashy auto owner/name` arms one, and from then on
-auto covers only what is armed; `--owner OWNER` arms a whole org and a repo of its own still
-overrides it, so the one repo under that owner you do not want reviewed can be left out with
-`gitdashy auto owner/repo --off`. A lone `--off` is not a decision to arm the rest: while nothing is
-armed, auto still covers everything. `gitdashy auto` reports. Widening the scope does not fire a
-batch, whether you widened it from the dashboard, from the command line or by editing the file:
-the tick that notices a repo has come into scope treats what it already has listed as seen, and
-only what arrives next starts.
+The board spans whatever the token can see, so with nothing armed auto covers every repo on it.
+`gitdashy auto owner/name` arms one, and from then on auto covers only what is armed; `--owner
+OWNER` arms a whole org and a repo of its own still overrides it, so the one repo under that owner
+you do not want reviewed can be left out with `gitdashy auto owner/repo --off`. A lone `--off` is
+not a decision to arm the rest: while nothing is armed, auto still covers everything. `gitdashy
+auto` reports. Widening the scope does not fire a batch, whether you widened it from the dashboard,
+from the command line or by editing the file: the tick that notices a repo has come into scope
+treats what it already has listed as seen, and only what arrives next starts.
 
 ### Agent sessions
 
