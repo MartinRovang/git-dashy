@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, errorText, post } from './api'
+import { api, copyText, errorText, post } from './api'
 import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, remember, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
@@ -330,7 +330,7 @@ export default function App() {
       }
       const got = await r.json()
       const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
-      const copy = () => void call('/api/copy', { text: got.text }, '✓ pre-review copied')
+      const copy = async () => setFlash(await copyText(got.text, 'the pre-review'))
       m.keys!.y = copy
       m.foot!.unshift(['y', 'copy', copy, 'go'])
       repaint()
@@ -342,8 +342,7 @@ export default function App() {
 
   async function copyUrl(p: Row) {
     if (!p) return
-    const out = await call('/api/copy', { url: p.url })
-    if (out) setFlash(out.tool === 'terminal' ? `sent ${p.url} to the terminal — if nothing landed, install wl-clipboard or xclip` : `✓ copied ${p.url} (via ${out.tool})`)
+    setFlash(await copyText(p.url, p.url))
   }
 
   async function addReviewer(p: Row) {
