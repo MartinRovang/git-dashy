@@ -289,27 +289,11 @@ pub fn session_notes() -> Vec<String> {
     if hand_wired_team_import(None) {
         out.push("CLAUDE.md imports @prs-team by hand".to_string());
     }
-    // ponytail: the launch prompt asks ONCE, at startup. After a `n`, or on a machine that only ever
-    // runs the session hook, a team's instruction to your sessions is withheld for ever with nothing
-    // saying so, and this row exists for exactly that: what a session here is NOT being told.
-    // ponytail: a refusal is a note too, and unacked_agents forgets a team once it is answered.
-    let waiting: Vec<String> = memory::unacked_agents().into_iter().map(|(k, _)| k).collect();
-    if !waiting.is_empty() {
-        out.push(format!(
-            "{}: agents.md not read, restart to be asked",
-            waiting.join(", ")
-        ));
-    }
-    // ponytail: names the command that ACTUALLY re-asks. It said "restart to be asked again", and a
-    // restart asked nothing: ask_agents walks unacked_agents, which drops a team whose refusal
-    // matches the file it still has. Nothing cleared a `!` entry at all.
-    let refused = memory::refused_agents();
-    if !refused.is_empty() {
-        out.push(format!(
-            "{}: agents.md refused, `gitdashy teams --agents-again`",
-            refused.join(", ")
-        ));
-    }
+    // ponytail: the TEAM gates are not here any more. They started as notes because a withheld
+    // agents.md was invisible, and a note is the wrong shape for them: it states a problem the reader
+    // cannot act on from where they are reading it. memory::pending_answers() drives its own rows on
+    // the knowledge card, and pressing one asks the question again. What is left here is what the
+    // docstring says: things about THIS MACHINE's wiring, which no click in the dashboard can fix.
     *cache = Some((key, out.clone()));
     out
 }
@@ -2131,6 +2115,35 @@ mod tests {
 
     fn s(v: &str) -> String {
         v.to_string()
+    }
+
+    #[test]
+    fn session_notes_leaves_the_team_gates_to_the_knowledge_rows() {
+        // They started here because a withheld agents.md was invisible, and a note is the wrong shape:
+        // it states a problem you cannot act on from where you read it. memory::pending_answers drives
+        // rows you can click. Saying it twice would be worse than saying it once in the wrong place.
+        let _g = lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        crate::config::update(|c| {
+            c.memory_dir = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        let team = root.join("teams").join("org-t");
+        std::fs::create_dir_all(team.join(".git")).unwrap();
+        std::fs::create_dir_all(team.join("memory")).unwrap();
+        std::fs::write(team.join("memory").join("agents.md"), "File what you work out.\n").unwrap();
+        // ponytail: the cache is keyed on the identity dir and CLAUDE.md, so it must be cleared here
+        // rather than trusted to notice a team file it no longer reads.
+        *NOTES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        assert_eq!(memory::pending_answers().len(), 2); // publishing unasked, agents unread
+        assert!(
+            session_notes().iter().all(|n| !n.contains("agents.md")),
+            "{:?}",
+            session_notes()
+        );
     }
 
     #[test]
