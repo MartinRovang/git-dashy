@@ -9,25 +9,43 @@ export function settings(d: StateData | null) {
   return d?.settings || {}
 }
 
-/** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box. */
+/** A TEAM row's source is on: its owner's org chip, or the team its repo is bound to. */
+export function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
+  return scopes.includes(`org:${p.repo.split('/')[0].toLowerCase()}`) || (!!p.team && scopes.includes(`team:${p.team}`))
+}
+
+/** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
+ *  TEAM is filtered by the sources toggles here, not by a refetch, and splits in two: rows the logs know a
+ *  review of stay TEAM, the rest are OTHER. */
 export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
   const out: VisSection[] = []
+  let other: VisSection | null = null // last, below REVIEWED
   for (const sec of d?.sections || []) {
+    // every source toggled off: the server still searches them this session, but there is nothing to show
+    if (sec.name === 'TEAM' && !s.scopes?.length) continue
     const rows: Row[] = (sec.prs || [])
       .map((p, i) => ({ ...p, uid: `${sec.name}/${i}/${p.url}`, section: sec.name, older: [] }))
       .filter((p) => {
         if (!s.drafts && p.isDraft && !p.busy && !p.review) return false // a draft under review stays visible
         if (sec.name === 'REVIEWED' && cutoff && new Date(p.reviewAt).getTime() < cutoff) return false
+        if (sec.name === 'TEAM' && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (onlyDrafts && !p.isDraft) return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
       })
+    if (sec.name === 'TEAM') {
+      const known = (p: Row) => !!(p.status || p.prev || p.review || p.busy)
+      out.push({ ...sec, prs: rows.filter(known) })
+      other = { ...sec, name: 'OTHER', error: '', prs: rows.filter((p) => !known(p)).map((p) => ({ ...p, section: 'OTHER', uid: p.uid.replace(/^TEAM\//, 'OTHER/') })) }
+      continue
+    }
     out.push({ ...sec, prs: sec.name === 'REVIEWED' ? group(rows) : rows })
   }
+  if (other?.prs.length) out.push(other)
   return out
 }
 
@@ -128,10 +146,28 @@ export function emptyLine(d: StateData | null, name: string, query: string, fail
   return SECTION_EMPTY[name] || 'Nothing here.'
 }
 
-export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {
-  return inBucket(secs, bucket)
-    .flatMap((s) => s.prs)
-    .flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
+/** REVIEWED and OTHER start folded while they share the board with other queues; their own tab always shows them.
+ *  `unfolded` is what the header clicks opened. */
+export const FOLDABLE = ['REVIEWED', 'OTHER']
+
+export function folded(name: string, shown: number, unfolded: Record<string, boolean>): boolean {
+  return FOLDABLE.includes(name) && shown > 1 && !unfolded[name]
+}
+
+/** The PRs actually on screen: the picked buckets minus folded sections. Unread counts and "Read all"
+ *  go through here too, so a fold never marks read what it hides. */
+export function onScreen(secs: VisSection[], bucket: readonly string[], unfolded: Record<string, boolean> = {}): Row[] {
+  const shown = inBucket(secs, bucket)
+  return shown.filter((s) => !folded(s.name, shown.length, unfolded)).flatMap((s) => s.prs)
+}
+
+export function flat(
+  secs: VisSection[],
+  bucket: readonly string[],
+  expanded: Record<string, boolean>,
+  unfolded: Record<string, boolean> = {},
+): Row[] {
+  return onScreen(secs, bucket, unfolded).flatMap((p) => [p, ...(expanded[p.url] ? p.older : [])])
 }
 
 /** The selected row, and whether it is the one that was actually chosen.
@@ -150,7 +186,8 @@ export function selected(rows: Row[], sel: string): Row | null {
 }
 
 export function counts(d: StateData | null) {
-  const all = (d?.sections || []).flatMap((s) => s.prs || []).map(rowState)
+  // TEAM verdicts come from log entries REVIEWED already counts
+  const all = (d?.sections || []).filter((s) => s.name !== 'TEAM').flatMap((s) => s.prs || []).map(rowState)
   const by = (t: string) => all.filter((r) => r.key === t).length
   return [
     ['approved', by('approved'), 'var(--green)'],

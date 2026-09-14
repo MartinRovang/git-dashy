@@ -116,6 +116,8 @@ pub struct Config {
     pub sub: String,
     pub window: Option<u64>,
     pub drafts: bool,
+    /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
+    pub scopes: Vec<String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
     /// each time. Anything that must be remembered across launches belongs on this side.
@@ -177,6 +179,7 @@ impl Default for Config {
             sub: "all".into(),
             window: Some(24),
             drafts: false,
+            scopes: Vec::new(),
             hinted: false,
             keyhints: true,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
@@ -205,6 +208,8 @@ pub struct Saved {
     pub window: Option<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,6 +318,9 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.drafts {
         c.drafts = v;
     }
+    if let Some(v) = saved.scopes {
+        c.scopes = v;
+    }
     if let Some(v) = saved.hinted {
         c.hinted = v;
     }
@@ -357,6 +365,7 @@ pub fn snapshot(c: &Config) -> Saved {
         subs: Some(c.sub.clone()),
         window: Some(c.window),
         drafts: Some(c.drafts),
+        scopes: Some(c.scopes.clone()),
         hinted: Some(c.hinted),
         keyhints: Some(c.keyhints),
         depth: Some(c.depth.clone()),

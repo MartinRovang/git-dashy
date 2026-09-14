@@ -99,7 +99,7 @@ pub fn payload(state: &State) -> Value {
     };
     let cfg = config::get();
     // ponytail: ONE resolver per frame, like the curses screen used to
-    let resolve = bind::resolver();
+    let (resolve, (repos, owners)) = bind::resolver_and_maps();
     // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
     // REVIEWED is newest first, so the first one seen wins.
     let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
@@ -165,6 +165,7 @@ pub fn payload(state: &State) -> Value {
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
     }
     let names = team::joined();
+    let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
         "sections": out,
@@ -180,7 +181,8 @@ pub fn payload(state: &State) -> Value {
         "settings": snapshot(),
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
-                    "interval": config::INTERVALS, "theme": THEMES},
+                    "interval": config::INTERVALS, "theme": THEMES,
+                    "scopes": scopes},
         "knowledge": {
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
@@ -1408,7 +1410,10 @@ fn post_settings(state: &State, body: &Body) -> Out {
             _ => None,
         };
         match got {
-            Some(w) if config::WINDOWS.contains(&w) => c.window = w,
+            Some(w) if config::WINDOWS.contains(&w) => {
+                c.window = w;
+                wake |= !c.scopes.is_empty(); // TEAM searches within the window, so it has to refetch
+            }
             _ => {
                 return Err(Fail::new(
                     400,
@@ -1419,6 +1424,28 @@ fn post_settings(state: &State, body: &Body) -> Out {
     }
     if body.contains_key("drafts") {
         c.drafts = truthy(body, "drafts");
+    }
+    if let Some(v) = body.get("scopes") {
+        // ponytail: shape-checked, not checked against scope_options: an org you toggled stays on
+        // while its PRs are merged away. scope_terms drops anything it cannot put in a query.
+        let got: Option<Vec<String>> = v.as_array().and_then(|a| {
+            a.iter()
+                .map(|x| {
+                    x.as_str()
+                        .filter(|s| (s.starts_with("org:") || s.starts_with("team:")) && s.len() <= 100)
+                        .map(String::from)
+                })
+                .collect()
+        });
+        let Some(got) = got.filter(|g| g.len() <= 50) else {
+            return Err(Fail::new(
+                400,
+                "scopes must be a list of org:<owner> or team:<key>",
+            ));
+        };
+        // a scope already searched this session is filtered in the board, no fetch; a new one is fetched now
+        wake |= got.iter().any(|s| !github::fetched(s));
+        c.scopes = got;
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
@@ -2075,10 +2102,24 @@ mod tests {
             json!({"theme": "neon"}),
             json!({"voice": []}),
             json!({"window": 5}),
+            json!({"scopes": ["bogus"]}),
+            json!({"scopes": ["org:x", 3]}),
+            json!({"scopes": vec!["org:x"; 51]}),
+            json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
         ] {
             assert_eq!(post(&format!("{base}/api/settings"), body, &token).0, 400);
         }
         assert_eq!(config::get().theme, "nord");
+        assert_eq!(
+            post(
+                &format!("{base}/api/settings"),
+                json!({"scopes": ["team:k"]}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(config::get().scopes, ["team:k"]);
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port

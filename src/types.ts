@@ -49,6 +49,8 @@ export type Options = {
   window: (number | null)[]
   interval: number[]
   theme: string[]
+  /** "team:<key>" and "org:<owner>" the TEAM section can search. */
+  scopes: string[]
 }
 
 export type Knowledge = {
@@ -80,6 +82,7 @@ export type Settings = {
   effort?: string
   voice?: string[]
   hunter?: string[]
+  scopes?: string[]
   interval?: number
   [key: string]: unknown
 }

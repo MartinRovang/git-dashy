@@ -20,12 +20,16 @@ export const SECTION_TONE: Record<string, string> = {
   MINE: 'var(--pink)',
   'REVIEW REQUESTED': 'var(--cyan)',
   ASSIGNED: 'var(--amber)',
+  TEAM: 'var(--violet)',
+  OTHER: 'var(--ink3)',
   REVIEWED: 'var(--dim)',
 }
 export const SECTION_HINT: Record<string, string> = {
   MINE: 'your open PRs',
   'REVIEW REQUESTED': 'waiting on you',
   ASSIGNED: 'owned by you',
+  TEAM: 'reviewed in your logs',
+  OTHER: 'no review in your logs',
   REVIEWED: 'recently done',
 }
 /** What an empty bucket says when no filter is narrowing it — see board.emptyLine(). It names the
