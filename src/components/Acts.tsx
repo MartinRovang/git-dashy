@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
 import { tone } from '../tokens'
 
@@ -57,7 +57,9 @@ export function ActsMenu({
   const box = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Anchor>(at)
 
-  useLayoutEffect(() => {
+  // ponytail: a resize used to close the menu, which throws it away for a window nudge. The clamp
+  // runs on [at], so a resize changed nothing on its own — it re-clamps now instead.
+  const clamp = useCallback(() => {
     const el = box.current
     if (!el) return
     const { width, height } = el.getBoundingClientRect()
@@ -67,6 +69,8 @@ export function ActsMenu({
       y: Math.max(pad, Math.min(at.y, window.innerHeight - height - pad)),
     })
   }, [at])
+
+  useLayoutEffect(clamp, [clamp])
 
   useEffect(() => {
     const away = (e: PointerEvent) => {
@@ -80,13 +84,13 @@ export function ActsMenu({
     }
     window.addEventListener('pointerdown', away, true)
     window.addEventListener('keydown', key, true)
-    window.addEventListener('resize', onClose)
+    window.addEventListener('resize', clamp)
     return () => {
       window.removeEventListener('pointerdown', away, true)
       window.removeEventListener('keydown', key, true)
-      window.removeEventListener('resize', onClose)
+      window.removeEventListener('resize', clamp)
     }
-  }, [onClose])
+  }, [onClose, clamp])
 
   return (
     <div className="acts" ref={box} role="menu" style={{ left: pos.x, top: pos.y }}>

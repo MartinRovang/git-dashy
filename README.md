@@ -69,7 +69,8 @@ gitdashy self-review 42   # pre-review your OWN PR; nothing is posted
 The list is a table — `age · repo · pr · title · author · state` — and above it one tab per queue:
 `all`, `mine`, `review requested`, `assigned`, `reviewed`, each with its count. **Tabs stack**: click a
 second one and both queues show, each under its own header; clicking the last one off falls back to
-`all`. Beside the tabs, `CI failing` and `Drafts` narrow whatever the tabs are showing. `[` and `]` walk
+`all`. Beside the tabs, `CI failing` and `Drafts` narrow whatever the tabs are showing, each counting only
+what is on screen; press one again to clear it. `[` and `]` walk
 one tab at a time and replace the pick. Beside it, `⏎`
 opens a pane on the selected PR: its branch and diff size, what CI thinks, and what the last review
 found, line by line. Everything in the pane is fetched for that one PR, only when you select it.
@@ -120,7 +121,7 @@ button somewhere on the page.
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
-| | **show key hints** (in the rail's View group, and in the `?` window) prints each key on the button or settings row it belongs to. On by default |
+| | show key hints, in the rail's View group and in the `?` window, prints each key on the button or settings row it belongs to. On by default |
 | `m` | pick the model: opus / sonnet / fable |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
@@ -140,7 +141,7 @@ button somewhere on the page.
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
 | `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
-| `S` | collapse the left rail to 92px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
+| `S` | collapse the left rail to 106px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
 | `[` `]` | previous / next queue tab |
 | `?` | the shortcut window: every key, grouped. It floats over the board — drag its header, resize its corner, leave it open while you try them. It also carries the **show key hints** switch |
 | `Esc` | the menu: theme, notifications, refresh, quit |

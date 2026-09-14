@@ -28,7 +28,7 @@ function Ln({ label, value, off }: { label: string; value: string; off?: boolean
 
 /** A setting that holds several at once, as the badges the expanded rail uses for the same thing.
  *
- * ponytail: joined with commas these ran off the 92px rail and you saw "review, cave…". One badge
+ * ponytail: joined with commas these ran off the narrow rail and you saw "review, cave…". One badge
  * per value, stacked, so every active one is readable at any width — which is the whole reason the
  * digest exists.
  */
@@ -106,7 +106,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const [open, setOpen] = useState<Record<string, boolean>>({ agent: true })
   const flip = (name: string) => {
     if (collapsed) {
-      // the rail is 92px: the fields have nowhere to render, so widen it and land on this group
+      // the rail is 106px: the fields have nowhere to render, so widen it and land on this group
       setOpen((o) => ({ ...o, [name]: true }))
       onCollapse()
       return
@@ -119,7 +119,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
 
   return (
     <div className={`side${collapsed ? ' shut' : ''}`}>
-      {/* ponytail: the drag grip stays on the expanded rail. A 92px rail is a fixed shelf, not a
+      {/* ponytail: the drag grip stays on the expanded rail. A narrow rail is a fixed shelf, not a
           width you tune, so dragging it is the one gesture that would fight the collapse. */}
       {collapsed ? null : <div className="grip" data-grip="side" />}
       <div className="sh">

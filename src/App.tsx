@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, groups, inBucket, pickBucket, selected, visible } from './board'
+import { ALL, buckets, flat, forView, groups, inBucket, pickBucket, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -23,14 +23,14 @@ export default function App() {
   const [sel, setSel] = useState('')
   const [query, setQuery] = useState('')
   const [failing, setFailing] = useState(false)
-  // ponytail: which bucket the tabs are on, not which sections are folded. The board shows one queue
-  // at a time now, so "what is on screen" is one string rather than a map of what is hidden.
+  // ponytail: which queues the tabs are on, not which sections are folded. Any number of them stack
+  // by click; `[` and `]` walk one at a time and replace the pick.
   const [bucket, setBucket] = useState<string[]>([ALL])
   // ponytail: a FILTER over the bucket, not the `drafts` setting. That setting decides whether drafts
   // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
   // counts zero and goes flat, which is the honest state rather than a contradiction.
   const [onlyDrafts, setOnlyDrafts] = useState(false)
-  // ponytail: the rail shuts to a 92px digest rather than disappearing. A hidden sidebar makes the
+  // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
@@ -51,14 +51,17 @@ export default function App() {
   const [at, setAt] = useState(0)
   const [stopped, setStopped] = useState(false)
   const [view, setView] = useState<'board' | 'graph'>('board')
-  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see or clear it.
-  // Cleared here, in the same update as the switch, so the graph lays out once and not twice.
+  // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
+  // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
+  // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    if (v !== 'graph') return
-    setQuery('')
-    setFailing(false)
-    setOnlyDrafts(false)
+    const f = forView(v)
+    if (!f) return
+    setQuery(f.query)
+    setFailing(f.failing)
+    setOnlyDrafts(f.drafts)
+    setBucket(f.bucket)
   }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Kept in localStorage,
   // which survives a reload but not a relaunch: the GUI picks a new port each launch, so the
@@ -389,7 +392,10 @@ export default function App() {
         if (detail?.url === p.url && detail.review)
           viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
-      code: openCode,
+      code: () => {
+        setSel(p.uid)
+        openCode()
+      },
       open: () => void call('/api/open', { url: p.url }),
       copy: () => void copyUrl(p),
       reviewer: () => void addReviewer(p),
@@ -525,7 +531,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={secs} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}

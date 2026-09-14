@@ -1,7 +1,7 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
-import { ALL, buckets, inBucket, settings } from '../board'
+import { ALL, buckets, chips, inBucket, settings } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_EMPTY, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -76,7 +76,7 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, on
   const twist = n ? (
     <div
       className="twist"
-      title={`${n + 1} reviews of this PR — space, or click`}
+      title={`${n + 1} reviews of this PR (space, or click)`}
       onClick={(e) => {
         e.stopPropagation()
         onExpand(p.url)
@@ -130,10 +130,6 @@ export function Queue(p: Props) {
   const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const shownSecs = inBucket(p.secs, p.bucket)
   const shown = shownSecs.flatMap((s) => s.prs)
-  const failing = shown.filter((x) => tone(x.checks) === 'changes').length
-  // ponytail: counted over the BUCKET, not the whole board. The chip sits beside the tabs and filters
-  // what they show, so a count of rows you are not looking at is a number that cannot be acted on.
-  const drafts = shown.filter((x) => x.isDraft).length
 
   // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
   const unread = new Set(shown.filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size
@@ -182,26 +178,20 @@ export function Queue(p: Props) {
           <span className="fi" aria-hidden="true">
             ≡
           </span>
-          <button className="chip" aria-pressed={p.failing} disabled={!failing && !p.failing && !p.drafts} onClick={p.onFailing}>
-            CI failing <b>{failing}</b>
-          </button>
-          <button className="chip" aria-pressed={p.drafts} disabled={!drafts && !p.drafts && !p.failing} onClick={p.onDrafts}>
-            Drafts <b>{drafts}</b>
-          </button>
+          {chips(p.secs, p.bucket, p.failing, p.drafts).map((c) => (
+            <button
+              key={c.key}
+              className="chip"
+              aria-pressed={c.on}
+              disabled={c.off}
+              onClick={c.key === 'failing' ? p.onFailing : p.onDrafts}
+            >
+              {c.label} <b>{c.n}</b>
+            </button>
+          ))}
           {unread ? (
             <button className="chip" onClick={p.onReadAll}>
               Read all <b>{unread}</b>
-            </button>
-          ) : null}
-          {p.failing || p.drafts ? (
-            <button
-              className="chip clr"
-              onClick={() => {
-                if (p.failing) p.onFailing()
-                if (p.drafts) p.onDrafts()
-              }}
-            >
-              Clear
             </button>
           ) : null}
         </div>

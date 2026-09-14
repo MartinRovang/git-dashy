@@ -61,6 +61,8 @@ export function buckets(secs: VisSection[]): { key: string; label: string; n: nu
  * Order follows `secs`, never the order they were clicked, so the board does not reshuffle.
  */
 export function inBucket(secs: VisSection[], bucket: readonly string[]): VisSection[] {
+  // an empty pick is the same as ALL. `pickBucket` never produces one, but this is an exported
+  // function over a list, so the sane answer to "no filter" is "no filtering", not "nothing".
   if (!bucket.length || bucket.includes(ALL)) return secs
   return secs.filter((s) => bucket.includes(s.name))
 }
@@ -70,6 +72,38 @@ export function pickBucket(bucket: readonly string[], key: string): string[] {
   if (key === ALL) return [ALL]
   const rest = bucket.filter((b) => b !== ALL && b !== key)
   return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
+}
+
+/** What the filter row becomes when the view changes, or null to leave it alone.
+ *
+ * ponytail: the graph has no filter row of its own, so a narrowed board there is a filter you can
+ * neither see nor clear — and a node outside the pick resolves to a uid `flat()` never produced,
+ * which `selected()` then answers with rows[0]. This lives here, out of the component, because it is
+ * the rule that keeps every graph node clickable and `show()` has no harness of its own.
+ */
+export function forView(v: 'board' | 'graph'): { query: string; failing: boolean; drafts: boolean; bucket: string[] } | null {
+  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : null
+}
+
+/** The two filter chips over the bucket on screen, with the rule for when one goes dead.
+ *
+ * ponytail: counted over the BUCKET, not the whole board — a chip offering "3 failing" while you are
+ * looking at a queue holding none of them is a number you cannot act on. A chip is dead only when
+ * pressing it would bring nothing back: zero here, not itself on, and no OTHER filter hiding rows it
+ * would have counted.
+ */
+export function chips(
+  secs: VisSection[],
+  bucket: readonly string[],
+  failing: boolean,
+  drafts: boolean,
+): { key: 'failing' | 'drafts'; label: string; n: number; on: boolean; off: boolean }[] {
+  const shown = inBucket(secs, bucket).flatMap((s) => s.prs)
+  const rows = [
+    { key: 'failing' as const, label: 'CI failing', n: shown.filter((x) => tone(x.checks) === 'changes').length, on: failing, other: drafts },
+    { key: 'drafts' as const, label: 'Drafts', n: shown.filter((x) => x.isDraft).length, on: drafts, other: failing },
+  ]
+  return rows.map(({ other, ...c }) => ({ ...c, off: !c.n && !c.on && !other }))
 }
 
 export function flat(secs: VisSection[], bucket: readonly string[], expanded: Record<string, boolean>): Row[] {

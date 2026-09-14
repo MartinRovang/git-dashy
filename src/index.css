@@ -523,7 +523,6 @@
                                        border-color: color-mix(in srgb, var(--pink) 40%, transparent); color: var(--pink); }
   .fgroup .chip[aria-pressed="true"] b { color: var(--pink); }
   .fgroup .chip:disabled { opacity: .4; cursor: default; }
-  .fgroup .chip.clr { border-style: dashed; color: var(--dim2); }
 
   /* ---- in the list ---- */
   .grp { display: flex; align-items: center; gap: 10px; padding: 12px 18px 5px; }
@@ -588,7 +587,7 @@
   .acts .ai.go b { color: var(--pink); font-weight: 600; }
 
   /* a multi-value setting in the collapsed digest, as the badges the expanded rail already uses.
-     Stacked, never joined: at 92px a comma list is a truncated one. */
+     Stacked, never joined: at 106px a comma list is a truncated one. */
   .icv .ln .pills { display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
                     margin-top: 3px; padding-left: 9px; min-width: 0; max-width: 100%; }
   .icv .ln .pills i { max-width: 100%; font-family: var(--mono); font-style: normal; font-size: 9.5px; line-height: 1.4;
