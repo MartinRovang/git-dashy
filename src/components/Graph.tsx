@@ -21,6 +21,7 @@ type Link = SimulationLinkDatum<Node> & { source: Node; target: Node; primary: b
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
 
+const SEP = ' › '
 const lines = (r?: Row) => (r?.add ?? 0) + (r?.del ?? 0)
 // a person, head and shoulders, in a unit box centred on 0: author nodes scale it to their radius
 const PERSON = 'M-.3,-.32a.3,.3 0 1,0 .6,0a.3,.3 0 1,0 -.6,0ZM-.62,.62Q-.62,.06 0,.06Q.62,.06 .62,.62Z'
@@ -38,14 +39,15 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
   return { kind: r.kind || guess || 'untagged', breaking: !!r.breaking || !!m?.[3] }
 }
 
-/** The hubs a PR links to, first one first: that one is its cluster. */
+/** The chain of hubs a PR hangs off, nearest first: PR -> first -> second. The last one is its cluster. */
 function hubsOf(r: Row, by: Group): [Hub, string][] {
   // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one.
   // In author mode such a PR then clusters on its repo, the only hub it has left.
   const author: [Hub, string][] = r.author ? [['author', r.author]] : []
-  // repo is a plain star, the repo with its PRs around it; author clusters by author and keeps the repos
+  // repo is a plain star, the repo with its PRs around it; author is a tree, author -> their repos -> their PRs,
+  // so each author gets their own node per repo (the id carries the author, the label drops it)
   if (by === 'repo') return [['repo', r.repo]]
-  if (by === 'author') return [...author, ['repo', r.repo]]
+  if (by === 'author') return r.author ? [['repo', `${r.author}${SEP}${r.repo}`], ...author] : [['repo', r.repo]]
   if (by === 'kind') return [['kind', tagOf(r).kind]]
   return [['state', rowState(r).key]]
 }
@@ -54,20 +56,26 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   const hubs = new Map<string, Node>()
   const nodes: Node[] = []
   const links: Link[] = []
+  const drawn = new Set<string>()
   for (const r of rows) {
-    // the repo rides on the label, so a PR still says where it lives when grouped by anything but repo
-    const pr: Node = { id: r.url, kind: 'pr', label: `${r.repo.split('/').pop()} #${r.number}`, degree: 2 }
+    // the title labels a PR; repo and number are in the tooltip
+    const label = r.title.length > 40 ? r.title.slice(0, 39) + '…' : r.title
+    const pr: Node = { id: r.url, kind: 'pr', label, degree: 2 }
     nodes.push(pr)
+    let prev = pr
     hubsOf(r, by).forEach(([kind, label], i) => {
       const id = `${kind}:${label}`
       let h = hubs.get(id)
       if (!h) {
-        h = { id, kind, label, degree: 0 }
+        h = { id, kind, label: label.split(SEP).pop()!, degree: 0 }
         hubs.set(id, h)
         nodes.push(h)
       }
+      // a hub counts every PR under it, but a hub-to-hub link is drawn once
       h.degree++
-      links.push({ source: pr, target: h, primary: i === 0 })
+      if (!drawn.has(`${prev.id}>${id}`)) links.push({ source: prev, target: h, primary: i === 0 })
+      drawn.add(`${prev.id}>${id}`)
+      prev = h
     })
   }
   return { nodes, links }
@@ -113,7 +121,7 @@ export function Graph({ secs, sel, onSelect }: {
       for (const [kind, label] of hubsOf(r, latest.current.by)) hits.add(`${kind}:${label}`)
     }
     select(svg).classed('search', !!q)
-    select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
+    select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is its PR, or the hub below in a chain
     const max = Math.max(1, ...rows.map(lines))
     // a hub grows with its PRs against the busiest hub, so the busiest hub is drawn largest
     const busiest = Math.max(1, ...graph.current.nodes.map((n) => (n.kind === 'pr' ? 0 : n.degree)))
@@ -166,7 +174,7 @@ export function Graph({ secs, sel, onSelect }: {
     const g = build(rows, by)
     // A new node spawns by its cluster's hub, and each cluster gets its own spot on a wide ring, so they
     // start apart instead of untangling from one pile in the middle. A second hub starts by its first PR's.
-    const cluster = (r: Row) => hubsOf(r, by)[0]?.join(':') ?? 'none'
+    const cluster = (r: Row) => hubsOf(r, by).at(-1)?.join(':') ?? 'none'
     const clusters = [...new Set(rows.map(cluster))].sort()
     const ring = 90 * Math.sqrt(clusters.length)
     const spot = new Map(clusters.map((c, i) => {
