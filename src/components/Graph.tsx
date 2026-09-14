@@ -23,6 +23,8 @@ type Group = (typeof GROUPS)[number]
 
 // most PR titles drawn at once: past this many on screen they are unreadable and SVG text is what makes WebKit crawl
 const LABELS = 120
+/** The zoom the graph opens at: below 0.8, where titles start, so opening it draws no text. */
+const START = 0.6
 // clear space kept between two galaxies' outermost nodes; the halos pad 50 on each side, so their glows just meet
 const GAP = 100
 
@@ -416,8 +418,9 @@ export function Graph({ secs, sel, onSelect }: {
         svg.style.setProperty('--k', String(transform.k))
       })
     root.call(z).on('dblclick.zoom', null)
-    svg.style.setProperty('--label', '0.4')
-    svg.style.setProperty('--k', '1')
+    // ponytail: opens zoomed out past where titles draw (k <= .8), so the first frames lay out dots, not
+    // hundreds of text nodes; scroll in to read. Through z.transform, so view, cull and --label all follow.
+    root.call(z.transform, zoomIdentity.scale(START))
     return () => {
       ro.disconnect()
       root.on('.zoom', null)
