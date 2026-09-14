@@ -123,6 +123,7 @@ function seed() {
   const v1 = mkPr(180, 'Refactor auth middleware', 'acme/api', 'frank', 3, 'REVIEWED')
   const v2 = mkPr(44, 'Add S3 lifecycle rules', 'acme/infra', 'grace', 5, 'REVIEWED')
   S.rows = [m1, m2, r1, r2, r3, a1, v1, v2]
+  for (let i = 0; i < Number(process.env.DASHY_MOCK_N || 0); i++) S.rows.push(mkPr(1000 + i, ['feat: ', 'fix: ', 'chore: ', 'docs: ', ''][i % 5] + 'synthetic change number ' + i, `acme/r${i % 25}`, `dev${(i * 7) % 40}`, i % 90, ['MINE', 'REVIEW REQUESTED', 'ASSIGNED', 'REVIEWED'][i % 4]))
   S.binding = { 'acme/api': 'acme', 'acme/web': 'acme', 'acme/infra': 'acme' }
   S.reviewInfo[v1.url] = {
     verdict: 'approve',
