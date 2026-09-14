@@ -630,51 +630,22 @@ fn reads(repo: &str, label: &str) -> String {
 fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: bool) -> i32 {
     let on = !off;
     let show = || {
-        let rows = autorev::scope().listed();
-        if rows.is_empty() {
-            println!("  auto-review covers every repo on the board; name one to narrow it");
-            return;
+        for line in autorev::report(&autorev::scope()) {
+            println!("  {}", line.trim_start());
         }
-        println!(
-            "{}",
-            rows.iter()
-                .map(|(t, v)| format!(
-                    "  {t:<36}  →  {}",
-                    if *v { "auto-review" } else { "not auto-reviewed" }
-                ))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        println!("  every other repo is left alone while anything is armed");
     };
-    // ponytail: BEFORE the owner branch and before the positional guard. --list is a read-only
-    // question, and bind() already learned this one command over: gating it behind a check on the
-    // thing you were asking about turned `bind <typo> --list` into an exit instead of an answer.
-    // Here it was worse — `auto --owner acme --list` armed the org and returned before reading it.
+    // ponytail: BEFORE every write. --list is a read-only question, and bind() learned this one
+    // command over: gating it behind a check on the thing you were asking about turned
+    // `bind <typo> --list` into an exit instead of an answer. Here it was worse — `auto --owner acme
+    // --list` armed the org and returned before reading the store.
     if list {
         show();
         return 0;
     }
-    if let Some(owner) = owner.filter(|o| !o.is_empty()) {
-        let err = autorev::set_owner(&owner, on);
-        if !err.is_empty() {
-            return fail(format!("gitdashy: {err}"));
-        }
-        println!(
-            "gitdashy: {}/* {}  (a repo of its own still overrides it)",
-            bind_mod::owner_key(&owner),
-            if on {
-                "is auto-reviewed"
-            } else {
-                "is not auto-reviewed"
-            }
-        );
-        return 0;
-    }
     let positional = positional.filter(|p| !p.is_empty());
+    let owner = owner.filter(|o| !o.is_empty());
     // ponytail: a positional we cannot read is a TYPO, not an absence — the same trap bind() names.
-    // Falling through to this directory's origin would arm the repo you happen to be standing in and
-    // report success with the wrong name.
+    // Checked BEFORE --owner, or `auto not-a-slug --owner acme` armed the org and swallowed the typo.
     let named = match &positional {
         Some(p) if p.contains('/') => p.clone(),
         Some(typo) => {
@@ -685,6 +656,27 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         }
         None => String::new(),
     };
+    if !named.is_empty() && owner.is_some() {
+        return fail("gitdashy: name a repo or --owner OWNER, not both");
+    }
+    if let Some(owner) = owner {
+        let err = autorev::set_owner(&owner, on);
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+        let o = bind_mod::owner_key(&owner);
+        // what the store now SAYS, not what was written: a lone --off leaves auto covering everything
+        println!(
+            "gitdashy: {o}/* {}  (a repo of its own still overrides it)",
+            if autorev::scope().armed_owner(&o) {
+                "is auto-reviewed"
+            } else {
+                "is not auto-reviewed"
+            }
+        );
+        show();
+        return 0;
+    }
     if named.is_empty() {
         show();
         return 0;
@@ -693,11 +685,11 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     if !err.is_empty() {
         return fail(format!("gitdashy: {err}"));
     }
-    // the folded key, not what was typed: `auto https://github.com/Acme/API` reported the URL back
+    // the folded key, not what was typed, and the state, not the write
+    let k = bind_mod::key(&named);
     println!(
-        "gitdashy: {} {}",
-        bind_mod::key(&named),
-        if on {
+        "gitdashy: {k} {}",
+        if autorev::scope().armed(&k) {
             "is auto-reviewed"
         } else {
             "is not auto-reviewed"
@@ -1584,11 +1576,14 @@ mod tests {
 
         // and without --list the same calls do write
         assert_eq!(auto_cmd(Some("acme/api".into()), None, false, false), 0);
-        assert!(crate::autorev::armed("acme/api") && !crate::autorev::armed("other/thing"));
+        assert!(crate::autorev::scope().armed("acme/api") && !crate::autorev::scope().armed("other/thing"));
         assert_eq!(auto_cmd(None, Some("beta".into()), false, false), 0);
-        assert!(crate::autorev::armed("beta/anything"));
+        assert!(crate::autorev::scope().armed("beta/anything"));
         assert_eq!(auto_cmd(Some("acme/api".into()), None, true, false), 0);
-        assert!(!crate::autorev::armed("acme/api"), "--off disarms it again");
+        assert!(
+            !crate::autorev::scope().armed("acme/api"),
+            "--off disarms it again"
+        );
     }
 
     /// A bare `gitdashy auto` reports: naming no repo and asking for no change is a question, and
@@ -1600,6 +1595,26 @@ mod tests {
         let store = d.path().join("autorev");
         config::update(|c| c.autorev = store.clone());
         assert_eq!(auto_cmd(None, None, false, false), 0);
+        assert!(!store.exists());
+    }
+
+    /// Which wins when both are given: neither. Before the typo guard moved above --owner,
+    /// `auto not-a-slug --owner acme` armed the org and swallowed the typo.
+    #[test]
+    fn auto_refuses_a_repo_and_an_owner_together() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+        assert_eq!(
+            auto_cmd(Some("acme/api".into()), Some("beta".into()), false, false),
+            1
+        );
+        assert_eq!(
+            auto_cmd(Some("not-a-slug".into()), Some("acme".into()), false, false),
+            1,
+            "the typo is caught before --owner arms anything"
+        );
         assert!(!store.exists());
     }
 

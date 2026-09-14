@@ -1,8 +1,8 @@
 //! Which repos auto-review is armed for (~/.prs_autoreview).
 //!
 //! `a` turns auto on for the whole board, and the board spans whatever the token can see — so
-//! arming it for one repo armed it for every repo a teammate happened to open a PR in. This store
-//! says where.
+//! arming it for one repo armed it for every repo a teammate happened to open a PR in, and this
+//! store says which repos it covers.
 //!
 //! **The rule, stated once.** Auto covers every repo while nothing is armed. Arm one repo or one
 //! owner and it covers only what is armed. A repo row beats an owner row, so a repo can be carved
@@ -48,6 +48,14 @@ impl Scope {
         !self.repos.values().any(|v| *v) && !self.owners.values().any(|v| *v)
     }
 
+    /// Whether auto reviews every repo under `owner` that has no row of its own.
+    pub fn armed_owner(&self, owner: &str) -> bool {
+        if self.everywhere() {
+            return true;
+        }
+        *self.owners.get(&owner_key(owner)).unwrap_or(&false)
+    }
+
     /// Whether auto reviews `repo`. A repo row beats an owner row beats the default.
     pub fn armed(&self, repo: &str) -> bool {
         if self.everywhere() {
@@ -76,13 +84,6 @@ impl Scope {
     }
 }
 
-fn flag(e: &serde_json::Map<String, Value>) -> Option<bool> {
-    match e.get("auto") {
-        Some(Value::Bool(b)) => Some(*b),
-        _ => None,
-    }
-}
-
 /// One read of the store. A line with no usable key, or no `auto` boolean, is skipped.
 pub fn scope() -> Scope {
     let mut out = Scope::default();
@@ -95,7 +96,9 @@ pub fn scope() -> Scope {
             Ok(Value::Object(e)) => e,
             _ => continue,
         };
-        let Some(on) = flag(&e) else { continue };
+        let Some(Value::Bool(on)) = e.get("auto").cloned() else {
+            continue;
+        };
         if let Some(Value::String(o)) = e.get("owner") {
             let o = owner_key(o);
             if !o.is_empty() {
@@ -113,12 +116,30 @@ pub fn scope() -> Scope {
     out
 }
 
-/// Whether auto reviews `repo`, against one read. For a single question.
+/// What `gitdashy auto` prints for a scope.
 ///
-/// ponytail: a caller asking about many rows holds a `scope()` and calls `armed` on it instead — a
-/// tick asks per PR, and reopening the file per row would let two rows in one tick disagree.
-pub fn armed(repo: &str) -> bool {
-    scope().armed(repo)
+/// ponytail: a function, because it is the only place that turns the rule into English and it had
+/// the rule backwards — it branched on "are there any rows" rather than asking everywhere(), so a
+/// store holding nothing but an --off row claimed every other repo was left alone while in fact
+/// nothing was armed and every repo was still reviewed. Now it can be asserted.
+pub fn report(s: &Scope) -> Vec<String> {
+    let rows = s.listed();
+    let mut out = Vec::new();
+    if s.everywhere() {
+        out.push("auto-review covers every repo on the board; name one to narrow it".to_string());
+    }
+    out.extend(rows.iter().map(|(t, v)| {
+        format!(
+            "  {t:<36}  →  {}",
+            if *v { "auto-review" } else { "not auto-reviewed" }
+        )
+    }));
+    if s.everywhere() && !rows.is_empty() {
+        out.push("nothing is armed, so the rows above do not apply yet".to_string());
+    } else if !s.everywhere() {
+        out.push("every other repo is left alone".to_string());
+    }
+    out
 }
 
 /// Add one line: the fields, then the `auto` flag as a bare JSON bool.
@@ -174,8 +195,8 @@ mod tests {
     fn an_empty_store_arms_every_repo() {
         let (_g, _d) = fresh();
         assert!(scope().everywhere());
-        assert!(armed("acme/api"));
-        assert!(armed("other/thing"));
+        assert!(scope().armed("acme/api"));
+        assert!(scope().armed("other/thing"));
     }
 
     #[test]
@@ -183,18 +204,18 @@ mod tests {
         let (_g, _d) = fresh();
         assert_eq!(set("acme/api", true), "");
         assert!(!scope().everywhere());
-        assert!(armed("acme/api"));
-        assert!(!armed("acme/web"));
-        assert!(!armed("other/thing"));
+        assert!(scope().armed("acme/api"));
+        assert!(!scope().armed("acme/web"));
+        assert!(!scope().armed("other/thing"));
     }
 
     #[test]
     fn an_owner_arms_everything_under_it_and_nothing_else() {
         let (_g, _d) = fresh();
         assert_eq!(set_owner("acme", true), "");
-        assert!(armed("acme/api"));
-        assert!(armed("acme/web"));
-        assert!(!armed("other/thing"));
+        assert!(scope().armed("acme/api"));
+        assert!(scope().armed("acme/web"));
+        assert!(!scope().armed("other/thing"));
     }
 
     /// The carve-out: a repo row beats the owner row, whichever was written first.
@@ -203,8 +224,8 @@ mod tests {
         let (_g, _d) = fresh();
         set_owner("acme", true);
         set("acme/web", false);
-        assert!(armed("acme/api"));
-        assert!(!armed("acme/web"));
+        assert!(scope().armed("acme/api"));
+        assert!(!scope().armed("acme/web"));
     }
 
     #[test]
@@ -212,8 +233,8 @@ mod tests {
         let (_g, _d) = fresh();
         set_owner("acme", false);
         set("acme/api", true);
-        assert!(armed("acme/api"));
-        assert!(!armed("acme/web"));
+        assert!(scope().armed("acme/api"));
+        assert!(!scope().armed("acme/web"));
     }
 
     /// Only `true` rows narrow the scope: a store holding nothing but a `false` still means
@@ -223,7 +244,7 @@ mod tests {
         let (_g, _d) = fresh();
         set("acme/web", false);
         assert!(scope().everywhere());
-        assert!(armed("acme/web"));
+        assert!(scope().armed("acme/web"));
     }
 
     #[test]
@@ -233,7 +254,7 @@ mod tests {
         set("acme/api", false);
         assert!(scope().everywhere(), "nothing is armed any more");
         set("acme/web", true);
-        assert!(!armed("acme/api"));
+        assert!(!scope().armed("acme/api"));
     }
 
     #[test]
@@ -258,8 +279,8 @@ mod tests {
     fn a_url_and_a_bare_name_are_the_same_repo() {
         let (_g, _d) = fresh();
         set("https://github.com/Acme/API", true);
-        assert!(armed("acme/api"));
-        assert!(armed("ACME/API"));
+        assert!(scope().armed("acme/api"));
+        assert!(scope().armed("ACME/API"));
     }
 
     #[test]
@@ -269,7 +290,7 @@ mod tests {
         let p = d.path().join("autorev");
         let good = std::fs::read_to_string(&p).unwrap();
         std::fs::write(&p, format!("not json at all\n{{\"repo\": \"x\"}}\n{good}")).unwrap();
-        assert!(armed("acme/api"));
+        assert!(scope().armed("acme/api"));
     }
 
     #[test]
@@ -282,6 +303,58 @@ mod tests {
         )
         .unwrap();
         assert!(scope().everywhere());
+    }
+
+    /// The bug this pins: report() branched on "are there any rows" instead of asking everywhere(),
+    /// so a store holding nothing but an --off row claimed every other repo was left alone.
+    #[test]
+    fn the_report_says_auto_covers_everything_until_something_is_armed() {
+        let (_g, _d) = fresh();
+        assert_eq!(
+            report(&scope()),
+            vec!["auto-review covers every repo on the board; name one to narrow it"]
+        );
+
+        set("acme/web", false);
+        let lines = report(&scope());
+        assert_eq!(
+            lines[0],
+            "auto-review covers every repo on the board; name one to narrow it"
+        );
+        assert!(lines[1].contains("acme/web"));
+        assert_eq!(lines[2], "nothing is armed, so the rows above do not apply yet");
+        assert!(!lines.iter().any(|l| l.contains("left alone")), "{lines:?}");
+    }
+
+    #[test]
+    fn the_report_says_what_is_left_alone_once_something_is_armed() {
+        let (_g, _d) = fresh();
+        set("acme/api", true);
+        let lines = report(&scope());
+        assert!(!lines[0].contains("covers every repo"), "{lines:?}");
+        assert!(lines[0].contains("acme/api"));
+        assert_eq!(lines.last().unwrap(), "every other repo is left alone");
+    }
+
+    /// The owner question the CLI prints from: an owner row that is off while nothing is armed still
+    /// leaves every repo under it reviewed.
+    #[test]
+    fn armed_owner_follows_the_same_rule() {
+        let (_g, _d) = fresh();
+        assert!(scope().armed_owner("acme"), "nothing armed, so everything is");
+        set_owner("acme", false);
+        assert!(
+            scope().armed_owner("acme"),
+            "a lone --off arms nothing, so it bites nothing"
+        );
+        set("other/thing", true);
+        assert!(
+            !scope().armed_owner("acme"),
+            "now something is armed, the off row applies"
+        );
+        set_owner("acme", true);
+        assert!(scope().armed_owner("acme"));
+        assert!(!scope().armed_owner("nope"));
     }
 
     #[test]
@@ -311,7 +384,7 @@ mod tests {
         assert!(s.armed("acme/api"));
         assert!(s.armed("acme/web"));
         assert!(!s.armed("other/thing"));
-        assert!(!armed("acme/api"), "a fresh read sees the change");
+        assert!(!scope().armed("acme/api"), "a fresh read sees the change");
     }
 
     /// autorev writes through bind's serializer, so a key that needs escaping reads back intact.
@@ -324,7 +397,7 @@ mod tests {
             line.contains("\\u00e8"),
             "non-ASCII is escaped the way bind writes it: {line}"
         );
-        assert!(armed("ac\u{e8}me/api"));
+        assert!(scope().armed("ac\u{e8}me/api"));
     }
 
     #[test]

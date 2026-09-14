@@ -124,10 +124,14 @@ impl Inner {
             .collect()
     }
     /// Review-requested urls with no verdict or review in flight.
-    pub fn pending_rr(&self) -> Vec<String> {
-        self.rr_urls()
+    /// The RR urls auto would actually start, so the number someone consents to is the number that
+    /// will run. ponytail: scope-filtered — the "Also review the N already listed?" prompt counted
+    /// PRs in repos auto is not armed for, and that is the count the answer is given against.
+    pub fn pending_rr(&self, armed: &dyn Fn(&str) -> bool) -> Vec<String> {
+        self.rr_prs()
             .into_iter()
-            .filter(|u| !self.reviews.contains_key(u))
+            .filter(|p| !self.reviews.contains_key(&p.url) && armed(p.repo()))
+            .map(|p| p.url)
             .collect()
     }
     fn rr_prs(&self) -> Vec<Pr> {
@@ -357,11 +361,12 @@ impl State {
 
     /// Review-requested PRs with no verdict or review in flight.
     pub fn pending_rr(&self) -> Vec<Pr> {
+        let scope = autorev::scope();
         let inner = self.lock();
         inner
             .rr_prs()
             .into_iter()
-            .filter(|p| !inner.reviews.contains_key(&p.url))
+            .filter(|p| !inner.reviews.contains_key(&p.url) && scope.armed(p.repo()))
             .collect()
     }
 
@@ -700,13 +705,13 @@ impl State {
                     }
                 }
             }
-            inner.pending = inner.pending_rr();
+            // ponytail: one read of the store for the whole tick. Asking per row would reopen the
+            // file once per PR, and two rows in one tick could get different answers if a click
+            // landed between them. Both the count and the starts read this one.
+            let scope = autorev::scope();
+            inner.pending = inner.pending_rr(&|r| scope.armed(r));
             match (&inner.auto, &inner.auto_baseline) {
                 (true, Some(baseline)) => {
-                    // ponytail: one read of the store for the whole tick. Asking per row would
-                    // reopen the file once per PR, and two rows in one tick could get different
-                    // answers if a click landed between them.
-                    let scope = autorev::scope();
                     auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
                 }
                 _ => Vec::new(),
@@ -913,6 +918,27 @@ mod tests {
         let only_b = |repo: &str| repo == "a/b";
         let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
         assert_eq!(started(rr, &[], &[], &only_b), ["mine"]);
+    }
+
+    /// The "Also review the N already listed?" prompt is the number someone consents against, so it
+    /// counts what auto will actually start, not every review request on the board.
+    #[test]
+    fn the_pending_count_only_counts_repos_auto_is_armed_for() {
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![
+                pr_in("mine", "a/b"),
+                pr_in("theirs", "other/thing"),
+                pr_in("done", "a/b"),
+            ]),
+            None,
+        )];
+        st.lock().reviews.insert("done".into(), "✓ approved".into());
+        let every = |_: &str| true;
+        let only_b = |repo: &str| repo == "a/b";
+        assert_eq!(st.lock().pending_rr(&every), ["mine", "theirs"]);
+        assert_eq!(st.lock().pending_rr(&only_b), ["mine"]);
     }
 
     #[test]

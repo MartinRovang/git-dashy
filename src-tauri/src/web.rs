@@ -66,6 +66,8 @@ fn team_error() -> String {
 
 /// Everything one frame of the GUI needs, as plain JSON.
 pub fn payload(state: &State) -> Value {
+    // one read for the count, the flag and the rows, so they cannot describe different files
+    let auto_scope = autorev::scope();
     let (
         sections,
         reviews,
@@ -92,7 +94,7 @@ pub fn payload(state: &State) -> Value {
             inner.fetched_at,
             inner.fetching,
             inner.auto,
-            inner.pending_rr().len(),
+            inner.pending_rr(&|r| auto_scope.armed(r)).len(),
             inner.update.clone(),
             inner.asks.clone(),
             inner.notices.clone(),
@@ -174,8 +176,11 @@ pub fn payload(state: &State) -> Value {
         "fetching": fetching,
         "error": error,
         "auto": auto,
-        // where auto is armed: [] means every repo, so the rail can say which of the two it is
-        "autoScope": autorev::scope().listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
+        // ponytail: the boolean, not "is the list empty". A store holding nothing but an --off row
+        // is a non-empty list while auto still covers everything, so a page deriving the rule from
+        // the rows gets it backwards. The rule lives in autorev.rs and says so here.
+        "autoEverywhere": auto_scope.everywhere(),
+        "autoScope": auto_scope.listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -585,6 +590,7 @@ fn get_debug(state: &State, _q: &Query) -> Out {
             "selfReviews": config::tilde(&cfg.self_dir),
             "backups": config::tilde(&cfg.backups),
             "bindings": config::tilde(&cfg.bindings),
+            "autoReview": config::tilde(&cfg.autorev),
             "teams": config::tilde(&cfg.teams),
             "registry": config::tilde(&cfg.registry),
             "corpus": config::tilde(&cfg.corpus_home),
@@ -2014,7 +2020,11 @@ mod tests {
             get(&format!("{base}/api/state"), Some(&token)).1["autoScope"],
             json!([{"target": "acme/api", "on": true}])
         );
-        assert!(autorev::armed("acme/api") && !autorev::armed("other/thing"));
+        assert!(autorev::scope().armed("acme/api") && !autorev::scope().armed("other/thing"));
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoEverywhere"],
+            json!(false)
+        );
 
         // the owner is its own value, not a flag that re-reads `repo`
         post(
@@ -2023,7 +2033,7 @@ mod tests {
             &token,
         );
         assert!(
-            autorev::armed("acme/web"),
+            autorev::scope().armed("acme/web"),
             "the owner rule reaches a sibling repo"
         );
         post(
@@ -2031,7 +2041,25 @@ mod tests {
             json!({"owner": "acme", "on": false}),
             &token,
         );
-        assert!(!autorev::armed("acme/web") && autorev::armed("acme/api"));
+        assert!(!autorev::scope().armed("acme/web") && autorev::scope().armed("acme/api"));
+
+        // a store holding nothing but an --off row is a non-empty list while auto still covers
+        // everything, so the flag and the rows must not be derived from each other
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "on": false}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(
+            d["autoEverywhere"],
+            json!(true),
+            "nothing armed, so auto covers everything"
+        );
+        assert_eq!(
+            d["autoScope"],
+            json!([{"target": "acme/*", "on": false}, {"target": "acme/api", "on": false}])
+        );
 
         let (code, body) = post(
             &format!("{base}/api/auto"),
@@ -2093,6 +2121,26 @@ mod tests {
             seen.iter().cloned().collect::<Vec<_>>(),
             vec!["elsewhere".to_string()],
             "only the newly covered repo's listed PRs joined the baseline"
+        );
+
+        // disarming the last armed row widens all the way back out, so every repo is newly covered
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "a/b", "on": false}),
+            &token,
+        );
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "other/thing", "on": false}),
+            &token,
+        );
+        assert!(autorev::scope().everywhere());
+        let mut seen: Vec<String> = state.lock().auto_baseline.clone().unwrap().into_iter().collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec!["elsewhere".to_string(), "u".to_string()],
+            "widening back to everything baselines what is already listed too"
         );
     }
 
