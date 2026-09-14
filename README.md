@@ -126,7 +126,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
-| `G` | switch between the board and the graph: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
+| `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
 | `j` `k` `D` `c` `Esc` | in the code viewer (after clicking into it): next/prev file, marks-only vs full diff, how much context, close. Click the board and its keys come back, with the viewer following the selected PR |
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
@@ -141,8 +141,9 @@ button somewhere on the page.
 | `q` | quit |
 
 `m` `d` `e` `s` `t` `i` open a picker: `j`/`k` moves, `Enter` picks, `Esc` keeps. `x` and `h` open a checklist
-that stays open while you toggle. The left rail holds the same settings as dropdowns and chips, one group
-open at a time — Agent, View, Knowledge — so nothing needs a key. A shut group still says what it is set to.
+that stays open while you toggle. The left rail holds the same settings as dropdowns and chips, in three
+groups — Agent, View, Knowledge — so nothing needs a key. A shut group still says what it is set to, and
+`S` shuts the whole rail to a column of digests that names every setting and its value.
 
 ## Installing
 
@@ -645,7 +646,12 @@ Open `http://localhost:1420/?token=dev`. The port matters.
 
 ```sh
 pnpm install && pnpm build   # web.rs embeds dist/, so the frontend must exist before cargo
+pnpm test                    # vitest, over the pure functions in src/board.ts
 cd src-tauri && cargo test
 ```
+
+`pnpm test` covers what the board derives from server data: which sections a bucket shows, how the
+older runs of a reviewed PR fold, and how the two draft rules compose. Anything that needs a browser
+is not tested — there is no DOM harness, and the layout is still checked by looking at it.
 
 Created by Martin Soria Røvang.

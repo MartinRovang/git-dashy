@@ -197,16 +197,34 @@ export function Pane({
           </>
         ) : null}
         <div className="sep" />
-        <div className="lab">ACTIONS</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-          {actsHTML(p, d).map(([k, cls, label, note, off, act]) => (
+        {/* ponytail: seven 38px rows was the pane's tallest block and six of them are things you do
+            once a week. The one that matters — review, or the pre-review on your own PR — stays out;
+            the rest fold into Options, the way the design drew them. */}
+        {(() => {
+          const acts = actsHTML(p, d)
+          const lead = acts.filter(([, cls]) => cls === 'go')
+          const rest = acts.filter(([, cls]) => cls !== 'go')
+          const row = ([k, cls, label, note, off, act]: Act) => (
             <div key={act} className={`act ${cls}${off ? ' off' : ''}`} onClick={() => !off && onAct(act)}>
               <kbd className="hint">{k}</kbd>
               <b>{label}</b>
               <em>{note}</em>
             </div>
-          ))}
-        </div>
+          )
+          return (
+            <>
+              {lead.length ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{lead.map(row)}</div> : null}
+              <details className="opts">
+                <summary>
+                  <span className="car">▶</span>
+                  <b>Options</b>
+                  <em>{rest.length}</em>
+                </summary>
+                <div className="optsb">{rest.map(row)}</div>
+              </details>
+            </>
+          )
+        })()}
       </div>
     </div>
   )

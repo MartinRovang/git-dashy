@@ -79,17 +79,16 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
-  const [open, setOpen] = useState<string>('agent')
-  // ponytail: one group open at a time. Three expanded at 252px is a rail you scroll to read, and the
-  // summary line exists so the shut ones still answer for themselves.
+  // each group opens and shuts on its own; the rail scrolls if you open all three
+  const [open, setOpen] = useState<Record<string, boolean>>({ agent: true })
   const flip = (name: string) => {
     if (collapsed) {
       // the rail is 92px: the fields have nowhere to render, so widen it and land on this group
-      setOpen(name)
+      setOpen((o) => ({ ...o, [name]: true }))
       onCollapse()
       return
     }
-    setOpen((cur) => (cur === name ? '' : name))
+    setOpen((o) => ({ ...o, [name]: !o[name] }))
   }
   const teams = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : '')).join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -100,10 +99,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           width you tune, so dragging it is the one gesture that would fight the collapse. */}
       {collapsed ? null : <div className="grip" data-grip="side" />}
       <div className="sh">
-        <div className="mark">
-          <b>gitdashy</b>
-          <span>v{d?.version || ''}</span>
-        </div>
         <button className="iconbtn" title={collapsed ? 'Expand sidebar (S)' : 'Collapse sidebar (S)'} onClick={onCollapse}>
           ≡
         </button>
@@ -120,11 +115,13 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <>
               <Ln label="model" value={s.model || '—'} />
               <Ln label="depth" value={s.depth || 'default'} />
-              <Ln label="voice" value={(s.voice || [])[0] || 'none'} off={!(s.voice || []).length} />
-              <Ln label="auto" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
+              <Ln label="effort" value={s.effort || 'default'} off={!s.effort} />
+              <Ln label="voices" value={(s.voice || []).join(', ') || 'none'} off={!(s.voice || []).length} />
+              <Ln label="hunters" value={(s.hunter || []).join(', ') || 'none'} off={!(s.hunter || []).length} />
+              <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
             </>
           }
-          open={open === 'agent'}
+          open={!!open.agent}
           onToggle={() => flip('agent')}
           collapsed={collapsed}
         >
@@ -159,12 +156,13 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           summary={`${win} history · ${every(s.interval || 0)}`}
           digest={
             <>
+              <Ln label="summaries" value={s.subs || 'all'} />
               <Ln label="history" value={win} />
               <Ln label="refresh" value={every(s.interval || 0)} />
               <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
             </>
           }
-          open={open === 'view'}
+          open={!!open.view}
           onToggle={() => flip('view')}
           collapsed={collapsed}
         >
@@ -199,13 +197,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           summary={[teams || 'no team', (k.waiting || []).length ? `${(k.waiting || []).length} asking` : ''].filter(Boolean).join(' · ')}
           digest={
             <>
+              <Ln label="memory" value={k.memory || 'default'} />
               <Ln label="teams" value={teams || 'none'} off={!k.teams.length} />
+              {k.store ? <Ln label="store" value={k.store} /> : null}
               {/* ponytail: a pending consent gate is a nudge, so it survives the collapse as a count.
                   Everything else in this digest is a setting; this one is the only thing asking. */}
               <Ln label="asks" value={String((k.waiting || []).length)} off={!(k.waiting || []).length} />
             </>
           }
-          open={open === 'know'}
+          open={!!open.know}
           onToggle={() => flip('know')}
           collapsed={collapsed}
         >

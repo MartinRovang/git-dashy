@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, groups, inBucket, selected, visible } from './board'
+import { ALL, buckets, flat, groups, selected, visible } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { shortcuts } from './components/Shortcuts'
@@ -478,7 +478,8 @@ export default function App() {
     if (k === 'S') return one(() => setRailShut((v) => !v))
     // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
-    if (k === '[' || k === ']')
+    // the tabs are not rendered in graph view, so the keys that move them do nothing there
+    if ((k === '[' || k === ']') && view === 'board')
       return one(() =>
         setBucket((cur) => {
           const keys = buckets(secs).map((b) => b.key)
@@ -535,9 +536,9 @@ export default function App() {
             <div className="queue">
               {view === 'graph' ? (
                 <Graph
-                  // the bucket's sections only: selected() searches the rows on screen, so a node from
-                  // another bucket would select a uid it cannot find and open rows[0] instead
-                  secs={inBucket(secs, bucket)}
+                  // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
+                  // filter with nothing on screen to see or clear it — the reason show() wipes the rest
+                  secs={secs}
                   sel={selUid}
                   onSelect={(uid) => {
                     setSel(uid)

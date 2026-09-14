@@ -389,18 +389,15 @@
   .side { padding: 0; gap: 0; overflow-x: visible; overflow-y: clip; }
   .side.shut { width: 92px; }
 
-  .sh { height: 46px; flex-shrink: 0; display: flex; align-items: center; gap: 8px;
-        padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); }
-  .side .mark { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
-  .side .mark b { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
-  .side .mark span { font-family: var(--mono); font-size: 10px; color: var(--dim3); }
+  /* just the collapse button: the top bar owns the wordmark and the version, and it stays on screen
+     when this rail is shut. */
+  .sh { height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end;
+        padding: 0 8px; border-bottom: 1px solid var(--line); }
   .iconbtn { margin-left: auto; width: 26px; height: 26px; flex-shrink: 0; border-radius: 6px;
              border: 1px solid transparent; background: none; color: var(--dim); font: inherit; font-size: 14px;
              display: grid; place-items: center; cursor: pointer; }
   .iconbtn:hover { background: var(--bg4); border-color: var(--edge); color: var(--ink); }
   .side.shut .sh { padding: 0; justify-content: center; }
-  .side.shut .mark { display: none; }
-  .side.shut .iconbtn { margin: 0; }
 
   .snav { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 8px 14px; }
   .grpname { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--dim3); padding: 0 8px 8px; }
@@ -427,14 +424,23 @@
   .side.shut .summary { grid-template-columns: 1fr; padding: 7px 6px 9px; }
   .side.shut .summary:hover { background: var(--bg3); }
   .side.shut .car, .side.shut .lb, .side.shut .sv { display: none; }
-  .side.shut .ic { display: block; font-family: var(--mono); font-size: 9px; font-weight: 600;
-                   letter-spacing: 0.1em; color: var(--dim3); }
-  .side.shut .icv { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; min-width: 0; }
-  .icv .ln { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
-  .icv .ln em { font-family: var(--mono); font-style: normal; font-size: 8.5px; letter-spacing: .08em; color: var(--dim3); }
-  .icv .ln s { text-decoration: none; font-family: var(--mono); font-size: 10px; color: var(--ink2);
+  /* the group's name, as a heading over its own block rather than a floating word */
+  .side.shut .ic { display: block; width: 100%; font-family: var(--mono); font-size: 9px; font-weight: 700;
+                   letter-spacing: 0.14em; color: var(--ink3); text-align: left;
+                   padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  .side.shut .icv { display: flex; flex-direction: column; gap: 7px; margin-top: 7px; min-width: 0; }
+  /* ponytail: label over value read as one column of eight floating words. The rule on the left ties
+     each pair together and separates it from its neighbour, which is the whole question the narrow
+     rail is asked: which of these is the setting and which is what it is set to. */
+  .icv .ln { display: flex; flex-direction: column; min-width: 0; line-height: 1.25;
+             padding-left: 6px; border-left: 2px solid var(--line); }
+  .icv .ln em { font-family: var(--mono); font-style: normal; font-size: 8px; font-weight: 600;
+                letter-spacing: .1em; text-transform: uppercase; color: var(--dim3); }
+  .icv .ln s { text-decoration: none; font-family: var(--mono); font-size: 10.5px; color: var(--ink);
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .icv .ln s.off { color: var(--dim3); }
+  /* a setting that is off is dim AND its rule goes away, so an active one is what the eye lands on */
+  .icv .ln:has(s.off) { border-left-color: var(--line2); }
+  .icv .ln s.off { color: var(--dim2); font-style: italic; }
 
   .fields { padding: 0 10px 10px; display: flex; flex-direction: column; }
   .fields .chips { justify-content: flex-start; margin-top: 2px; }
@@ -546,3 +552,18 @@
   .krow { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
   .krow kbd { min-width: 44px; height: 20px; font-size: 11px; color: var(--ink2); }
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
+
+  /* the pane's Options disclosure: one row out, the rest folded */
+  .opts { margin-top: 10px; }
+  .opts > summary { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px;
+                    border-radius: 8px; border: 1px solid var(--edge); background: var(--bg3);
+                    cursor: pointer; list-style: none; }
+  .opts > summary::-webkit-details-marker { display: none; }
+  .opts > summary:hover { background: var(--bg4); border-color: var(--dim3); }
+  .opts > summary b { font-size: 12.5px; font-weight: 500; color: var(--ink3); }
+  .opts > summary em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--dim3); }
+  .opts > summary .car { font-size: 8px; color: var(--dim2); transition: transform .15s; }
+  .opts[open] > summary .car { transform: rotate(90deg); color: var(--pink); }
+  .opts[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
+  .optsb { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 9px;
+           border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 8px 8px; background: var(--bg2); }
