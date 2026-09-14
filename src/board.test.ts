@@ -461,5 +461,7 @@ describe('TEAM sources', () => {
     expect(v[1].prs[0].section).toBe('OTHER')
     const known = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', status: '✓ approved' })] }], on))
     expect(known.map((s) => s.name)).toEqual(['TEAM'])
+    // every source off: no empty TEAM left behind
+    expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
   })
 })

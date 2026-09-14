@@ -99,7 +99,7 @@ pub fn payload(state: &State) -> Value {
     };
     let cfg = config::get();
     // ponytail: ONE resolver per frame, like the curses screen used to
-    let resolve = bind::resolver();
+    let (resolve, (repos, owners)) = bind::resolver_and_maps();
     // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
     // REVIEWED is newest first, so the first one seen wins.
     let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
@@ -165,7 +165,6 @@ pub fn payload(state: &State) -> Value {
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
     }
     let names = team::joined();
-    let (repos, owners) = bind::maps();
     let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,

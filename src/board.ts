@@ -24,6 +24,8 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
   const out: VisSection[] = []
   let other: VisSection | null = null // last, below REVIEWED
   for (const sec of d?.sections || []) {
+    // every source toggled off: the server still searches them this session, but there is nothing to show
+    if (sec.name === 'TEAM' && !s.scopes?.length) continue
     const rows: Row[] = (sec.prs || [])
       .map((p, i) => ({ ...p, uid: `${sec.name}/${i}/${p.url}`, section: sec.name, older: [] }))
       .filter((p) => {

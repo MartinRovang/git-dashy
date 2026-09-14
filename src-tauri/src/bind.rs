@@ -169,10 +169,21 @@ pub fn owners() -> HashMap<String, String> {
     entries().owners
 }
 
+pub type Resolver = Box<dyn Fn(&str) -> String + Send + Sync>;
+/// (bindings(), owners()).
+pub type Maps = (HashMap<String, String>, HashMap<String, String>);
+
 /// (bindings(), owners()) from one read of the store.
-pub fn maps() -> (HashMap<String, String>, HashMap<String, String>) {
+pub fn maps() -> Maps {
     let e = entries();
     (e.repos, e.owners)
+}
+
+/// resolver() and maps() from the same read, so a frame's team labels and scope options agree.
+pub fn resolver_and_maps() -> (Resolver, Maps) {
+    let entry = entries();
+    let maps = (entry.repos.clone(), entry.owners.clone());
+    (Box::new(move |repo| pick(&entry, repo).1), maps)
 }
 
 /// (kind, slug) for `repo` against one read of the store: ("team"|"owner", slug) or ("", "").
