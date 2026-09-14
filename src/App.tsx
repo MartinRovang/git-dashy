@@ -525,6 +525,9 @@ export default function App() {
     setDiff(null)
   }
 
+  // until a fetch newer than the history change lands, the board still shows the old window
+  const refetching = refetchFrom != null && !!data?.fetching && data.fetchedAt === refetchFrom
+
   if (stopped) return <div className="splash">gitdashy stopped — close this window</div>
 
   return (
@@ -590,7 +593,6 @@ export default function App() {
                 }}
                 onOpen={() => setPane(true)}
                 onMenu={(row, at) => setMenuAt({ p: row, at })}
-                refetching={refetchFrom != null && !!data?.fetching && data.fetchedAt === refetchFrom}
               />
               )}
             </div>
@@ -628,13 +630,15 @@ export default function App() {
         <span>? all keys</span>
         <div style={{ flex: 1 }} />
         <div className="sync">
-          <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />
+          {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>
             {!data?.fetchedAt
               ? 'fetching…'
-              : data?.fetching
-                ? 'refreshing…'
-                : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
+              : refetching
+                ? 'fetching PRs…'
+                : data?.fetching
+                  ? 'refreshing…'
+                  : <>synced {age(new Date(data.fetchedAt * 1000).toISOString())} ago · next in <Countdown at={data.fetchedAt} interval={data.interval || 0} /></>}
           </span>
         </div>
       </footer>
