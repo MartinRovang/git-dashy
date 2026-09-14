@@ -91,8 +91,9 @@ const QUOTES = [
   "Be with me always, take any form, drive me mad!",
 ];
 let q = Math.floor(Math.random() * QUOTES.length);
-show(QUOTES[q], document.getElementById("foot"));
-setInterval(() => show(QUOTES[q = (q + 1) % QUOTES.length], document.getElementById("foot")), 5000);
+const footEl = document.getElementById("foot");
+show(QUOTES[q], footEl);
+setInterval(() => show(QUOTES[q = (q + 1) % QUOTES.length], footEl), 5000);
 
 function bar(pct) {
   document.getElementById("fill").style.width = pct.toFixed(1) + "%";
