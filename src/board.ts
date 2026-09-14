@@ -156,6 +156,8 @@ export function emptyLine(d: StateData | null, name: string, query: string, fail
 /** REVIEWED, OTHER and MERGED start folded while they share the board with other queues; their own tab always shows them.
  *  `unfolded` is what the header clicks opened. */
 export const FOLDABLE = ['REVIEWED', 'OTHER', 'MERGED']
+/** Every foldable section open: the graph draws them all, so its clicks must resolve against them all. */
+export const UNFOLDED = Object.fromEntries(FOLDABLE.map((n) => [n, true]))
 
 export function folded(name: string, shown: number, unfolded: Record<string, boolean>): boolean {
   return FOLDABLE.includes(name) && shown > 1 && !unfolded[name]

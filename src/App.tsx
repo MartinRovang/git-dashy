@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
-import { ALL, buckets, flat, forView, groups, inBucket, onScreen, pick, pickBucket, remember, visible, walkBucket } from './board'
+import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -63,6 +63,9 @@ export default function App() {
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
     setBucket(f.bucket)
+    // a node picked in the graph may sit in a folded section; open it so the board shows the selection
+    const at = current?.section || ''
+    if (v === 'board' && chosen && FOLDABLE.includes(at)) setUnfolded((u) => ({ ...u, [at]: true }))
   }
   // url -> the updatedAt that was read, so a PR that moves goes unread again. Saved in the settings
   // file, not localStorage: the GUI picks a new port each launch, so the webview's storage starts empty.
@@ -85,7 +88,8 @@ export default function App() {
   }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
-  const rows = useMemo(() => flat(secs, bucket, expanded, unfolded), [secs, bucket, expanded, unfolded])
+  // folds are the board's: in the graph a node of a folded section is still clickable, so nothing is folded there
+  const rows = useMemo(() => flat(secs, bucket, expanded, view === 'graph' ? UNFOLDED : unfolded), [secs, bucket, expanded, unfolded, view])
   const { row: current, chosen } = pick(rows, sel)
   const selUid = current?.uid || ''
   const url = current?.url || ''

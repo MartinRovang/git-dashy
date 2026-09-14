@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
 
 let n = 0
 
@@ -470,6 +470,8 @@ describe('TEAM sources', () => {
     expect(m.map((s) => [s.name, s.prs.map((p) => p.title)])).toEqual([['TEAM', []], ['REVIEWED', ['r']], ['OTHER', ['new']], ['MERGED', ['shipped']]])
     expect(flat(m, [ALL], {}).map((p) => p.title)).toEqual([])
     expect(flat(m, ['MERGED'], {}).map((p) => p.title)).toEqual(['shipped'])
+    // the graph resolves clicks with nothing folded
+    expect(flat(m, [ALL], {}, UNFOLDED).map((p) => p.title)).toEqual(['r', 'new', 'shipped'])
     // every source off: no empty TEAM left behind
     expect(secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a' })] }], { scopes: [] })).map((s) => s.name)).toEqual([])
   })
