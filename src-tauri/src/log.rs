@@ -142,11 +142,19 @@ pub fn reviewed() -> Vec<Pr> {
 }
 
 /// The newest entry for this PR url.
+///
+/// ponytail: a scan of the cached entries, cloning only the winner. It was reviewed().find(), which
+/// cloned and sorted every entry of every log for one lookup, and the pane asks this every 1.5s (#74).
+/// Same order as reviewed(): newest `at`, then later line; the earlier log wins a full tie.
 pub fn last(url: &str) -> Option<LogEntry> {
-    reviewed()
-        .into_iter()
-        .find(|p| p.url == url)
-        .and_then(|p| p.review.map(|b| *b))
+    let logs: Vec<_> = logs().iter().map(|p| entries(p)).collect();
+    let mut best: Option<(&LogEntry, usize)> = None;
+    for (i, e) in logs.iter().flat_map(|es| es.iter().enumerate()) {
+        if e.pr.url == url && best.is_none_or(|(b, j)| (&e.at, i) > (&b.at, j)) {
+            best = Some((e, i));
+        }
+    }
+    best.map(|(e, _)| e.clone())
 }
 
 /// "adaptive/medium $0.42 3m": depth[/effort] the review ran with, then what it cost; "" for old entries.
@@ -477,6 +485,26 @@ mod tests {
             reviewed().iter().map(|p| p.url.as_str()).collect::<Vec<_>>(),
             ["c", "b", "a"]
         );
+        // last() scans instead of sorting, and must pick what reviewed() lists first: the later line
+        let later = verdict("request_changes", "no");
+        for (v, at) in [
+            (&v, "2020-01-01T00:00:01+00:00"),
+            (&later, "2020-01-01T00:00:01+00:00"),
+        ] {
+            log_review(
+                &Pr {
+                    url: "a".into(),
+                    ..pr()
+                },
+                "opus",
+                v,
+                Some(at),
+            )
+            .unwrap();
+        }
+        let first = reviewed().into_iter().find(|p| p.url == "a").unwrap();
+        assert_eq!(last("a").unwrap().verdict, first.review.unwrap().verdict);
+        assert_eq!(last("a").unwrap().verdict, "request_changes");
     }
 
     #[test]
