@@ -194,9 +194,13 @@ export function Graph({ secs, sel, onSelect }: {
     // a soft glow behind each galaxy. A radial gradient per galaxy fades each disc out;
     // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
     const gid = (d: string) => `ghalo-${galaxies.indexOf(d)}`
-    // saturated hues a golden angle apart, so neighbouring galaxies never share a colour;
-    // the state tab takes the legend's colour instead, so approved stays green
-    const tint = (d: string, light: number) => (by === 'state' ? (PALETTE[d] || PALETTE.idle).fg : `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% ${light}%)`)
+    // no two galaxies share a colour: hues spread evenly round the wheel, the widest gap any count allows.
+    // The ring order steps through them by a stride coprime to the count, so ring neighbours sit far apart in hue too
+    const n = galaxies.length
+    const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a)
+    let stride = Math.max(1, Math.round(n * 0.38))
+    while (gcd(stride, n) !== 1) stride++
+    const tint = (d: string, light: number) => `hsl(${(((galaxies.indexOf(d) * stride) % n) * 360) / n} 90% ${light}%)`
     root
       .select('defs')
       .selectAll<SVGRadialGradientElement, string>('radialGradient')
