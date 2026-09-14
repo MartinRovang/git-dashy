@@ -112,16 +112,19 @@ export function Graph({ secs, sel, onSelect }: {
     if (!svg) return
     const { rows, sel, query } = latest.current
     const byUrl = new Map(rows.map((r) => [r.url, r]))
-    // same fields as the board's filter box; a hit lights its PR and that PR's hub
+    // same fields as the board's filter box; a hit lights its PR, that PR's hub and its galaxy
     const q = query.trim().toLowerCase()
     const hits = new Set<string>()
+    const lit = new Set<string>()
     for (const r of rows) {
       if (!q || !`${r.title} ${r.repo} ${r.author} #${r.number} ${tagOf(r).kind}`.toLowerCase().includes(q)) continue
       hits.add(r.url)
+      lit.add(galaxyOf(r, latest.current.by))
       const hub = hubOf(r, latest.current.by)
       if (hub) hits.add(hub.id)
     }
     select(svg).classed('search', !!q)
+    select(svg).selectAll<SVGElement, string>('.halos circle, .gnames text').classed('hit', (d) => lit.has(d))
     select(svg).selectAll<SVGLineElement, Link>('line').classed('hit', (l) => hits.has(l.source.id)) // a link's source is always its PR
     const max = Math.max(1, ...rows.map(lines))
     // a hub grows with its PRs against the busiest hub, so the busiest hub is drawn largest
