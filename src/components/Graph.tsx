@@ -16,7 +16,8 @@ import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
 type Hub = 'repo' | 'author' | 'kind' | 'state'
-type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number }
+// repo: the repo a PR or repo hub belongs to, what the author tab pulls together and haloes
+type Node = SimulationNodeDatum & { id: string; kind: 'pr' | Hub; label: string; degree: number; repo?: string }
 type Link = SimulationLinkDatum<Node> & { source: Node; target: Node; primary: boolean }
 const GROUPS = ['repo', 'kind', 'author', 'state'] as const
 type Group = (typeof GROUPS)[number]
@@ -60,14 +61,14 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   for (const r of rows) {
     // the title labels a PR; repo and number are in the tooltip
     const label = r.title.length > 40 ? r.title.slice(0, 39) + '…' : r.title
-    const pr: Node = { id: r.url, kind: 'pr', label, degree: 2 }
+    const pr: Node = { id: r.url, kind: 'pr', label, degree: 2, repo: r.repo }
     nodes.push(pr)
     let prev = pr
     hubsOf(r, by).forEach(([kind, label], i) => {
       const id = `${kind}:${label}`
       let h = hubs.get(id)
       if (!h) {
-        h = { id, kind, label: label.split(SEP).pop()!, degree: 0 }
+        h = { id, kind, label: label.split(SEP).pop()!, degree: 0, repo: kind === 'repo' ? r.repo : undefined }
         hubs.set(id, h)
         nodes.push(h)
       }
@@ -174,7 +175,8 @@ export function Graph({ secs, sel, onSelect }: {
     const g = build(rows, by)
     // A new node spawns by its cluster's hub, and each cluster gets its own spot on a wide ring, so they
     // start apart instead of untangling from one pile in the middle. A second hub starts by its first PR's.
-    const cluster = (r: Row) => hubsOf(r, by).at(-1)?.join(':') ?? 'none'
+    // the author tab clusters on repo, not author: one repo's nodes share an area whoever wrote them
+    const cluster = (r: Row) => (by === 'author' ? `repo:${r.repo}` : (hubsOf(r, by).at(-1)?.join(':') ?? 'none'))
     const clusters = [...new Set(rows.map(cluster))].sort()
     const ring = 90 * Math.sqrt(clusters.length)
     const spot = new Map(clusters.map((c, i) => {
@@ -197,6 +199,28 @@ export function Graph({ secs, sel, onSelect }: {
 
     const root = select(svg)
     const world = root.select<SVGGElement>('g.world')
+    // a soft glow per repo behind its area, author tab only. A radial gradient per repo fades each disc out;
+    // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
+    const repos = by === 'author' ? [...new Set(rows.map((r) => r.repo))] : []
+    const gid = (d: string) => `ghalo-${repos.indexOf(d)}`
+    root
+      .select('defs')
+      .selectAll<SVGRadialGradientElement, string>('radialGradient')
+      .data(repos, (d) => d)
+      .join((enter) => {
+        const e = enter.append('radialGradient')
+        e.append('stop').attr('offset', '0%').style('stop-color', 'currentColor').style('stop-opacity', 0.22)
+        e.append('stop').attr('offset', '100%').style('stop-color', 'currentColor').style('stop-opacity', 0)
+        return e
+      })
+      .attr('id', gid)
+      .style('color', (d) => avatar(d)) // the stops paint currentColor, inherited from here
+    const halo = world
+      .select('g.halos')
+      .selectAll<SVGCircleElement, string>('circle')
+      .data(repos, (d) => d)
+      .join('circle')
+      .style('fill', (d) => `url(#${gid(d)})`)
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
@@ -245,9 +269,21 @@ export function Graph({ secs, sel, onSelect }: {
       // hubs push harder than PRs and the pull to the centre is gentle, so repo clusters sit apart
       .force('charge', forceManyBody<Node>().strength((n) => (n.kind === 'pr' ? -160 : -600)))
       .force('link', forceLink<Node, Link>(g.links).distance((l) => (l.primary && by === 'repo' ? 70 : l.primary ? 60 : 90)))
-      .force('x', forceX(0).strength(0.025))
-      .force('y', forceY(0).strength(0.025))
+      // in the author tab a repo's nodes are pulled to that repo's spot, authors float between their repos
+      .force('x', forceX<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.x : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
+      .force('y', forceY<Node>((n) => (by === 'author' && n.repo ? spot.get(`repo:${n.repo}`)!.y : 0)).strength((n) => (by === 'author' && n.repo ? 0.08 : 0.025)))
       .on('tick', () => {
+        if (repos.length) {
+          const area = new Map<string, Node[]>()
+          for (const n of g.nodes) if (n.repo) (area.get(n.repo) || area.set(n.repo, []).get(n.repo)!).push(n)
+          halo.each(function (d) {
+            const ns = area.get(d) ?? []
+            const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
+            const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
+            const r = 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy)))
+            select(this).attr('cx', cx).attr('cy', cy).attr('r', r)
+          })
+        }
         link
           .attr('x1', (l) => l.source.x!)
           .attr('y1', (l) => l.source.y!)
@@ -341,7 +377,10 @@ export function Graph({ secs, sel, onSelect }: {
         )}
       </div>
       <svg ref={svgRef}>
+        <defs>
+        </defs>
         <g className="world">
+          <g className="halos" />
           <g className="links" />
           <g className="nodes" />
         </g>
