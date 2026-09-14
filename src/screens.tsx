@@ -1,6 +1,6 @@
 // The screens the curses keys opened, ported from gui.html. Each drives the modal store imperatively
 // and mutates its modal in place, then repaint()s — the same shape as the vanilla openModal/paint pair.
-import { api, errorText, post } from './api'
+import { api, copyText, errorText, post } from './api'
 import type { Foot } from './modals'
 import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Ask, Row, StateData } from './types'
@@ -549,8 +549,7 @@ export async function debugScreen(ctx: Ctx) {
     return
   }
   const text = JSON.stringify(await r.json(), null, 2)
-  // the same /api/copy the rest of the app uses, so a headless or wayland box still copies
-  const copy = () => void ctx.call('/api/copy', { text }, '✓ debug data copied')
+  const copy = async () => ctx.flash(await copyText(text, 'the debug data'))
   const m = viewer('debug', text, 'holds repo names, pr urls and config paths — read it before pasting it in public')
   m.keys!.y = copy
   m.foot!.unshift(['y', 'copy', copy, 'go'])
