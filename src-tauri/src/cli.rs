@@ -191,6 +191,8 @@ pub enum Command {
         leave: Option<String>,
         #[arg(long)]
         agents_again: bool,
+        #[arg(long)]
+        publishing_again: bool,
     },
     #[command(name = "self-check")]
     SelfCheck {
@@ -913,6 +915,7 @@ fn teams(
     uncover: Option<String>,
     leave: Option<String>,
     agents_again: bool,
+    publishing_again: bool,
 ) -> i32 {
     team::activate();
     let some = |s: Option<String>| s.filter(|v| !v.is_empty());
@@ -998,12 +1001,18 @@ fn teams(
             fresh.first().cloned().unwrap_or(join),
             team_error_suffix()
         );
-    } else if agents_again {
+    } else if agents_again || publishing_again {
+        // ponytail: the same undo for both gates — see memory::ask_publishing_again for why.
         let key = match key_or_fail() {
             Ok(k) => k,
             Err(e) => return fail(e),
         };
-        if memory::ask_agents_again(&key) {
+        let forgot = if agents_again {
+            memory::ask_agents_again(&key)
+        } else {
+            memory::ask_publishing_again(&key)
+        };
+        if forgot {
             println!("gitdashy: {key} will be asked about again at the next launch");
         } else {
             println!("gitdashy: nothing recorded for {key} — it is already asked about at launch");
@@ -1423,6 +1432,7 @@ pub fn run(args: Vec<String>) -> i32 {
             uncover,
             leave,
             agents_again,
+            publishing_again,
         }) => teams(
             new,
             desc,
@@ -1435,6 +1445,7 @@ pub fn run(args: Vec<String>) -> i32 {
             uncover,
             leave,
             agents_again,
+            publishing_again,
         ),
         Some(Command::SelfCheck { model }) => self_check(model),
         None => dashboard(cli),
@@ -1607,6 +1618,7 @@ mod tests {
             parse(&["teams", "--team", "k", "--agents-again"]).command,
             Some(Command::Teams {
                 agents_again: true,
+                publishing_again: false,
                 ..
             })
         ));
