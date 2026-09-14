@@ -212,16 +212,18 @@ export function Graph({ secs, sel, onSelect }: {
       .style('color', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 55%)`)
     const halo = world
       .select('g.halos')
-      .selectAll<SVGGElement, string>('g')
+      .selectAll<SVGCircleElement, string>('circle')
       .data(repos, (d) => d)
-      .join((enter) => {
-        const e = enter.append('g')
-        e.append('circle')
-        e.append('text')
-        return e
-      })
-    halo.select('circle').style('fill', (d) => `url(#${gid(d)})`)
-    halo.select('text').text((d) => d).style('fill', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 65%)`)
+      .join('circle')
+      .style('fill', (d) => `url(#${gid(d)})`)
+    // the names get their own layer above the nodes, so a node never covers one
+    const rname = world
+      .select('g.rnames')
+      .selectAll<SVGTextElement, string>('text')
+      .data(repos, (d) => d)
+      .join('text')
+      .text((d) => d)
+      .style('fill', (d) => `hsl(${(repos.indexOf(d) * 137.5) % 360} 90% 65%)`)
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
@@ -277,14 +279,14 @@ export function Graph({ secs, sel, onSelect }: {
         if (repos.length) {
           const area = new Map<string, Node[]>()
           for (const n of g.nodes) if (n.repo) (area.get(n.repo) || area.set(n.repo, []).get(n.repo)!).push(n)
-          halo.each(function (d) {
+          const at = new Map(repos.map((d) => {
             const ns = area.get(d) ?? []
             const cx = ns.reduce((a, n) => a + n.x!, 0) / ns.length
             const cy = ns.reduce((a, n) => a + n.y!, 0) / ns.length
-            const r = 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy)))
-            select(this).select('circle').attr('cx', cx).attr('cy', cy).attr('r', r)
-            select(this).select('text').attr('x', cx).attr('y', cy - r * 0.6)
-          })
+            return [d, { cx, cy, r: 50 + Math.max(0, ...ns.map((n) => Math.hypot(n.x! - cx, n.y! - cy))) }]
+          }))
+          halo.attr('cx', (d) => at.get(d)!.cx).attr('cy', (d) => at.get(d)!.cy).attr('r', (d) => at.get(d)!.r)
+          rname.attr('x', (d) => at.get(d)!.cx).attr('y', (d) => at.get(d)!.cy - at.get(d)!.r * 0.6)
         }
         link
           .attr('x1', (l) => l.source.x!)
@@ -385,6 +387,7 @@ export function Graph({ secs, sel, onSelect }: {
           <g className="halos" />
           <g className="links" />
           <g className="nodes" />
+          <g className="rnames" />
         </g>
       </svg>
       <div className="glegend">
