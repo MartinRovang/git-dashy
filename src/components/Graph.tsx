@@ -1,5 +1,5 @@
 // The whole board as a live graph, Obsidian/Quartz style: every PR is a node linked to hubs, by default
-// one for its repo, so each repo is a star of its PRs. The group-by tabs
+// one for its repo and one for its author, so each repo is a star of its PRs and shared authors pull them together. The group-by tabs
 // swap the hubs for the PR's author, kind (from its review) or review state. PRs are sized by lines
 // changed and colored by review state. Drag nodes, scroll to zoom, hover to light up neighbours.
 //
@@ -42,8 +42,7 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
 function hubsOf(r: Row, by: Group): [Hub, string][] {
   // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
   const author: [Hub, string][] = r.author ? [['author', r.author]] : []
-  // repo is a plain star, the repo with its PRs around it: the author tab draws who wrote what
-  if (by === 'repo') return [['repo', r.repo]]
+  if (by === 'repo') return [['repo', r.repo], ...author]
   if (by === 'author') return author
   if (by === 'kind') return [['kind', tagOf(r).kind]]
   return [['state', rowState(r).key]]
@@ -348,7 +347,7 @@ export function Graph({ secs, sel, onSelect }: {
             <i style={{ background: 'var(--dim2)' }} /> {by}
           </span>
         )}
-        {by === 'author' && (
+        {(by === 'repo' || by === 'author') && (
           <span>
             <svg className="gperson" viewBox="-1 -1 2 2">
               <path d={PERSON} />
