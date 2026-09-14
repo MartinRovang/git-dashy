@@ -1,4 +1,5 @@
 import type { Detail, Row } from '../types'
+import { useNow } from '../usePoll'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 
 type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
@@ -44,6 +45,7 @@ export function Pane({
   onAct: (name: string) => void
   onClose: () => void
 }) {
+  useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
   if (!p)
     return (
       <div className="pane">

@@ -1,4 +1,5 @@
 import type { Row, StateData } from '../types'
+import { useNow } from '../usePoll'
 import type { VisSection } from '../board'
 import { settings } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
@@ -6,9 +7,9 @@ import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, to
 type Props = {
   data: StateData | null
   secs: VisSection[]
-  now: number
   sel: string
   read: Record<string, string>
+  onReadAll: () => void
   query: string
   onQuery: (v: string) => void
   failing: boolean
@@ -115,7 +116,12 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen }: 
 /** The queue: filter bar, then the sections, their PRs, and the folded REVIEWED runs. */
 export function Queue(p: Props) {
   const d = p.data
+  // running: not read here, but a running row's elapsed label (rowState) only moves when this re-renders
+  const now = useNow(d?.running || !d?.fetchedAt ? 1000 : 0)
   const failing = (d?.sections || []).flatMap((s) => s.prs || []).filter((x) => tone(x.checks) === 'changes').length
+
+  // by url: a PR still open elsewhere also has a REVIEWED row, and counting both showed 8 for 7
+  const unread = new Set(p.secs.flatMap((s) => s.prs).filter((x) => p.read[x.url] !== x.updatedAt).map((x) => x.url)).size
 
   if (d && !d.fetchedAt && !d.sections?.length) {
     return (
@@ -125,7 +131,7 @@ export function Queue(p: Props) {
             <img src="/head.png" alt="" />
           </div>
           <div style={{ color: 'var(--amber)', fontWeight: 600 }}>
-            {SPINNER[Math.floor(p.now / 125) % SPINNER.length]} fetching pull requests…
+            {SPINNER[Math.floor(now / 125) % SPINNER.length]} fetching pull requests…
           </div>
           <div className="mono" style={{ fontSize: 11 }}>
             created by
@@ -148,6 +154,11 @@ export function Queue(p: Props) {
         <div className={`chip${p.failing ? ' on' : ''}`} onClick={p.onFailing}>
           CI failing <em>{failing}</em>
         </div>
+        {unread ? (
+          <div className="chip" onClick={p.onReadAll}>
+            read all <em>{unread}</em>
+          </div>
+        ) : null}
         <div style={{ flex: 1 }} />
         <div className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
           updated{' '}
