@@ -94,7 +94,7 @@ export function Graph({ secs, sel, onSelect }: {
   }, [secs])
   // ponytail: plain state, not localStorage: the GUI gets a new port, so a new origin and empty storage, every launch
   const [by, setBy] = useState<Group>('repo')
-  const key = useMemo(() => by + '|' + rows.map((r) => `${r.url}\t${galaxyOf(r, by)}\t${hubOf(r, by)?.id}`).sort().join('|'), [rows, by])
+  const key = useMemo(() => by + '|' + rows.map((r) => `${r.url}\t${r.title}\t${galaxyOf(r, by)}\t${hubOf(r, by)?.id}`).sort().join('|'), [rows, by])
   const lastBy = useRef(by)
   const svgRef = useRef<SVGSVGElement>(null)
   const sim = useRef<Simulation<Node, Link> | null>(null)
@@ -140,7 +140,6 @@ export function Graph({ secs, sel, onSelect }: {
     node.select('text').attr('y', (n) => radius(n) + 3)
     node
       .select('path.icon')
-      .attr('display', (n) => (n.kind === 'pr' ? 'none' : null))
       .attr('d', (n) => (n.kind === 'pr' ? null : ICON[n.kind]))
       .attr('transform', (n) => `scale(${radius(n) * (n.kind === 'repo' ? 0.6 : 0.75)})`)
       .style('fill', (n) => (n.kind === 'author' ? avatar(n.label) : 'var(--ink3)'))
@@ -194,7 +193,10 @@ export function Graph({ secs, sel, onSelect }: {
     const world = root.select<SVGGElement>('g.world')
     // a soft glow behind each galaxy. A radial gradient per galaxy fades each disc out;
     // an SVG blur filter looked the same but re-rasterised on every tick and made the layout crawl
-        const gid = (d: string) => `ghalo-${galaxies.indexOf(d)}`
+    const gid = (d: string) => `ghalo-${galaxies.indexOf(d)}`
+    // saturated hues a golden angle apart, so neighbouring galaxies never share a colour;
+    // the state tab takes the legend's colour instead, so approved stays green
+    const tint = (d: string, light: number) => (by === 'state' ? (PALETTE[d] || PALETTE.idle).fg : `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% ${light}%)`)
     root
       .select('defs')
       .selectAll<SVGRadialGradientElement, string>('radialGradient')
@@ -206,8 +208,8 @@ export function Graph({ secs, sel, onSelect }: {
         return e
       })
       .attr('id', gid)
-      // saturated hues a golden angle apart, so neighbouring galaxies never share a colour; the stops paint currentColor
-      .style('color', (d) => `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% 55%)`)
+      // the stops paint currentColor
+      .style('color', (d) => tint(d, 55))
     const halo = world
       .select('g.halos')
       .selectAll<SVGCircleElement, string>('circle')
@@ -221,7 +223,7 @@ export function Graph({ secs, sel, onSelect }: {
       .data(galaxies, (d) => d)
       .join('text')
       .text((d) => d)
-      .style('fill', (d) => `hsl(${(galaxies.indexOf(d) * 137.5) % 360} 90% 65%)`)
+      .style('fill', (d) => tint(d, 65))
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
