@@ -386,6 +386,7 @@ export default function App() {
   function move(step: number) {
     if (!rows.length) return
     const i = rows.findIndex((r) => r.uid === selUid)
+    if (i < 0) return // a graph node in a folded section: no row to step from, so stay put rather than jump to the top
     const next = rows[Math.min(rows.length - 1, Math.max(0, i + step))]
     if (next) {
       setSel(next.uid)

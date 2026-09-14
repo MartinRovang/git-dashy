@@ -40,7 +40,8 @@ function tagOf(r: Row): { kind: string; breaking: boolean } {
 
 /** The hubs a PR links to, first one first: that one is its cluster. */
 function hubsOf(r: Row, by: Group): [Hub, string][] {
-  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one
+  // an author whose account is gone has no login; skip the hub rather than pool them all on a blank one.
+  // In author mode such a PR then clusters on its repo, the only hub it has left.
   const author: [Hub, string][] = r.author ? [['author', r.author]] : []
   // repo is a plain star, the repo with its PRs around it; author clusters by author and keeps the repos
   if (by === 'repo') return [['repo', r.repo]]
