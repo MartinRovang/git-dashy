@@ -116,7 +116,7 @@ button somewhere on the page.
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |
 | `a` | toggle auto mode |
-| `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
+| `t` | pick the REVIEWED window: 1h / 3h / 6h / 1d / 1w / 1mo / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |

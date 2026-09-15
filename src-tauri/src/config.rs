@@ -32,7 +32,7 @@ pub const KINDS: &[&str] = &[
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.
-pub const WINDOWS: &[Option<u64>] = &[Some(6), Some(24), Some(168), Some(720), None];
+pub const WINDOWS: &[Option<u64>] = &[Some(1), Some(3), Some(6), Some(24), Some(168), Some(720), None];
 pub const SPLASH_MIN: f64 = 1.0;
 
 /// Verdict -> the status string every row and log reader shows.
