@@ -1,23 +1,7 @@
-// Who the floating story cards follow, kept in this browser's storage.
+// Who the floating story cards follow. The server keeps the list (~/.prs_stories.json): this page's own
+// storage is per origin, and the port changes every launch.
 
 export type Followed = { login: string; days: number }
-const KEY = 'stories'
-
-export function loadFollowed(): Followed[] {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '[]') as Followed[]
-  } catch {
-    return []
-  }
-}
-
-export function saveFollowed(list: Followed[]) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(list))
-  } catch {
-    /* storage unavailable */
-  }
-}
 
 /** Add once (GitHub logins are case-insensitive), a week by default. */
 export const follow = (list: Followed[], login: string): Followed[] =>

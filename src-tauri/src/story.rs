@@ -1,11 +1,13 @@
 //! A followed user's story: what they have been working on lately, as a few sentences from the model.
 //!
+//! Who is followed and the last story per (login, days) live in ~/.prs_stories.json, beside the settings:
+//! the page's own storage is per origin, and the server picks a new port every launch.
+//!
 //! ponytail: PRs only (authored, touched in the window). Commits and reviews would say more, and cost a
 //! second and third search; add them when PR titles prove too thin to summarise.
 
-use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -13,10 +15,89 @@ use serde_json::{json, Value};
 use crate::{config, github, llm};
 
 /// How long a story stands before the next open asks the model again.
-const FRESH: Duration = Duration::from_secs(30 * 60);
+const FRESH: f64 = 30.0 * 60.0;
 const TIMEOUT: u64 = 180;
-/// ponytail: in memory, so a restart asks again. Persist when that bill shows up.
-static CACHE: Mutex<Option<HashMap<(String, u64), (Instant, Value)>>> = Mutex::new(None);
+/// The file as last read or written: `{"follow": [{login, days}], "cache": {"login:days": story}}`.
+/// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
+static FILE: Mutex<Option<Value>> = Mutex::new(None);
+
+fn path() -> Option<PathBuf> {
+    config::get()
+        .settings
+        .map(|p| p.with_file_name(".prs_stories.json"))
+}
+
+/// Run `f` on the file's contents and write back what it leaves.
+fn with_file<T>(f: impl FnOnce(&mut Value) -> T) -> T {
+    let mut g = FILE.lock().unwrap_or_else(|e| e.into_inner());
+    let v = g.get_or_insert_with(|| {
+        path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}))
+    });
+    let before = v.clone();
+    let out = f(v);
+    if *v != before {
+        if let Some(p) = path() {
+            // a temp file renamed over, like the settings: a cut-short write never reads back as {}
+            let tmp = p.with_extension("tmp");
+            let wrote = std::fs::write(&tmp, v.to_string()).and_then(|_| std::fs::rename(&tmp, &p));
+            if let Err(e) = wrote {
+                log::debug!("stories not saved: {e}");
+            }
+        }
+    }
+    out
+}
+
+/// The followed list, each login checked and days clamped; anything else in it is dropped.
+pub fn clean(list: &Value) -> Value {
+    let mut seen: Vec<String> = Vec::new();
+    Value::Array(
+        list.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| {
+                let login = f["login"].as_str()?;
+                let low = login.to_lowercase();
+                if !login_ok(login) || seen.contains(&low) {
+                    return None;
+                }
+                seen.push(low);
+                Some(json!({"login": login, "days": clamp_days(&f["days"].to_string())}))
+            })
+            .take(50)
+            .collect(),
+    )
+}
+
+pub fn followed() -> Value {
+    with_file(|v| clean(&v["follow"]))
+}
+
+pub fn set_followed(list: &Value) -> Value {
+    let list = clean(list);
+    with_file(|v| {
+        v["follow"] = list.clone();
+        // stories of logins no longer followed go with them
+        let keep: Vec<String> = list
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f["login"].as_str())
+            .map(str::to_lowercase)
+            .collect();
+        if let Some(c) = v.get_mut("cache").and_then(Value::as_object_mut) {
+            c.retain(|k, _| {
+                keep.iter()
+                    .any(|l| k.rsplit_once(':').is_some_and(|(who, _)| who == l))
+            });
+        }
+    });
+    list
+}
 
 /// A GitHub login: letters, digits and single hyphens, at most 39. It goes into a search string.
 pub fn login_ok(s: &str) -> bool {
@@ -60,12 +141,14 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
 }
 
 pub fn get(login: &str, days: u64, fresh: bool) -> Result<Value> {
-    let key = (login.to_lowercase(), days);
+    let key = format!("{}:{days}", login.to_lowercase());
     if !fresh {
-        if let Some((at, v)) = CACHE.lock().unwrap().get_or_insert_with(HashMap::new).get(&key) {
-            if at.elapsed() < FRESH {
-                return Ok(v.clone());
-            }
+        let hit = with_file(|v| v["cache"][&key].clone());
+        if hit["at"]
+            .as_f64()
+            .is_some_and(|at| crate::state::now() - at < FRESH)
+        {
+            return Ok(hit);
         }
     }
     let cfg = config::get();
@@ -91,11 +174,12 @@ pub fn get(login: &str, days: u64, fresh: bool) -> Result<Value> {
         };
         json!({"summary": summary, "prs": prs, "at": crate::state::now()})
     };
-    CACHE
-        .lock()
-        .unwrap()
-        .get_or_insert_with(HashMap::new)
-        .insert(key, (Instant::now(), out.clone()));
+    with_file(|v| {
+        if !v["cache"].is_object() {
+            v["cache"] = json!({});
+        }
+        v["cache"][&key] = out.clone();
+    });
     Ok(out)
 }
 
@@ -125,5 +209,15 @@ mod tests {
             search("bob", 7, now),
             "is:pr author:bob updated:>=2026-09-08T12:00:00Z"
         );
+    }
+
+    #[test]
+    fn a_saved_follow_list_comes_back_checked() {
+        let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob", "days": 1}, {"login": "x y"}, "junk", {"login": "amy", "days": 3}]);
+        assert_eq!(
+            clean(&raw),
+            json!([{"login": "Bob", "days": 7}, {"login": "amy", "days": 3}])
+        );
+        assert_eq!(clean(&json!(null)), json!([]));
     }
 }

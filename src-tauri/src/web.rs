@@ -1560,6 +1560,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
+        "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
         _ => return None,
     })
 }
@@ -1585,6 +1586,9 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/update" => post_update,
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
+        "/api/stories" => {
+            |_, body| Ok(json!({"follow": story::set_followed(body.get("follow").unwrap_or(&Value::Null))}))
+        }
         _ => return None,
     })
 }

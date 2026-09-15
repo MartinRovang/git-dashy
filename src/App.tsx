@@ -6,7 +6,7 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, loadFollowed, saveFollowed, setDays, unfollow, type Followed } from './stories'
+import { follow, setDays, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -36,11 +36,17 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
-  const [followed, setFollowedState] = useState(loadFollowed)
+  const [followed, setFollowedState] = useState<Followed[]>([])
+  useEffect(() => {
+    api('/api/stories')
+      .then((r) => (r.ok ? r.json() : { follow: [] }))
+      .then((j) => setFollowedState(j.follow))
+      .catch(() => {})
+  }, [])
   const setFollowed = (f: (l: Followed[]) => Followed[]) =>
     setFollowedState((l) => {
       const next = f(l)
-      saveFollowed(next)
+      void post('/api/stories', { follow: next })
       return next
     })
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
