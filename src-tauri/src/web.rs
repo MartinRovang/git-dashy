@@ -993,6 +993,17 @@ fn post_stories(_state: &State, body: &Body) -> Out {
     Ok(json!({"follow": story::set_followed(list)}))
 }
 
+/// The card has been read: drop the shift mark on that story. Unknown logins are a no-op, not an error --
+/// the card may have been closed and the story pruned by the time this lands.
+fn post_story_seen(_state: &State, body: &Body) -> Out {
+    let login = body.get("login").and_then(Value::as_str).unwrap_or_default();
+    if !story::login_ok(login) {
+        return Err(Fail::new(400, "login must be a GitHub username"));
+    }
+    story::seen(login);
+    Ok(json!({"ok": true}))
+}
+
 fn get_story(_state: &State, query: &Query) -> Out {
     let login = q(query, "login");
     if !story::login_ok(login) {
@@ -1776,6 +1787,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
         "/api/stories" => post_stories,
+        "/api/story/seen" => post_story_seen,
         _ => return None,
     })
 }
@@ -2118,6 +2130,17 @@ mod tests {
             (code, body["error"].as_str()),
             (400, Some("follow must be a list"))
         );
+        // ponytail: clearing a mark still goes through login_ok -- it names a key in the story store, and a
+        // body with no login at all must not reach it either
+        for bad in [json!({}), json!({"login": "../../etc"})] {
+            let (code, body) = post(&format!("{base}/api/story/seen"), bad.clone(), &token);
+            assert_eq!(
+                (code, body["error"].as_str()),
+                (400, Some("login must be a GitHub username")),
+                "{bad}"
+            );
+        }
+        assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
     }
 
     #[test]

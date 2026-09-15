@@ -51,6 +51,7 @@ const KEYS: [string, [string, string][]][] = [
       ['i', 'Refresh interval'],
       ['D', 'Show or hide draft PRs'],
       ['O', 'Sources for the TEAM section'],
+      ['F', 'Follow someone: a card of what they are working on'],
     ],
   ],
   [

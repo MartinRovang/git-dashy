@@ -543,14 +543,24 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 
 ## Following people
 
-**+ follow** in the top bar fuzzy-finds anyone who authored or reviewed a PR on the board (or takes any
-GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
+**+ follow** in the footer, or `F`, fuzzy-finds anyone who authored or reviewed a PR on the board (or takes
+any GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
 over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
-from its corner grip, `–` minimizes it to a chip in the footer, `⟳` asks again, `✕` unfollows.
+from its corner grip, `–` minimizes it to a chip in the footer beside the button, `⟳` asks again, `✕`
+unfollows. The rail's **view** group also lists every team and org the board is showing; clicking one
+follows everyone it has a PR from.
 
 Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
-search; the model only runs when that person's PRs changed since the last story. When a minimized card's
-story changes, its chip lights up and the new bullets drop up above it.
+search; the model only runs when that person's PRs changed since the last story.
+
+**A card marks itself when someone changes direction.** Every rewritten story is compared against the one
+before it, in the same model call, and the bar is a *different problem* — even alongside the old one.
+Picking up an auth rewrite next to the export job is a change of direction; moving from export pagination
+to export retries is more of the same export work, and says nothing. Only the first kind marks the card:
+one line at the top of it, a dot on its footer chip, and — while it is minimized — the line and the new
+bullets drop up above the chip. Reading it clears the mark, and nothing else does: a mark raised while you
+were away survives later rewrites until you have seen it. "No change" is the answer the model is asked for
+and almost always gives.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
 `openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.

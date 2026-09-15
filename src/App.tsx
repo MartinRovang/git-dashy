@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, UNFOLDED, buckets, flat, forView, groups, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, type Only, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -41,6 +41,24 @@ export default function App() {
   const [help, setHelp] = useState(false)
   // where minimized story cards sit: the footer, handed to them once it is in the DOM
   const [dock, setDock] = useState<HTMLDivElement | null>(null)
+  /** Ask who, then follow them. The footer and the rail's View group both call it. */
+  const followSomeone = () =>
+    void findLogin(
+      'Follow someone',
+      people((data?.sections || []).flatMap((x) => x.prs)),
+      followed.map((f) => f.login),
+    ).then((l) => l && setFollowed((f) => follow(f, l)))
+  /** Follow everyone the board shows working under one team or org. */
+  const followScope = (scope: string) => {
+    const rows = (data?.sections || []).flatMap((x) => x.prs).filter((p) => inScope(p, [scope]))
+    const who = people(rows)
+    if (!who.length) {
+      setFlash(`nobody on the board under ${scope}`)
+      return
+    }
+    setFollowed((f) => who.reduce(follow, f))
+    setFlash(`following ${who.length} from ${scope}`)
+  }
   const [followed, setFollowedState] = useState<Followed[]>([])
   useEffect(() => {
     api('/api/stories')
@@ -572,6 +590,7 @@ export default function App() {
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
     if (k === '?') return one(() => setHelp((v) => !v))
+    if (k === 'F') return one(followSomeone)
     if (k === 'S') return one(() => setRailShut((v) => !v))
     // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
@@ -603,7 +622,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -620,6 +639,9 @@ export default function App() {
           onTeams={onTeams}
           onModal={onModal}
           onAuto={onAuto}
+          onFollow={followSomeone}
+          onFollowScope={followScope}
+          followed={followed.length}
           posting={detail?.url === current?.url ? detail?.posting || null : null}
           onPosting={(ran, post, owner) =>
             void call(
@@ -711,6 +733,11 @@ export default function App() {
         <span>r review</span>
         <span>? all keys</span>
         <div className="dock" ref={setDock} />
+        {/* ponytail: here, next to the dock a followed card minimises into. The control that adds
+            one was in the top bar, three feet from where its result appears. */}
+        <button className="lnk foot" title="follow someone: a floating card of what they are working on" onClick={followSomeone}>
+          + follow
+        </button>
         <div style={{ flex: 1 }} />
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}

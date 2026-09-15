@@ -11,6 +11,12 @@ type Props = {
   onTeams: () => void
   onModal: (name: string) => void
   onAuto: () => void
+  /** Ask who, then follow them. */
+  onFollow: () => void
+  /** Follow everyone the board shows working under one `team:`/`org:` scope. */
+  onFollowScope: (scope: string) => void
+  /** How many are followed, so the rail can say so when shut. */
+  followed: number
   /** What happens to the selected repo's reviews, resolved by the server; null with no PR selected. */
   posting: Posting | null
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', owner: boolean) => void
@@ -169,7 +175,7 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, posting, onPosting, onAskAgain, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, posting, onPosting, onAskAgain, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -328,6 +334,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
               <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
               {/* a count, not the names: seven badges is the whole rail, and "4 of 7" is the thing
                   you actually want to know at this width */}
+              <Ln label="following" value={String(followed)} off={!followed} />
               <Ln
                 label="sources"
                 value={
@@ -367,6 +374,28 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
             onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))}
             onAll={(v) => setting('scopes', v)}
           />
+          {/* ponytail: these DO something, they do not toggle — following a team is "add everyone it
+              has on the board right now", so the same chip pressed tomorrow adds whoever joined
+              since. The tag shape is the one the Knowledge group already uses for an action. */}
+          <div className="sub">
+            <kbd className="hint">F</kbd> follow
+            <em>
+              <button className="lnk" onClick={onFollow}>
+                someone
+              </button>
+            </em>
+          </div>
+          {o.scopes.length ? (
+            <div className="tags">
+              {o.scopes.map((v) => (
+                <button className="tag" key={v} title={`follow everyone the board shows under ${v}`} onClick={() => onFollowScope(v)}>
+                  {v.replace(':', ' ')}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">a team or an org shows up here once it has a PR</div>
+          )}
           <Row k="t" label="history">
             <Select
               value={s.window == null ? 'all' : String(s.window)}
