@@ -81,6 +81,7 @@ pub fn payload(state: &State) -> Value {
         arrived,
         fetched_at,
         fetching,
+        ticks,
         auto,
         pending,
         update,
@@ -97,6 +98,7 @@ pub fn payload(state: &State) -> Value {
             inner.arrived.clone(),
             inner.fetched_at,
             inner.fetching,
+            inner.ticks,
             inner.auto,
             inner.pending_rr(&|r| auto_scope.armed(r)).len(),
             inner.update.clone(),
@@ -182,6 +184,7 @@ pub fn payload(state: &State) -> Value {
         "fetchedAt": fetched_at,
         "interval": cfg.interval,
         "fetching": fetching,
+        "ticks": ticks,
         "error": error,
         "auto": auto,
         // ponytail: the boolean, not "is the list empty". A store holding nothing but an --off row
@@ -1018,8 +1021,7 @@ fn post_auto(state: &State, body: &Body) -> Out {
 
 fn post_refresh(state: &State, _body: &Body) -> Out {
     diff::retry(); // f means "look again", so a diff GitHub failed to read is worth retrying
-    state.wake();
-    Ok(json!({"ok": true}))
+    Ok(json!({"ok": true, "answeredBy": state.wake_answered_by()}))
 }
 
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.

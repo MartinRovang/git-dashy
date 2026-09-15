@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, refreshDone, remember, selected, toggleHidden, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -39,6 +39,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     fetchedAt: 1,
     interval: 60,
     fetching: false,
+    ticks: 0,
     error: '',
     auto: false,
     pending: 0,
@@ -537,18 +538,6 @@ describe('remember', () => {
     const read = { a: '2026-01-01', b: '2026-03-01', c: '2026-02-01' }
     expect(remember(read, [{ url: 'a', updatedAt: '2026-04-01' }])).toEqual({ a: '2026-04-01', b: '2026-03-01', c: '2026-02-01' })
     expect(remember(read, [{ url: 'd', updatedAt: '2026-05-01' }], 2)).toEqual({ d: '2026-05-01', b: '2026-03-01' })
-  })
-})
-
-describe('refreshDone', () => {
-  const p = { fetchedAt: 100, error: '', seen: false }
-  it('keeps spinning until a fetch has run since the press', () => {
-    expect(refreshDone(p, { fetching: false, fetchedAt: 100, error: '' })).toBe(false)
-    expect(refreshDone(p, { fetching: true, fetchedAt: 100, error: '' })).toBe(false)
-    expect(refreshDone({ ...p, seen: true }, { fetching: true, fetchedAt: 100, error: '' })).toBe(false)
-    expect(refreshDone({ ...p, seen: true }, { fetching: false, fetchedAt: 100, error: '' })).toBe(true)
-    expect(refreshDone(p, { fetching: false, fetchedAt: 200, error: '' })).toBe(true)
-    expect(refreshDone(p, { fetching: false, fetchedAt: 100, error: 'boom' })).toBe(true)
   })
 })
 

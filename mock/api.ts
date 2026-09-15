@@ -107,6 +107,7 @@ const S = {
   postingOwners: {} as Record<string, { manual: string; auto: string }>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
+  ticks: 0,
   cursor: 0,
   overlaps: { running: false, t0: 0, error: '', result: null as unknown[] | null, idle: true },
   dream: { running: false, t0: 0, error: '', result: null as unknown | null, idle: true },
@@ -233,6 +234,7 @@ function buildPayload() {
     fetchedAt: S.fetchedAt,
     interval: S.settings.interval,
     fetching: S.fetching,
+    ticks: S.ticks,
     error: '',
     auto: S.auto,
     pending: S.rows.filter((r) => r.section === 'REVIEW REQUESTED').length,
@@ -543,8 +545,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       setTimeout(() => {
         S.fetching = false
         S.fetchedAt = secs()
+        S.ticks += 1
       }, 400)
-      return json(200, { ok: true })
+      return json(200, { ok: true, answeredBy: S.ticks + 1 })
     }
     if (path === '/api/open') {
       const r = S.rows.find((x) => x.url === str(body, 'url'))
