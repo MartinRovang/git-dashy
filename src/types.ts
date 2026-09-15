@@ -98,6 +98,8 @@ export type StateData = {
   fetchedAt: number | null
   interval: number
   fetching: boolean
+  /** Ticks finished, landed or failed, since the server started. See post_refresh. */
+  ticks: number
   error: string
   auto: boolean
   pending: number
