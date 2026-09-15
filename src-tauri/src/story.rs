@@ -140,7 +140,7 @@ fn lock_for(key: &str) -> Arc<Mutex<()>> {
 /// board fragment also pulls checks, review requests and reviews for every node.
 fn page(search: &str) -> String {
     format!(
-        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url updatedAt repository {{ nameWithOwner }} }} }} }} }}",
+        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url headRefOid repository {{ nameWithOwner }} }} }} }} }}",
         Value::String(search.into())
     )
 }
@@ -187,8 +187,9 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
     )
 }
 
-/// What the story was written from: every PR in the window and when it last moved. Same PRs, same
-/// updatedAt, same story; a new PR, a push, or one ageing out of the window changes it.
+/// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
+/// same story; a new PR, a push, or one ageing out of the window changes it. ponytail: not updatedAt, which
+/// CI, bots and comments bump every few seconds with nothing pushed.
 pub fn sig(nodes: &[Value]) -> String {
     let mut seen: Vec<String> = nodes
         .iter()
@@ -196,7 +197,7 @@ pub fn sig(nodes: &[Value]) -> String {
             format!(
                 "{}@{}",
                 n["url"].as_str().unwrap_or(""),
-                n["updatedAt"].as_str().unwrap_or("")
+                n["headRefOid"].as_str().unwrap_or("")
             )
         })
         .collect();
@@ -228,7 +229,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let prs: Vec<Value> = nodes
         .iter()
-        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "updatedAt": n["updatedAt"]}))
+        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "head": n["headRefOid"]}))
         .collect();
     let summary = if prs.is_empty() {
         format!("No pull requests from {login} in the last {days} day(s).")
@@ -314,7 +315,7 @@ mod tests {
         assert!(doc.contains(r#"search(query: "is:pr author:bob \"x", type: ISSUE, first: 20)"#));
         assert!(!doc.contains("statusCheckRollup"));
         // what sig() and the page's new-work check compare on
-        assert!(doc.contains("updatedAt"));
+        assert!(doc.contains("headRefOid"));
     }
 
     #[test]
@@ -336,10 +337,10 @@ mod tests {
 
     #[test]
     fn the_story_is_rewritten_only_when_the_prs_moved() {
-        let a = json!({"url": "u/1", "updatedAt": "t1"});
-        let b = json!({"url": "u/2", "updatedAt": "t1"});
+        let a = json!({"url": "u/1", "headRefOid": "t1"});
+        let b = json!({"url": "u/2", "headRefOid": "t1"});
         assert_eq!(sig(&[a.clone(), b.clone()]), sig(&[b.clone(), a.clone()]));
         assert_ne!(sig(std::slice::from_ref(&a)), sig(&[a.clone(), b]));
-        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "updatedAt": "t2"})]));
+        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "headRefOid": "t2"})]));
     }
 }

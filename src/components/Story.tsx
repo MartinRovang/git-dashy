@@ -32,7 +32,8 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
   const [open, setOpen] = useState(false)
   /** The PRs a poll found new or moved since the story on the pill; they pop up on their own. */
   const [news, setNews] = useState<Pr[]>([])
-  const last = useRef<Got | null>(null)
+  /** Every PR head this pill has seen: what a poll's PRs are checked against. */
+  const seen = useRef<Map<string, string | undefined> | null>(null)
   /** A check still out: the next poll tick skips rather than stacking a second one on it. */
   const inflight = useRef(false)
   const el = useRef<HTMLDivElement>(null)
@@ -49,12 +50,12 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
       .then(async (r) => {
         if (r.ok) {
           const next: Got = await r.json()
-          if (last.current && next.at !== last.current.at) {
-            const moves = moved(last.current, next)
-            // a PR only ageing out of the window rewrites the story but is not new work
+          // the first story only teaches what is already there
+          if (!seen.current) moved((seen.current = new Map()), next)
+          else {
+            const moves = moved(seen.current, next)
             if (moves.length) setNews(moves)
           }
-          last.current = next
           setGot(next)
           setErr('')
         } else if (!quiet) setErr(await errorText(r))

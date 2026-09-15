@@ -58,10 +58,15 @@ export function fuzzy(q: string, logins: string[]): string[] {
   return scored.sort((a, b) => b[0] - a[0]).map(([, l]) => l)
 }
 
-export type Pr = { repo: string; number: number; title: string; url: string; updatedAt?: string }
+export type Pr = { repo: string; number: number; title: string; url: string; head?: string }
 export type Got = { at: number; summary: string; prs: Pr[] }
 
-/** PRs in `next` that are new or were pushed since `prev`. A story saved before PRs carried `updatedAt`
- *  cannot tell, so it reports nothing rather than every PR. */
-export const moved = (prev: Got, next: Got): Pr[] =>
-  prev.prs.some((q) => !q.updatedAt) ? [] : next.prs.filter((p) => !prev.prs.some((q) => q.url === p.url && q.updatedAt === p.updatedAt))
+/** PRs in `next` that were pushed to (head commit changed) or never seen before, then `seen` learns them.
+ *  ponytail: `seen` only grows. Search drops PRs from a page at random and hands them back a poll later;
+ *  against only the last poll those came back as new work. A PR with no known head (a story cached before
+ *  heads) is learnt, not reported. */
+export function moved(seen: Map<string, string | undefined>, next: Got): Pr[] {
+  const out = next.prs.filter((p) => (seen.has(p.url) ? !!seen.get(p.url) && seen.get(p.url) !== p.head : true))
+  for (const p of next.prs) seen.set(p.url, p.head)
+  return out
+}
