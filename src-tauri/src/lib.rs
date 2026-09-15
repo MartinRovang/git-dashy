@@ -22,6 +22,7 @@ pub mod mirror;
 pub mod review;
 pub mod shell;
 pub mod state;
+pub mod story;
 pub mod team;
 pub mod textdiff;
 pub mod types;

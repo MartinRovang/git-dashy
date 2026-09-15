@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const MODELS: &[&str] = &["opus", "sonnet", "fable"];
+pub const MODELS: &[&str] = &["opus", "sonnet", "fable", "haiku"];
 pub const EFFORTS: &[&str] = &["", "low", "medium", "high", "xhigh", "max"];
 pub const DEPTHS: &[&str] = &["adaptive", "low", "medium", "high"];
 pub const VOICES: &[&str] = &["review", "caveman", "bot"];
