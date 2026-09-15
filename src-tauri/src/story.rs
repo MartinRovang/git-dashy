@@ -95,9 +95,19 @@ fn prune(v: &mut Value, keep: &[String]) {
     }
 }
 
-/// Whether the saved story can stand: the same PRs it was written from, and no ⟳.
+/// Whether the saved story can stand: no ⟳, and every PR the search found is one it was written from, at
+/// the same head. Fewer is fine: search leaves PRs off a page at random and hands them back a poll later.
+/// ponytail: so a PR ageing out of the window stays in the story until something new comes along; an empty
+/// search still rewrites it, so a quiet day says so. A push landing on the poll search dropped a PR from
+/// writes the story without it, and the model runs again when it comes back; a union of saved and found PRs
+/// would save that second run.
 fn stands(saved: &Value, now_sig: &str, fresh: bool) -> bool {
-    !fresh && saved["sig"].as_str() == Some(now_sig)
+    let Some(was) = saved["sig"].as_str() else {
+        return false;
+    };
+    !fresh
+        && (now_sig == was
+            || !now_sig.is_empty() && now_sig.split(' ').all(|p| was.split(' ').any(|w| w == p)))
 }
 
 pub fn followed() -> Value {
@@ -140,7 +150,7 @@ fn lock_for(key: &str) -> Arc<Mutex<()>> {
 /// board fragment also pulls checks, review requests and reviews for every node.
 fn page(search: &str) -> String {
     format!(
-        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url updatedAt repository {{ nameWithOwner }} }} }} }} }}",
+        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url headRefOid repository {{ nameWithOwner }} }} }} }} }}",
         Value::String(search.into())
     )
 }
@@ -187,8 +197,10 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
     )
 }
 
-/// What the story was written from: every PR in the window and when it last moved. Same PRs, same
-/// updatedAt, same story; a new PR, a push, or one ageing out of the window changes it.
+/// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
+/// same story; a new PR, a push, or one ageing out of the window changes it, though `stands` lets a
+/// shrink keep the story. ponytail: not updatedAt, which CI, bots and comments bump every few seconds with
+/// nothing pushed.
 pub fn sig(nodes: &[Value]) -> String {
     let mut seen: Vec<String> = nodes
         .iter()
@@ -196,7 +208,7 @@ pub fn sig(nodes: &[Value]) -> String {
             format!(
                 "{}@{}",
                 n["url"].as_str().unwrap_or(""),
-                n["updatedAt"].as_str().unwrap_or("")
+                n["headRefOid"].as_str().unwrap_or("")
             )
         })
         .collect();
@@ -228,7 +240,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let prs: Vec<Value> = nodes
         .iter()
-        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "updatedAt": n["updatedAt"]}))
+        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "head": n["headRefOid"]}))
         .collect();
     let summary = if prs.is_empty() {
         format!("No pull requests from {login} in the last {days} day(s).")
@@ -293,6 +305,14 @@ mod tests {
         assert!(!stands(&saved, "u/1@t1", true));
         assert!(!stands(&saved, "u/1@t2", false));
         assert!(!stands(&Value::Null, "", false));
+        // search leaving a PR off is not a new story; a new PR or no PRs at all is
+        let two = json!({"sig": "u/1@t1 u/2@t1"});
+        assert!(stands(&two, "u/2@t1", false));
+        assert!(!stands(&two, "u/2@t1 u/3@t1", false));
+        // a push to a PR still in a smaller result
+        assert!(!stands(&two, "u/1@t2", false));
+        assert!(!stands(&two, "", false));
+        assert!(stands(&json!({"sig": ""}), "", false));
     }
 
     #[test]
@@ -314,7 +334,7 @@ mod tests {
         assert!(doc.contains(r#"search(query: "is:pr author:bob \"x", type: ISSUE, first: 20)"#));
         assert!(!doc.contains("statusCheckRollup"));
         // what sig() and the page's new-work check compare on
-        assert!(doc.contains("updatedAt"));
+        assert!(doc.contains("headRefOid"));
     }
 
     #[test]
@@ -336,10 +356,10 @@ mod tests {
 
     #[test]
     fn the_story_is_rewritten_only_when_the_prs_moved() {
-        let a = json!({"url": "u/1", "updatedAt": "t1"});
-        let b = json!({"url": "u/2", "updatedAt": "t1"});
+        let a = json!({"url": "u/1", "headRefOid": "t1"});
+        let b = json!({"url": "u/2", "headRefOid": "t1"});
         assert_eq!(sig(&[a.clone(), b.clone()]), sig(&[b.clone(), a.clone()]));
         assert_ne!(sig(std::slice::from_ref(&a)), sig(&[a.clone(), b]));
-        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "updatedAt": "t2"})]));
+        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "headRefOid": "t2"})]));
     }
 }

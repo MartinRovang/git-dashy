@@ -391,7 +391,7 @@ function postSettings(b: Body) {
 // a followed user's story; every poll after the first finds one more PR, so the "new work" pop-up shows
 function story(login: string) {
   const n = (S.storyCalls[login] = (S.storyCalls[login] || 0) + 1)
-  const pr = (i: number) => ({ repo: 'acme/api', number: 200 + i, title: `${login}'s change #${i}`, url: `https://github.com/acme/api/pull/${200 + i}`, updatedAt: `t${i}` })
+  const pr = (i: number) => ({ repo: 'acme/api', number: 200 + i, title: `${login}'s change #${i}`, url: `https://github.com/acme/api/pull/${200 + i}`, head: `h${i}` })
   return {
     summary: `- ${login} is reworking auth middleware in acme/api\n- reviewing small fixes in acme/dashboard`,
     prs: Array.from({ length: n + 1 }, (_, i) => pr(i)),
