@@ -441,6 +441,18 @@ impl State {
         true
     }
 
+    /// Forget a held review's status, so the row goes back to what the board says it is.
+    ///
+    /// ponytail: the hold writes its verdict into `reviews` through finish(), which is how the row
+    /// shows "waiting to post". Dropping the file without clearing that left the row reading as
+    /// reviewed and auto skipping the PR — recoverable only by a push or a restart, because nothing
+    /// else removes an entry except a head that moved.
+    pub fn forget_review(&self, url: &str) {
+        let mut inner = self.lock();
+        inner.reviews.remove(url);
+        inner.done_at.remove(url);
+    }
+
     /// Post a review that was waiting, with the row spinning while it goes.
     ///
     /// ponytail: a thread and `begin`/`finish`, like every other review action. Posting is two

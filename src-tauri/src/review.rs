@@ -786,12 +786,20 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     if !c.demo {
         if !h.hello.is_empty() {
             github::comment(repo, n, &h.hello)?;
+            // ponytail: recorded the moment it lands. A post that fails after the hello went up used
+            // to leave the file with `hello` still set, so every retry greeted the author again.
+            let mut said = h.clone();
+            said.hello = String::new();
+            held::put(&said)?;
         }
         github::post_review(repo, n, &h.verdict.verdict, &h.verdict.body)?;
     }
-    // the log is the record of a POSTED review, so it is written here and not when the hold was taken
-    let status = rlog::log_review(&h.pr, &h.model, &h.verdict, None)?;
+    // ponytail: dropped HERE, the instant the review is on the PR, and not after the log. The first
+    // draft had it last so a crash left the review recoverable — but what it actually left was a
+    // file whose review had already gone up, and the next `p` posted the whole thing again. A lost
+    // log line costs a re-review later; a second post is on someone else's PR. Cheaper failure wins.
     held::drop(repo, n)?;
+    let status = rlog::log_review(&h.pr, &h.model, &h.verdict, None)?;
     team::push(&format!("review {repo}#{n}: {}", h.verdict.verdict));
     Ok(status)
 }
@@ -1009,10 +1017,10 @@ mod tests {
         assert_eq!(post_held(&h).unwrap(), config::status("approve").unwrap());
     }
 
-    /// Dropped only AFTER everything before it landed. Anything that fails on the way leaves the
-    /// review held: holding twice is a keypress, posting twice is on someone else's PR.
+    /// Dropped the moment the review is on the PR, before the log. A log write that fails after
+    /// that must NOT leave the file, or the next press posts the same review again.
     #[test]
-    fn a_failed_post_leaves_the_review_waiting() {
+    fn a_failed_log_does_not_leave_the_review_to_post_again() {
         let _g = crate::autorev::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
@@ -1042,10 +1050,13 @@ mod tests {
             at: 100.0,
         };
         held::put(&h).unwrap();
-        assert!(post_held(&h).is_err());
         assert!(
-            held::get("acme/api", 11).is_some(),
-            "the post did not land, so the review is still waiting"
+            post_held(&h).is_err(),
+            "the log refuses a verdict it does not know"
+        );
+        assert!(
+            held::get("acme/api", 11).is_none(),
+            "the review went up, so the file is gone whatever the log did"
         );
     }
 

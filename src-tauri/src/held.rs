@@ -39,15 +39,26 @@ fn dir() -> PathBuf {
     crate::config::get().held_dir
 }
 
+/// Where one held review lives, or None when `repo` is not a name this can key on.
+///
 /// ponytail: derived from the repo and number, the way review::self_review_path is, so a held review
 /// is found again after a restart without a second store saying where it went.
-pub fn path(repo: &str, n: u64) -> PathBuf {
-    dir().join(format!("{}__{n}.json", repo.replace('/', "__")))
+/// ponytail: folded through bind::key first, and refused when that fails. `repo` arrives from an
+/// HTTP body, and discard calls remove_file on what comes back — replacing `/` alone left a `\` or
+/// a `..` segment to walk straight out of the directory on a host whose separator is not `/`. The
+/// fold accepts exactly one `owner/name` and nothing else, which is the same guard set_post uses.
+pub fn path(repo: &str, n: u64) -> Option<PathBuf> {
+    let key = crate::bind::key(repo);
+    if key.is_empty() {
+        return None;
+    }
+    Some(dir().join(format!("{}__{n}.json", key.replace('/', "__"))))
 }
 
 /// Park a finished review. Returns where it went.
 pub fn put(h: &Held) -> Result<PathBuf> {
-    let p = path(h.pr.repo(), h.pr.number);
+    let p = path(h.pr.repo(), h.pr.number)
+        .ok_or_else(|| anyhow::anyhow!("{} is not an owner/name", h.pr.repo()))?;
     std::fs::create_dir_all(dir())?;
     std::fs::write(&p, serde_json::to_string_pretty(h)?)?;
     Ok(p)
@@ -59,7 +70,7 @@ pub fn put(h: &Held) -> Result<PathBuf> {
 /// decide a row's status; one unreadable file must not take the dashboard down, and the review it
 /// described is gone either way.
 pub fn get(repo: &str, n: u64) -> Option<Held> {
-    let text = std::fs::read_to_string(path(repo, n)).ok()?;
+    let text = std::fs::read_to_string(path(repo, n)?).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -84,7 +95,10 @@ pub fn waiting() -> HashSet<(String, u64)> {
 
 /// Forget one, posted or dropped. Missing is not an error: two keys racing is not a failure.
 pub fn drop(repo: &str, n: u64) -> Result<()> {
-    match std::fs::remove_file(path(repo, n)) {
+    let Some(p) = path(repo, n) else {
+        return Ok(()); // not a name we could have written: there is nothing of ours to remove
+    };
+    match std::fs::remove_file(p) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
@@ -146,6 +160,60 @@ mod tests {
         assert!(d.path().join("held/acme__api__7.json").exists());
     }
 
+    /// `repo` arrives from an HTTP body and discard calls remove_file on what comes back. Every path
+    /// this hands back must be one file directly inside the store, whatever was typed: no separator
+    /// survives the fold, so nothing walks out of the directory on any host.
+    #[test]
+    fn no_name_can_reach_outside_the_store() {
+        let (_g, d) = fresh();
+        let store = d.path().join("held");
+        let keyed = |t: &str| path(t, 7).is_some();
+        assert!(
+            !keyed("..\\..\\windows\\system32"),
+            "a backslash name keys nothing at all"
+        );
+        assert!(keyed("acme/api"), "and a real one still does");
+        for typed in [
+            "../../etc/passwd",
+            "..\\..\\windows\\system32",
+            "acme/api/../../../etc",
+            "acme/../../../api",
+            "https://github.com/acme/api",
+            "acme/api",
+        ] {
+            // either it keys nothing, or it keys one file directly inside the store — never a path
+            let Some(p) = path(typed, 7) else { continue };
+            assert_eq!(p.parent(), Some(store.as_path()), "{typed:?} left the store");
+            let name = p.file_name().unwrap().to_string_lossy().to_string();
+            assert!(
+                !name.contains("..") && !name.contains('/') && !name.contains('\\'),
+                "{name:?}"
+            );
+            assert!(name.ends_with("__7.json"), "{name:?}");
+        }
+    }
+
+    /// And a name it cannot key at all writes nothing and removes nothing.
+    #[test]
+    fn a_name_that_is_not_one_repo_gets_no_path_at_all() {
+        let (_g, _d) = fresh();
+        for bad in ["notes", "", "/", "   "] {
+            assert!(path(bad, 7).is_none(), "{bad:?} should not key a file");
+            assert!(get(bad, 7).is_none());
+            assert!(drop(bad, 7).is_ok(), "{bad:?}: nothing of ours to remove");
+        }
+    }
+
+    /// The fold is bind's, so a URL, an ssh remote and a bare name land on one file.
+    #[test]
+    fn a_url_and_a_bare_name_are_the_same_held_review() {
+        let (_g, d) = fresh();
+        put(&held("Acme/API", 7, 100.0)).unwrap();
+        assert!(d.path().join("held/acme__api__7.json").exists());
+        assert!(get("https://github.com/acme/api", 7).is_some());
+        assert!(get("ACME/API", 7).is_some());
+    }
+
     #[test]
     fn nothing_held_is_none_not_an_error() {
         let (_g, _d) = fresh();
@@ -158,7 +226,7 @@ mod tests {
     fn a_file_it_cannot_parse_is_none() {
         let (_g, _d) = fresh();
         std::fs::create_dir_all(dir()).unwrap();
-        std::fs::write(path("acme/api", 7), "not json at all").unwrap();
+        std::fs::write(path("acme/api", 7).unwrap(), "not json at all").unwrap();
         assert!(get("acme/api", 7).is_none());
         put(&held("acme/web", 1, 50.0)).unwrap();
         assert!(get("acme/web", 1).is_some(), "the readable one still reads");
@@ -184,7 +252,7 @@ mod tests {
     fn a_file_it_cannot_parse_still_marks_the_row() {
         let (_g, _d) = fresh();
         std::fs::create_dir_all(dir()).unwrap();
-        std::fs::write(path("acme/api", 7), "not json at all").unwrap();
+        std::fs::write(path("acme/api", 7).unwrap(), "not json at all").unwrap();
         assert!(waiting().contains(&("acme/api".to_string(), 7)));
         assert!(get("acme/api", 7).is_none());
     }

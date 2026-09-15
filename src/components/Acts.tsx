@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
-import { tone } from '../tokens'
+import { isReviewed } from '../board'
 
 export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
@@ -13,10 +13,7 @@ export function acts(p: Row, d: Detail | null): Act[] {
   const out: Act[] = []
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
-  // ponytail: a held review is NOT reviewed. The hold path writes "✗ changes requested (waiting to
-  // post)" into review, which tone() matches, so the menu said Reviewed for a verdict the author has
-  // never seen — the same confusion rowState already guards against one file over.
-  const reviewed = !!(p.review && !p.busy && !p.waiting && tone(p.review))
+  const reviewed = !p.busy && isReviewed(p)
   if (rr)
     out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
   if (mine)

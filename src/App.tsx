@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, FOLDABLE, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, remember, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -14,7 +14,7 @@ import { close, confirm, modalCount, ModalHost, notice, open, picker, prompt, re
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
-import { CONTEXTS, age, every, span, tone } from './tokens'
+import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
 
@@ -322,7 +322,7 @@ export default function App() {
 
   async function review(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
-    if (tone(p.review)) {
+    if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
     }
@@ -452,7 +452,18 @@ export default function App() {
       title: `waiting to post — ${d.repo}#${p.number}`,
       sub: `${d.held.model} · ${d.held.verdict}`,
       wide: true,
-      body: () => <pre>{d.held.body}</pre>,
+      body: () => (
+        <>
+          {/* the verdict was written against a head that is no longer the one on the board, so
+              posting it now puts an old reading against new commits */}
+          {d.held.moved ? (
+            <div className="note" style={{ marginBottom: 10 }}>
+              ⚠ the PR has been pushed to since this was written — it describes the older commits
+            </div>
+          ) : null}
+          <pre>{d.held.body}</pre>
+        </>
+      ),
       foot: [
         ['p', 'post it', () => { close(m); void call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…') }, 'go'],
         ['x', 'drop it', () => { close(m); void call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped') }, 'warn'],

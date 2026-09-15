@@ -103,7 +103,7 @@ const S = {
   posting: {} as Record<string, { manual: string; auto: string }>,
   // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
   postingOwners: {} as Record<string, { manual: string; auto: string }>,
-  held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number }>,
+  held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
   cursor: 0,
   overlaps: { running: false, t0: 0, error: '', result: null as unknown[] | null, idle: true },
@@ -183,6 +183,7 @@ function seed() {
       body: '## Blocking\n\n- the export job drops the last page when the cursor is empty\n\n## Notes\n\n- the retry reads a value it wrote two lines earlier',
       model: 'opus',
       at: secs(),
+      moved: true,
     }
   }
 }
@@ -400,7 +401,14 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
         ownerValue: theirs?.[ran] ?? 'post',
       })
-      return json(200, { repo, owner, manual: one('manual'), auto: one('auto'), held: S.held[key] || null })
+      const h = S.held[key]
+      return json(200, {
+        repo,
+        owner,
+        manual: one('manual'),
+        auto: one('auto'),
+        held: h ? { ...h, moved: !!h.moved } : null,
+      })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))

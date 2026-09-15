@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
+import { ALL, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, remember, selected, visible, walkBucket } from './board'
 
 let n = 0
 
@@ -537,5 +537,24 @@ describe('rowState: a held review is not a posted one', () => {
   // a review in flight outranks it: the spinner is what is happening right now
   it('busy still wins', () => {
     expect(rowState(pr({ waiting: true, busy: true })).key).toBe('running')
+  })
+})
+
+describe('isReviewed: a held verdict is not a posted one', () => {
+  it('a posted verdict counts', () => {
+    expect(isReviewed(pr({ review: '✗ changes requested' }))).toBe(true)
+    expect(isReviewed(pr({ review: '✓ approved' }))).toBe(true)
+  })
+
+  // the hold path writes the verdict into `review` so the row can say "waiting to post", and tone()
+  // matches it — every caller that forgot this treated a held review as one the author had seen
+  it('a held verdict does not, however it reads', () => {
+    expect(isReviewed(pr({ waiting: true, review: '✗ changes requested (waiting to post)' }))).toBe(false)
+    expect(isReviewed(pr({ waiting: true, review: '✓ approved (waiting to post)' }))).toBe(false)
+  })
+
+  it('no verdict at all is not reviewed', () => {
+    expect(isReviewed(pr())).toBe(false)
+    expect(isReviewed(pr({ review: 'reviewing…' }))).toBe(false)
   })
 })

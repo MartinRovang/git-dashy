@@ -873,7 +873,18 @@ fn get_posting(_state: &State, query: &Query) -> Out {
             "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
         })
     };
-    let h = held::get(repo, q(query, "number").parse().unwrap_or(0));
+    let n: u64 = q(query, "number").parse().unwrap_or(0);
+    let h = held::get(repo, n);
+    // ponytail: the head the verdict was written against, next to the one on the board now. Pressing
+    // `p` a week later posts the old verdict against new commits, and nothing on the screen said so.
+    let live = _state
+        .lock()
+        .sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .find(|p| p.repo() == repo && p.number == n)
+        .map(|p| p.head.clone())
+        .unwrap_or_default();
     Ok(json!({
         "repo": repo,
         "owner": owner,
@@ -885,6 +896,8 @@ fn get_posting(_state: &State, query: &Query) -> Out {
             "body": h.verdict.body,
             "model": h.model,
             "at": h.at,
+            // neither side knowing its head is not a move; only two we can compare and that differ
+            "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
         })),
     }))
 }
@@ -1245,6 +1258,11 @@ fn post_posting(state: &State, body: &Body) -> Out {
                     .map(|e| e.to_string())
                     .unwrap_or_default(),
             )?;
+            // ponytail: and the STATUS, not just the file. The hold wrote its verdict into the row
+            // through finish(); dropping only the file left the row reading "changes requested
+            // (waiting to post)" with nothing waiting, the menu calling it Reviewed, and auto
+            // skipping the PR until a push or a restart.
+            state.forget_review(&h.pr.url);
             state.wake();
             return Ok(json!({"ok": true, "status": "dropped"}));
         }
@@ -2372,6 +2390,59 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (404, Some("nothing waiting for that PR"))
+        );
+    }
+
+    /// Dropping a held review must clear the STATUS as well as the file. The hold wrote its verdict
+    /// into the row, so removing only the file left it reading "changes requested (waiting to post)"
+    /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
+    #[test]
+    fn discarding_a_held_review_leaves_the_row_clean() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        held::put(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "request_changes".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+        // the hold path puts its verdict on the row, the way finish() does
+        state
+            .lock()
+            .reviews
+            .insert(pr().url.clone(), "✗ changes requested (waiting to post)".into());
+
+        let row = |base: &str| -> Value {
+            get(&format!("{base}/api/state"), Some(token.as_str())).1["sections"][0]["prs"][0].clone()
+        };
+        assert_eq!(row(&base)["waiting"], json!(true));
+
+        let (code, _) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "discard", "repo": pr().repo(), "number": pr().number}),
+            &token,
+        );
+        assert_eq!(code, 200);
+        let r = row(&base);
+        assert_eq!(r["waiting"], json!(false), "nothing is waiting any more");
+        assert_eq!(
+            r["review"], "",
+            "and the row does not claim a verdict nobody posted"
+        );
+        assert!(
+            !state.lock().reviews.contains_key(&pr().url),
+            "so auto can reach it again"
         );
     }
 

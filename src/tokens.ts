@@ -98,6 +98,7 @@ export function rowState(p: Pr): { key: string; label: string } {
   }
   // ponytail: ahead of the verdict, and it IS the verdict — held, so the author has not seen it.
   // Showing "changes requested" on a row whose review never went up reads as posted.
+  // board.isReviewed() is the same question asked the other way round; both must stay in step.
   if (p.waiting) return { key: 'waiting', label: 'waiting to post' }
   for (const s of [p.review, p.status, p.prev]) {
     const t = tone(s)
