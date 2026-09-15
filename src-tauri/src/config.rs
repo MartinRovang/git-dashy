@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -136,6 +136,8 @@ pub struct Config {
     pub settings: Option<PathBuf>,
     /// Pre-reviews of your own PRs.
     pub self_dir: PathBuf,
+    /// Friday reports, one HTML file per day written.
+    pub reports: PathBuf,
     /// Reviews that finished and are waiting to be posted. See held.rs.
     pub held_dir: PathBuf,
     pub backups: PathBuf,
@@ -198,6 +200,7 @@ impl Default for Config {
             seen: String::new(),
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
+            reports: home().join(".prs_reports"),
             held_dir: home().join(".prs_held"),
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
@@ -410,6 +413,13 @@ pub fn snapshot(c: &Config) -> Saved {
         hunter: Some(c.hunter.clone()),
     }
 }
+
+/// Held across every read-change-save of the settings. Without it two writers copy the config, and the
+/// later save undoes the other's change: in memory, and in the file a restart reads.
+/// ponytail: one global lock, settings writes are rare and quick. It covers the writers that SAVE
+/// (post_settings, update::mark_seen); a plain `config::update` elsewhere does not take it, and
+/// post_settings' whole-config write can still undo one that lands mid-post.
+pub static SAVING: Mutex<()> = Mutex::new(());
 
 /// Persist the settings. ponytail: `settings: None` (demo) means never write.
 pub fn save(values: &Saved) -> std::io::Result<()> {

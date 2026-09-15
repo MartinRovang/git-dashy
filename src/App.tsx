@@ -728,6 +728,7 @@ export default function App() {
           onModal={onModal}
           onAuto={onAuto}
           onAskAgain={onAskAgain}
+          onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
         />

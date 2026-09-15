@@ -215,6 +215,8 @@ fn releases() -> Result<String, String> {
 
 /// Record this version as the one whose notes were shown.
 pub fn mark_seen() {
+    // a settings post at launch must not undo this, nor this undo it
+    let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     c.seen = config::VERSION.to_string();
     let saved = config::snapshot(&c);

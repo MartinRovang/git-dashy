@@ -1435,6 +1435,9 @@ fn dashboard(cli: Cli) -> i32 {
         Err(e) => return fail(format!("gitdashy: could not serve: {e}")),
     };
     if cli.browser || cli.no_open {
+        // a report is a throwaway: one left by an exit that ran no code goes now. ponytail: no
+        // single-instance guard in browser mode, so a second --browser run clears the first one's report
+        crate::report::clear();
         let url = format!("http://127.0.0.1:{port}/?token={token}");
         println!("gitdashy {VERSION} gui — {url}\n  ctrl-c to stop");
         let _ = std::io::stdout().flush();
