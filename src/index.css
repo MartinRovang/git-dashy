@@ -69,6 +69,7 @@
         background: var(--bg4); color: var(--ink3);
         display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
   .ib:hover { border-color: var(--dim3); color: var(--ink); }
+  .ib .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 
   .body { flex: 1; min-height: 0; display: flex; }
 

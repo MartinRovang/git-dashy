@@ -314,3 +314,12 @@ export function groups(rows: CodeRow[]): Group[] {
 export function isRefetching(from: number | null, d?: Pick<StateData, 'fetching' | 'fetchedAt'> | null): boolean {
   return from != null && !!d?.fetching && d.fetchedAt === from
 }
+
+/** What the state said when f was pressed, and whether a fetch has been seen running since. */
+export type Pressed = { fetchedAt: number | null; error: string; seen: boolean }
+
+/** f is answered once no fetch runs and one has run since: seen running, landed, or failed differently.
+ *  ponytail: a tick that fails with the same error inside one 2s poll is missed; the next press clears it. */
+export function refreshDone(p: Pressed, d: Pick<StateData, 'fetching' | 'fetchedAt' | 'error'>): boolean {
+  return !d.fetching && (p.seen || d.fetchedAt !== p.fetchedAt || d.error !== p.error)
+}
