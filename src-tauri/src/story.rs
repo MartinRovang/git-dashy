@@ -95,9 +95,17 @@ fn prune(v: &mut Value, keep: &[String]) {
     }
 }
 
-/// Whether the saved story can stand: the same PRs it was written from, and no ⟳.
+/// Whether the saved story can stand: no ⟳, and every PR the search found is one it was written from, at
+/// the same head. Fewer is fine: search leaves PRs off a page at random and hands them back a poll later.
+/// ponytail: so a PR ageing out of the window stays in the story until something new comes along; an empty
+/// search still rewrites it, so a quiet day says so.
 fn stands(saved: &Value, now_sig: &str, fresh: bool) -> bool {
-    !fresh && saved["sig"].as_str() == Some(now_sig)
+    let Some(was) = saved["sig"].as_str() else {
+        return false;
+    };
+    !fresh
+        && (now_sig == was
+            || !now_sig.is_empty() && now_sig.split(' ').all(|p| was.split(' ').any(|w| w == p)))
 }
 
 pub fn followed() -> Value {
@@ -294,6 +302,12 @@ mod tests {
         assert!(!stands(&saved, "u/1@t1", true));
         assert!(!stands(&saved, "u/1@t2", false));
         assert!(!stands(&Value::Null, "", false));
+        // search leaving a PR off is not a new story; a new PR or no PRs at all is
+        let two = json!({"sig": "u/1@t1 u/2@t1"});
+        assert!(stands(&two, "u/2@t1", false));
+        assert!(!stands(&two, "u/2@t1 u/3@t1", false));
+        assert!(!stands(&two, "", false));
+        assert!(stands(&json!({"sig": ""}), "", false));
     }
 
     #[test]
