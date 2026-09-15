@@ -98,7 +98,9 @@ fn prune(v: &mut Value, keep: &[String]) {
 /// Whether the saved story can stand: no ⟳, and every PR the search found is one it was written from, at
 /// the same head. Fewer is fine: search leaves PRs off a page at random and hands them back a poll later.
 /// ponytail: so a PR ageing out of the window stays in the story until something new comes along; an empty
-/// search still rewrites it, so a quiet day says so.
+/// search still rewrites it, so a quiet day says so. A push landing on the poll search dropped a PR from
+/// writes the story without it, and the model runs again when it comes back; a union of saved and found PRs
+/// would save that second run.
 fn stands(saved: &Value, now_sig: &str, fresh: bool) -> bool {
     let Some(was) = saved["sig"].as_str() else {
         return false;
@@ -196,7 +198,8 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
 }
 
 /// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
-/// same story; a new PR, a push, or one ageing out of the window changes it. ponytail: not updatedAt, which
+/// same story; a new PR, a push, or one ageing out of the window changes it, though `stands` lets a
+/// shrink keep the story. ponytail: not updatedAt, which
 /// CI, bots and comments bump every few seconds with nothing pushed.
 pub fn sig(nodes: &[Value]) -> String {
     let mut seen: Vec<String> = nodes
@@ -306,6 +309,8 @@ mod tests {
         let two = json!({"sig": "u/1@t1 u/2@t1"});
         assert!(stands(&two, "u/2@t1", false));
         assert!(!stands(&two, "u/2@t1 u/3@t1", false));
+        // a push to a PR still in a smaller result
+        assert!(!stands(&two, "u/1@t2", false));
         assert!(!stands(&two, "", false));
         assert!(stands(&json!({"sig": ""}), "", false));
     }
