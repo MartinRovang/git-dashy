@@ -101,6 +101,8 @@ const S = {
   refused: [] as { kind: string; key: string; what: string }[],
   // what happens to each repo's reviews, and the ones that finished and are waiting for a key
   posting: {} as Record<string, { manual: string; auto: string }>,
+  // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
+  postingOwners: {} as Record<string, { manual: string; auto: string }>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number }>,
   refreshes: 0,
   cursor: 0,
@@ -169,7 +171,9 @@ function seed() {
   ]
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
   // one repo set to hold, and a review of it already waiting, so both screens are reachable in dev
-  S.posting['acme/web'] = { manual: 'post', auto: 'hold' }
+  // an owner rule carved out by a repo rule, so `o` has the case it used to get wrong
+  S.postingOwners['acme'] = { manual: 'post', auto: 'hold' }
+  S.posting['acme/web'] = { manual: 'post', auto: 'post' }
   const rr = S.rows.find((r) => r.section === 'REVIEW REQUESTED')
   if (rr) {
     rr.waiting = true
@@ -386,15 +390,17 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
-      const rules = S.posting[repo] || { manual: 'post', auto: 'post' }
+      const owner = repo.split('/')[0]
+      const mine = S.posting[repo]
+      const theirs = S.postingOwners[owner]
       const key = `${repo}#${query.get('number') || ''}`
-      return json(200, {
-        repo,
-        owner: repo.split('/')[0],
-        manual: { value: rules.manual, via: S.posting[repo] ? 'repo' : '' },
-        auto: { value: rules.auto, via: S.posting[repo] ? 'repo' : '' },
-        held: S.held[key] || null,
+      // repo beats owner beats the default, the same chain the store resolves
+      const one = (ran: 'manual' | 'auto') => ({
+        value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
+        via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
+        ownerValue: theirs?.[ran] ?? 'post',
       })
+      return json(200, { repo, owner, manual: one('manual'), auto: one('auto'), held: S.held[key] || null })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
@@ -664,8 +670,13 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         }
         return json(200, { ok: true })
       }
-      const cur = S.posting[repo] || { manual: 'post', auto: 'post' }
-      S.posting[repo] = { ...cur, [str(body, 'ran')]: str(body, 'post') }
+      const ran = str(body, 'ran')
+      if (body.owner) {
+        const owner = repo.split('/')[0]
+        S.postingOwners[owner] = { ...(S.postingOwners[owner] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
+        return json(200, { ok: true })
+      }
+      S.posting[repo] = { ...(S.posting[repo] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
       return json(200, { ok: true })
     }
     if (path === '/api/consent') {

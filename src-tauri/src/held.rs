@@ -1,10 +1,9 @@
 //! Reviews that finished but have not been posted (~/.prs_held).
 //!
-//! The expensive half of a review is running it; the irreversible half is posting it. They were one
-//! call, so a verdict you disagreed with was already on the PR by the time you read it. A held
-//! review is the finished verdict on disk, waiting for a keypress — the same rule the memory pool is
-//! built on: automate where being wrong costs only you, require a keypress where it costs other
-//! people.
+//! A held review is the finished verdict on disk, waiting for a keypress. Running and posting were
+//! one call, so a verdict you disagreed with was already on the PR by the time you read it — the
+//! same rule the memory pool is built on: automate where being wrong costs only you, require a
+//! keypress where it costs other people.
 //!
 //! ponytail: the whole verdict, not the rendered markdown. Posting needs the structured
 //! `approve`/`request_changes`/`comment` and the body, and the log entry needs the findings and the
@@ -14,6 +13,7 @@
 //! `p` finds again by deriving the name — the same derivation, so a held review of someone else's PR
 //! would be indistinguishable from a pre-review of your own on any row where both could exist.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -63,18 +63,23 @@ pub fn get(repo: &str, n: u64) -> Option<Held> {
     serde_json::from_str(&text).ok()
 }
 
-/// Every held review, newest first.
-pub fn all() -> Vec<Held> {
-    let mut out: Vec<Held> = std::fs::read_dir(dir())
+/// Which PRs have a review waiting, from the filenames alone.
+///
+/// ponytail: the names, not the contents. The payload asks this on every poll and only wants to know
+/// WHICH rows are waiting; deserialising every parked verdict to answer that is work nobody reads.
+/// The name is `<owner>__<repo>__<n>.json`, which is where both halves come from.
+pub fn waiting() -> HashSet<(String, u64)> {
+    std::fs::read_dir(dir())
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-        .filter_map(|t| serde_json::from_str::<Held>(&t).ok())
-        .collect();
-    out.sort_by(|a, b| b.at.total_cmp(&a.at));
-    out
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".json")?;
+            let (repo, n) = stem.rsplit_once("__")?;
+            Some((repo.replacen("__", "/", 1), n.parse().ok()?))
+        })
+        .collect()
 }
 
 /// Forget one, posted or dropped. Missing is not an error: two keys racing is not a failure.
@@ -145,7 +150,7 @@ mod tests {
     fn nothing_held_is_none_not_an_error() {
         let (_g, _d) = fresh();
         assert!(get("acme/api", 7).is_none());
-        assert!(all().is_empty());
+        assert!(waiting().is_empty());
     }
 
     /// Read on every draw: one unreadable file must not take the dashboard down.
@@ -156,16 +161,43 @@ mod tests {
         std::fs::write(path("acme/api", 7), "not json at all").unwrap();
         assert!(get("acme/api", 7).is_none());
         put(&held("acme/web", 1, 50.0)).unwrap();
-        assert_eq!(all().len(), 1, "the readable one still lists");
+        assert!(get("acme/web", 1).is_some(), "the readable one still reads");
     }
 
     #[test]
-    fn all_is_newest_first() {
+    /// The payload asks this per poll and only wants the row keys, so it reads names, not verdicts.
+    fn waiting_names_every_held_pr_without_reading_one() {
         let (_g, _d) = fresh();
         put(&held("acme/api", 7, 100.0)).unwrap();
         put(&held("acme/web", 1, 300.0)).unwrap();
         put(&held("other/thing", 2, 200.0)).unwrap();
-        assert_eq!(all().iter().map(|h| h.pr.number).collect::<Vec<_>>(), [1, 2, 7]);
+        let w = waiting();
+        assert_eq!(w.len(), 3);
+        assert!(w.contains(&("acme/api".to_string(), 7)));
+        assert!(w.contains(&("other/thing".to_string(), 2)));
+        assert!(!w.contains(&("acme/api".to_string(), 8)));
+    }
+
+    /// It reads names, so a file it could not parse still marks the row — which is right: the review
+    /// is there, and Y says what is wrong with it rather than the row pretending nothing waits.
+    #[test]
+    fn a_file_it_cannot_parse_still_marks_the_row() {
+        let (_g, _d) = fresh();
+        std::fs::create_dir_all(dir()).unwrap();
+        std::fs::write(path("acme/api", 7), "not json at all").unwrap();
+        assert!(waiting().contains(&("acme/api".to_string(), 7)));
+        assert!(get("acme/api", 7).is_none());
+    }
+
+    #[test]
+    fn a_name_it_cannot_read_is_skipped() {
+        let (_g, d) = fresh();
+        std::fs::create_dir_all(dir()).unwrap();
+        for bad in ["notes.json", "acme__api__notanumber.json", "acme__api__7.txt"] {
+            std::fs::write(d.path().join("held").join(bad), "{}").unwrap();
+        }
+        put(&held("acme/api", 7, 100.0)).unwrap();
+        assert_eq!(waiting(), HashSet::from([("acme/api".to_string(), 7)]));
     }
 
     #[test]
@@ -175,7 +207,7 @@ mod tests {
         let mut newer = held("acme/api", 7, 200.0);
         newer.verdict.verdict = "approve".into();
         put(&newer).unwrap();
-        assert_eq!(all().len(), 1);
+        assert_eq!(waiting().len(), 1);
         assert_eq!(get("acme/api", 7).unwrap().verdict.verdict, "approve");
     }
 
@@ -186,7 +218,7 @@ mod tests {
         put(&held("acme/web", 1, 200.0)).unwrap();
         drop("acme/api", 7).unwrap();
         assert!(get("acme/api", 7).is_none());
-        assert_eq!(all().len(), 1);
+        assert_eq!(waiting().len(), 1);
         drop("acme/api", 7).unwrap(); // already gone: two keys racing is not a failure
     }
 }

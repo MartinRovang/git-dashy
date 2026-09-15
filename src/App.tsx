@@ -382,9 +382,12 @@ export default function App() {
         { repo: p.repo, ran, post: now === 'hold' ? 'post' : 'hold', owner },
         `${owner ? `${d.owner}/*` : d.repo}: ${ran} reviews ${now === 'hold' ? 'post' : 'wait'}`,
       )
-    const rows: [string, string, string, () => void][] = [
-      ['you press r', d.manual.value, where(d.manual.via), () => set('manual', d.manual.value, false)],
-      ['auto runs it', d.auto.value, where(d.auto.via), () => set('auto', d.auto.value, false)],
+    // ponytail: the row carries BOTH words. `o` flips the owner rule, and flipping it from the
+    // effective value wrote back what was already there whenever a repo row had carved the owner
+    // out — a no-op reported as a change.
+    const rows: [ran: string, label: string, value: string, via: string, owner: string][] = [
+      ['manual', 'you press r', d.manual.value, where(d.manual.via), d.manual.ownerValue],
+      ['auto', 'auto runs it', d.auto.value, where(d.auto.via), d.auto.ownerValue],
     ]
     let idx = 0
     const m = open({
@@ -396,7 +399,7 @@ export default function App() {
             A held review is written to disk and posts nothing until you say so. Nothing changes for a
             repo you never set.
           </div>
-          {rows.map(([label, value, via], i) => (
+          {rows.map(([, label, value, via], i) => (
             <div key={label} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
               <span className="tick">{i === idx ? '▸' : ''}</span>
               <span>when {label}</span>
@@ -410,13 +413,19 @@ export default function App() {
       ),
       foot: [
         ['⏎', 'flip this one', () => pick(idx), 'go'],
-        ['o', `the whole ${d.owner}/*`, () => rows[idx] && set(idx === 0 ? 'manual' : 'auto', rows[idx][1], true)],
+        ['o', `the whole ${d.owner}/*`, () => flipOwner(idx)],
         ['Esc', 'close', () => close(m)],
       ] as Foot[],
     })
     const pick = (i: number) => {
       idx = i
-      rows[i][3]()
+      set(rows[i][0], rows[i][2], false)
+      close(m)
+    }
+    // the owner's own word, not the effective one, and it closes like pick does: the values on
+    // screen describe the file as it was read, and it has just changed
+    const flipOwner = (i: number) => {
+      set(rows[i][0], rows[i][4], true)
       close(m)
     }
     m.keys = {

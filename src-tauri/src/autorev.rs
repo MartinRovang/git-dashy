@@ -104,10 +104,7 @@ pub enum Post {
 }
 
 impl Post {
-    pub fn parse_word(s: &str) -> Option<Post> {
-        Post::parse(s)
-    }
-    fn parse(s: &str) -> Option<Post> {
+    pub fn parse(s: &str) -> Option<Post> {
         match s {
             "post" => Some(Post::Now),
             "hold" => Some(Post::Hold),
@@ -151,13 +148,14 @@ pub struct Rules {
 impl Rules {
     /// A repo row beats an owner row beats the default — the chain `armed` already uses.
     ///
-    /// ponytail: a name this cannot fold gets the DEFAULT, not the safe direction. The fold is a
-    /// lookup key; failing it means no rule was found, and inventing one for a row whose name did
-    /// not come back would change behaviour on a broken row rather than on a decision.
+    /// ponytail: a name this cannot fold HOLDS, the same call `Scope::armed` makes for the same
+    /// failure. The first draft argued the fold is only a lookup key, so failing it just means no
+    /// rule was found — but the consequence is not symmetric. Falling to the default here puts a
+    /// verdict on a PR, and posting to something we cannot name is the half that costs other people.
     pub fn of(&self, repo: &str) -> Post {
         let r = key(repo);
         if r.is_empty() {
-            return Post::default();
+            return Post::Hold;
         }
         if let Some(v) = self.repos.get(&r) {
             return *v;
@@ -187,10 +185,7 @@ pub struct Posting {
 
 impl Posting {
     pub fn of(&self, repo: &str, ran: Ran) -> Post {
-        match ran {
-            Ran::Manual => self.manual.of(repo),
-            Ran::Auto => self.auto.of(repo),
-        }
+        self.rules(ran).of(repo)
     }
     pub fn rules(&self, ran: Ran) -> &Rules {
         match ran {
@@ -594,6 +589,21 @@ mod tests {
             "the repo row wins"
         );
         assert_eq!(posting().of("acme/web", Ran::Auto), Post::Hold);
+    }
+
+    /// The asymmetry with `armed`: falling to the default there skips a review, here it puts a
+    /// verdict on a PR. Posting to something we cannot name is the half that costs other people.
+    #[test]
+    fn a_repo_it_cannot_name_is_never_posted_to() {
+        let (_g, _d) = fresh();
+        assert_eq!(posting().of("", Ran::Auto), Post::Hold);
+        assert_eq!(posting().of("notes", Ran::Manual), Post::Hold);
+        set_post("acme/api", Ran::Auto, Post::Now);
+        assert_eq!(
+            posting().of("", Ran::Auto),
+            Post::Hold,
+            "and still, whatever else is set"
+        );
     }
 
     #[test]

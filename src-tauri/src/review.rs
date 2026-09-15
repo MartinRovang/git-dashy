@@ -894,6 +894,13 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran) -> Result<String> {
     // is released instead.
     if hold {
         let shown = config::status(&v.verdict).unwrap_or(&v.verdict);
+        // ponytail: BOTH pushes, the same two the posted path makes. memory::append writes into the
+        // team checkouts as well as your own, so committing only yours left a tracked file modified
+        // there — and pool_drafts' own ponytail records what that costs: the next tick's
+        // `pull --rebase` fails with "Please commit or stash them". The window here is until a
+        // release, which may be never, and push_dir's ponytail is the recorded finding about an
+        // unrelated push sweeping the change in under the wrong message.
+        team::push(&format!("memory: {repo}#{n} (held)"));
         team::push_dir(&c.memory_dir, &format!("memory: {repo}#{n} (held)"), "mine");
         return Ok(format!("{shown} (waiting to post)"));
     }

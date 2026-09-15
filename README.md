@@ -428,12 +428,12 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
 
-**Whether a finished review posts is a separate question again.** The expensive half of a review is
-running it; the irreversible half is posting it. `H` on a row settles that per repo, separately for
-reviews you start with `r` and for ones auto starts: post it, as always, or hold it. A held review is
-written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts it
-or drops it. The model is never asked again — the verdict you read is the verdict that goes up. No
-opening comment is posted for a held review either, so a PR never says it is being reviewed by
+Whether a finished review posts is a separate setting. Running a review is the expensive part;
+posting it is the part you cannot take back. `H` on a row settles that per repo, separately for
+reviews you start with `r` and for ones auto starts: post it, as always, or hold it. A held review
+is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
+it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
+No opening comment is posted for a held review either, so a PR never says it is being reviewed by
 something that may never arrive.
 
 The board spans whatever the token can see, so with nothing armed auto covers every repo on it.

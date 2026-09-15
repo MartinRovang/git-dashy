@@ -1190,6 +1190,34 @@ mod tests {
         assert!(!inner.auto && inner.auto_baseline.is_none());
     }
 
+    /// The seam a release sits on: a review already in flight must refuse, not answer ok and do
+    /// nothing. Dropping this bool left the flash saying "posting…" while the file stayed put.
+    #[test]
+    fn a_release_refuses_while_a_review_of_that_pr_is_running() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        crate::config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+        });
+        let h = held::Held {
+            pr: pr_in("u", "a/b"),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+
+        let st = State::new();
+        assert!(st.begin("u", "reviewing..."), "something else takes the row");
+        assert!(!st.start_post_held(h.clone()), "the release refuses");
+        assert!(held::get("a/b", 7).is_some(), "and the review is still waiting");
+    }
+
     #[test]
     fn take_arrivals_empties_the_badge() {
         let st = State::new();
