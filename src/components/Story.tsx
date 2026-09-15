@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api, errorText } from '../api'
 import { useFloatBox } from '../float'
 import { useNow } from '../usePoll'
@@ -28,7 +29,7 @@ function Updated({ at }: { at: number }) {
 type Got = { at: number; summary: string; prs: { repo: string; number: number; title: string }[] }
 
 /** One followed user's floating card: what they have been on for the last 3 days, in the model's words. */
-export function Story({ f, i, every, onOpen, onClose }: { f: Followed; i: number; every: number; onOpen: (open: boolean) => void; onClose: () => void }) {
+export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i: number; every: number; dock: HTMLElement | null; onPatch: (part: Partial<Followed>) => void; onClose: () => void }) {
   const { box, el, drag, style } = useFloatBox(
     `story:${f.login}`,
     () => ({ x: window.innerWidth - 360 - i * 28, y: 70 + i * 28, w: 340, h: 230, max: false }),
@@ -38,6 +39,9 @@ export function Story({ f, i, every, onOpen, onClose }: { f: Followed; i: number
   const [got, setGot] = useState<Got | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  /** A poll brought a story other than the one on the card; shown as a drop-up while it is minimized. */
+  const [news, setNews] = useState(false)
+  const lastAt = useRef(0)
 
   /** `quiet` is the poll: no skeleton, and a failed check keeps the story already on the card. */
   const load = (fresh: boolean, quiet = false) => {
@@ -48,7 +52,10 @@ export function Story({ f, i, every, onOpen, onClose }: { f: Followed; i: number
     api(`/api/story?login=${encodeURIComponent(f.login)}${fresh ? '&fresh=1' : ''}`)
       .then(async (r) => {
         if (r.ok) {
-          setGot(await r.json())
+          const next: Got = await r.json()
+          if (lastAt.current && next.at !== lastAt.current) setNews(true)
+          lastAt.current = next.at
+          setGot(next)
           setErr('')
         } else if (!quiet) setErr(await errorText(r))
       })
@@ -66,52 +73,92 @@ export function Story({ f, i, every, onOpen, onClose }: { f: Followed; i: number
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.login, every])
 
-  return (
-    <div ref={el} className={`fw story${box.max ? ' max' : ''}${f.open ? ' open' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
-      <div className="bar" title="drag to move, double-click to maximize" {...drag}>
-        <b>{f.login}</b>
-        <div style={{ flex: 1 }} />
-        <button className="iconbtn" onClick={() => onOpen(!f.open)} title={f.open ? 'collapse' : 'expand to show everything'}>
-          {f.open ? '▴' : '▾'}
-        </button>
-        <button className="iconbtn" onClick={() => load(true)} disabled={busy} title="ask again">
-          ⟳
-        </button>
-        <button className="iconbtn" onClick={onClose} title="unfollow">
-          ✕
-        </button>
-      </div>
-      <div className="keys scroll">
-        {err ? (
-          <p style={{ color: 'var(--red)' }}>✗ {err}</p>
-        ) : busy ? (
-          <div className="skel" aria-busy="true">
-            <span className="shimtext">fetching summaries…</span>
-            <i style={{ width: '92%' }} />
-            <i style={{ width: '78%' }} />
-            <i style={{ width: '85%' }} />
-          </div>
-        ) : got ? (
-          <>
-            <Summary text={got.summary} />
-            <Updated at={got.at} />
-          </>
-        ) : null}
-        {!busy && got?.prs.length ? (
-          <details open={f.open}>
-            <summary>
-              {got.prs.length} PR{got.prs.length === 1 ? '' : 's'}
-            </summary>
-            {got.prs.map((p) => (
-              <div className="krow" key={`${p.repo}#${p.number}`}>
-                <s>
-                  {p.repo}#{p.number} {p.title}
-                </s>
+  const restore = () => {
+    setNews(false)
+    onPatch({ min: false })
+  }
+  const chip = f.min && dock
+    ? createPortal(
+        <div className={`chip${news ? ' news' : ''}`}>
+          <button onClick={restore} title="restore the card">
+            {news ? <i /> : null}
+            {f.login}
+          </button>
+          {news && got ? (
+            <div className="pop" role="status">
+              <div className="poph">
+                <b>{f.login}</b>
+                <span>new work</span>
+                <div style={{ flex: 1 }} />
+                <button className="iconbtn" onClick={() => setNews(false)} title="dismiss">
+                  ✕
+                </button>
               </div>
-            ))}
-          </details>
-        ) : null}
+              <div onClick={restore} style={{ cursor: 'pointer' }}>
+                <Summary text={got.summary} />
+              </div>
+            </div>
+          ) : null}
+        </div>,
+        dock,
+      )
+    : null
+
+  return (
+    <>
+      {chip}
+      <div ref={el} hidden={!!f.min} className={`fw story${box.max ? ' max' : ''}${f.open ? ' open' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
+        <div className="bar" title="drag to move, double-click to maximize" {...drag}>
+          <b>{f.login}</b>
+          <div style={{ flex: 1 }} />
+          <button className="iconbtn" onClick={() => {
+              setNews(false)
+              onPatch({ min: true })
+            }} title="minimize to the footer">
+            –
+          </button>
+          <button className="iconbtn" onClick={() => onPatch({ open: !f.open })} title={f.open ? 'collapse' : 'expand to show everything'}>
+            {f.open ? '▴' : '▾'}
+          </button>
+          <button className="iconbtn" onClick={() => load(true)} disabled={busy} title="ask again">
+            ⟳
+          </button>
+          <button className="iconbtn" onClick={onClose} title="unfollow">
+            ✕
+          </button>
+        </div>
+        <div className="keys scroll">
+          {err ? (
+            <p style={{ color: 'var(--red)' }}>✗ {err}</p>
+          ) : busy ? (
+            <div className="skel" aria-busy="true">
+              <span className="shimtext">fetching summaries…</span>
+              <i style={{ width: '92%' }} />
+              <i style={{ width: '78%' }} />
+              <i style={{ width: '85%' }} />
+            </div>
+          ) : got ? (
+            <>
+              <Summary text={got.summary} />
+              <Updated at={got.at} />
+            </>
+          ) : null}
+          {!busy && got?.prs.length ? (
+            <details open={f.open}>
+              <summary>
+                {got.prs.length} PR{got.prs.length === 1 ? '' : 's'}
+              </summary>
+              {got.prs.map((p) => (
+                <div className="krow" key={`${p.repo}#${p.number}`}>
+                  <s>
+                    {p.repo}#{p.number} {p.title}
+                  </s>
+                </div>
+              ))}
+            </details>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </>
   )
 }

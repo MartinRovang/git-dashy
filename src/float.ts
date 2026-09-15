@@ -53,6 +53,8 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string, fitCon
     if (!node) return
     const ro = new ResizeObserver(() => {
       setBox((b) => {
+        // hidden (a minimized card) measures 0 by 0, which is not a size to remember
+        if (!node.offsetWidth) return b
         const h = fitting.current ? b.h : node.offsetHeight
         return b.max || (node.offsetWidth === b.w && h === b.h) ? b : { ...b, w: node.offsetWidth, h }
       })

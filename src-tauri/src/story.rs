@@ -18,7 +18,7 @@ const TIMEOUT: u64 = 180;
 /// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
 /// per followed user on Opus adds up.
 const MODEL: &str = "haiku";
-/// The file as last read or written: `{"follow": [{login, open}], "cache": {"login": story}}`.
+/// The file as last read or written: `{"follow": [{login, open, min}], "cache": {"login": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
 
@@ -67,7 +67,7 @@ pub fn clean(list: &Value) -> Value {
                     return None;
                 }
                 seen.push(low);
-                Some(json!({"login": login, "open": f["open"].as_bool().unwrap_or(false)}))
+                Some(json!({"login": login, "open": f["open"].as_bool().unwrap_or(false), "min": f["min"].as_bool().unwrap_or(false)}))
             })
             .take(50)
             .collect(),
@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn a_saved_follow_list_comes_back_checked() {
-        let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "open": true}]);
+        let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "open": true, "min": true}]);
         assert_eq!(
             clean(&raw),
-            json!([{"login": "Bob", "open": false}, {"login": "amy", "open": true}])
+            json!([{"login": "Bob", "open": false, "min": false}, {"login": "amy", "open": true, "min": true}])
         );
         assert_eq!(clean(&json!(null)), json!([]));
     }

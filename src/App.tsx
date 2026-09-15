@@ -6,7 +6,7 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, people, setOpen, unfollow, type Followed } from './stories'
+import { follow, patch, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -36,6 +36,8 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
+  // where minimized story cards sit: the footer, handed to them once it is in the DOM
+  const [dock, setDock] = useState<HTMLDivElement | null>(null)
   const [followed, setFollowedState] = useState<Followed[]>([])
   useEffect(() => {
     api('/api/stories')
@@ -646,6 +648,7 @@ export default function App() {
         <span>⏎ pane</span>
         <span>r review</span>
         <span>? all keys</span>
+        <div className="dock" ref={setDock} />
         <div style={{ flex: 1 }} />
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
@@ -677,7 +680,7 @@ export default function App() {
         />
       ) : null}
       {followed.map((f, i) => (
-        <Story key={f.login} f={f} i={i} every={data?.interval || 0} onOpen={(o) => setFollowed((l) => setOpen(l, f.login, o))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
+        <Story key={f.login} f={f} i={i} every={data?.interval || 0} dock={dock} onPatch={(part) => setFollowed((l) => patch(l, f.login, part))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
       ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { follow, fuzzy, people, setOpen, unfollow } from './stories'
+import { follow, fuzzy, patch, people, unfollow } from './stories'
 
 describe('followed users', () => {
   it('adds a login once, and drops it again', () => {
     const one = follow([], 'Bob')
-    expect(one).toEqual([{ login: 'Bob', open: false }])
+    expect(one).toEqual([{ login: 'Bob', open: false, min: false }])
     expect(follow(one, 'bob')).toBe(one)
-    expect(setOpen(one, 'Bob', true)).toEqual([{ login: 'Bob', open: true }])
+    expect(patch(one, 'Bob', { min: true })).toEqual([{ login: 'Bob', open: false, min: true }])
     expect(unfollow(one, 'Bob')).toEqual([])
   })
 })
