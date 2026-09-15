@@ -27,12 +27,13 @@ function Updated({ at }: { at: number }) {
 
 type Got = { at: number; summary: string; prs: { repo: string; number: number; title: string }[] }
 
-/** One followed user's floating card: what they have been on for the last `days`, in the model's words. */
-export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number; every: number; onDays: (d: number) => void; onClose: () => void }) {
+/** One followed user's floating card: what they have been on for the last 3 days, in the model's words. */
+export function Story({ f, i, every, onOpen, onClose }: { f: Followed; i: number; every: number; onOpen: (open: boolean) => void; onClose: () => void }) {
   const { box, el, drag, style } = useFloatBox(
     `story:${f.login}`,
     () => ({ x: window.innerWidth - 360 - i * 28, y: 70 + i * 28, w: 340, h: 230, max: false }),
-    '.iconbtn, select',
+    '.iconbtn',
+    !!f.open,
   )
   const [got, setGot] = useState<Got | null>(null)
   const [err, setErr] = useState('')
@@ -44,7 +45,7 @@ export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number
       setBusy(true)
       setErr('')
     }
-    api(`/api/story?login=${encodeURIComponent(f.login)}&days=${f.days}${fresh ? '&fresh=1' : ''}`)
+    api(`/api/story?login=${encodeURIComponent(f.login)}${fresh ? '&fresh=1' : ''}`)
       .then(async (r) => {
         if (r.ok) {
           setGot(await r.json())
@@ -55,7 +56,7 @@ export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number
       .finally(() => quiet || setBusy(false))
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => load(false), [f.login, f.days])
+  useEffect(() => load(false), [f.login])
   // ponytail: polls on the board's own interval. The server searches every time but only asks the model
   // again when this user's PRs moved, so a quiet week costs one search per tick.
   useEffect(() => {
@@ -63,20 +64,16 @@ export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number
     const id = setInterval(() => load(false, true), every * 1000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.login, f.days, every])
+  }, [f.login, every])
 
   return (
-    <div ref={el} className={`fw story${box.max ? ' max' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
+    <div ref={el} className={`fw story${box.max ? ' max' : ''}${f.open ? ' open' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
       <div className="bar" title="drag to move, double-click to maximize" {...drag}>
         <b>{f.login}</b>
         <div style={{ flex: 1 }} />
-        <select value={f.days} onChange={(e) => onDays(Number(e.target.value))} title="timespan">
-          {[1, 2, 3].map((d) => (
-            <option key={d} value={d}>
-              {d}d
-            </option>
-          ))}
-        </select>
+        <button className="iconbtn" onClick={() => onOpen(!f.open)} title={f.open ? 'collapse' : 'expand to show everything'}>
+          {f.open ? '▴' : '▾'}
+        </button>
         <button className="iconbtn" onClick={() => load(true)} disabled={busy} title="ask again">
           ⟳
         </button>
@@ -101,7 +98,7 @@ export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number
           </>
         ) : null}
         {!busy && got?.prs.length ? (
-          <details>
+          <details open={f.open}>
             <summary>
               {got.prs.length} PR{got.prs.length === 1 ? '' : 's'}
             </summary>

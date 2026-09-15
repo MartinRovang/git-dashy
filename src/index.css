@@ -582,10 +582,10 @@
               -webkit-background-clip: text; background-clip: text; color: transparent; }
   @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
   @media (prefers-reduced-motion: reduce) { .skel i, .shimtext { animation: none; } }
+  /* expanded: the card is as tall as what it holds (up to the window's bottom), only its width resizes */
+  .fw.story.open { resize: horizontal; min-height: 0; }
   .story .updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); margin: -4px 0 10px; }
   .story summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
-  .story .bar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
-                       border: 1px solid var(--edge); border-radius: 6px; height: 24px; color-scheme: dark; }
 
   /* the pane header's options button */
   .tab.opt { font-family: var(--sans); font-size: 12px; border-color: var(--edge); background: var(--bg4); color: var(--ink3); }

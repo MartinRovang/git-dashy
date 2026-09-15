@@ -1,6 +1,6 @@
 //! A followed user's story: what they have been working on lately, as a few sentences from the model.
 //!
-//! Who is followed and the last story per (login, days) live in ~/.prs_stories.json, beside the settings:
+//! Who is followed and the last story per login live in ~/.prs_stories.json, beside the settings:
 //! the page's own storage is per origin, and the server picks a new port every launch.
 //!
 //! ponytail: PRs only (authored, touched in the window). Commits and reviews would say more, and cost a
@@ -18,7 +18,7 @@ const TIMEOUT: u64 = 180;
 /// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
 /// per followed user on Opus adds up.
 const MODEL: &str = "haiku";
-/// The file as last read or written: `{"follow": [{login, days}], "cache": {"login:days": story}}`.
+/// The file as last read or written: `{"follow": [{login, open}], "cache": {"login": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
 
@@ -53,7 +53,7 @@ fn with_file<T>(f: impl FnOnce(&mut Value) -> T) -> T {
     out
 }
 
-/// The followed list, each login checked and days clamped; anything else in it is dropped.
+/// The followed list, each login checked; anything else in it is dropped.
 pub fn clean(list: &Value) -> Value {
     let mut seen: Vec<String> = Vec::new();
     Value::Array(
@@ -67,7 +67,7 @@ pub fn clean(list: &Value) -> Value {
                     return None;
                 }
                 seen.push(low);
-                Some(json!({"login": login, "days": clamp_days(&f["days"].to_string())}))
+                Some(json!({"login": login, "open": f["open"].as_bool().unwrap_or(false)}))
             })
             .take(50)
             .collect(),
@@ -91,10 +91,7 @@ pub fn set_followed(list: &Value) -> Value {
             .map(str::to_lowercase)
             .collect();
         if let Some(c) = v.get_mut("cache").and_then(Value::as_object_mut) {
-            c.retain(|k, _| {
-                keep.iter()
-                    .any(|l| k.rsplit_once(':').is_some_and(|(who, _)| who == l))
-            });
+            c.retain(|k, _| keep.contains(k));
         }
     });
     list
@@ -108,10 +105,8 @@ pub fn login_ok(s: &str) -> bool {
         && !s.starts_with('-')
 }
 
-/// Days held to 1..=3.
-pub fn clamp_days(raw: &str) -> u64 {
-    raw.parse::<u64>().unwrap_or(3).clamp(1, 3)
-}
+/// How far back a story looks.
+pub const DAYS: u64 = 3;
 
 pub fn search(login: &str, days: u64, now: chrono::DateTime<chrono::Utc>) -> String {
     let since = now - chrono::Duration::days(days as i64);
@@ -158,10 +153,10 @@ pub fn sig(nodes: &[Value]) -> String {
     seen.join(" ")
 }
 
-/// The story for (login, days). The search runs every call, so the card can poll; the model runs only when
+/// The story for `login`. The search runs every call, so the card can poll; the model runs only when
 /// the PRs moved since the saved story, or on `fresh` (the card's ⟳).
-pub fn get(login: &str, days: u64, fresh: bool) -> Result<Value> {
-    let key = format!("{}:{days}", login.to_lowercase());
+pub fn get(login: &str, fresh: bool) -> Result<Value> {
+    let (days, key) = (DAYS, login.to_lowercase());
     let cfg = config::get();
     if cfg.demo {
         return Ok(
@@ -205,20 +200,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn login_and_days_are_held_to_what_search_can_take() {
+    fn login_is_held_to_what_search_can_take() {
         assert!(login_ok("MartinRovang") && login_ok("a-b1"));
         for bad in ["", "-x", "a b", "x\" repo:evil", &"a".repeat(40)] {
             assert!(!login_ok(bad), "{bad}");
         }
-        assert_eq!(
-            (
-                clamp_days("0"),
-                clamp_days("2"),
-                clamp_days("30"),
-                clamp_days("x")
-            ),
-            (1, 2, 3, 3)
-        );
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-15T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
@@ -230,10 +216,10 @@ mod tests {
 
     #[test]
     fn a_saved_follow_list_comes_back_checked() {
-        let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob", "days": 1}, {"login": "x y"}, "junk", {"login": "amy", "days": 2}]);
+        let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "open": true}]);
         assert_eq!(
             clean(&raw),
-            json!([{"login": "Bob", "days": 3}, {"login": "amy", "days": 2}])
+            json!([{"login": "Bob", "open": false}, {"login": "amy", "open": true}])
         );
         assert_eq!(clean(&json!(null)), json!([]));
     }

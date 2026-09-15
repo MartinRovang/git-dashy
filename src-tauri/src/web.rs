@@ -861,11 +861,7 @@ fn get_story(_state: &State, query: &Query) -> Out {
     if !story::login_ok(login) {
         return Err(Fail::new(400, "login must be a GitHub username"));
     }
-    Ok(story::get(
-        login,
-        story::clamp_days(q(query, "days")),
-        !q(query, "fresh").is_empty(),
-    )?)
+    Ok(story::get(login, !q(query, "fresh").is_empty())?)
 }
 
 // ---------------------------------------------------------------- routes: POST

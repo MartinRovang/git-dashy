@@ -1,16 +1,15 @@
 // Who the floating story cards follow. The server keeps the list (~/.prs_stories.json): this page's own
 // storage is per origin, and the port changes every launch.
 
-export type Followed = { login: string; days: number }
+/** `open`: the card grows to show everything instead of scrolling. */
+export type Followed = { login: string; open?: boolean }
 
-/** Add once (GitHub logins are case-insensitive), three days by default. */
+/** Add once (GitHub logins are case-insensitive). */
 export const follow = (list: Followed[], login: string): Followed[] =>
-  list.some((f) => f.login.toLowerCase() === login.toLowerCase()) ? list : [...list, { login, days: 3 }]
+  list.some((f) => f.login.toLowerCase() === login.toLowerCase()) ? list : [...list, { login, open: false }]
 
 export const unfollow = (list: Followed[], login: string) => list.filter((f) => f.login !== login)
 
-export const setDays = (list: Followed[], login: string, days: number) =>
-  list.map((f) => (f.login === login ? { ...f, days } : f))
 
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/
 
@@ -56,3 +55,6 @@ export function fuzzy(q: string, logins: string[]): string[] {
   }
   return scored.sort((a, b) => b[0] - a[0]).map(([, l]) => l)
 }
+
+export const setOpen = (list: Followed[], login: string, open: boolean) =>
+  list.map((f) => (f.login === login ? { ...f, open } : f))

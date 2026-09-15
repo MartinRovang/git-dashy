@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { follow, fuzzy, people, setDays, unfollow } from './stories'
+import { follow, fuzzy, people, setOpen, unfollow } from './stories'
 
 describe('followed users', () => {
-  it('adds a login once, a week by default, and drops it again', () => {
+  it('adds a login once, and drops it again', () => {
     const one = follow([], 'Bob')
-    expect(one).toEqual([{ login: 'Bob', days: 3 }])
+    expect(one).toEqual([{ login: 'Bob', open: false }])
     expect(follow(one, 'bob')).toBe(one)
-    expect(setDays(one, 'Bob', 3)).toEqual([{ login: 'Bob', days: 3 }])
+    expect(setOpen(one, 'Bob', true)).toEqual([{ login: 'Bob', open: true }])
     expect(unfollow(one, 'Bob')).toEqual([])
   })
 })

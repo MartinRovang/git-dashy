@@ -6,7 +6,7 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, people, setDays, unfollow, type Followed } from './stories'
+import { follow, people, setOpen, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -677,7 +677,7 @@ export default function App() {
         />
       ) : null}
       {followed.map((f, i) => (
-        <Story key={f.login} f={f} i={i} every={data?.interval || 0} onDays={(d) => setFollowed((l) => setDays(l, f.login, d))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
+        <Story key={f.login} f={f} i={i} every={data?.interval || 0} onOpen={(o) => setFollowed((l) => setOpen(l, f.login, o))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
       ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}

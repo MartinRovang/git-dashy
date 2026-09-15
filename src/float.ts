@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
 export type Box = { x: number; y: number; w: number; h: number; max: boolean }
 
@@ -28,10 +28,17 @@ function stored(key: string, make: () => Box): Box {
  * `noDrag` is a selector for the controls in the header bar — without it, clicking a tab in the
  * header starts a drag instead.
  */
-export function useFloatBox(key: string, make: () => Box, noDrag: string) {
+export function useFloatBox(key: string, make: () => Box, noDrag: string, fitContent = false) {
   const [box, setBox] = useState(() => stored(key, make))
   const el = useRef<HTMLDivElement>(null)
   const grab = useRef<{ dx: number; dy: number } | null>(null)
+  // read by the observer, which is set up once: while the box grows to its content, that height is not the
+  // one to remember, or collapsing it would keep the grown size
+  const fitting = useRef(fitContent)
+  // a layout effect: it lands before the observer reports the resize the toggle causes
+  useLayoutEffect(() => {
+    fitting.current = fitContent
+  }, [fitContent])
 
   useEffect(() => {
     try {
@@ -45,7 +52,10 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     const node = el.current
     if (!node) return
     const ro = new ResizeObserver(() => {
-      setBox((b) => (b.max || (node.offsetWidth === b.w && node.offsetHeight === b.h) ? b : { ...b, w: node.offsetWidth, h: node.offsetHeight }))
+      setBox((b) => {
+        const h = fitting.current ? b.h : node.offsetHeight
+        return b.max || (node.offsetWidth === b.w && h === b.h) ? b : { ...b, w: node.offsetWidth, h }
+      })
     })
     ro.observe(node)
     const onResize = () => setBox(fit)
@@ -73,6 +83,10 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     },
   }
 
-  const style = box.max ? undefined : { left: box.x, top: box.y, width: box.w, height: box.h }
+  const style = box.max
+    ? undefined
+    : fitContent
+      ? { left: box.x, top: box.y, width: box.w, maxHeight: `calc(100vh - ${box.y}px)` }
+      : { left: box.x, top: box.y, width: box.w, height: box.h }
   return { box, el, drag, style }
 }
