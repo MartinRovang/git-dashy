@@ -17,6 +17,9 @@ use crate::{config, github, llm};
 /// How long a story stands before the next open asks the model again.
 const FRESH: f64 = 30.0 * 60.0;
 const TIMEOUT: u64 = 180;
+/// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
+/// per followed user on Opus adds up.
+const MODEL: &str = "haiku";
 /// The file as last read or written: `{"follow": [{login, days}], "cache": {"login:days": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
@@ -167,7 +170,7 @@ pub fn get(login: &str, days: u64, fresh: bool) -> Result<Value> {
         let summary = if prs.is_empty() {
             format!("No pull requests from {login} in the last {days} day(s).")
         } else {
-            llm::ask(&prompt(login, days, &prs), &cfg.model, "", "", TIMEOUT, &[])?
+            llm::ask(&prompt(login, days, &prs), MODEL, "", "", TIMEOUT, &[])?
                 .0
                 .trim()
                 .to_string()

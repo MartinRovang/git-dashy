@@ -121,7 +121,7 @@ button somewhere on the page.
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
-| `m` | pick the model: opus / sonnet / fable |
+| `m` | pick the model: opus / sonnet / fable / haiku |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
