@@ -74,7 +74,17 @@ pub fn get(repo: &str, n: u64) -> Option<Held> {
     serde_json::from_str(&text).ok()
 }
 
-/// Which PRs have a review waiting, from the filenames alone.
+/// Whether this PR has a review waiting. `repo` is folded, so the caller may pass the raw name.
+///
+/// ponytail: the one door. `waiting()` returns folded keys because the filenames are folded, and a
+/// caller comparing them against a raw `nameWithOwner` silently never matched — `MartinRovang` is
+/// this repo's own owner, and every fixture was lowercase, so nothing caught it.
+pub fn is_waiting(set: &HashSet<(String, u64)>, repo: &str, n: u64) -> bool {
+    set.contains(&(crate::bind::key(repo), n))
+}
+
+/// Which PRs have a review waiting, from the filenames alone. Keys are FOLDED: ask with
+/// `is_waiting`, never by building the tuple yourself.
 ///
 /// ponytail: the names, not the contents. The payload asks this on every poll and only wants to know
 /// WHICH rows are waiting; deserialising every parked verdict to answer that is work nobody reads.
@@ -232,8 +242,26 @@ mod tests {
         assert!(get("acme/web", 1).is_some(), "the readable one still reads");
     }
 
+    /// The fold lowercases, so the set's keys are lowercase and a raw nameWithOwner never matches.
+    /// `MartinRovang/git-dashy` is this repo's own owner and every other fixture here is lowercase,
+    /// which is exactly why nothing caught it.
     #[test]
+    fn a_mixed_case_repo_is_found_by_the_name_the_board_uses() {
+        let (_g, _d) = fresh();
+        put(&held("MartinRovang/git-dashy", 7, 100.0)).unwrap();
+        let w = waiting();
+        assert!(
+            is_waiting(&w, "MartinRovang/git-dashy", 7),
+            "the raw name the board carries"
+        );
+        assert!(is_waiting(&w, "martinrovang/git-dashy", 7), "and the folded one");
+        assert!(!is_waiting(&w, "MartinRovang/git-dashy", 8));
+        assert!(!is_waiting(&w, "someone/else", 7));
+        assert!(get("MartinRovang/git-dashy", 7).is_some());
+    }
+
     /// The payload asks this per poll and only wants the row keys, so it reads names, not verdicts.
+    #[test]
     fn waiting_names_every_held_pr_without_reading_one() {
         let (_g, _d) = fresh();
         put(&held("acme/api", 7, 100.0)).unwrap();

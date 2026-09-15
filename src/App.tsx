@@ -458,7 +458,7 @@ export default function App() {
               posting it now puts an old reading against new commits */}
           {d.held.moved ? (
             <div className="note" style={{ marginBottom: 10 }}>
-              ⚠ the PR has been pushed to since this was written — it describes the older commits
+              ⚠ New commits were pushed after this review was written. It describes the older ones.
             </div>
           ) : null}
           <pre>{d.held.body}</pre>

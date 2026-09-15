@@ -778,8 +778,6 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
 /// ponytail: the model is never asked again. The verdict was computed once and parked whole, so
 /// releasing a hold is two GitHub writes and a log entry — pressing the key a week later posts the
 /// review you read, not a fresh one that may say something else.
-/// ponytail: the file is dropped only after the post lands. A crash between them leaves it held, and
-/// holding twice is a keypress; posting twice is on someone else's PR.
 pub fn post_held(h: &held::Held) -> Result<String> {
     let (repo, n) = (h.pr.repo(), h.pr.number);
     let c = config::get();
@@ -790,7 +788,12 @@ pub fn post_held(h: &held::Held) -> Result<String> {
             // to leave the file with `hello` still set, so every retry greeted the author again.
             let mut said = h.clone();
             said.hello = String::new();
-            held::put(&said)?;
+            // ponytail: logged, not returned. Failing here after the hello landed would hand back an
+            // error with `hello` still on disk, so the retry greets the author a second time — the
+            // very thing this write exists to prevent.
+            if let Err(e) = held::put(&said) {
+                log::error!("could not record the hello for {repo}#{n}: {e:#}");
+            }
         }
         github::post_review(repo, n, &h.verdict.verdict, &h.verdict.body)?;
     }
@@ -799,7 +802,19 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     // file whose review had already gone up, and the next `p` posted the whole thing again. A lost
     // log line costs a re-review later; a second post is on someone else's PR. Cheaper failure wins.
     held::drop(repo, n)?;
-    let status = rlog::log_review(&h.pr, &h.model, &h.verdict, None)?;
+    // ponytail: the review IS posted by here, so the row must say so whatever the log does. Returning
+    // the error put "error: ..." on the row, which tone() does not match — so `r` was offered again
+    // and a second review could go up under a `post` policy. A lost log line costs a re-review later;
+    // that costs someone else's PR.
+    let status = match rlog::log_review(&h.pr, &h.model, &h.verdict, None) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("posted {repo}#{n} but could not log it: {e:#}");
+            config::status(&h.verdict.verdict)
+                .unwrap_or("reviewed")
+                .to_string()
+        }
+    };
     team::push(&format!("review {repo}#{n}: {}", h.verdict.verdict));
     Ok(status)
 }
@@ -1050,9 +1065,12 @@ mod tests {
             at: 100.0,
         };
         held::put(&h).unwrap();
-        assert!(
-            post_held(&h).is_err(),
-            "the log refuses a verdict it does not know"
+        // the log refuses a verdict it does not know, and that must not become the row's status:
+        // the review is already on the PR, so `r` must not be offered again
+        let status = post_held(&h).expect("the post landed, so this is not a failure");
+        assert_eq!(
+            status, "reviewed",
+            "an unknown verdict has no status word of its own"
         );
         assert!(
             held::get("acme/api", 11).is_none(),

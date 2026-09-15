@@ -169,7 +169,7 @@ pub fn payload(state: &State) -> Value {
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.
-                "waiting": waiting.contains(&(p.repo().to_string(), p.number)),
+                "waiting": held::is_waiting(&waiting, p.repo(), p.number),
             }));
         }
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
@@ -848,7 +848,7 @@ fn get_bind(_state: &State, query: &Query) -> Out {
 ///
 /// ponytail: `via` as well as the value. A review that stops posting with nothing on screen saying
 /// which rule decided it looks like a bug, and the rule may be an owner-wide one set months ago.
-fn get_posting(_state: &State, query: &Query) -> Out {
+fn get_posting(state: &State, query: &Query) -> Out {
     let repo = q(query, "repo");
     if repo.is_empty() {
         return Err(Fail::new(400, "no row selected"));
@@ -877,7 +877,7 @@ fn get_posting(_state: &State, query: &Query) -> Out {
     let h = held::get(repo, n);
     // ponytail: the head the verdict was written against, next to the one on the board now. Pressing
     // `p` a week later posts the old verdict against new commits, and nothing on the screen said so.
-    let live = _state
+    let live = state
         .lock()
         .sections
         .iter()
@@ -2396,6 +2396,90 @@ mod tests {
     /// Dropping a held review must clear the STATUS as well as the file. The hold wrote its verdict
     /// into the row, so removing only the file left it reading "changes requested (waiting to post)"
     /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
+    /// bind::key lowercases, so the filenames are folded and a raw nameWithOwner never matched.
+    /// Every other fixture here is lowercase, which is exactly why nothing caught it.
+    #[test]
+    fn a_mixed_case_repo_still_marks_its_row_as_waiting() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        let mut mixed = pr();
+        mixed.repository.name_with_owner = "MartinRovang/git-dashy".into();
+        mixed.url = "https://x/MartinRovang/git-dashy/7".into();
+        state.lock().sections = vec![Section {
+            name: "REVIEW REQUESTED".into(),
+            prs: Some(vec![mixed.clone()]),
+            err: None,
+        }];
+        held::put(&held::Held {
+            pr: mixed.clone(),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+        let j = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(j["sections"][0]["prs"][0]["waiting"], json!(true));
+    }
+
+    /// The warning on the waiting screen: only two heads we can both read and that differ.
+    #[test]
+    fn the_waiting_screen_says_when_the_head_has_moved() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        let ask = |head: &str| {
+            let mut live = pr();
+            live.head = head.into();
+            state.lock().sections = vec![Section {
+                name: "REVIEW REQUESTED".into(),
+                prs: Some(vec![live]),
+                err: None,
+            }];
+            get(
+                &format!("{base}/api/posting?repo={}&number={}", pr().repo(), pr().number),
+                Some(&token),
+            )
+            .1["held"]["moved"]
+                .clone()
+        };
+        let mut held_pr = pr();
+        held_pr.head = "aaa".into();
+        held::put(&held::Held {
+            pr: held_pr,
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+
+        assert_eq!(ask("bbb"), json!(true), "two heads we can read, and they differ");
+        assert_eq!(ask("aaa"), json!(false), "the same head is not a move");
+        assert_eq!(
+            ask(""),
+            json!(false),
+            "a head we cannot read is not a move either"
+        );
+    }
+
     #[test]
     fn discarding_a_held_review_leaves_the_row_clean() {
         let _g = autorev::test_lock();
