@@ -58,12 +58,9 @@ export function fuzzy(q: string, logins: string[]): string[] {
   return scored.sort((a, b) => b[0] - a[0]).map(([, l]) => l)
 }
 
-export type Pr = { repo: string; number: number; title: string; url: string }
-export type Got = { at: number; summary: string; prs: Pr[]; sig?: string }
+export type Pr = { repo: string; number: number; title: string; url: string; updatedAt?: string }
+export type Got = { at: number; summary: string; prs: Pr[] }
 
-/** PRs in `next` that are new or moved since `prev`: their "url@updatedAt" is not in the old signature. */
-export function moved(prev: Got, next: Got): Pr[] {
-  const was = new Set((prev.sig ?? '').split(' '))
-  const now = (next.sig ?? '').split(' ').filter((t) => t && !was.has(t))
-  return next.prs.filter((p) => now.some((t) => t.startsWith(`${p.url}@`)))
-}
+/** PRs in `next` that are new or were pushed since `prev`. */
+export const moved = (prev: Got, next: Got): Pr[] =>
+  next.prs.filter((p) => !prev.prs.some((q) => q.url === p.url && q.updatedAt === p.updatedAt))

@@ -228,7 +228,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let prs: Vec<Value> = nodes
         .iter()
-        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"]}))
+        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "updatedAt": n["updatedAt"]}))
         .collect();
     let summary = if prs.is_empty() {
         format!("No pull requests from {login} in the last {days} day(s).")

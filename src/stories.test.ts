@@ -34,10 +34,9 @@ describe('finding someone to follow', () => {
 })
 
 it('only PRs that are new or were pushed since the last story count as new work', () => {
-  const pr = (n: number) => ({ repo: 'acme/api', number: n, title: `t${n}`, url: `https://gh/acme/api/pull/${n}` })
-  const prev = { at: 1, summary: '', prs: [pr(1), pr(2), pr(3)], sig: `${pr(1).url}@a ${pr(2).url}@a ${pr(3).url}@a` }
-  const next = { at: 2, summary: '', prs: [pr(1), pr(2), pr(4)], sig: `${pr(1).url}@a ${pr(2).url}@b ${pr(4).url}@a` }
-  expect(moved(prev, next).map((p) => p.number)).toEqual([2, 4])
+  const pr = (n: number, updatedAt = 'a') => ({ repo: 'acme/api', number: n, title: `t${n}`, url: `https://gh/acme/api/pull/${n}`, updatedAt })
+  const prev = { at: 1, summary: '', prs: [pr(1), pr(2), pr(3)] }
+  expect(moved(prev, { at: 2, summary: '', prs: [pr(1), pr(2, 'b'), pr(4)] }).map((p) => p.number)).toEqual([2, 4])
   // pr 3 ageing out alone is nothing new
-  expect(moved(prev, { ...prev, prs: [pr(1), pr(2)], sig: `${pr(1).url}@a ${pr(2).url}@a` })).toEqual([])
+  expect(moved(prev, { ...prev, prs: [pr(1), pr(2)] })).toEqual([])
 })
