@@ -268,7 +268,16 @@ pub fn review(pr: &Pr, model: &str) -> String {
         None,
     ];
     match &verdicts[TURN.fetch_add(1, Ordering::SeqCst) % verdicts.len()] {
-        Some(v) => crate::log::log_review(pr, model, v, None).unwrap_or_else(|e| format!("error: {e}")),
+        Some(v) => {
+            // no real review to have read them, so the fake one runs with whatever is set
+            let c = config::get();
+            let v = Verdict {
+                depth: c.depth.clone(),
+                effort: c.effort.clone(),
+                ..v.clone()
+            };
+            crate::log::log_review(pr, model, &v, None).unwrap_or_else(|e| format!("error: {e}"))
+        }
         None => "error: claude: rate limit exceeded, retry in 60s".into(),
     }
 }

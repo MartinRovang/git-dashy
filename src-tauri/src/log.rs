@@ -254,8 +254,8 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
         at: at.map(str::to_string).unwrap_or_else(|| iso(Utc::now())),
         model: model.to_string(),
         pr: pr.for_log(), // CI state at review time is stale by the time anyone reads it
-        depth: cfg.depth.clone(),
-        effort: cfg.effort.clone(),
+        depth: v.depth.clone(),
+        effort: v.effort.clone(),
         head: pr.head.clone(),
         cost: v.cost,
         ms: v.ms,
@@ -441,6 +441,8 @@ mod tests {
         let _g = isolated();
         let mut v = verdict("approve", "lgtm");
         v.summary = "adds x".into();
+        v.depth = "adaptive".into();
+        v.effort = "medium".into();
         log_review(
             &Pr {
                 url: "first".into(),
@@ -879,6 +881,8 @@ mod tests {
         let v = Verdict {
             cost: Some(0.5),
             ms: Some(1200),
+            depth: "adaptive".into(),
+            effort: "medium".into(),
             ..verdict("approve", "ok")
         };
         log_review(
@@ -901,5 +905,25 @@ mod tests {
         assert!(e["pr"].get("checks").is_none());
         assert_eq!(e["depth"], "adaptive");
         assert_eq!(e["cost"], 0.5);
+    }
+
+    #[test]
+    fn log_records_the_settings_the_review_ran_with_not_the_ones_set_now() {
+        let _g = isolated();
+        let v = Verdict {
+            depth: "adaptive".into(),
+            effort: "medium".into(),
+            ..verdict("approve", "ok")
+        };
+        // changed from the dropdown while the review ran
+        config::update(|c| {
+            c.depth = "high".into();
+            c.effort = "low".into();
+        });
+        log_review(&pr(), "opus", &v, None).unwrap();
+        let line = std::fs::read_to_string(config::get().log).unwrap();
+        let e: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(e["depth"], "adaptive");
+        assert_eq!(e["effort"], "medium");
     }
 }

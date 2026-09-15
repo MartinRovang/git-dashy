@@ -691,10 +691,13 @@ fn verdict(repo: &str, n: u64, model: &str, prev: Option<&LogEntry>) -> Result<V
     } else {
         Vec::new()
     };
-    let (answer, cost, ms) = llm::ask(&text, model, LENS, &tools, TIMEOUT, &env)?;
+    // the effort read with the prompt, so the one recorded below is the one the model got
+    let (answer, cost, ms) = llm::ask_at(&text, model, LENS, &tools, TIMEOUT, &env, &c.effort)?;
     let mut v = parse_verdict(&answer)?;
     v.cost = cost;
     v.ms = Some(ms);
+    v.depth = c.depth.clone();
+    v.effort = c.effort.clone();
     Ok(with_depth_note(v, &c.depth))
 }
 
