@@ -211,7 +211,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
         <Group
           k="agent"
           label="Agent"
-          summary={[s.model, s.depth, s.effort].filter(Boolean).join(' · ')}
+          summary={[
+            [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
+            posting && (posting.manual.value === 'hold' || posting.auto.value === 'hold') ? 'holds a review' : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
           digest={
             <>
               <Ln label="model" value={s.model || '—'} />
@@ -220,6 +225,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
               <Pills label="voices" values={s.voice || []} />
               <Pills label="hunters" values={s.hunter || []} />
               <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
+              {/* the one setting here that changes what lands on someone else's PR, so it survives
+                  the collapse even though it is the selected repo's and not the machine's */}
+              <Ln label="you ran it" value={posting ? posting.manual.value : '—'} off={posting?.manual.value !== 'hold'} />
+              <Ln label="auto ran it" value={posting ? posting.auto.value : '—'} off={posting?.auto.value !== 'hold'} />
             </>
           }
           open={!!open.agent}
@@ -317,6 +326,21 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
               <Ln label="refresh" value={every(s.interval || 0)} />
               <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
               <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
+              {/* a count, not the names: seven badges is the whole rail, and "4 of 7" is the thing
+                  you actually want to know at this width */}
+              <Ln
+                label="sources"
+                value={
+                  !o.scopes.length
+                    ? 'none yet'
+                    : !(s.scopes || []).length
+                      ? 'none'
+                      : (s.scopes || []).length === o.scopes.length
+                        ? 'all'
+                        : `${(s.scopes || []).length} of ${o.scopes.length}`
+                }
+                off={!(s.scopes || []).length}
+              />
             </>
           }
           open={!!open.view}

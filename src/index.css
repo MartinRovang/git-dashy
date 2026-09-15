@@ -393,7 +393,10 @@
   /* ponytail: the drag grip sits at right:-3px, so a plain overflow:hidden clips half of it and all
      of its dragging highlight. Clip the scroll axis only. */
   .side { padding: 0; gap: 0; overflow-x: visible; overflow-y: clip; }
-  .side.shut { width: 106px; }
+  /* ponytail: !important because the grip writes an inline width while you drag, and an inline style
+     outranks any rule. The drag clears it on release, so this is the belt to that braces — a
+     collapse that silently does nothing is the worst kind of dead control. */
+  .side.shut { width: 106px !important; }
 
   /* just the collapse button: the top bar owns the wordmark and the version, and it stays on screen
      when this rail is shut. */

@@ -182,6 +182,10 @@ export default function App() {
         document.documentElement.classList.remove('dragging')
         // keep the root var in step so a remounted pane or sidebar keeps the saved width
         document.documentElement.style.setProperty(`--${which}-w`, `${want}px`)
+        // ponytail: and DROP the inline width the drag was writing. It outranks every stylesheet
+        // rule, so once you had resized the rail, `.side.shut` lost to it and collapsing did
+        // nothing at all. The var is set on the line above, so the box does not move.
+        box.style.width = ''
         try {
           const w = JSON.parse(localStorage.getItem('dashy-widths') || '{}')
           w[which] = `${want}px`
