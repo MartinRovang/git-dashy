@@ -558,7 +558,6 @@
   .fw[hidden] { display: none; }
   .fgrip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; z-index: 3; cursor: nwse-resize; touch-action: none;
            background: linear-gradient(135deg, transparent 55%, var(--dim3) 55%, var(--dim3) 62%, transparent 62%, transparent 75%, var(--dim3) 75%, var(--dim3) 82%, transparent 82%); }
-  .fgrip:hover { background-color: color-mix(in srgb, var(--pink) 18%, transparent); }
   .fw.max { inset: 0; resize: none; border-radius: 0; }
   .fw > .bar { height: 42px; flex-shrink: 0; gap: 8px; padding: 0 8px 0 16px; cursor: grab; user-select: none; }
   .fw.max > .bar { cursor: default; }

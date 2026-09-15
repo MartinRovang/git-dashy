@@ -6,8 +6,9 @@
 //! ponytail: PRs only (authored, touched in the window). Commits and reviews would say more, and cost a
 //! second and third search; add them when PR titles prove too thin to summarise.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -16,8 +17,21 @@ use crate::{config, github, llm};
 
 const TIMEOUT: u64 = 180;
 /// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
-/// per followed user on Opus adds up.
-const MODEL: &str = "haiku";
+/// per followed user on Opus adds up. Haiku is a bare name, the claude CLI, so a setup that reviews through
+/// `provider:model` (and may have no CLI) keeps its own model instead.
+const HAIKU: &str = "haiku";
+
+fn model(picked: &str) -> String {
+    if llm::provider(picked).0 == "claude" {
+        HAIKU.to_string()
+    } else {
+        picked.to_string()
+    }
+}
+
+/// One lock per login, held across search, model and write: a second poll for the same user waits, then
+/// finds the story the first one saved instead of paying for it again.
+static RUNNING: Mutex<Option<HashMap<String, Arc<Mutex<()>>>>> = Mutex::new(None);
 /// The file as last read or written: `{"follow": [{login, min}], "cache": {"login": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
@@ -74,6 +88,18 @@ pub fn clean(list: &Value) -> Value {
     )
 }
 
+/// Drop the saved stories of logins not in `keep` (lowercased).
+fn prune(v: &mut Value, keep: &[String]) {
+    if let Some(c) = v.get_mut("cache").and_then(Value::as_object_mut) {
+        c.retain(|k, _| keep.contains(k));
+    }
+}
+
+/// Whether the saved story can stand: the same PRs it was written from, and no ⟳.
+fn stands(saved: &Value, now_sig: &str, fresh: bool) -> bool {
+    !fresh && saved["sig"].as_str() == Some(now_sig)
+}
+
 pub fn followed() -> Value {
     with_file(|v| clean(&v["follow"]))
 }
@@ -90,19 +116,20 @@ pub fn set_followed(list: &Value) -> Value {
             .filter_map(|f| f["login"].as_str())
             .map(str::to_lowercase)
             .collect();
-        if let Some(c) = v.get_mut("cache").and_then(Value::as_object_mut) {
-            c.retain(|k, _| keep.contains(k));
-        }
+        prune(v, &keep);
     });
     list
 }
 
-/// A GitHub login: letters, digits and single hyphens, at most 39. It goes into a search string.
+/// A GitHub login: letters, digits and single hyphens, not at either end, at most 39. It goes into a search
+/// string.
 pub fn login_ok(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 39
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         && !s.starts_with('-')
+        && !s.ends_with('-')
+        && !s.contains("--")
 }
 
 /// How far back a story looks.
@@ -163,15 +190,23 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
             json!({"summary": format!("- {login} is polishing the demo board in acme/dashboard\n- reviewing a few small fixes in acme/api"), "prs": [], "at": crate::state::now()}),
         );
     }
+    let lock = RUNNING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    let _running = lock.lock().unwrap_or_else(|e| e.into_inner());
+    // ponytail: one page, the newest 20. Three days of one author rarely fills it, and the rest would cost a
+    // round trip each on every poll.
     let q = search(login, days, chrono::Utc::now());
-    let got = github::search_all(&q, |doc| github::gql(doc, 20)).map_err(|e| anyhow!(e.0))?;
-    let nodes = got["nodes"].as_array().cloned().unwrap_or_default();
+    let got = github::gql(&github::page(&q, ""), 20).map_err(|e| anyhow!(e.0))?;
+    let nodes = got["s"]["nodes"].as_array().cloned().unwrap_or_default();
     let now_sig = sig(&nodes);
-    if !fresh {
-        let hit = with_file(|v| v["cache"][&key].clone());
-        if hit["sig"].as_str() == Some(now_sig.as_str()) {
-            return Ok(hit);
-        }
+    let saved = with_file(|v| v["cache"][&key].clone());
+    if stands(&saved, &now_sig, fresh) {
+        return Ok(saved);
     }
     let prs: Vec<Value> = nodes
         .iter()
@@ -180,10 +215,19 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     let summary = if prs.is_empty() {
         format!("No pull requests from {login} in the last {days} day(s).")
     } else {
-        llm::ask(&prompt(login, days, &prs), MODEL, "", "", TIMEOUT, &[])?
-            .0
-            .trim()
-            .to_string()
+        // ponytail: never pass tools here. PR titles come from any repo and are the prompt; with --safe-mode,
+        // an empty cwd and no --allowedTools the worst a title can do is make the card say something false.
+        llm::ask(
+            &prompt(login, days, &prs),
+            &model(&cfg.model),
+            "",
+            "",
+            TIMEOUT,
+            &[],
+        )?
+        .0
+        .trim()
+        .to_string()
     };
     let out = json!({"summary": summary, "prs": prs, "at": crate::state::now(), "sig": now_sig});
     with_file(|v| {
@@ -202,7 +246,7 @@ mod tests {
     #[test]
     fn login_is_held_to_what_search_can_take() {
         assert!(login_ok("MartinRovang") && login_ok("a-b1"));
-        for bad in ["", "-x", "a b", "x\" repo:evil", &"a".repeat(40)] {
+        for bad in ["", "-x", "x-", "a--b", "a b", "x\" repo:evil", &"a".repeat(40)] {
             assert!(!login_ok(bad), "{bad}");
         }
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-15T12:00:00Z")
@@ -222,6 +266,32 @@ mod tests {
             json!([{"login": "Bob", "min": false}, {"login": "amy", "min": true}])
         );
         assert_eq!(clean(&json!(null)), json!([]));
+    }
+
+    #[test]
+    fn a_saved_story_stands_until_the_prs_move_or_it_is_asked_again() {
+        let saved = json!({"summary": "- s", "sig": "u/1@t1"});
+        assert!(stands(&saved, "u/1@t1", false));
+        assert!(!stands(&saved, "u/1@t1", true));
+        assert!(!stands(&saved, "u/1@t2", false));
+        assert!(!stands(&Value::Null, "", false));
+    }
+
+    #[test]
+    fn unfollowing_drops_that_users_saved_story() {
+        let mut v = json!({"cache": {"bob": {"summary": "b"}, "amy": {"summary": "a"}}});
+        prune(&mut v, &["amy".to_string()]);
+        assert_eq!(v["cache"], json!({"amy": {"summary": "a"}}));
+        let mut none = json!({});
+        prune(&mut none, &[]);
+        assert_eq!(none, json!({}));
+    }
+
+    #[test]
+    fn stories_run_on_haiku_unless_reviews_go_through_a_provider() {
+        assert_eq!(model("opus"), "haiku");
+        assert_eq!(model("haiku"), "haiku");
+        assert_eq!(model("openrouter:x-ai/grok-4"), "openrouter:x-ai/grok-4");
     }
 
     #[test]

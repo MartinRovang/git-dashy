@@ -41,6 +41,8 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   /** A poll brought a story other than the one on the card; shown as a drop-up while it is minimized. */
   const [news, setNews] = useState(false)
   const lastAt = useRef(0)
+  /** A check still out: the next poll tick skips rather than stacking a second one on it. */
+  const inflight = useRef(false)
 
   /** `quiet` is the poll: no skeleton, and a failed check keeps the story already on the card. */
   const load = (fresh: boolean, quiet = false) => {
@@ -48,6 +50,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
       setBusy(true)
       setErr('')
     }
+    inflight.current = true
     api(`/api/story?login=${encodeURIComponent(f.login)}${fresh ? '&fresh=1' : ''}`)
       .then(async (r) => {
         if (r.ok) {
@@ -59,7 +62,10 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
         } else if (!quiet) setErr(await errorText(r))
       })
       .catch(() => quiet || setErr('server gone'))
-      .finally(() => quiet || setBusy(false))
+      .finally(() => {
+        inflight.current = false
+        if (!quiet) setBusy(false)
+      })
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => load(false), [f.login])
@@ -67,7 +73,8 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   // again when this user's PRs moved, so a quiet week costs one search per tick.
   useEffect(() => {
     if (!every) return
-    const id = setInterval(() => load(false, true), every * 1000)
+    // like the board's own poll: nothing while the window is hidden
+    const id = setInterval(() => document.hidden || inflight.current || load(false, true), every * 1000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.login, every])

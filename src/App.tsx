@@ -48,12 +48,12 @@ export default function App() {
       .then((j) => setFollowedState(j.follow))
       .catch(() => {})
   }, [])
-  const setFollowed = (f: (l: Followed[]) => Followed[]) =>
-    setFollowedState((l) => {
-      const next = f(l)
-      void post('/api/stories', { follow: next })
-      return next
-    })
+  // the post goes here, not inside a state updater: React may run an updater twice
+  const setFollowed = (f: (l: Followed[]) => Followed[]) => {
+    const next = f(followed)
+    setFollowedState(next)
+    void post('/api/stories', { follow: next })
+  }
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)

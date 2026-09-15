@@ -4,14 +4,18 @@
 /** `min`: the card sits in the footer as a chip. */
 export type Followed = { login: string; min?: boolean }
 
-/** Add once (GitHub logins are case-insensitive). */
+/** GitHub logins are case-insensitive, so every lookup here is too. */
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/** Add once. */
 export const follow = (list: Followed[], login: string): Followed[] =>
-  list.some((f) => f.login.toLowerCase() === login.toLowerCase()) ? list : [...list, { login, min: false }]
+  list.some((f) => same(f.login, login)) ? list : [...list, { login, min: false }]
 
-export const unfollow = (list: Followed[], login: string) => list.filter((f) => f.login !== login)
+export const unfollow = (list: Followed[], login: string) => list.filter((f) => !same(f.login, login))
 
 
-const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/
+/** The server's login_ok: letters, digits and single hyphens, not at either end, at most 39. */
+export const isLogin = (s: string) => s.length <= 39 && /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/.test(s)
 
 /** Everyone on the board: PR authors and reviewers. `reviewers` is "✓bob ·carol", a glyph before each login;
  *  bots ("app/x", "x[bot]") are not logins and drop out. */
@@ -20,12 +24,11 @@ export function people(prs: { author: string; reviewers: string }[]): string[] {
   for (const p of prs)
     for (const raw of [p.author, ...p.reviewers.split(' ')]) {
       const login = raw.replace(/^[^A-Za-z0-9]+/, '')
-      if (LOGIN.test(login) && !seen.has(login.toLowerCase())) seen.set(login.toLowerCase(), login)
+      if (isLogin(login) && !seen.has(login.toLowerCase())) seen.set(login.toLowerCase(), login)
     }
   return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
-export const isLogin = (s: string) => LOGIN.test(s)
 
 /** The logins whose letters hold `q` in order, best first: a match at the start, then letters in a row,
  *  then an earlier start. Empty `q` keeps them all, in order. */
@@ -57,4 +60,4 @@ export function fuzzy(q: string, logins: string[]): string[] {
 }
 
 export const patch = (list: Followed[], login: string, part: Partial<Followed>) =>
-  list.map((f) => (f.login === login ? { ...f, ...part } : f))
+  list.map((f) => (same(f.login, login) ? { ...f, ...part } : f))

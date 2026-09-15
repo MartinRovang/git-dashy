@@ -540,6 +540,22 @@ or the two disagree.
 Memory is often team-private, so `sync-memory` refuses to write anywhere git would commit it. Ignore
 the target path first (`.git/info/exclude` keeps the rule out of the tracked `.gitignore`).
 
+## Following people
+
+**+ follow** in the top bar fuzzy-finds anyone who authored or reviewed a PR on the board (or takes any
+GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
+over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
+from its corner grip, `–` minimizes it to a chip in the footer, `⟳` asks again, `✕` unfollows.
+
+Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
+search; the model only runs when that person's PRs changed since the last story. When a minimized card's
+story changes, its chip lights up and the new bullets drop up above it.
+
+Stories run on Haiku through the `claude` CLI whatever model reviews use, unless reviews go through
+`openrouter:` / `local:`, in which case the cards use that model too. Who you follow, which cards are
+minimized, and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
+(`--demo` writes nothing).
+
 ## Versioning & self-update
 
 The version lives in one place, `version` in `src-tauri/Cargo.toml`, and shows in the header badge and via
