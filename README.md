@@ -555,8 +555,8 @@ above it.
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
 `openrouter:` or `local:`, in which case the stories use that model too. They always run at low effort.
 Following is meant for a handful of people: every pill is one search per refresh, so fifty (the cap)
-on a short interval is a lot of GitHub traffic. Who you follow and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
-(`--demo` writes nothing).
+on a short interval is a lot of GitHub traffic. Who you follow and the last story per person are kept in
+`~/.prs_stories.json`, beside the settings file (`--demo` writes nothing).
 
 ## Versioning & self-update
 

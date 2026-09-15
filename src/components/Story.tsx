@@ -86,7 +86,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
     setOpen((o) => !o)
   }
   // the pop-up is fixed (a dock that scrolls sideways would clip it), so it is put over its pill by hand,
-  // again whenever the window or the dock moves under it
+  // again whenever the window, the dock's scroll, or the dock's own width (a pill beside it grows a dot or goes) moves it
   const shown = open || news.length > 0
   useLayoutEffect(() => {
     if (!shown) return
@@ -96,9 +96,12 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
     }
     place()
     const dock = el.current?.parentElement
+    const grew = new ResizeObserver(place)
+    if (dock) grew.observe(dock)
     window.addEventListener('resize', place)
     dock?.addEventListener('scroll', place)
     return () => {
+      grew.disconnect()
       window.removeEventListener('resize', place)
       dock?.removeEventListener('scroll', place)
     }
