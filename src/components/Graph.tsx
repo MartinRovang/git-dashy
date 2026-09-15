@@ -11,7 +11,7 @@ import { forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-forc
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity } from 'd3-zoom'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { VisSection } from '../board'
+import { isRead, type VisSection } from '../board'
 import { avatar, PALETTE, rowState } from '../tokens'
 import type { Row } from '../types'
 
@@ -88,9 +88,11 @@ function build(rows: Row[], by: Group): { nodes: Node[]; links: Link[] } {
   return { nodes, links }
 }
 
-export function Graph({ secs, sel, onSelect }: {
+export function Graph({ secs, sel, read, onSelect, onReadAll }: {
   secs: VisSection[]
   sel: string
+  read: Record<string, string>
+  onReadAll: (rows: Row[]) => void
   onSelect: (uid: string) => void
 }) {
   // REVIEWED comes already cut to the history window; a PR still open elsewhere keeps its open row, one node per url
@@ -110,8 +112,8 @@ export function Graph({ secs, sel, onSelect }: {
   const [query, setQuery] = useState('')
   const view = useRef(zoomIdentity)
   const capped = useRef(false)
-  const latest = useRef({ rows, sel, onSelect, query, by })
-  latest.current = { rows, sel, onSelect, query, by }
+  const latest = useRef({ rows, sel, read, onSelect, query, by })
+  latest.current = { rows, sel, read, onSelect, query, by }
 
   // Look: colors, sizes, selection, tooltips. Cheap, runs on every poll, never restarts the layout.
   // Rows are looked up by url here rather than pinned on the node: the structure effect only re-runs
@@ -119,7 +121,7 @@ export function Graph({ secs, sel, onSelect }: {
   const paint = () => {
     const svg = svgRef.current
     if (!svg) return
-    const { rows, sel, query } = latest.current
+    const { rows, sel, read, query } = latest.current
     const byUrl = new Map(rows.map((r) => [r.url, r]))
     // same fields as the board's filter box; a hit lights its PR, that PR's hub and its galaxy
     const q = query.trim().toLowerCase()
@@ -149,6 +151,9 @@ export function Graph({ secs, sel, onSelect }: {
       .classed('hub', (n) => n.kind !== 'pr')
       .classed('hit', (n) => hits.has(n.id))
       .classed('breaking', (n) => !!byUrl.get(n.id) && tagOf(byUrl.get(n.id)!).breaking)
+      // same marks as the board: a PR that moved since you last opened it pulses
+      .classed('unread', (n) => !!byUrl.get(n.id) && !isRead(read, byUrl.get(n.id)!))
+    node.select('circle.pulse').attr('r', radius)
     node.select('text').attr('y', (n) => radius(n) + 3)
     node
       .select('path.icon')
@@ -282,6 +287,7 @@ export function Graph({ secs, sel, onSelect }: {
       .join((enter) => {
         const e = enter.append('g').attr('class', 'gnode')
         e.append('circle')
+        e.append('circle').attr('class', 'pulse')
         e.append('path').attr('class', 'icon').attr('fill-rule', 'evenodd')
         e.append('text')
         e.append('title')
@@ -398,7 +404,7 @@ export function Graph({ secs, sel, onSelect }: {
   }, [key])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(paint, [rows, sel, query, by])
+  useEffect(paint, [rows, sel, read, query, by])
 
   // Zoom and pan, once. Labels fade in as you zoom, like Quartz, so a wide view stays uncluttered.
   useEffect(() => {
@@ -440,6 +446,7 @@ export function Graph({ secs, sel, onSelect }: {
     }
   }, [])
 
+  const unread = rows.filter((r) => !isRead(read, r))
   const states = (['approved', 'changes', 'commented', 'awaiting', 'running', 'error', 'idle'] as const).filter((k) =>
     rows.some((r) => rowState(r).key === k),
   )
@@ -465,6 +472,11 @@ export function Graph({ secs, sel, onSelect }: {
             </button>
           ))}
         </div>
+        {unread.length ? (
+          <button className="chip" onClick={() => onReadAll(unread)}>
+            Read all <b>{unread.length}</b>
+          </button>
+        ) : null}
         {!rows.length ? (
           'nothing to graph yet'
         ) : (
@@ -501,6 +513,11 @@ export function Graph({ secs, sel, onSelect }: {
               <path d={PERSON} />
             </svg>{' '}
             author
+          </span>
+        )}
+        {!!unread.length && (
+          <span>
+            <i className="gnew" /> new
           </span>
         )}
         {rows.some((r) => tagOf(r).breaking) && (

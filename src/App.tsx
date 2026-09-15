@@ -563,6 +563,8 @@ export default function App() {
                   // filter with nothing on screen to see or clear it — the reason show() wipes the rest
                   secs={secs}
                   sel={selUid}
+                  read={read}
+                  onReadAll={markRead}
                   onSelect={(uid) => {
                     setSel(uid)
                     setAt(0)
