@@ -52,6 +52,24 @@ describe('acts: what one PR offers', () => {
     expect(keys(row({ section: 'ASSIGNED' }))).not.toContain('reviewer')
   })
 
+  it('offers the waiting review only on a row that has one', () => {
+    expect(keys(row({ waiting: true }))).toContain('waiting')
+    expect(keys(row())).not.toContain('waiting')
+  })
+
+  it('offers the posting setting on every row', () => {
+    expect(keys(row())).toContain('posting')
+    expect(keys(row({ section: 'REVIEWED' }))).toContain('posting')
+  })
+
+  // the hold path writes "✗ changes requested (waiting to post)" into review, and tone() matches it,
+  // so without the guard the menu said Reviewed for a verdict the author has never seen
+  it('does not call a held review reviewed', () => {
+    const held = row({ section: 'REVIEW REQUESTED', waiting: true, review: '✗ changes requested (waiting to post)' })
+    expect(one(held, 'review')?.[2]).toBe('Review this PR')
+    expect(one(held, 'review')?.[4]).toBe(false)
+  })
+
   // the two states that must not start a second run on the same head
   it('the review is dead once it is running or already done', () => {
     const rr = (over: Partial<Row>) => one(row({ section: 'REVIEW REQUESTED', ...over }), 'review')

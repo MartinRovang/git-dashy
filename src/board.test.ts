@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, NOBODY, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, whoIs, pickable, UNFOLDED } from './board'
+import { rowState } from './tokens'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -518,6 +519,45 @@ describe('isRefetching', () => {
     expect(isRefetching(100, { fetching: true, fetchedAt: 200 })).toBe(false)
     expect(isRefetching(100, { fetching: false, fetchedAt: 100 })).toBe(false)
     expect(isRefetching(null, { fetching: true, fetchedAt: 100 })).toBe(false)
+  })
+})
+
+describe('rowState: a held review is not a posted one', () => {
+  it('says it is waiting, ahead of the verdict it carries', () => {
+    // the hold path puts the verdict in `review`, so without the guard the row read as posted
+    const r = rowState(pr({ waiting: true, review: '✗ changes requested (waiting to post)' }))
+    expect(r).toEqual({ key: 'waiting', label: 'waiting to post' })
+  })
+
+  it('a posted verdict still reads as the verdict', () => {
+    expect(rowState(pr({ review: '✗ changes requested' }))).toEqual({
+      key: 'changes',
+      label: 'changes requested',
+    })
+  })
+
+  // a review in flight outranks it: the spinner is what is happening right now
+  it('busy still wins', () => {
+    expect(rowState(pr({ waiting: true, busy: true })).key).toBe('running')
+  })
+})
+
+describe('isReviewed: a held verdict is not a posted one', () => {
+  it('a posted verdict counts', () => {
+    expect(isReviewed(pr({ review: '✗ changes requested' }))).toBe(true)
+    expect(isReviewed(pr({ review: '✓ approved' }))).toBe(true)
+  })
+
+  // the hold path writes the verdict into `review` so the row can say "waiting to post", and tone()
+  // matches it — every caller that forgot this treated a held review as one the author had seen
+  it('a held verdict does not, however it reads', () => {
+    expect(isReviewed(pr({ waiting: true, review: '✗ changes requested (waiting to post)' }))).toBe(false)
+    expect(isReviewed(pr({ waiting: true, review: '✓ approved (waiting to post)' }))).toBe(false)
+  })
+
+  it('no verdict at all is not reviewed', () => {
+    expect(isReviewed(pr())).toBe(false)
+    expect(isReviewed(pr({ review: 'reviewing…' }))).toBe(false)
   })
 })
 

@@ -633,6 +633,20 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
         for line in autorev::report(&autorev::scope()) {
             println!("{line}");
         }
+        // ponytail: reported, never set here. Where a review posts is a GUI decision — the operator
+        // asked for it there — but a command that reports the scope and stays silent about what
+        // happens to the verdict is telling half the story.
+        let p = autorev::posting();
+        for (ran, label) in [
+            (autorev::Ran::Manual, "you press r"),
+            (autorev::Ran::Auto, "auto runs it"),
+        ] {
+            for (t, v) in p.rules(ran).listed() {
+                if v == autorev::Post::Hold {
+                    println!("  {t:<36}  →  waits for a key when {label}");
+                }
+            }
+        }
     };
     // ponytail: BEFORE every write. --list is a read-only question, and bind() learned this one
     // command over: gating it behind a check on the thing you were asking about turned

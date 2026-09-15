@@ -19,7 +19,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, team,
+    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, team,
     textdiff, update,
 };
 
@@ -68,6 +68,10 @@ fn team_error() -> String {
 pub fn payload(state: &State) -> Value {
     // one read for the count, the flag and the rows, so they cannot describe different files
     let auto_scope = autorev::scope();
+    // ponytail: one read of the held store for the whole payload, and it reads the NAMES — asking
+    // per row would open the directory once per PR on every poll, and the verdicts inside it are not
+    // what a row mark needs.
+    let waiting = held::waiting();
     let (
         sections,
         reviews,
@@ -163,6 +167,9 @@ pub fn payload(state: &State) -> Value {
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
+                // a finished review nobody has posted yet. The row says so, because a verdict
+                // sitting in a file nothing points at is a verdict nobody reads.
+                "waiting": held::is_waiting(&waiting, p.repo(), p.number),
             }));
         }
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
@@ -837,6 +844,64 @@ fn get_bind(_state: &State, query: &Query) -> Out {
     Ok(json!({"repo": repo, "kind": kind, "to": to, "owner": owner_of(repo), "teams": teams}))
 }
 
+/// What happens to this repo's reviews, and where each answer came from.
+///
+/// ponytail: `via` as well as the value. A review that stops posting with nothing on screen saying
+/// which rule decided it looks like a bug, and the rule may be an owner-wide one set months ago.
+fn get_posting(state: &State, query: &Query) -> Out {
+    let repo = q(query, "repo");
+    if repo.is_empty() {
+        return Err(Fail::new(400, "no row selected"));
+    }
+    let p = autorev::posting();
+    let owner = owner_of(repo);
+    let one = |rules: &autorev::Rules| {
+        let r = bind::key(repo);
+        let via = if rules.repos.contains_key(&r) {
+            "repo"
+        } else if rules.owners.contains_key(&owner) {
+            "owner"
+        } else {
+            ""
+        };
+        // ponytail: the owner's OWN word too, not only the effective one. `o` flips the owner rule,
+        // and flipping it from the effective value wrote back what was already there whenever a repo
+        // row had carved the owner out — a no-op the flash reported as a change.
+        json!({
+            "value": rules.of(repo).word(),
+            "via": via,
+            "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
+        })
+    };
+    let n: u64 = q(query, "number").parse().unwrap_or(0);
+    let h = held::get(repo, n);
+    // ponytail: the head the verdict was written against, next to the one on the board now. Pressing
+    // `p` a week later posts the old verdict against new commits, and nothing on the screen said so.
+    let live = state
+        .lock()
+        .sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .find(|p| p.repo() == repo && p.number == n)
+        .map(|p| p.head.clone())
+        .unwrap_or_default();
+    Ok(json!({
+        "repo": repo,
+        "owner": owner,
+        "manual": one(&p.manual),
+        "auto": one(&p.auto),
+        "held": h.map(|h| json!({
+            "verdict": h.verdict.verdict,
+            "summary": h.verdict.summary,
+            "body": h.verdict.body,
+            "model": h.model,
+            "at": h.at,
+            // neither side knowing its head is not a move; only two we can compare and that differ
+            "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
+        })),
+    }))
+}
+
 fn get_dream(_state: &State, _q: &Query) -> Out {
     let mut j = job("dream");
     if let Some(result) = j["result"].as_object_mut() {
@@ -893,7 +958,7 @@ fn post_review(state: &State, body: &Body) -> Out {
     let started = if truthy(body, "self") {
         state.start_self_review(&pr)
     } else {
-        state.start_review(&pr)
+        state.start_review(&pr, autorev::Ran::Manual)
     };
     if !started {
         return Err(Fail::new(409, "already running"));
@@ -1171,6 +1236,60 @@ fn post_bind(state: &State, body: &Body) -> Out {
         _ => return Err(Fail::new(400, "op must be bind, owner or forget")),
     };
     fail_if(err)?;
+    state.wake();
+    Ok(json!({"ok": true}))
+}
+
+/// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
+fn post_posting(state: &State, body: &Body) -> Out {
+    let (repo, op) = (text(body, "repo"), text(body, "op"));
+    if repo.is_empty() {
+        return Err(Fail::new(400, "no row selected"));
+    }
+    if op == "release" || op == "discard" {
+        let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
+        let Some(h) = held::get(&repo, n) else {
+            return Err(Fail::new(404, "nothing waiting for that PR"));
+        };
+        if op == "discard" {
+            fail_if(
+                held::drop(&repo, n)
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
+            )?;
+            // ponytail: and the STATUS, not just the file. The hold wrote its verdict into the row
+            // through finish(); dropping only the file left the row reading "changes requested
+            // (waiting to post)" with nothing waiting, the menu calling it Reviewed, and auto
+            // skipping the PR until a push or a restart.
+            state.forget_review(&h.pr.url);
+            state.wake();
+            return Ok(json!({"ok": true, "status": "dropped"}));
+        }
+        // ponytail: on a thread with the row spinning, like every other review action. Posting is
+        // two network calls and this handler answers the UI.
+        // ponytail: the return is the answer, not a formality. It is false when a review of this URL
+        // is already in flight, and dropping it answered ok to a release that started nothing — the
+        // flash said "posting…", the file stayed, and nothing went up. post_review two hundred lines
+        // up already knew this.
+        if !state.start_post_held(h) {
+            return Err(Fail::new(409, "a review of this PR is already running"));
+        }
+        return Ok(json!({"ok": true}));
+    }
+    let ran = match text(body, "ran").as_str() {
+        "manual" => autorev::Ran::Manual,
+        "auto" => autorev::Ran::Auto,
+        _ => return Err(Fail::new(400, "ran must be manual or auto")),
+    };
+    let Some(p) = autorev::Post::parse(&text(body, "post")) else {
+        return Err(Fail::new(400, "post must be post or hold"));
+    };
+    fail_if(if truthy(body, "owner") {
+        autorev::set_post_owner(&owner_of(&repo), ran, p)
+    } else {
+        autorev::set_post(&repo, ran, p)
+    })?;
     state.wake();
     Ok(json!({"ok": true}))
 }
@@ -1544,6 +1663,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/share" => get_share,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
+        "/api/posting" => get_posting,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         _ => return None,
@@ -1564,6 +1684,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/share" => post_share,
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
+        "/api/posting" => post_posting,
         "/api/dream" => post_dream,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
@@ -2157,6 +2278,255 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (400, Some("acme/api is not an owner"))
+        );
+    }
+
+    /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
+    /// `o` flips that one, and flipping it from the effective value wrote back what was already
+    /// there whenever a repo row had carved the owner out.
+    #[test]
+    fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, _state) = served();
+        let get_one = || {
+            get(
+                &format!("{base}/api/posting?repo=acme/api&number=7"),
+                Some(&token),
+            )
+            .1
+        };
+
+        let j = get_one();
+        assert_eq!(j["auto"]["value"], "post");
+        assert_eq!(j["auto"]["via"], "");
+        assert_eq!(j["auto"]["ownerValue"], "post");
+        assert_eq!(j["held"], json!(null));
+
+        post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "hold", "owner": true}),
+            &token,
+        );
+        let j = get_one();
+        assert_eq!(j["auto"]["value"], "hold");
+        assert_eq!(j["auto"]["via"], "owner");
+        assert_eq!(j["auto"]["ownerValue"], "hold");
+
+        // the carve-out: the repo says post, the owner still says hold, and `o` must see the latter
+        post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "post"}),
+            &token,
+        );
+        let j = get_one();
+        assert_eq!(j["auto"]["value"], "post");
+        assert_eq!(j["auto"]["via"], "repo");
+        assert_eq!(
+            j["auto"]["ownerValue"], "hold",
+            "the owner's own word, not the effective one"
+        );
+        assert_eq!(
+            j["manual"]["value"], "post",
+            "the other kind is untouched throughout"
+        );
+    }
+
+    /// A release that could not start must say so. It answered ok, the flash said "posting…", and
+    /// nothing went up.
+    #[test]
+    fn a_release_that_cannot_start_is_a_409() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        held::put(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+        // the row is marked from the store, by name
+        let j = get(&format!("{base}/api/state"), Some(&token)).1;
+        let waiting: Vec<bool> = j["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|s| s["prs"].as_array().unwrap())
+            .map(|p| p["waiting"].as_bool().unwrap())
+            .collect();
+        assert_eq!(waiting, [true], "the row says a review is waiting");
+
+        state.lock().running.insert(pr().url.clone());
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "release", "repo": pr().repo(), "number": pr().number}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (409, Some("a review of this PR is already running"))
+        );
+        assert!(held::get(pr().repo(), pr().number).is_some(), "still waiting");
+
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "release", "repo": "other/thing", "number": 1}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (404, Some("nothing waiting for that PR"))
+        );
+    }
+
+    /// bind::key lowercases, so the filenames are folded and a raw nameWithOwner never matched.
+    /// Every other fixture here is lowercase, so no test caught it.
+    #[test]
+    fn a_mixed_case_repo_still_marks_its_row_as_waiting() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        let mut mixed = pr();
+        mixed.repository.name_with_owner = "MartinRovang/git-dashy".into();
+        mixed.url = "https://x/MartinRovang/git-dashy/7".into();
+        state.lock().sections = vec![Section {
+            name: "REVIEW REQUESTED".into(),
+            prs: Some(vec![mixed.clone()]),
+            err: None,
+        }];
+        held::put(&held::Held {
+            pr: mixed.clone(),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+        let j = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(j["sections"][0]["prs"][0]["waiting"], json!(true));
+    }
+
+    /// The warning on the waiting screen: only two heads we can both read and that differ.
+    #[test]
+    fn the_waiting_screen_says_when_the_head_has_moved() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        let ask = |head: &str| {
+            let mut live = pr();
+            live.head = head.into();
+            state.lock().sections = vec![Section {
+                name: "REVIEW REQUESTED".into(),
+                prs: Some(vec![live]),
+                err: None,
+            }];
+            get(
+                &format!("{base}/api/posting?repo={}&number={}", pr().repo(), pr().number),
+                Some(&token),
+            )
+            .1["held"]["moved"]
+                .clone()
+        };
+        let mut held_pr = pr();
+        held_pr.head = "aaa".into();
+        held::put(&held::Held {
+            pr: held_pr,
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+
+        assert_eq!(ask("bbb"), json!(true), "two heads we can read, and they differ");
+        assert_eq!(ask("aaa"), json!(false), "the same head is not a move");
+        assert_eq!(
+            ask(""),
+            json!(false),
+            "a head we cannot read is not a move either"
+        );
+    }
+
+    /// Dropping a held review must clear the STATUS as well as the file. The hold wrote its verdict
+    /// into the row, so removing only the file left it reading "changes requested (waiting to post)"
+    /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
+    #[test]
+    fn discarding_a_held_review_leaves_the_row_clean() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        held::put(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            verdict: crate::types::Verdict {
+                verdict: "request_changes".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        })
+        .unwrap();
+        // the hold path puts its verdict on the row, the way finish() does
+        state
+            .lock()
+            .reviews
+            .insert(pr().url.clone(), "✗ changes requested (waiting to post)".into());
+
+        let row = |base: &str| -> Value {
+            get(&format!("{base}/api/state"), Some(token.as_str())).1["sections"][0]["prs"][0].clone()
+        };
+        assert_eq!(row(&base)["waiting"], json!(true));
+
+        let (code, _) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "discard", "repo": pr().repo(), "number": pr().number}),
+            &token,
+        );
+        assert_eq!(code, 200);
+        let r = row(&base);
+        assert_eq!(r["waiting"], json!(false), "nothing is waiting any more");
+        assert_eq!(
+            r["review"], "",
+            "and the row does not claim a verdict nobody posted"
+        );
+        assert!(
+            !state.lock().reviews.contains_key(&pr().url),
+            "so auto can reach it again"
         );
     }
 
