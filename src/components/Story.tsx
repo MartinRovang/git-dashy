@@ -34,7 +34,6 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
     `story:${f.login}`,
     () => ({ x: window.innerWidth - 360 - i * 28, y: 70 + i * 28, w: 340, h: 230, max: false }),
     '.iconbtn',
-    !!f.open,
   )
   const [got, setGot] = useState<Got | null>(null)
   const [err, setErr] = useState('')
@@ -107,7 +106,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   return (
     <>
       {chip}
-      <div ref={el} hidden={!!f.min} className={`fw story${box.max ? ' max' : ''}${f.open ? ' open' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
+      <div ref={el} hidden={!!f.min} className={`fw story${box.max ? ' max' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>
         <div className="bar" title="drag to move, double-click to maximize" {...drag}>
           <b>{f.login}</b>
           <div style={{ flex: 1 }} />
@@ -116,9 +115,6 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
               onPatch({ min: true })
             }} title="minimize to the footer">
             –
-          </button>
-          <button className="iconbtn" onClick={() => onPatch({ open: !f.open })} title={f.open ? 'collapse' : 'expand to show everything'}>
-            {f.open ? '▴' : '▾'}
           </button>
           <button className="iconbtn" onClick={() => load(true)} disabled={busy} title="ask again">
             ⟳
@@ -144,7 +140,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
             </>
           ) : null}
           {!busy && got?.prs.length ? (
-            <details open={f.open}>
+            <details>
               <summary>
                 {got.prs.length} PR{got.prs.length === 1 ? '' : 's'}
               </summary>

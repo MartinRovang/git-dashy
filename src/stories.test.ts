@@ -4,9 +4,9 @@ import { follow, fuzzy, patch, people, unfollow } from './stories'
 describe('followed users', () => {
   it('adds a login once, and drops it again', () => {
     const one = follow([], 'Bob')
-    expect(one).toEqual([{ login: 'Bob', open: false, min: false }])
+    expect(one).toEqual([{ login: 'Bob', min: false }])
     expect(follow(one, 'bob')).toBe(one)
-    expect(patch(one, 'Bob', { min: true })).toEqual([{ login: 'Bob', open: false, min: true }])
+    expect(patch(one, 'Bob', { min: true })).toEqual([{ login: 'Bob', min: true }])
     expect(unfollow(one, 'Bob')).toEqual([])
   })
 })

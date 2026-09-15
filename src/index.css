@@ -583,8 +583,6 @@
               -webkit-background-clip: text; background-clip: text; color: transparent; }
   @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
   @media (prefers-reduced-motion: reduce) { .skel i, .shimtext { animation: none; } }
-  /* expanded: the card is as tall as what it holds (up to the window's bottom), only its width resizes */
-  .fw.story.open { resize: horizontal; min-height: 0; }
   /* minimized cards: a chip per user in the footer, and a drop-up above it when their story changes */
   .dock { display: flex; gap: 6px; align-items: center; }
   .dock .chip { position: relative; }
