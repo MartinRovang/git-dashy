@@ -87,6 +87,7 @@ pub fn payload(state: &State) -> Value {
         update,
         asks,
         notices,
+        changelog,
     ) = {
         let inner = state.lock();
         (
@@ -104,6 +105,7 @@ pub fn payload(state: &State) -> Value {
             inner.update.clone(),
             inner.asks.clone(),
             inner.notices.clone(),
+            inner.changelog.clone(),
         )
     };
     let cfg = config::get();
@@ -214,6 +216,7 @@ pub fn payload(state: &State) -> Value {
         },
         "asks": asks,
         "notices": notices,
+        "changelog": changelog,
     })
 }
 
@@ -1480,6 +1483,12 @@ fn post_notices(state: &State, _body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+fn post_changelog(state: &State, _body: &Body) -> Out {
+    state.lock().changelog.clear();
+    update::mark_seen();
+    Ok(json!({"ok": true}))
+}
+
 /// A JSON value that names one of `options`, as Python's `body[key] in options`.
 fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
     let s = v.as_str()?;
@@ -1693,6 +1702,11 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
+        "/api/changelog" => |_, _| {
+            update::recent()
+                .map(|text| json!({"text": text}))
+                .map_err(|e| Fail::new(502, format!("release notes: {e}")))
+        },
         _ => return None,
     })
 }
@@ -1719,6 +1733,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/update" => post_update,
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
+        "/api/changelog" => post_changelog,
         "/api/stories" => post_stories,
         _ => return None,
     })
@@ -2772,6 +2787,28 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["keyhints"], json!(false));
+    }
+
+    #[test]
+    fn closing_the_changelog_clears_it_and_records_the_version() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        config::update(|c| c.settings = Some(file.clone()));
+        let (base, token, state) = served();
+        state.lock().changelog = "v9.9.9\n\nnotes".into();
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["changelog"],
+            "v9.9.9\n\nnotes"
+        );
+        assert_eq!(post(&format!("{base}/api/changelog"), json!({}), &token).0, 200);
+        assert_eq!(state.lock().changelog, "");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(saved["seen"], config::VERSION);
+        config::update(|c| {
+            c.settings = None;
+            c.seen = String::new();
+        });
     }
 
     #[test]

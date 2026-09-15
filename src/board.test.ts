@@ -52,6 +52,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     knowledge: { memory: '', store: '', teams: [], teamError: '', notes: [] },
     asks: [],
     notices: [],
+    changelog: '',
   }
 }
 

@@ -98,6 +98,8 @@ const S = {
   fetching: false,
   fetchedAt: secs(),
   notices: [] as string[],
+  // shown once per dev server start, as after an update; closing it clears it like /api/changelog does
+  changelog: "v2.21.0\n\n## What's Changed\n* feat: release notes after an update\n* fix: the refresh button shows a spinner",
   asks: [] as { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }[],
   // what a "no" left held back, so the rail's consent rows and its asks count are reachable in dev
   refused: [] as { kind: string; key: string; what: string }[],
@@ -255,6 +257,7 @@ function buildPayload() {
     },
     asks: S.asks,
     notices: S.notices,
+    changelog: S.changelog,
   }
 }
 
@@ -405,6 +408,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/stories') return json(200, { follow: S.follow })
+    if (path === '/api/changelog') return json(200, { text: S.changelog || 'v2.21.0\n\n(the mock has no older notes)' })
     if (path === '/api/story') return json(200, story(query.get('login') || ''))
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
@@ -726,6 +730,10 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/path') return json(200, { ok: true })
     if (path === '/api/update') return json(200, { ok: true })
     if (path === '/api/quit') return json(200, { ok: true })
+    if (path === '/api/changelog') {
+      S.changelog = ''
+      return json(200, { ok: true })
+    }
     if (path === '/api/notices') {
       S.notices = []
       return json(200, { ok: true })
