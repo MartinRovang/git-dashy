@@ -1,6 +1,6 @@
 import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
-import type { VisSection } from '../board'
+import type { Only, VisSection } from '../board'
 import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket, isRead, onScreen } from '../board'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
@@ -11,6 +11,7 @@ type Props = {
   read: Record<string, string>
   onReadAll: () => void
   query: string
+  only: Only
   onQuery: (v: string) => void
   failing: boolean
   onFailing: () => void
@@ -242,7 +243,7 @@ export function Queue(p: Props) {
               {shut ? null : s.error ? (
                 <div className="none err">{s.error.split('\n')[0]}</div>
               ) : !s.prs.length ? (
-                <div className="empty">{emptyLine(d, s.name, p.query, p.failing, p.drafts)}</div>
+                <div className="empty">{emptyLine(d, s.name, p.query, p.failing, p.drafts, p.only)}</div>
               ) : (
                 rows.map((row) => {
                   const label = row.team || ''

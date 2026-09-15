@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, remember, selected, visible, walkBucket } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -54,7 +54,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
   }
 }
 
-const secs = (d: StateData, failing = false, drafts = false) => visible(d, '', failing, drafts)
+const secs = (d: StateData, failing = false, drafts = false) => visible(d, '', failing, drafts, NOBODY)
 
 describe('buckets', () => {
   it('puts All in front and its count is every section summed', () => {
@@ -75,7 +75,7 @@ describe('buckets', () => {
   })
 
   it('keeps a section with no PRs, so a tab does not vanish when a filter empties it', () => {
-    const v = visible(state([{ name: 'MINE', prs: [pr({ title: 'keep' })] }]), 'nothing matches', false, false)
+    const v = visible(state([{ name: 'MINE', prs: [pr({ title: 'keep' })] }]), 'nothing matches', false, false, NOBODY)
     expect(buckets(v).map((b) => b.key)).toEqual([ALL, 'MINE'])
     expect(buckets(v)[1].n).toBe(0)
   })
@@ -218,7 +218,7 @@ describe('visible: the drafts rules compose', () => {
       ],
       settings,
     )
-  const titles = (d: StateData, onlyDrafts: boolean) => visible(d, '', false, onlyDrafts)[0].prs.map((p) => p.title)
+  const titles = (d: StateData, onlyDrafts: boolean) => visible(d, '', false, onlyDrafts, NOBODY)[0].prs.map((p) => p.title)
 
   it('with drafts shown, onlyDrafts leaves the drafts', () => {
     expect(titles(board({ drafts: true }), true)).toEqual(['draft', 'draft busy', 'draft reviewed'])
@@ -239,29 +239,31 @@ describe('emptyLine', () => {
   const d = state([], { window: 24 })
 
   it('names the queue when nothing is narrowing the board', () => {
-    expect(emptyLine(d, 'MINE', '', false, false)).toBe('Nothing of yours is open.')
-    expect(emptyLine(d, 'REVIEW REQUESTED', '', false, false)).toBe('Nobody is waiting on your review.')
+    expect(emptyLine(d, 'MINE', '', false, false, NOBODY)).toBe('Nothing of yours is open.')
+    expect(emptyLine(d, 'REVIEW REQUESTED', '', false, false, NOBODY)).toBe('Nobody is waiting on your review.')
   })
 
   // the claim is about the QUEUE, so a filter emptying the section makes it false
   it('blames the filter, not the queue, whenever one is on', () => {
-    expect(emptyLine(d, 'MINE', 'foo', false, false)).toBe('Nothing matches the filter.')
-    expect(emptyLine(d, 'MINE', '', true, false)).toBe('Nothing matches the filter.')
-    expect(emptyLine(d, 'MINE', '', false, true)).toBe('Nothing matches the filter.')
-    expect(emptyLine(d, 'REVIEWED', 'foo', false, false)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', 'foo', false, false, NOBODY)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', true, false, NOBODY)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', false, true, NOBODY)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'REVIEWED', 'foo', false, false, NOBODY)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', false, false, { repos: ['acme/web'], authors: [] })).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', false, false, { repos: [], authors: ['ann'] })).toBe('Nothing matches the filter.')
   })
 
   it('a query of nothing but spaces is not a filter', () => {
-    expect(emptyLine(d, 'MINE', '   ', false, false)).toBe('Nothing of yours is open.')
+    expect(emptyLine(d, 'MINE', '   ', false, false, NOBODY)).toBe('Nothing of yours is open.')
   })
 
   it('REVIEWED names the window it is cut to, and says so only when one is set', () => {
-    expect(emptyLine(d, 'REVIEWED', '', false, false)).toBe('Nothing reviewed in the last 24h.')
-    expect(emptyLine(state([], { window: null }), 'REVIEWED', '', false, false)).toBe('Nothing reviewed yet.')
+    expect(emptyLine(d, 'REVIEWED', '', false, false, NOBODY)).toBe('Nothing reviewed in the last 24h.')
+    expect(emptyLine(state([], { window: null }), 'REVIEWED', '', false, false, NOBODY)).toBe('Nothing reviewed yet.')
   })
 
   it('a section it has no line for still says something', () => {
-    expect(emptyLine(d, 'SOMETHING NEW', '', false, false)).toBe('Nothing here.')
+    expect(emptyLine(d, 'SOMETHING NEW', '', false, false, NOBODY)).toBe('Nothing here.')
   })
 })
 
@@ -422,7 +424,7 @@ describe('counts: what the status block reads', () => {
 describe('visible: the filter box', () => {
   const d = () =>
     state([{ name: 'MINE', prs: [pr({ title: 'export job', repo: 'acme/web', author: 'bob', number: 42 })] }])
-  const hits = (q: string) => visible(d(), q, false, false)[0].prs.length
+  const hits = (q: string) => visible(d(), q, false, false, NOBODY)[0].prs.length
 
   it('matches the title, the repo, the author and the number', () => {
     expect([hits('export'), hits('acme'), hits('bob'), hits('#42')]).toEqual([1, 1, 1, 1])
@@ -448,11 +450,11 @@ describe('visible: the CI filter', () => {
     state([{ name: 'MINE', prs: [pr({ title: 'red', checks: '✗' }), pr({ title: 'green', checks: '✓' }), pr({ title: 'none', checks: '' })] }])
 
   it('off, every row survives', () => {
-    expect(visible(d(), '', false, false)[0].prs.map((p) => p.title)).toEqual(['red', 'green', 'none'])
+    expect(visible(d(), '', false, false, NOBODY)[0].prs.map((p) => p.title)).toEqual(['red', 'green', 'none'])
   })
 
   it('on, only the failing one does — a repo with no checks is not failing', () => {
-    expect(visible(d(), '', true, false)[0].prs.map((p) => p.title)).toEqual(['red'])
+    expect(visible(d(), '', true, false, NOBODY)[0].prs.map((p) => p.title)).toEqual(['red'])
   })
 })
 
@@ -557,4 +559,25 @@ describe('isReviewed: a held verdict is not a posted one', () => {
     expect(isReviewed(pr())).toBe(false)
     expect(isReviewed(pr({ review: 'reviewing…' }))).toBe(false)
   })
+})
+
+describe('repo and author picks', () => {
+  const d = state([
+    { name: 'MINE', prs: [pr({ title: 'a', repo: 'acme/web', author: 'bob' }), pr({ title: 'b', repo: 'acme/api', author: 'ann' })] },
+    { name: 'ASSIGNED', prs: [pr({ title: 'c', repo: 'acme/web', author: 'ann' })] },
+  ])
+  const titles = (repos: string[], authors: string[]) => visible(d, '', false, false, { repos, authors }).flatMap((s) => s.prs.map((p) => p.title))
+
+  it('an empty pick is everything', () => expect(titles([], [])).toEqual(['a', 'b', 'c']))
+  it('narrows by repo', () => expect(titles(['acme/web'], [])).toEqual(['a', 'c']))
+  it('narrows by author', () => expect(titles([], ['ann'])).toEqual(['b', 'c']))
+  it('repo and author both apply', () => expect(titles(['acme/web'], ['ann'])).toEqual(['c']))
+  it('lists the options off the raw board, sorted and once each', () =>
+    expect(whoIs(d)).toEqual({ repos: ['acme/api', 'acme/web'], authors: ['ann', 'bob'] }))
+  it('the pick and the filter box both apply', () =>
+    expect(visible(d, 'ann', false, false, { repos: ['acme/web'], authors: [] }).flatMap((s) => s.prs.map((p) => p.title))).toEqual(['c']))
+  it('an empty author is not an option', () =>
+    expect(whoIs(state([{ name: 'MINE', prs: [pr({ repo: 'acme/web', author: '' })] }])).authors).toEqual([]))
+  it('a pick whose PRs left the board stays listed so it can be unticked', () =>
+    expect(pickable(whoIs(d), { repos: ['acme/gone'], authors: [] }, 'repos')).toEqual(['acme/api', 'acme/web', 'acme/gone']))
 })
