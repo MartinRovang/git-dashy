@@ -2790,6 +2790,28 @@ mod tests {
     }
 
     #[test]
+    fn closing_the_changelog_clears_it_and_records_the_version() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        config::update(|c| c.settings = Some(file.clone()));
+        let (base, token, state) = served();
+        state.lock().changelog = "v9.9.9\n\nnotes".into();
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["changelog"],
+            "v9.9.9\n\nnotes"
+        );
+        assert_eq!(post(&format!("{base}/api/changelog"), json!({}), &token).0, 200);
+        assert_eq!(state.lock().changelog, "");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(saved["seen"], config::VERSION);
+        config::update(|c| {
+            c.settings = None;
+            c.seen = String::new();
+        });
+    }
+
+    #[test]
     fn consent_answers_one_ask_and_drops_it() {
         let (base, token, state) = served();
         state.lock().asks = vec![

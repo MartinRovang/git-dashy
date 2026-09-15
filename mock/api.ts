@@ -408,7 +408,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/stories') return json(200, { follow: S.follow })
-    if (path === '/api/changelog') return json(200, { text: "v2.21.0\n\n## What's Changed\n* feat: release notes after an update" })
+    if (path === '/api/changelog') return json(200, { text: S.changelog || 'v2.21.0\n\n(the mock has no older notes)' })
     if (path === '/api/story') return json(200, story(query.get('login') || ''))
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''

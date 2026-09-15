@@ -503,19 +503,7 @@ export async function updateScreen(ctx: Ctx) {
 
 /** The release notes under the header picture: once after an update, and again from the menu. */
 export function whatsNew(text: string, version = '') {
-  const m = open({
-    title: "what's new",
-    sub: `v${version}`,
-    body: () => (
-      <>
-        <img className="news" src="/whats-new.webp" alt="" />
-        <pre>{text}</pre>
-      </>
-    ),
-    foot: [['q', 'close', () => close(m)]],
-  })
-  m.keys = { Escape: () => close(m) }
-  return m
+  return viewer("what's new", text, `v${version}`, <img className="news" src="/whats-new.webp" alt="" />)
 }
 
 export function escMenu(ctx: Ctx) {
