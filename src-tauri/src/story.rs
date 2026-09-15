@@ -199,8 +199,8 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
 
 /// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
 /// same story; a new PR, a push, or one ageing out of the window changes it, though `stands` lets a
-/// shrink keep the story. ponytail: not updatedAt, which
-/// CI, bots and comments bump every few seconds with nothing pushed.
+/// shrink keep the story. ponytail: not updatedAt, which CI, bots and comments bump every few seconds with
+/// nothing pushed.
 pub fn sig(nodes: &[Value]) -> String {
     let mut seen: Vec<String> = nodes
         .iter()
