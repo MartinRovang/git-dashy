@@ -325,7 +325,7 @@
   .gnode.hub text { fill: var(--dim); opacity: min(1, calc(var(--label) * 2)); font-size: calc(12px / var(--k)); }
   /* WebKit lays out every drawn SVG text on each tick, so a title is drawn only where the code names it (on screen, few enough) or it is lit */
   .gnode:not(.named, .sel, .lit, .hit) text { display: none; }
-  .gnode.sel circle { stroke-width: 3; }
+  .gnode.sel circle:not(.pulse) { stroke-width: 3; }
   .gnode.sel text, .gnode.lit text { opacity: 1; fill: var(--ink); }
   .graph svg.focus .gnode:not(.lit), .graph svg.focus line:not(.lit) { opacity: .15; }
   /* search dims non-matches more than hover does */
@@ -337,10 +337,10 @@
   .gbadge .search { pointer-events: auto; background: var(--bg); }
   .gbadge .chip { pointer-events: auto; align-self: flex-start; }
   .gbadge .vtabs { pointer-events: auto; align-self: flex-start; background: var(--bg); }
-  .gnode.breaking circle { stroke-width: 2.5; stroke-dasharray: 3 2; }
+  .gnode.breaking circle:not(.pulse) { stroke-width: 2.5; stroke-dasharray: 3 2; }
   /* unread PRs: a violet ring, like the board's unread edge, swells out of the node and fades.
      ponytail: one CSS animation per unread node; if a board with hundreds unread stutters in WebKit, pulse only on-screen nodes */
-  .gnode .pulse { display: none; fill: none; stroke: var(--violet); stroke-width: 2; pointer-events: none; }
+  .gnode .pulse { display: none; transform-box: fill-box; transform-origin: center; fill: none; stroke: var(--violet); stroke-width: 2; pointer-events: none; }
   .gnode.unread .pulse { display: inline; animation: gpulse 1.8s ease-out infinite; }
   @keyframes gpulse { from { transform: scale(1); opacity: .9; } to { transform: scale(2.2); opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .gnode.unread .pulse { animation: none; transform: scale(1.4); } }

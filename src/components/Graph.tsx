@@ -473,7 +473,7 @@ export function Graph({ secs, sel, read, onSelect, onReadAll }: {
           ))}
         </div>
         {unread.length ? (
-          <button className="chip" onClick={() => onReadAll(unread)}>
+          <button className="chip" onClick={() => onReadAll(secs.flatMap((s) => s.prs).filter((r) => !isRead(read, r)))}>
             Read all <b>{unread.length}</b>
           </button>
         ) : null}
