@@ -39,6 +39,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     fetchedAt: 1,
     interval: 60,
     fetching: false,
+    ticks: 0,
     error: '',
     auto: false,
     pending: 0,
@@ -51,6 +52,7 @@ function state(sections: Partial<Section>[], settings: Record<string, unknown> =
     knowledge: { memory: '', store: '', teams: [], teamError: '', notes: [] },
     asks: [],
     notices: [],
+    changelog: '',
   }
 }
 

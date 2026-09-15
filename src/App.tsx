@@ -15,7 +15,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
+import { askConsents, draftsScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -77,6 +77,8 @@ export default function App() {
   const [stopped, setStopped] = useState(false)
   // the fetchedAt a history change was made on: until a newer fetch lands, the board is the old window
   const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
+  // f was pressed: the ticks count that answers it (Infinity until the POST says), and the ⟳ spins till then
+  const [pressed, setPressed] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
@@ -161,6 +163,13 @@ export default function App() {
       'welcome',
     )
   }, [hinted])
+
+  // Once after an update: what changed since the version that ran before. Closing it tells the server.
+  const changelog = data?.changelog
+  useEffect(() => {
+    if (!changelog) return
+    whatsNew(changelog, dataRef.current?.version).onClose = () => void post('/api/changelog', {})
+  }, [changelog])
 
   useEffect(() => {
     if (!flash) return
@@ -334,7 +343,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.asks])
 
-  const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
+  useEffect(() => {
+    if (pressed != null && data && data.ticks >= pressed) setPressed(null)
+  }, [data, pressed])
+  const onRefresh = () => {
+    setPressed(Infinity)
+    call('/api/refresh', {}, 'refreshing…').then(
+      (r) => setPressed(r ? r.answeredBy : null),
+      () => setPressed(null),
+    )
+  }
   const onAuto = async () => {
     const on = !data?.auto
     let includeExisting = false
@@ -692,7 +710,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -710,6 +728,7 @@ export default function App() {
           onModal={onModal}
           onAuto={onAuto}
           onAskAgain={onAskAgain}
+          onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
         />

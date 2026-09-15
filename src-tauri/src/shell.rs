@@ -46,6 +46,9 @@ pub fn run(state: State, port: u16, token: String) {
         }))
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            // ponytail: here and not at launch. A second launch exits inside the single-instance plugin,
+            // before this runs, so it cannot delete the report of the window it raises.
+            crate::report::clear();
             let handle = app.handle().clone();
             // ponytail: WebKitGTK plays media only after a click inside the frame that plays it, and the
             // logo's video is a YouTube iframe, so a click on our logo never counted. Browsers pass the
@@ -104,6 +107,11 @@ pub fn run(state: State, port: u16, token: String) {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                crate::report::clear(); // the window closed: the report was for this session
+            }
+        });
 }
