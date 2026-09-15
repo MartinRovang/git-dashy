@@ -28,7 +28,7 @@ function Updated({ at }: { at: number }) {
 type Got = { at: number; summary: string; prs: { repo: string; number: number; title: string }[] }
 
 /** One followed user's floating card: what they have been on for the last `days`, in the model's words. */
-export function Story({ f, i, onDays, onClose }: { f: Followed; i: number; onDays: (d: number) => void; onClose: () => void }) {
+export function Story({ f, i, every, onDays, onClose }: { f: Followed; i: number; every: number; onDays: (d: number) => void; onClose: () => void }) {
   const { box, el, drag, style } = useFloatBox(
     `story:${f.login}`,
     () => ({ x: window.innerWidth - 360 - i * 28, y: 70 + i * 28, w: 340, h: 230, max: false }),
@@ -38,16 +38,32 @@ export function Story({ f, i, onDays, onClose }: { f: Followed; i: number; onDay
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = (fresh: boolean) => {
-    setBusy(true)
-    setErr('')
+  /** `quiet` is the poll: no skeleton, and a failed check keeps the story already on the card. */
+  const load = (fresh: boolean, quiet = false) => {
+    if (!quiet) {
+      setBusy(true)
+      setErr('')
+    }
     api(`/api/story?login=${encodeURIComponent(f.login)}&days=${f.days}${fresh ? '&fresh=1' : ''}`)
-      .then(async (r) => (r.ok ? setGot(await r.json()) : setErr(await errorText(r))))
-      .catch(() => setErr('server gone'))
-      .finally(() => setBusy(false))
+      .then(async (r) => {
+        if (r.ok) {
+          setGot(await r.json())
+          setErr('')
+        } else if (!quiet) setErr(await errorText(r))
+      })
+      .catch(() => quiet || setErr('server gone'))
+      .finally(() => quiet || setBusy(false))
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => load(false), [f.login, f.days])
+  // ponytail: polls on the board's own interval. The server searches every time but only asks the model
+  // again when this user's PRs moved, so a quiet week costs one search per tick.
+  useEffect(() => {
+    if (!every) return
+    const id = setInterval(() => load(false, true), every * 1000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.login, f.days, every])
 
   return (
     <div ref={el} className={`fw story${box.max ? ' max' : ''}`} style={style} role="dialog" aria-label={`${f.login}'s story`}>

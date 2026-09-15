@@ -14,8 +14,6 @@ use serde_json::{json, Value};
 
 use crate::{config, github, llm};
 
-/// How long a story stands before the next open asks the model again.
-const FRESH: f64 = 30.0 * 60.0;
 const TIMEOUT: u64 = 180;
 /// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
 /// per followed user on Opus adds up.
@@ -143,40 +141,56 @@ fn prompt(login: &str, days: u64, prs: &[Value]) -> String {
     )
 }
 
+/// What the story was written from: every PR in the window and when it last moved. Same PRs, same
+/// updatedAt, same story; a new PR, a push, or one ageing out of the window changes it.
+pub fn sig(nodes: &[Value]) -> String {
+    let mut seen: Vec<String> = nodes
+        .iter()
+        .map(|n| {
+            format!(
+                "{}@{}",
+                n["url"].as_str().unwrap_or(""),
+                n["updatedAt"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    seen.sort();
+    seen.join(" ")
+}
+
+/// The story for (login, days). The search runs every call, so the card can poll; the model runs only when
+/// the PRs moved since the saved story, or on `fresh` (the card's ⟳).
 pub fn get(login: &str, days: u64, fresh: bool) -> Result<Value> {
     let key = format!("{}:{days}", login.to_lowercase());
+    let cfg = config::get();
+    if cfg.demo {
+        return Ok(
+            json!({"summary": format!("- {login} is polishing the demo board in acme/dashboard\n- reviewing a few small fixes in acme/api"), "prs": [], "at": crate::state::now()}),
+        );
+    }
+    let q = search(login, days, chrono::Utc::now());
+    let got = github::search_all(&q, |doc| github::gql(doc, 20)).map_err(|e| anyhow!(e.0))?;
+    let nodes = got["nodes"].as_array().cloned().unwrap_or_default();
+    let now_sig = sig(&nodes);
     if !fresh {
         let hit = with_file(|v| v["cache"][&key].clone());
-        if hit["at"]
-            .as_f64()
-            .is_some_and(|at| crate::state::now() - at < FRESH)
-        {
+        if hit["sig"].as_str() == Some(now_sig.as_str()) {
             return Ok(hit);
         }
     }
-    let cfg = config::get();
-    let out = if cfg.demo {
-        json!({"summary": format!("- {login} is polishing the demo board in acme/dashboard\n- reviewing a few small fixes in acme/api"), "prs": [], "at": crate::state::now()})
+    let prs: Vec<Value> = nodes
+        .iter()
+        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"]}))
+        .collect();
+    let summary = if prs.is_empty() {
+        format!("No pull requests from {login} in the last {days} day(s).")
     } else {
-        let q = search(login, days, chrono::Utc::now());
-        let got = github::search_all(&q, |doc| github::gql(doc, 20)).map_err(|e| anyhow!(e.0))?;
-        let prs: Vec<Value> = got["nodes"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"]}))
-            .collect();
-        let summary = if prs.is_empty() {
-            format!("No pull requests from {login} in the last {days} day(s).")
-        } else {
-            llm::ask(&prompt(login, days, &prs), MODEL, "", "", TIMEOUT, &[])?
-                .0
-                .trim()
-                .to_string()
-        };
-        json!({"summary": summary, "prs": prs, "at": crate::state::now()})
+        llm::ask(&prompt(login, days, &prs), MODEL, "", "", TIMEOUT, &[])?
+            .0
+            .trim()
+            .to_string()
     };
+    let out = json!({"summary": summary, "prs": prs, "at": crate::state::now(), "sig": now_sig});
     with_file(|v| {
         if !v["cache"].is_object() {
             v["cache"] = json!({});
@@ -222,5 +236,14 @@ mod tests {
             json!([{"login": "Bob", "days": 3}, {"login": "amy", "days": 2}])
         );
         assert_eq!(clean(&json!(null)), json!([]));
+    }
+
+    #[test]
+    fn the_story_is_rewritten_only_when_the_prs_moved() {
+        let a = json!({"url": "u/1", "updatedAt": "t1"});
+        let b = json!({"url": "u/2", "updatedAt": "t1"});
+        assert_eq!(sig(&[a.clone(), b.clone()]), sig(&[b.clone(), a.clone()]));
+        assert_ne!(sig(&[a.clone()]), sig(&[a.clone(), b]));
+        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "updatedAt": "t2"})]));
     }
 }

@@ -677,7 +677,7 @@ export default function App() {
         />
       ) : null}
       {followed.map((f, i) => (
-        <Story key={f.login} f={f} i={i} onDays={(d) => setFollowed((l) => setDays(l, f.login, d))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
+        <Story key={f.login} f={f} i={i} every={data?.interval || 0} onDays={(d) => setFollowed((l) => setDays(l, f.login, d))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
       ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
