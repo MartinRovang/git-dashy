@@ -121,6 +121,8 @@ pub struct Config {
     /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
     /// localStorage because the webview's origin changes every launch (see `hinted`). The page keeps the newest.
     pub read: HashMap<String, String>,
+    /// url -> the updatedAt it was hidden at, same shape as `read`: a PR that moves past it shows again.
+    pub hidden: HashMap<String, String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
     /// each time. Anything that must be remembered across launches belongs on this side.
@@ -188,6 +190,7 @@ impl Default for Config {
             drafts: false,
             scopes: Vec::new(),
             read: HashMap::new(),
+            hidden: HashMap::new(),
             hinted: false,
             keyhints: true,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
@@ -222,6 +225,8 @@ pub struct Saved {
     pub scopes: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -336,6 +341,9 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.read {
         c.read = v;
     }
+    if let Some(v) = saved.hidden {
+        c.hidden = v;
+    }
     if let Some(v) = saved.hinted {
         c.hinted = v;
     }
@@ -382,6 +390,7 @@ pub fn snapshot(c: &Config) -> Saved {
         drafts: Some(c.drafts),
         scopes: Some(c.scopes.clone()),
         read: Some(c.read.clone()),
+        hidden: Some(c.hidden.clone()),
         hinted: Some(c.hinted),
         keyhints: Some(c.keyhints),
         depth: Some(c.depth.clone()),

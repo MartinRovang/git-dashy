@@ -1623,8 +1623,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
         wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
     }
-    if let Some(v) = body.get("read") {
-        // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    let marks = |key: &str| -> Result<Option<HashMap<String, String>>, Fail> {
+        let Some(v) = body.get(key) else { return Ok(None) };
         let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
             m.iter()
                 .map(|(u, t)| {
@@ -1634,13 +1635,18 @@ fn post_settings(state: &State, body: &Body) -> Out {
                 })
                 .collect()
         });
-        let Some(got) = got else {
-            return Err(Fail::new(
+        got.map(Some).ok_or_else(|| {
+            Fail::new(
                 400,
-                "read must be an object of url to updatedAt, at most 5000",
-            ));
-        };
+                format!("{key} must be an object of url to updatedAt, at most 5000"),
+            )
+        })
+    };
+    if let Some(got) = marks("read")? {
         c.read = got;
+    }
+    if let Some(got) = marks("hidden")? {
+        c.hidden = got;
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
@@ -2682,6 +2688,7 @@ mod tests {
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
             json!({"read": {"u": 1}}),
+            json!({"hidden": {"u": 1}}),
             json!({"read": {"x".repeat(513): "t"}}),
             json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
         ] {

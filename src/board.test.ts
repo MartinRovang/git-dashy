@@ -445,6 +445,21 @@ describe('visible: the filter box', () => {
   })
 })
 
+describe('visible: hidden PRs', () => {
+  const stale = pr({ title: 'stale', updatedAt: '2026-09-01T00:00:00Z' })
+  const d = (over: Partial<Pr> = {}) => state([{ name: 'MINE', prs: [{ ...stale, ...over }, pr({ title: 'live' })] }])
+  const titles = (x: StateData, show = false) => visible(x, '', false, false, NOBODY, { [stale.url]: stale.updatedAt }, show)[0].prs.map((p) => p.title)
+
+  it('leaves a hidden PR out, and the chip shows only the hidden ones', () => {
+    expect(titles(d())).toEqual(['live'])
+    expect(titles(d(), true)).toEqual(['stale'])
+  })
+
+  it('brings it back once it moves past the mark', () => {
+    expect(titles(d({ updatedAt: '2026-09-02T00:00:00Z' }))).toEqual(['stale', 'live'])
+  })
+})
+
 describe('visible: the CI filter', () => {
   const d = () =>
     state([{ name: 'MINE', prs: [pr({ title: 'red', checks: '✗' }), pr({ title: 'green', checks: '✓' }), pr({ title: 'none', checks: '' })] }])

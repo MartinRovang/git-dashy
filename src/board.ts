@@ -16,8 +16,17 @@ export function inScope(p: { repo: string; team: string }, scopes: string[]): bo
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
- *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. */
-export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean, only: Only): VisSection[] {
+ *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. Hidden PRs are left out,
+ *  or with `showHidden` they are all that is left. */
+export function visible(
+  d: StateData | null,
+  query: string,
+  failing: boolean,
+  onlyDrafts: boolean,
+  only: Only,
+  hidden: Record<string, string> = {},
+  showHidden = false,
+): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -36,6 +45,7 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
         if (sourced && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (onlyDrafts && !p.isDraft) return false
+        if (isRead(hidden, p) !== showHidden) return false // same rule as read: a PR that moves comes back
         if (only.repos.length && !only.repos.includes(p.repo)) return false
         if (only.authors.length && !only.authors.includes(p.author)) return false
         if (!q) return true
