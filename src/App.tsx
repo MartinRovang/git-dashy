@@ -5,12 +5,14 @@ import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
+import { Story } from './components/Story'
+import { follow, patch, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
-import { close, confirm, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
+import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
@@ -37,6 +39,25 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
+  // where minimized story cards sit: the footer, handed to them once it is in the DOM
+  const [dock, setDock] = useState<HTMLDivElement | null>(null)
+  const [followed, setFollowedState] = useState<Followed[]>([])
+  useEffect(() => {
+    api('/api/stories')
+      .then((r) => (r.ok ? r.json() : { follow: [] }))
+      .then((j) => setFollowedState(j.follow))
+      .catch(() => {})
+  }, [])
+  // the post goes here, not inside a state updater: React may run an updater twice. The list the server
+  // kept (deduped, checked, capped) replaces ours once it answers, so a card it will not serve goes away.
+  const setFollowed = (f: (l: Followed[]) => Followed[]) => {
+    const next = f(followed)
+    setFollowedState(next)
+    post('/api/stories', { follow: next })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && setFollowedState(j.follow))
+      .catch(() => {})
+  }
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
@@ -649,7 +670,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -748,6 +769,7 @@ export default function App() {
         <span>⏎ pane</span>
         <span>r review</span>
         <span>? all keys</span>
+        <div className="dock" ref={setDock} />
         <div style={{ flex: 1 }} />
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
@@ -778,6 +800,9 @@ export default function App() {
           onClose={() => setMenuAt(null)}
         />
       ) : null}
+      {followed.map((f, i) => (
+        <Story key={f.login} f={f} i={i} every={data?.interval || 0} dock={dock} onPatch={(part) => setFollowed((l) => patch(l, f.login, part))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
+      ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

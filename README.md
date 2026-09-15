@@ -121,7 +121,7 @@ button somewhere on the page.
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
-| `m` | pick the model: opus / sonnet / fable |
+| `m` | pick the model: opus / sonnet / fable / haiku |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
@@ -539,6 +539,24 @@ or the two disagree.
 
 Memory is often team-private, so `sync-memory` refuses to write anywhere git would commit it. Ignore
 the target path first (`.git/info/exclude` keeps the rule out of the tracked `.gitignore`).
+
+## Following people
+
+**+ follow** in the top bar fuzzy-finds anyone who authored or reviewed a PR on the board (or takes any
+GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
+over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
+from its corner grip, `–` minimizes it to a chip in the footer, `⟳` asks again, `✕` unfollows.
+
+Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
+search; the model only runs when that person's PRs changed since the last story. When a minimized card's
+story changes, its chip lights up and the new bullets drop up above it.
+
+Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
+`openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.
+Following is meant for a handful of people: every card is one search per refresh, so fifty cards (the cap)
+on a short interval is a lot of GitHub traffic. Who you follow, which cards are
+minimized, and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
+(`--demo` writes nothing).
 
 ## Versioning & self-update
 

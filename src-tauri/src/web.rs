@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, team,
-    textdiff, update,
+    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, story,
+    team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -920,6 +920,23 @@ fn get_collaborators(state: &State, query: &Query) -> Out {
     Ok(json!({"logins": logins}))
 }
 
+/// ponytail: blocks this request's thread for the model call; every request has its own thread.
+/// Replace the followed list. A body without one is a mistake, not "unfollow everyone".
+fn post_stories(_state: &State, body: &Body) -> Out {
+    let Some(list) = body.get("follow").filter(|v| v.is_array()) else {
+        return Err(Fail::new(400, "follow must be a list"));
+    };
+    Ok(json!({"follow": story::set_followed(list)}))
+}
+
+fn get_story(_state: &State, query: &Query) -> Out {
+    let login = q(query, "login");
+    if !story::login_ok(login) {
+        return Err(Fail::new(400, "login must be a GitHub username"));
+    }
+    Ok(story::get(login, !q(query, "fresh").is_empty())?)
+}
+
 // ---------------------------------------------------------------- routes: POST
 
 type Body = Map<String, Value>;
@@ -1666,6 +1683,8 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/posting" => get_posting,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
+        "/api/story" => get_story,
+        "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
         _ => return None,
     })
 }
@@ -1692,6 +1711,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/update" => post_update,
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
+        "/api/stories" => post_stories,
         _ => return None,
     })
 }
@@ -2019,6 +2039,21 @@ mod tests {
             resp.status().as_u16(),
             serde_json::from_str(&text).unwrap_or(Value::String(text)),
         )
+    }
+
+    #[test]
+    fn story_routes_turn_away_a_bad_login_and_a_missing_list() {
+        let (base, token, _state) = served();
+        let (code, body) = get(&format!("{base}/api/story?login=x%22%20repo:evil"), Some(&token));
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("login must be a GitHub username"))
+        );
+        let (code, body) = post(&format!("{base}/api/stories"), json!({}), &token);
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("follow must be a list"))
+        );
     }
 
     #[test]

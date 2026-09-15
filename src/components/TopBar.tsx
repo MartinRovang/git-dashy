@@ -12,6 +12,7 @@ type Props = {
   onMenu: () => void
   onUpdate: () => void
   onHelp: () => void
+  onFollow: () => void
   onLogo: () => void
   view: 'board' | 'graph'
   onView: (v: 'board' | 'graph') => void
@@ -30,7 +31,7 @@ export function Countdown({ at, interval }: { at: number; interval: number }) {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView, only, canPick, onOnly, onClearOnly }: Props) {
+export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onFollow, onLogo, view, onView, only, canPick, onOnly, onClearOnly }: Props) {
   const running = d?.running || 0
   // ponytail: both numbers come off the same list. Counting PRs after the filters and repos before
   // them read as "3 PRs · 12 repos", which is two answers to one question.
@@ -114,6 +115,9 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
         <kbd className="hint">a</kbd>
       </div>
       <Pinata />
+      <button className="ghost" title="follow a user: a floating card of what they are working on" onClick={onFollow}>
+        + follow
+      </button>
       <button className="ghost" title="keyboard shortcuts (?)" onClick={onHelp}>
         <kbd className="hint">?</kbd> shortcuts
       </button>
