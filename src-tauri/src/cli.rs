@@ -1416,6 +1416,7 @@ fn dashboard(cli: Cli) -> i32 {
     // ponytail: web::launch_asks was never called, so the desk asked nothing at launch and the
     // Knowledge row sat on "restart to be asked" for ever — restarting asked nothing either.
     state.lock().asks = crate::web::launch_asks();
+    crate::report::clear(); // a report is a throwaway: one left by an exit that ran no code goes now
     let notes = state.clone();
     std::thread::spawn(move || notes.lock().changelog = crate::update::changelog());
     let looper = state.clone();

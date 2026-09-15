@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, story,
-    team, textdiff, update,
+    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, report, review,
+    story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -204,6 +204,10 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": THEMES,
                     "scopes": scopes},
         "knowledge": {
+            "report": {
+                "job": job("report"),
+                "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
+            },
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
             "teams": names.iter().map(|k| json!({"key": k, "name": team::info(k).name, "arrived": arrived.get(k).copied().unwrap_or(0)})).collect::<Vec<_>>(),
@@ -603,6 +607,7 @@ fn get_debug(state: &State, _q: &Query) -> Out {
             "log": config::tilde(&cfg.log),
             "debugLog": config::tilde(&cfg.debug_log),
             "selfReviews": config::tilde(&cfg.self_dir),
+            "reports": config::tilde(&cfg.reports),
             "backups": config::tilde(&cfg.backups),
             "bindings": config::tilde(&cfg.bindings),
             "autoReview": config::tilde(&cfg.autorev),
@@ -1316,6 +1321,22 @@ fn post_posting(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Start the Friday report in the background, or open the newest one written.
+fn post_report(_state: &State, body: &Body) -> Out {
+    match text(body, "op").as_str() {
+        "start" => {
+            start_job("report", report::write);
+            Ok(json!({"ok": true}))
+        }
+        "open" => {
+            let path = report::latest().ok_or_else(|| Fail::new(404, "no report yet"))?;
+            github::open_in_browser(&path.to_string_lossy());
+            Ok(json!({"ok": true}))
+        }
+        _ => Err(Fail::new(400, "op must be start or open")),
+    }
+}
+
 fn post_dream(_state: &State, body: &Body) -> Out {
     let op = text(body, "op");
     if op == "start" {
@@ -1473,6 +1494,7 @@ fn post_quit(_state: &State, _body: &Body) -> Out {
     // ponytail: the request threads have nothing to flush; the reply goes out, then the process ends
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(200));
+        report::clear();
         std::process::exit(0);
     });
     Ok(json!({"ok": true}))
@@ -1501,10 +1523,8 @@ fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
 /// the GitHub API: 0 would spin it flat out against your rate limit, and a string would break inside
 /// the refresh thread, where nothing is watching. Nothing lands until every key checked out.
 fn post_settings(state: &State, body: &Body) -> Out {
-    // every request has its own thread: without this, two posts copy the config, and the later save
-    // undoes the other's change. ponytail: one global lock, settings posts are rare and quick
-    static SAVING: Mutex<()> = Mutex::new(());
-    let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    // every request has its own thread; see config::SAVING
+    let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     let mut wake = false;
     if let Some(v) = body.get("interval") {
@@ -1727,6 +1747,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
         "/api/dream" => post_dream,
+        "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
         "/api/path" => post_path,
@@ -2805,6 +2826,21 @@ mod tests {
         assert_eq!(state.lock().changelog, "");
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(saved["seen"], config::VERSION);
+        // a dismiss waits for a settings write in progress, so neither save undoes the other
+        config::update(|c| c.seen = String::new());
+        let held = config::SAVING.lock().unwrap();
+        std::thread::scope(|sc| {
+            let dismiss = sc.spawn(|| post(&format!("{base}/api/changelog"), json!({}), &token));
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert_eq!(
+                config::get().seen,
+                "",
+                "saved while a settings write held the lock"
+            );
+            drop(held);
+            assert_eq!(dismiss.join().unwrap().0, 200);
+        });
+        assert_eq!(config::get().seen, config::VERSION);
         config::update(|c| {
             c.settings = None;
             c.seen = String::new();

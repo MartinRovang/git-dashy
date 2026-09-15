@@ -3,7 +3,11 @@
 // the drafts recurrence gate (promote just removes the draft) and the Host/token guard.
 // Active when no backend answers on :7777; force with DASHY_MOCK=1, disable with DASHY_MOCK=0.
 // DASHY_MOCK_N=400 adds that many synthetic PRs, to try the graph on a big board.
+import { spawn } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { get as httpGet } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 
@@ -98,6 +102,8 @@ const S = {
   fetching: false,
   fetchedAt: secs(),
   notices: [] as string[],
+  reportAt: 0,
+  reportLatest: null as string | null,
   // shown once per dev server start, as after an update; closing it clears it like /api/changelog does
   changelog: "v2.21.0\n\n## What's Changed\n* feat: release notes after an update\n* fix: the refresh button shows a spinner",
   asks: [] as { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }[],
@@ -246,6 +252,11 @@ function buildPayload() {
     settings: { ...S.settings },
     options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
     knowledge: {
+      // the Friday report takes 4s here, so the row's writing state is visible in dev
+      report: {
+        job: S.reportAt && secs() - S.reportAt < 4 ? { running: true, elapsed: Math.round(secs() - S.reportAt) } : { running: false },
+        latest: S.reportAt && secs() - S.reportAt >= 4 ? new Date().toISOString().slice(0, 10) : S.reportLatest,
+      },
       memory: '~/.prs_memory',
       store: '',
       teams: S.teams.map((t) => ({ key: t.key, name: t.name, arrived: 0 })),
@@ -730,6 +741,16 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/path') return json(200, { ok: true })
     if (path === '/api/update') return json(200, { ok: true })
     if (path === '/api/quit') return json(200, { ok: true })
+    if (path === '/api/report') {
+      if (body.op === 'start') S.reportAt = secs()
+      if (body.op === 'open') {
+        // like the server: a file, opened by the OS. The real page comes from src-tauri/src/report.rs.
+        const file = join(tmpdir(), 'gitdashy-mock-report.html')
+        writeFileSync(file, '<!doctype html><meta charset="utf-8"><title>Friday report · mock</title><body style="font:15px/1.6 system-ui;max-width:760px;margin:40px auto;padding:0 16px"><p style="color:#777">Friday report · mock</p><h1>The week</h1><p>The mock has no model; the real report is written by the review model.</p></body>')
+        spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [file], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
+      }
+      return json(200, { ok: true })
+    }
     if (path === '/api/changelog') {
       S.changelog = ''
       return json(200, { ok: true })

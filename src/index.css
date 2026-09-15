@@ -485,6 +485,7 @@
                border-radius: 12px; border: 1px solid var(--edge); background: var(--bg4); color: var(--ink3);
                font: inherit; font-size: 11px; cursor: pointer; }
   .tags .tag:hover { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 50%, transparent); }
+  .tags .tag:disabled { cursor: default; color: var(--dim2); border-color: var(--edge); }
 
   /* ---- the rail's foot: what the reviews came to, in the history window ---- */
   .sfoot { flex-shrink: 0; border-top: 1px solid var(--line); padding: 10px 14px 12px; }

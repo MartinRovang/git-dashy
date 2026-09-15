@@ -104,6 +104,11 @@ pub fn run(state: State, port: u16, token: String) {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                crate::report::clear(); // the window closed: the report was for this session
+            }
+        });
 }
