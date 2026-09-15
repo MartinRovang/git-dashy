@@ -945,6 +945,17 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test]
+    fn run_timed_kills_a_command_that_outlives_its_timeout() {
+        let started = Instant::now();
+        assert!(run_timed(Command::new("sleep").arg("5"), Duration::from_millis(200)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(
+            run_timed(Command::new("echo").arg("open"), Duration::from_secs(5)).unwrap(),
+            "open\n"
+        );
+    }
+
     /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips
     /// the two GitHub calls, which is the half a test cannot drive — everything after them is here.
     #[test]
