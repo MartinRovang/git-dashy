@@ -2811,6 +2811,25 @@ mod tests {
     }
 
     #[test]
+    fn a_report_route_answers_only_start_and_open_and_open_needs_a_report() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::update(|c| c.reports = dir.path().to_path_buf());
+        let (base, token, _state) = served();
+        assert_eq!(
+            post(&format!("{base}/api/report"), json!({"op": "delete"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&format!("{base}/api/report"), json!({"op": "open"}), &token).0,
+            404
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["knowledge"]["report"]["latest"], Value::Null);
+        config::update(|c| c.reports = config::Config::default().reports);
+    }
+
+    #[test]
     fn closing_the_changelog_clears_it_and_records_the_version() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
@@ -2828,7 +2847,7 @@ mod tests {
         assert_eq!(saved["seen"], config::VERSION);
         // a dismiss waits for a settings write in progress, so neither save undoes the other
         config::update(|c| c.seen = String::new());
-        let held = config::SAVING.lock().unwrap();
+        let held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
         std::thread::scope(|sc| {
             let dismiss = sc.spawn(|| post(&format!("{base}/api/changelog"), json!({}), &token));
             std::thread::sleep(std::time::Duration::from_millis(200));

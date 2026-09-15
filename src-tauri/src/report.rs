@@ -221,7 +221,11 @@ fn clear_in(dir: &std::path::Path) {
 
 /// The newest report on disk. ponytail: the names are dates, so the largest name is the newest.
 pub fn latest() -> Option<PathBuf> {
-    std::fs::read_dir(config::get().reports)
+    latest_in(&config::get().reports)
+}
+
+fn latest_in(dir: &std::path::Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "html"))
@@ -241,6 +245,16 @@ mod tests {
         assert!(!dir.path().join("2026-09-15.html").exists());
         assert!(dir.path().join("notes.txt").exists());
         clear_in(&dir.path().join("missing")); // no directory yet is fine
+    }
+
+    #[test]
+    fn the_latest_report_is_the_newest_date() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(latest_in(dir.path()), None);
+        for name in ["2026-09-08.html", "2026-09-15.html", "2026-09-20.txt"] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        assert_eq!(latest_in(dir.path()), Some(dir.path().join("2026-09-15.html")));
     }
 
     #[test]

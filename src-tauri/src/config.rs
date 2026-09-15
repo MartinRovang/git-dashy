@@ -416,7 +416,9 @@ pub fn snapshot(c: &Config) -> Saved {
 
 /// Held across every read-change-save of the settings. Without it two writers copy the config, and the
 /// later save undoes the other's change: in memory, and in the file a restart reads.
-/// ponytail: one global lock, settings writes are rare and quick
+/// ponytail: one global lock, settings writes are rare and quick. It covers the writers that SAVE
+/// (post_settings, update::mark_seen); a plain `config::update` elsewhere does not take it, and
+/// post_settings' whole-config write can still undo one that lands mid-post.
 pub static SAVING: Mutex<()> = Mutex::new(());
 
 /// Persist the settings. ponytail: `settings: None` (demo) means never write.

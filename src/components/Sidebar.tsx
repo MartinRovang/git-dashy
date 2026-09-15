@@ -314,16 +314,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <button className="tag" disabled>
                 writing… {rep.job.elapsed || 0}s
               </button>
-            ) : !rep?.latest ? (
-              <button className="tag" onClick={() => onReport('start')}>
-                generate
-              </button>
-            ) : null}
-            {rep?.latest && !rep.job.running ? (
+            ) : rep?.latest ? (
               <button className="tag" title={`open the ${rep.latest} report in the browser`} onClick={() => onReport('open')}>
                 open {rep.latest}
               </button>
-            ) : null}
+            ) : (
+              <button className="tag" onClick={() => onReport('start')}>
+                generate
+              </button>
+            )}
           </div>
           {rep?.job.error ? <div className="note">⚠ report: {rep.job.error}</div> : null}
         </Group>
