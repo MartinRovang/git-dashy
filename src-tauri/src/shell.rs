@@ -47,6 +47,18 @@ pub fn run(state: State, port: u16, token: String) {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+            // ponytail: WebKitGTK plays media only after a click inside the frame that plays it, and the
+            // logo's video is a YouTube iframe, so a click on our logo never counted. Browsers pass the
+            // click through `allow="autoplay"`; this makes the app window autoplay the same way.
+            #[cfg(target_os = "linux")]
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.with_webview(|w| {
+                    use webkit2gtk::{SettingsExt, WebViewExt};
+                    if let Some(settings) = w.inner().settings() {
+                        settings.set_media_playback_requires_user_gesture(false);
+                    }
+                });
+            }
             // ponytail: the splash says when its listeners are up. Emitting the steps from setup raced
             // the page — they all fired before it loaded, so only the first step ever spun.
             let listening = Arc::new(AtomicBool::new(false));

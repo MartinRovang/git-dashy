@@ -249,3 +249,13 @@ export function groups(rows: CodeRow[]): Group[] {
   }
   return loose.rows.length ? [...files, loose] : files
 }
+
+/** The footer's "fetching PRs…": a fetch is running and none has landed since the history change.
+ *
+ * ponytail: a tick already running when the window changes fetches the OLD window, and this shows for
+ * it; when it lands the spinner goes, and the real refetch follows up to WAKE_GAP later as "refreshing…".
+ * A settings reply saying which tick carries the new window is the upgrade if that gap is felt.
+ */
+export function isRefetching(from: number | null, d?: Pick<StateData, 'fetching' | 'fetchedAt'> | null): boolean {
+  return from != null && !!d?.fetching && d.fetchedAt === from
+}

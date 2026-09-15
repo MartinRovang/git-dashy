@@ -259,6 +259,8 @@ export function Graph({ secs, sel, onSelect }: {
       .join('circle')
       .style('fill', (d) => `url(#${gid(d)})`)
     // the names get their own layer above the nodes, so a node never covers one
+    const size = new Map<string, number>()
+    for (const r of rows) size.set(galaxyOf(r, by), (size.get(galaxyOf(r, by)) ?? 0) + 1)
     const gname = world
       .select('g.gnames')
       .selectAll<SVGTextElement, string>('text')
@@ -266,6 +268,8 @@ export function Graph({ secs, sel, onSelect }: {
       .join('text')
       .text((d) => d)
       .style('fill', (d) => tint(d, 65))
+      // bigger galaxy, bigger name: sqrt of its PR count against the largest, from 0.6x to 1.2x the base size
+      .style('--gs', (d) => String(0.6 + 0.6 * Math.sqrt(size.get(d)! / Math.max(...size.values()))))
     const link = world
       .select('g.links')
       .selectAll<SVGLineElement, Link>('line')
@@ -408,20 +412,28 @@ export function Graph({ secs, sel, onSelect }: {
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(svg)
+    let frame = 0
     const z = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.25, 4])
       .on('zoom', ({ transform }) => {
-        root.select('g.world').attr('transform', transform.toString())
         view.current = transform
-        cull()
-        svg.style.setProperty('--label', String(Math.min(1, Math.max(0, (transform.k - 0.8) * 2))))
-        svg.style.setProperty('--k', String(transform.k))
+        // a touchpad fires wheel events faster than frames, and on a 3456x2160 screen each restyle and cull
+        // redraws millions of pixels in WebKit: apply only the latest transform, once per frame
+        frame ||= requestAnimationFrame(() => {
+          frame = 0
+          const t = view.current
+          root.select('g.world').attr('transform', t.toString())
+          cull()
+          svg.style.setProperty('--label', String(Math.min(1, Math.max(0, (t.k - 0.8) * 2))))
+          svg.style.setProperty('--k', String(t.k))
+        })
       })
     root.call(z).on('dblclick.zoom', null)
     // ponytail: opens zoomed out past where titles draw (k <= .8), so the first frames lay out dots, not
     // hundreds of text nodes; scroll in to read. Through z.transform, so view, cull and --label all follow.
     root.call(z.transform, zoomIdentity.scale(START))
     return () => {
+      cancelAnimationFrame(frame)
       ro.disconnect()
       root.on('.zoom', null)
       sim.current?.stop()

@@ -1,6 +1,6 @@
 [package]
 name = "gitdashy"
-version = "2.11.0"
+version = "2.13.0"
 edition = "2021"
 description = "PR dashboard with Claude reviews and shared team memory"
 license = "MIT"
@@ -39,6 +39,10 @@ thiserror = "2"
 tiny_http = "0.12"
 ureq = { version = "3", features = ["json"] }
 urlencoding = "2"
+
+# the app window's engine on Linux, already under tauri; direct only to turn off its click-to-play rule
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2"
 
 [dev-dependencies]
 tempfile = "3"

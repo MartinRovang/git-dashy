@@ -311,8 +311,9 @@
   .gbadge { position: absolute; top: 10px; left: 12px; font-size: 11px; color: var(--dim); pointer-events: none; }
   .graph .halos, .graph .gnames { pointer-events: none; }
   /* divided by the zoom, so a galaxy name stays the same size on screen however far you zoom */
-  .graph .gnames text { font-size: calc(26px / var(--k)); font-weight: 700; text-anchor: middle; opacity: .85; paint-order: stroke; stroke: var(--bg); stroke-width: calc(4px / var(--k)); }
-  .graph line { stroke: var(--edge); stroke-width: calc(1px / var(--k)); transition: opacity .2s, stroke .2s; }
+  .graph .gnames text { font-size: calc(20px * var(--gs, 1) / var(--k)); font-weight: 700; text-anchor: middle; opacity: .85; paint-order: stroke; stroke: var(--bg); stroke-width: calc(4px / var(--k)); }
+  /* non-scaling stroke: a line keeps 1px on screen without restyling every link on each zoom frame */
+  .graph line { stroke: var(--edge); stroke-width: 1px; vector-effect: non-scaling-stroke; transition: opacity .2s, stroke .2s; }
   .graph line.lit { stroke: var(--ink3); }
   .gnode { cursor: pointer; transition: opacity .2s; }
   .gnode circle { stroke-width: 1.5; transition: r .3s; }
@@ -535,6 +536,7 @@
         border-top: 1px solid var(--line); background: var(--bg2); font-size: 11px; color: var(--dim3); }
   .ft > span { white-space: nowrap; }
   .ft .sync { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; color: var(--dim2); }
+  .ft .sync .spinner { width: 9px; height: 9px; border-width: 1.5px; }
   .ft .sync i { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
   /* ---- the shortcut window: the code viewer's frame, so it drags, resizes and stays where you
