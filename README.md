@@ -131,8 +131,8 @@ button somewhere on the page.
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
-| `H` | when this repo posts a review: `r` and auto settle separately, and `o` sets the whole owner. Held means the verdict is written to `~/.prs_held` and posts nothing until you press `Y` and say so. Posting is the default, so a repo you never set behaves as it always has |
 | `Y` | on a row waiting to post: read the held review, then post it or drop it |
+| `F` | follow someone: a floating card of what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
@@ -429,8 +429,10 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 the ones on screen or leave them as the baseline.
 
 Whether a finished review posts is a separate setting. Running a review is the expensive part;
-posting it is the part you cannot take back. `H` on a row settles that per repo, separately for
-reviews you start with `r` and for ones auto starts: post it, as always, or hold it. A held review
+posting it is the part you cannot take back. The rail's **Agent** group settles it for the
+selected PR's repo, separately for reviews you start and ones auto starts: post it, as always, or
+hold it. Both answers are buttons, so neither is hidden behind a toggle, and beside them is every
+rule set on this machine — a repo, or `owner/*` for all of them at once. A held review
 is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
 it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by
@@ -542,14 +544,23 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 
 ## Following people
 
-**+ follow** in the top bar fuzzy-finds anyone who authored or reviewed a PR on the board (or takes any
-GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
+**+ follow** in the footer, or `F`, fuzzy-finds anyone who authored or reviewed a PR on the board (or takes
+any GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
 over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
-from its corner grip, `–` minimizes it to a chip in the footer, `⟳` asks again, `✕` unfollows.
+from its corner grip, `–` minimizes it to a chip in the footer beside the button, `⟳` asks again, `✕`
+unfollows. The rail's **view** group also lists every team and org the board is showing; clicking one
+follows everyone it has a PR from.
 
 Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
-search; the model only runs when that person's PRs changed since the last story. When a minimized card's
-story changes, its chip lights up and the new bullets drop up above it.
+search; the model only runs when that person's PRs changed since the last story.
+
+A card marks itself when someone changes direction. Every rewritten story is compared against the one
+before it, in the same model call, and the bar is a *different problem* — even alongside the old one.
+Picking up an auth rewrite next to the export job is a change of direction; moving from export pagination
+to export retries is more of the same export work, and says nothing. Only the first kind marks the card:
+one line at the top of it, a dot on its footer chip, and — while it is minimized — the line and the new
+bullets drop up above the chip. Reading it clears the mark, and nothing else does: a mark raised while you
+were away survives later rewrites until you have seen it. The model answers "no change" almost every time.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
 `openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.

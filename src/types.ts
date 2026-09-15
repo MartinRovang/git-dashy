@@ -67,6 +67,14 @@ export type Knowledge = {
 
 export type Waiting = { kind: string; key: string; what: string }
 
+/** What happens to a finished review: 'post' or 'hold'. */
+export type PostWord = 'post' | 'hold'
+/** One axis of the answer for a repo: the word in force, whose rule it is, and the owner's own. */
+export type PostRule = { value: PostWord; via: '' | 'repo' | 'owner'; ownerValue: PostWord }
+export type Posting = { repo: string; owner: string; manual: PostRule; auto: PostRule }
+/** Every rule on the machine, in the order web.rs builds them. */
+export type PostingRule = { target: string; manual: PostWord; auto: PostWord }
+
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
 /** config::snapshot, only the keys the UI reads. */
@@ -107,6 +115,7 @@ export type StateData = {
   knowledge: Knowledge
   asks: Ask[]
   notices: string[]
+  postingRules?: PostingRule[]
 }
 
 export type Finding = { kind: string; text: string; loc?: string }
@@ -135,6 +144,8 @@ export type Detail = {
   brief: { whose: string; empty: boolean }
   pre: Pre
   review: Review | null
+  /** What happens to this repo's reviews, resolved by the server. */
+  posting: Posting
 }
 
 /** code_rows(): the diff as a flat list. */

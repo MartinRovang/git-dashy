@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, errorText } from '../api'
+import { api, errorText, post } from '../api'
 import { useFloatBox } from '../float'
 import { useNow } from '../usePoll'
 import type { Followed } from '../stories'
@@ -26,7 +26,13 @@ function Updated({ at }: { at: number }) {
   return <div className="updated">updated {ago}</div>
 }
 
-type Got = { at: number; summary: string; prs: { repo: string; number: number; title: string }[] }
+type Got = {
+  at: number
+  summary: string
+  prs: { repo: string; number: number; title: string }[]
+  /** One sentence, only when the model judged this a different problem from the last story. */
+  shift?: string
+}
 
 /** One followed user's floating card: what they have been on for the last 3 days, in the model's words. */
 export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i: number; every: number; dock: HTMLElement | null; onPatch: (part: Partial<Followed>) => void; onClose: () => void }) {
@@ -38,9 +44,6 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   const [got, setGot] = useState<Got | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  /** A poll brought a story other than the one on the card; shown as a drop-up while it is minimized. */
-  const [news, setNews] = useState(false)
-  const lastAt = useRef(0)
   /** A check still out: the next poll tick skips rather than stacking a second one on it. */
   const inflight = useRef(false)
 
@@ -55,8 +58,6 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
       .then(async (r) => {
         if (r.ok) {
           const next: Got = await r.json()
-          if (lastAt.current && next.at !== lastAt.current) setNews(true)
-          lastAt.current = next.at
           setGot(next)
           setErr('')
         } else if (!quiet) setErr(await errorText(r))
@@ -79,28 +80,37 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.login, every])
 
+  /** What the model called a change of direction, until it has been read. */
+  const shift = got?.shift || ''
+  /** Reading it is what clears it -- on the server too, or the next poll brings the same mark back. */
+  const read = () => {
+    if (!shift) return
+    setGot((g) => (g ? { ...g, shift: '' } : g))
+    void post('/api/story/seen', { login: f.login })
+  }
   const restore = () => {
-    setNews(false)
+    read()
     onPatch({ min: false })
   }
   const chip = f.min && dock
     ? createPortal(
-        <div className={`chip${news ? ' news' : ''}`}>
+        <div className={`chip${shift ? ' news' : ''}`}>
           <button onClick={restore} title="restore the card">
-            {news ? <i /> : null}
+            {shift ? <i /> : null}
             {f.login}
           </button>
-          {news && got ? (
+          {shift && got ? (
             <div className="pop" role="status">
               <div className="poph">
                 <b>{f.login}</b>
-                <span>new work</span>
+                <span>new direction</span>
                 <div style={{ flex: 1 }} />
-                <button className="iconbtn" onClick={() => setNews(false)} title="dismiss">
+                <button className="iconbtn" onClick={read} title="dismiss">
                   ✕
                 </button>
               </div>
               <div onClick={restore} style={{ cursor: 'pointer' }}>
+                <p className="shiftline">{shift}</p>
                 <Summary text={got.summary} />
               </div>
             </div>
@@ -117,10 +127,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
         <div className="bar" title="drag to move, double-click to maximize" {...drag}>
           <b>{f.login}</b>
           <div style={{ flex: 1 }} />
-          <button className="iconbtn" onClick={() => {
-              setNews(false)
-              onPatch({ min: true })
-            }} title="minimize to the footer">
+          <button className="iconbtn" onClick={() => onPatch({ min: true })} title="minimize to the footer">
             –
           </button>
           <button className="iconbtn" onClick={() => load(true)} disabled={busy} title="ask again">
@@ -131,6 +138,15 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
           </button>
         </div>
         <div className="keys scroll">
+          {shift ? (
+            <div className="shift" role="status">
+              <b>new direction</b>
+              <span>{shift}</span>
+              <button className="iconbtn" onClick={read} title="dismiss">
+                ✕
+              </button>
+            </div>
+          ) : null}
           {/* above the story, not instead of it: a failed ⟳ leaves the last good one readable */}
           {err ? <p style={{ color: 'var(--red)' }}>✗ {err}</p> : null}
           {busy ? (

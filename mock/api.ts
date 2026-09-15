@@ -10,6 +10,16 @@ import type { Plugin } from 'vite'
 const TARGET = 'http://127.0.0.1:7777'
 
 const THEMES = ['pencil', 'dashy', 'dracula', 'gruvbox', 'nord']
+// several of each kind, so the sources rows are worth grouping in dev too
+const SCOPES = [
+  'team:teamdashy',
+  'team:acme-guild',
+  'team:platform',
+  'org:acme',
+  'org:a',
+  'org:other',
+  'org:infra',
+]
 const MODELS = ['opus', 'sonnet', 'fable']
 const DEPTHS = ['adaptive', 'low', 'medium', 'high']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -238,7 +248,7 @@ function buildPayload() {
     running: S.rows.filter((r) => r.busy).length,
     update: '',
     settings: { ...S.settings },
-    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
+    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: SCOPES },
     knowledge: {
       memory: '~/.prs_memory',
       store: '',
@@ -251,6 +261,7 @@ function buildPayload() {
     },
     asks: S.asks,
     notices: S.notices,
+    postingRules: postingRules(),
   }
 }
 
@@ -273,6 +284,7 @@ function detail(url: string) {
       { name: 'preview deploy', state: 'ok' },
     ],
     brief: { whose: teamOf(r.repo), empty: false },
+    posting: postingOf(r.repo),
     pre: r.pre,
     review: info
       ? {
@@ -370,6 +382,28 @@ function postReview(b: Body) {
   return json(200, { ok: true })
 }
 
+/** repo beats owner beats the default, the same chain the store resolves. One place, so the detail
+ *  and the /api/posting route cannot disagree. */
+function postingOf(repo: string) {
+  const owner = repo.split('/')[0]
+  const mine = S.posting[repo]
+  const theirs = S.postingOwners[owner]
+  const one = (ran: 'manual' | 'auto') => ({
+    value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
+    via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
+    ownerValue: theirs?.[ran] ?? 'post',
+  })
+  return { repo, owner, manual: one('manual'), auto: one('auto') }
+}
+
+/** Every rule that exists, owners first — and each half sorted, the way posting_rules_json does it. */
+function postingRules() {
+  const by = (a: { target: string }, b: { target: string }) => a.target.localeCompare(b.target)
+  const owners = Object.entries(S.postingOwners).map(([o, r]) => ({ target: `${o}/*`, ...r })).sort(by)
+  const repos = Object.entries(S.posting).map(([t, r]) => ({ target: t, ...r })).sort(by)
+  return [...owners, ...repos]
+}
+
 function postSettings(b: Body) {
   const s = S.settings
   for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
@@ -391,24 +425,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
-      const owner = repo.split('/')[0]
-      const mine = S.posting[repo]
-      const theirs = S.postingOwners[owner]
       const key = `${repo}#${query.get('number') || ''}`
-      // repo beats owner beats the default, the same chain the store resolves
-      const one = (ran: 'manual' | 'auto') => ({
-        value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
-        via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
-        ownerValue: theirs?.[ran] ?? 'post',
-      })
       const h = S.held[key]
-      return json(200, {
-        repo,
-        owner,
-        manual: one('manual'),
-        auto: one('auto'),
-        held: h ? { ...h, moved: !!h.moved } : null,
-      })
+      return json(200, { ...postingOf(repo), held: h ? { ...h, moved: !!h.moved } : null })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))

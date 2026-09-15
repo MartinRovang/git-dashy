@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { StateData } from '../types'
+import { Fragment, useState } from 'react'
+import type { Posting, StateData } from '../types'
 import { counts } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
@@ -11,6 +11,15 @@ type Props = {
   onTeams: () => void
   onModal: (name: string) => void
   onAuto: () => void
+  /** Ask who, then follow them. */
+  onFollow: () => void
+  /** Follow everyone the board shows working under one `team:`/`org:` scope. */
+  onFollowScope: (scope: string) => void
+  /** How many are followed, so the rail can say so when shut. */
+  followed: number
+  /** What happens to the selected repo's reviews, resolved by the server; null with no PR selected. */
+  posting: Posting | null
+  onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', owner: boolean) => void
   onAskAgain: (kind: string, key: string) => void
   collapsed: boolean
   onCollapse: () => void
@@ -45,6 +54,78 @@ function Pills({ label, values }: { label: string; values: string[] }) {
         <s className="off">none</s>
       )}
     </span>
+  )
+}
+
+/** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
+ *
+ * ponytail: grouped, and the prefix is the heading. One flat wrapped row of `team:neomedsys`
+ * `org:martinrovang` chips repeated the prefix on every one of them, right-aligned itself into a
+ * ragged block, and gave no way to say "all of them" — which is the answer most of the time.
+ */
+function Sources({
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  options: string[]
+  picked: string[]
+  onToggle: (v: string) => void
+  onAll: (v: string[]) => void
+}) {
+  if (!options.length) {
+    return (
+      <>
+        <div className="sub">
+          <kbd className="hint">O</kbd> sources
+        </div>
+        <div className="rules none">nothing seen yet — a team or an org shows up once it has a PR</div>
+      </>
+    )
+  }
+  const groups: [string, string, string][] = [
+    ['team:', 'teams', 'a repo bound to one of your teams'],
+    ['org:', 'orgs', 'every repo under that owner'],
+  ]
+  const all = options.length === picked.length
+  return (
+    <>
+      <div className="sub">
+        <kbd className="hint">O</kbd> sources
+        <em>
+          {/* explicit, not a chip that means the opposite of itself when it is already on. Disabled when
+              it is already true: pressing it otherwise posts a setting nothing changed and flashes it. */}
+          <button className="lnk" aria-pressed={all} disabled={all} onClick={() => onAll(options)}>
+            all
+          </button>
+          <button className="lnk" aria-pressed={!picked.length} disabled={!picked.length} onClick={() => onAll([])}>
+            none
+          </button>
+        </em>
+      </div>
+      {groups.map(([prefix, label, why]) => {
+        const mine = options.filter((v) => v.startsWith(prefix))
+        if (!mine.length) return null
+        return (
+          <div className="srcs" key={prefix}>
+            <b title={why}>{label}</b>
+            <div className="chips">
+              {mine.map((v) => (
+                <i
+                  key={v}
+                  className={picked.includes(v) ? 'on' : ''}
+                  title={`${v} — ${why}`}
+                  onClick={() => onToggle(v)}
+                >
+                  {v.slice(prefix.length)}
+                </i>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </>
   )
 }
 
@@ -95,7 +176,7 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onAskAgain, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, posting, onPosting, onAskAgain, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -114,6 +195,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // ponytail: `waiting` is what a NO is holding back, not what is waiting for an answer — the rows
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
+  const rules = d?.postingRules || []
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -136,7 +218,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           k="agent"
           label="Agent"
-          summary={[s.model, s.depth, s.effort].filter(Boolean).join(' · ')}
+          summary={[
+            [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
+            posting && (posting.manual.value === 'hold' || posting.auto.value === 'hold') ? 'holds a review' : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
           digest={
             <>
               <Ln label="model" value={s.model || '—'} />
@@ -145,6 +232,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <Pills label="voices" values={s.voice || []} />
               <Pills label="hunters" values={s.hunter || []} />
               <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
+              {/* the one setting here that changes what lands on someone else's PR, so it survives
+                  the collapse even though it is the selected repo's and not the machine's */}
+              <Ln label="you ran it" value={posting ? posting.manual.value : '—'} off={posting?.manual.value !== 'hold'} />
+              <Ln label="auto ran it" value={posting ? posting.auto.value : '—'} off={posting?.auto.value !== 'hold'} />
             </>
           }
           open={!!open.agent}
@@ -175,6 +266,73 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <span>Auto-run on new PRs</span>
             <span className="sw" />
           </button>
+
+          {/* ponytail: here, and spelled out. It was a modal behind `H` on a row showing two lines of
+              "post it / wait for a key · via acme/*", so both options were never on screen at once
+              and nothing said what else was set. Posting is the part you cannot take back, so the
+              setting should not be hidden behind a key. */}
+          <div className="sub">
+            when a review finishes <em>{posting ? posting.repo : 'pick a PR'}</em>
+          </div>
+          {posting ? (
+            <>
+              {(['manual', 'auto'] as const).map((ran) => (
+                <Fragment key={ran}>
+                  <div className="pair">
+                    <span>{ran === 'manual' ? 'you ran it' : 'auto ran it'}</span>
+                    <div className="seg" role="group">
+                      {(['post', 'hold'] as const).map((w) => (
+                        <button
+                          key={w}
+                          aria-pressed={posting[ran].value === w}
+                          title={
+                            w === 'post'
+                              ? 'the verdict goes on the PR as soon as it is written'
+                              : 'the verdict waits on disk; Y reads it and posts or drops it'
+                          }
+                          onClick={() => onPosting(ran, w, false)}
+                        >
+                          {w === 'post' ? 'post it' : 'hold it'}
+                        </button>
+                      ))}
+                    </div>
+                    <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
+                      {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'this repo' : 'default'}
+                    </i>
+                  </div>
+                  {/* ponytail: one per axis, and both carry aria-pressed. A single auto-only toggle left an
+                      owner-wide manual rule listed in the table below that nothing on screen could set or
+                      clear, and without aria-pressed the switch sat in its off position whatever the rule
+                      said. */}
+                  <button
+                    className="fld"
+                    aria-pressed={posting[ran].ownerValue === 'hold'}
+                    title={`the rule for every repo under ${posting.owner}, which a rule on one repo still overrides`}
+                    onClick={() => onPosting(ran, posting[ran].ownerValue === 'hold' ? 'post' : 'hold', true)}
+                  >
+                    <span>
+                      all of {posting.owner}/* {posting[ran].ownerValue === 'hold' ? 'holds' : 'posts'}{' '}
+                      {ran === 'manual' ? 'what you run' : 'what auto runs'}
+                    </span>
+                    <span className="sw" />
+                  </button>
+                </Fragment>
+              ))}
+            </>
+          ) : null}
+          {rules.length ? (
+            <div className="rules">
+              {rules.map((r) => (
+                <div key={r.target}>
+                  <b>{r.target}</b>
+                  <span>you {r.manual === 'hold' ? 'hold' : 'post'}</span>
+                  <span>auto {r.auto === 'hold' ? 'holds' : 'posts'}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">every repo posts its reviews — nothing is set</div>
+          )}
         </Group>
 
         <Group
@@ -187,6 +345,22 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <Ln label="refresh" value={every(s.interval || 0)} />
               <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
               <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
+              {/* a count, not the names: seven badges is the whole rail, and "4 of 7" is the thing
+                  you actually want to know at this width */}
+              <Ln label="following" value={String(followed)} off={!followed} />
+              <Ln
+                label="sources"
+                value={
+                  !o.scopes.length
+                    ? 'none yet'
+                    : !(s.scopes || []).length
+                      ? 'none'
+                      : (s.scopes || []).length === o.scopes.length
+                        ? 'all'
+                        : `${(s.scopes || []).length} of ${o.scopes.length}`
+                }
+                off={!(s.scopes || []).length}
+              />
             </>
           }
           open={!!open.view}
@@ -207,13 +381,34 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <span>Show key hints</span>
             <span className="sw" />
           </button>
-          <Row k="O" label="sources">
-            {o.scopes.length ? (
-              <Chips values={s.scopes || []} options={o.scopes} onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))} />
-            ) : (
-              <b style={{ color: 'var(--dim2)' }}>none seen yet</b>
-            )}
-          </Row>
+          <Sources
+            options={o.scopes}
+            picked={s.scopes || []}
+            onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))}
+            onAll={(v) => setting('scopes', v)}
+          />
+          {/* ponytail: these DO something, they do not toggle — following a team is "add everyone it
+              has on the board right now", so the same chip pressed tomorrow adds whoever joined
+              since. The tag shape is the one the Knowledge group already uses for an action. */}
+          <div className="sub">
+            <kbd className="hint">F</kbd> follow
+            <em>
+              <button className="lnk" onClick={onFollow}>
+                someone
+              </button>
+            </em>
+          </div>
+          {o.scopes.length ? (
+            <div className="tags">
+              {o.scopes.map((v) => (
+                <button className="tag" key={v} title={`follow everyone the board shows under ${v}`} onClick={() => onFollowScope(v)}>
+                  {v.replace(':', ' ')}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">a team or an org shows up here once it has a PR</div>
+          )}
           <Row k="t" label="history">
             <Select
               value={s.window == null ? 'all' : String(s.window)}

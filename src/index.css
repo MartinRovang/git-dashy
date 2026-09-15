@@ -393,7 +393,11 @@
   /* ponytail: the drag grip sits at right:-3px, so a plain overflow:hidden clips half of it and all
      of its dragging highlight. Clip the scroll axis only. */
   .side { padding: 0; gap: 0; overflow-x: visible; overflow-y: clip; }
-  .side.shut { width: 106px; }
+  /* ponytail: !important because an inline width outranks any rule, and the grip writes one while you
+     drag. The drag clears it on release, which is the actual fix; this holds the collapse against the
+     next thing that writes an inline width on this box. A collapse that does nothing is worse than no
+     collapse button. */
+  .side.shut { width: 106px !important; }
 
   /* just the collapse button: the top bar owns the wordmark and the version, and it stays on screen
      when this rail is shut. */
@@ -604,6 +608,14 @@
   .dock .pop li::marker { color: var(--pink); }
   .dock .pop p { margin: 0; font-size: 12.5px; color: var(--ink2); }
   @keyframes pop-up { from { opacity: 0; transform: translateY(6px); } }
+  .dock .pop p.shiftline { color: var(--ink); margin-bottom: 8px; }
+  /* the mark on the open card: what changed, above the story it changed into */
+  .story .shift { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; padding: 7px 9px;
+                  border: 1px solid color-mix(in srgb, var(--pink) 40%, transparent); border-radius: 8px;
+                  background: color-mix(in srgb, var(--pink) 10%, transparent); }
+  .story .shift b { font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--pink);
+                    text-transform: uppercase; letter-spacing: .04em; padding-top: 1px; white-space: nowrap; }
+  .story .shift span { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink); }
   .story .updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); margin: -4px 0 10px; }
   .story summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
 
@@ -656,3 +668,47 @@
 
   /* the Esc menu names the board key that does the same thing, before the current value */
   .modal .opt kbd.hint { margin-left: 6px; }
+
+  /* ponytail: a two-button group, not a switch. Both answers are on screen with their own words, so
+     "what happens when a review finishes" is read rather than inferred from which way a toggle sits. */
+  .fields .pair { display: flex; align-items: center; gap: 7px; padding: 3px 0; min-height: 26px; }
+  .fields .pair > span { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim);
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fields .pair > i { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--dim3);
+                      flex-shrink: 0; width: 52px; text-align: right;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg { display: flex; flex-shrink: 0; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 10.5px; padding: 2px 7px; border: 0; background: var(--bg4);
+                color: var(--dim2); cursor: pointer; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--edge); }
+  .seg button:hover { color: var(--ink2); }
+  .seg button[aria-pressed='true'] { background: var(--bg); color: var(--ink); }
+  /* held is the one that changes what lands on a PR, so it is the one that gets a colour */
+  .seg button[aria-pressed='true']:last-child { color: var(--violet); }
+
+  /* the rules table under the posting controls */
+  .rules { margin-top: 8px; border-top: 1px solid var(--line2); padding-top: 7px;
+           display: flex; flex-direction: column; gap: 4px; }
+  .rules > div { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; }
+  .rules b { font-family: var(--mono); font-weight: 500; color: var(--ink3); flex: 1; min-width: 0;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rules span { font-family: var(--mono); font-size: 9.5px; color: var(--dim3); flex-shrink: 0; }
+  .rules.none { font-size: 10.5px; color: var(--dim3); line-height: 1.4; }
+
+  /* sources: the prefix is the heading, so a chip carries only the name */
+  .srcs { display: flex; align-items: baseline; gap: 8px; padding: 2px 0 4px; }
+  .srcs > b { flex-shrink: 0; width: 34px; font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+              letter-spacing: .08em; color: var(--dim3); }
+  .srcs .chips { flex: 1; min-width: 0; justify-content: flex-start; }
+  /* a plain word that acts, next to a heading that does not */
+  .sub em .lnk { font: inherit; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
+                 padding: 0 4px; border: 0; background: none; color: var(--dim3); cursor: pointer; }
+  .sub em .lnk:hover { color: var(--pink); }
+  .sub em .lnk[aria-pressed='true'], .sub em .lnk:disabled { color: var(--ink3); cursor: default; }
+  .sub em .lnk:disabled:hover { color: var(--ink3); }
+  .sub em { display: flex; margin-left: auto; opacity: 1; }
+
+  /* the footer's own plain-word button, next to the dock a followed card minimises into */
+  .ft .lnk.foot { font: inherit; font-size: 11px; padding: 0 4px; border: 0; background: none;
+                  color: var(--dim2); cursor: pointer; white-space: nowrap; }
+  .ft .lnk.foot:hover { color: var(--pink); }
