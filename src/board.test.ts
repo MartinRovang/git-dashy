@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
-import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, UNFOLDED } from './board'
+import { ALL, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, onScreen, pick, pickBucket, remember, selected, visible, walkBucket, whoIs, UNFOLDED } from './board'
 
 let n = 0
 
@@ -248,6 +248,7 @@ describe('emptyLine', () => {
     expect(emptyLine(d, 'MINE', '', true, false)).toBe('Nothing matches the filter.')
     expect(emptyLine(d, 'MINE', '', false, true)).toBe('Nothing matches the filter.')
     expect(emptyLine(d, 'REVIEWED', 'foo', false, false)).toBe('Nothing matches the filter.')
+    expect(emptyLine(d, 'MINE', '', false, false, { repos: ['acme/web'], authors: [] })).toBe('Nothing matches the filter.')
   })
 
   it('a query of nothing but spaces is not a filter', () => {
@@ -517,4 +518,19 @@ describe('isRefetching', () => {
     expect(isRefetching(100, { fetching: false, fetchedAt: 100 })).toBe(false)
     expect(isRefetching(null, { fetching: true, fetchedAt: 100 })).toBe(false)
   })
+})
+
+describe('repo and author picks', () => {
+  const d = state([
+    { name: 'MINE', prs: [pr({ title: 'a', repo: 'acme/web', author: 'bob' }), pr({ title: 'b', repo: 'acme/api', author: 'ann' })] },
+    { name: 'ASSIGNED', prs: [pr({ title: 'c', repo: 'acme/web', author: 'ann' })] },
+  ])
+  const titles = (repos: string[], authors: string[]) => visible(d, '', false, false, { repos, authors }).flatMap((s) => s.prs.map((p) => p.title))
+
+  it('an empty pick is everything', () => expect(titles([], [])).toEqual(['a', 'b', 'c']))
+  it('narrows by repo', () => expect(titles(['acme/web'], [])).toEqual(['a', 'c']))
+  it('narrows by author', () => expect(titles([], ['ann'])).toEqual(['b', 'c']))
+  it('repo and author both apply', () => expect(titles(['acme/web'], ['ann'])).toEqual(['c']))
+  it('lists the options off the raw board, sorted and once each', () =>
+    expect(whoIs(d)).toEqual({ repos: ['acme/api', 'acme/web'], authors: ['ann', 'bob'] }))
 })

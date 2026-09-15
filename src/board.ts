@@ -17,7 +17,7 @@ export function inScope(p: { repo: string; team: string }, scopes: string[]): bo
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
  *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. */
-export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean): VisSection[] {
+export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean, only: Only = NOBODY): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -36,6 +36,8 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
         if (sourced && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (onlyDrafts && !p.isDraft) return false
+        if (only.repos.length && !only.repos.includes(p.repo)) return false
+        if (only.authors.length && !only.authors.includes(p.author)) return false
         if (!q) return true
         return `${p.title} ${p.repo} ${p.author} #${p.number}`.toLowerCase().includes(q)
       })
@@ -54,6 +56,21 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
   if (other?.prs.length) out.push(other)
   if (merged) out.push(merged)
   return out
+}
+
+/** The repo and author picks. An empty list is every one of them, not none.
+ *
+ * ponytail: kept apart from `Filters` on purpose — forView() wipes those for the graph because the
+ * graph cannot show them, but these sit in the top bar, which both views have.
+ */
+export type Only = { repos: string[]; authors: string[] }
+export const NOBODY: Only = { repos: [], authors: [] }
+
+/** Every repo and author on the raw board, sorted, so a pick never hides the options to undo it. */
+export function whoIs(d: StateData | null): Only {
+  const prs = (d?.sections || []).flatMap((s) => s.prs || [])
+  const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  return { repos: uniq(prs.map((p) => p.repo)), authors: uniq(prs.map((p) => p.author)) }
 }
 
 /** REVIEWED lists one entry per REVIEW; the newest keeps the row and the rest fold under it. */
@@ -146,8 +163,8 @@ export function walkBucket(keys: string[], cur: readonly string[], dir: 1 | -1):
  * filter emptying the section makes it false — type `/foo` and MINE says you have nothing open. The
  * queue line is only true when nothing is narrowing the board.
  */
-export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean): string {
-  if (query.trim() || failing || drafts) return 'Nothing matches the filter.'
+export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean, only: Only = NOBODY): string {
+  if (query.trim() || failing || drafts || only.repos.length || only.authors.length) return 'Nothing matches the filter.'
   const win = settings(d).window
   if (name === 'REVIEWED' && win) return `Nothing reviewed in the last ${win}h.`
   return SECTION_EMPTY[name] || 'Nothing here.'

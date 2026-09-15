@@ -1,7 +1,7 @@
 import { Pinata } from './Pinata'
 import { useNow } from '../usePoll'
 import type { StateData } from '../types'
-import type { VisSection } from '../board'
+import type { Only, VisSection } from '../board'
 
 type Props = {
   data: StateData | null
@@ -15,6 +15,10 @@ type Props = {
   onLogo: () => void
   view: 'board' | 'graph'
   onView: (v: 'board' | 'graph') => void
+  /** The repo and author picks; empty is all. */
+  only: Only
+  onOnly: (which: keyof Only) => void
+  onClearOnly: (which: keyof Only) => void
 }
 
 /** "Ns" to the next refresh: the only ticking text, so only it re-renders every second, not its bar. */
@@ -24,7 +28,7 @@ export function Countdown({ at, interval }: { at: number; interval: number }) {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView }: Props) {
+export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView, only, onOnly, onClearOnly }: Props) {
   const running = d?.running || 0
   // ponytail: both numbers come off the same list. Counting PRs after the filters and repos before
   // them read as "3 PRs · 12 repos", which is two answers to one question.
@@ -60,6 +64,27 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
           ))}
         </div>
         <kbd className="hint">G</kbd>
+      </div>
+      <div className="fgroup">
+        {(['repos', 'authors'] as const).map((w) => {
+          const n = only[w].length
+          return (
+            <button key={w} className="chip" aria-pressed={!!n} title={`only these ${w}`} onClick={() => onOnly(w)}>
+              {w} <b>{n ? (n === 1 ? only[w][0].split('/').pop() : n) : 'all'}</b>
+              {n ? (
+                <span
+                  aria-label={`clear ${w}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClearOnly(w)
+                  }}
+                >
+                  ✕
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
       </div>
       <div style={{ flex: 1 }} />
       {d?.update ? (
