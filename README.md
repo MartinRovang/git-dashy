@@ -551,8 +551,10 @@ Cards check on the board's refresh interval (not while the window is hidden). Ea
 search; the model only runs when that person's PRs changed since the last story. When a minimized card's
 story changes, its chip lights up and the new bullets drop up above it.
 
-Stories run on Haiku through the `claude` CLI whatever model reviews use, unless reviews go through
-`openrouter:` / `local:`, in which case the cards use that model too. Who you follow, which cards are
+Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
+`openrouter:` or `local:`, in which case the cards use that model too. They ignore the effort setting.
+Following is meant for a handful of people: every card is one search per refresh, so fifty cards (the cap)
+on a short interval is a lot of GitHub traffic. Who you follow, which cards are
 minimized, and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
 (`--demo` writes nothing).
 

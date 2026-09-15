@@ -78,7 +78,7 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     },
   }
 
-  /** A corner handle of our own. ponytail: `resize: both` alone does not answer in the Linux app's webview
+  /** A corner handle of our own; its floors are `.fw`'s min-width and min-height. ponytail: `resize: both` alone does not answer in the Linux app's webview
    *  when a scrolling child covers the corner, so a box that needs resizing there spreads these on a div. */
   const grip = {
     onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -89,7 +89,7 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     },
     onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => {
       const s = sizing.current
-      if (s) setBox((b) => fit({ ...b, w: Math.max(280, s.w + e.clientX - s.x), h: Math.max(160, s.h + e.clientY - s.y) }))
+      if (s) setBox((b) => fit({ ...b, w: Math.max(280, s.w + e.clientX - s.x), h: Math.max(200, s.h + e.clientY - s.y) }))
     },
     onPointerUp: () => (sizing.current = null),
     onLostPointerCapture: () => (sizing.current = null),

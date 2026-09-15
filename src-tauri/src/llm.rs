@@ -65,6 +65,27 @@ pub fn ask(
     timeout_secs: u64,
     env: &[(String, String)],
 ) -> Result<(String, Option<f64>, u64)> {
+    ask_at(
+        prompt,
+        model,
+        system,
+        tools,
+        timeout_secs,
+        env,
+        &config::get().effort,
+    )
+}
+
+/// `ask` at an effort of the caller's choosing rather than the picked one; "" leaves it to the model.
+pub fn ask_at(
+    prompt: &str,
+    model: &str,
+    system: &str,
+    tools: &str,
+    timeout_secs: u64,
+    env: &[(String, String)],
+    effort: &str,
+) -> Result<(String, Option<f64>, u64)> {
     let cfg = config::get();
     if cfg.demo {
         return Ok((
@@ -77,7 +98,7 @@ pub fn ask(
     let started = Instant::now();
     log::debug!("ask {who}:{name} tools={tools} prompt={} chars", prompt.len());
     if who == "claude" {
-        return ask_claude(prompt, &name, system, tools, timeout_secs, env, &cfg.effort);
+        return ask_claude(prompt, &name, system, tools, timeout_secs, env, effort);
     }
     let endpoints = config::endpoints();
     let (base, key_env) = endpoints
@@ -95,8 +116,8 @@ pub fn ask(
         sent["usage"] = json!({"include": true});
         // ponytail: --effort was claude-only, so a reasoning model behind OpenRouter thought as hard as it
         // liked and a 2k-token diff took minutes. Same knob, same names, one translation table.
-        if !cfg.effort.is_empty() {
-            sent["reasoning"] = json!({"effort": reasoning(&cfg.effort)});
+        if !effort.is_empty() {
+            sent["reasoning"] = json!({"effort": reasoning(effort)});
         }
     }
     let body = serde_json::to_vec(&sent)?;

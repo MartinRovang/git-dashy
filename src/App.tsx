@@ -48,11 +48,15 @@ export default function App() {
       .then((j) => setFollowedState(j.follow))
       .catch(() => {})
   }, [])
-  // the post goes here, not inside a state updater: React may run an updater twice
+  // the post goes here, not inside a state updater: React may run an updater twice. The list the server
+  // kept (deduped, checked, capped) replaces ours once it answers, so a card it will not serve goes away.
   const setFollowed = (f: (l: Followed[]) => Followed[]) => {
     const next = f(followed)
     setFollowedState(next)
-    void post('/api/stories', { follow: next })
+    post('/api/stories', { follow: next })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && setFollowedState(j.follow))
+      .catch(() => {})
   }
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
   // button and a right-click on a row.

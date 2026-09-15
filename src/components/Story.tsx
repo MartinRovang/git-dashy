@@ -131,9 +131,9 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
           </button>
         </div>
         <div className="keys scroll">
-          {err ? (
-            <p style={{ color: 'var(--red)' }}>✗ {err}</p>
-          ) : busy ? (
+          {/* above the story, not instead of it: a failed ⟳ leaves the last good one readable */}
+          {err ? <p style={{ color: 'var(--red)' }}>✗ {err}</p> : null}
+          {busy ? (
             <div className="skel" aria-busy="true">
               <span className="shimtext">fetching summaries…</span>
               <i style={{ width: '92%' }} />
