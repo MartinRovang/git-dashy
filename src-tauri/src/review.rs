@@ -228,7 +228,7 @@ fn fill(template: &str, vals: &[(&str, &str)]) -> String {
 }
 
 /// A subprocess' stdout, killed when `timeout` passes. Err carries stderr, or why it could not run.
-fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
+pub(crate) fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

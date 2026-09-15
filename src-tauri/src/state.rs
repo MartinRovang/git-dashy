@@ -18,6 +18,9 @@ use crate::{
 /// carries it and writes it out once, beside the other temp files.
 pub const NOTIFY_ICON: &[u8] = include_bytes!("../ui/notify.png");
 
+/// How long a popup waits for its Open click before notify-send is killed, so an undismissed one cannot hold a thread forever.
+const NOTIFY_WAIT: Duration = Duration::from_secs(600);
+
 /// Seconds since the epoch, as Python's time.time().
 pub fn now() -> f64 {
     SystemTime::now()
@@ -858,12 +861,12 @@ pub fn notify(pr: &Pr, section: &str) {
         return;
     };
     let url = pr.url.clone();
-    // ponytail: -A blocks until dismissed, so wait in a thread; notify-send only (Linux)
+    // ponytail: -A blocks until dismissed, so wait in a thread, killed after NOTIFY_WAIT; notify-send only (Linux)
     std::thread::spawn(move || {
         // a popup is decoration; the refresh loop must outlive it
-        let out = std::process::Command::new(&argv[0]).args(&argv[1..]).output();
+        let out = review::run_timed(std::process::Command::new(&argv[0]).args(&argv[1..]), NOTIFY_WAIT);
         if let Ok(out) = out {
-            if String::from_utf8_lossy(&out.stdout).trim() == "open" {
+            if out.trim() == "open" {
                 github::open_in_browser(&url);
             }
         }
