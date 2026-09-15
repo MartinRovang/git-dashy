@@ -270,7 +270,7 @@ pub fn review(pr: &Pr, model: &str) -> String {
     ];
     match &verdicts[TURN.fetch_add(1, Ordering::SeqCst) % verdicts.len()] {
         Some(v) => {
-            // no real review to have read them, so the fake one runs with whatever is set
+            // demo has no review that read the settings, so it logs the current ones
             let c = config::get();
             let v = Verdict {
                 depth: c.depth.clone(),
