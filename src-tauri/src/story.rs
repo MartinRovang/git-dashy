@@ -282,10 +282,7 @@ mod tests {
     #[test]
     fn a_saved_follow_list_comes_back_checked() {
         let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "min": true}]);
-        assert_eq!(
-            clean(&raw),
-            json!([{"login": "Bob"}, {"login": "amy"}])
-        );
+        assert_eq!(clean(&raw), json!([{"login": "Bob"}, {"login": "amy"}]));
         assert_eq!(clean(&json!(null)), json!([]));
     }
 
