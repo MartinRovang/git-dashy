@@ -228,7 +228,7 @@ fn fill(template: &str, vals: &[(&str, &str)]) -> String {
 }
 
 /// A subprocess' stdout, killed when `timeout` passes. Err carries stderr, or why it could not run.
-fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
+pub(crate) fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -943,6 +943,17 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn run_timed_kills_a_command_that_outlives_its_timeout() {
+        let started = Instant::now();
+        assert!(run_timed(Command::new("sleep").arg("5"), Duration::from_millis(200)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(
+            run_timed(Command::new("echo").arg("open"), Duration::from_secs(5)).unwrap(),
+            "open\n"
+        );
     }
 
     /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips
