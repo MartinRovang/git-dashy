@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, NOBODY, type Only, whoIs, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, NOBODY, type Only, pickable, whoIs, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -92,12 +92,9 @@ export default function App() {
   }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only), [data, query, failing, onlyDrafts, only])
-  const pickOnly = (which: keyof Only) => {
-    const options = whoIs(data)[which]
-    // a pick that left the board (merged away, window narrowed) stays listed so it can be unticked
-    const all = [...options, ...only[which].filter((v) => !options.includes(v))]
-    picker(`only these ${which}`, all, only[which], String, (v) => setOnly((o) => ({ ...o, [which]: v })), true)
-  }
+  const opts = useMemo(() => whoIs(data), [data])
+  const pickOnly = (which: keyof Only) =>
+    picker(`only these ${which}`, pickable(opts, only, which), only[which], String, (v) => setOnly((o) => ({ ...o, [which]: v })), true)
   // folds are the board's: in the graph a node of a folded section is still clickable, so nothing is folded there
   const rows = useMemo(() => flat(secs, bucket, expanded, view === 'graph' ? UNFOLDED : unfolded), [secs, bucket, expanded, unfolded, view])
   const { row: current, chosen } = pick(rows, sel)
@@ -541,7 +538,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}

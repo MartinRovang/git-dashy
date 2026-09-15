@@ -17,6 +17,8 @@ type Props = {
   onView: (v: 'board' | 'graph') => void
   /** The repo and author picks; empty is all. */
   only: Only
+  /** False when a picker would open empty (no data yet, or nothing on the board). */
+  canPick: (which: keyof Only) => boolean
   onOnly: (which: keyof Only) => void
   onClearOnly: (which: keyof Only) => void
 }
@@ -28,7 +30,7 @@ export function Countdown({ at, interval }: { at: number; interval: number }) {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView, only, onOnly, onClearOnly }: Props) {
+export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView, only, canPick, onOnly, onClearOnly }: Props) {
   const running = d?.running || 0
   // ponytail: both numbers come off the same list. Counting PRs after the filters and repos before
   // them read as "3 PRs · 12 repos", which is two answers to one question.
@@ -69,7 +71,7 @@ export function TopBar({ data: d, secs, onRefresh, onAuto, onMenu, onUpdate, onH
         {(['repos', 'authors'] as const).map((w) => {
           const n = only[w].length
           return (
-            <button key={w} className="chip" aria-pressed={!!n} title={`only these ${w}`} onClick={() => onOnly(w)}>
+            <button key={w} className="chip" aria-pressed={!!n} disabled={!canPick(w)} title={`only these ${w}`} onClick={() => onOnly(w)}>
               {w} <b>{n ? (n === 1 ? only[w][0].split('/').pop() : n) : 'all'}</b>
               {n ? (
                 <span

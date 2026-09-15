@@ -17,7 +17,7 @@ export function inScope(p: { repo: string; team: string }, scopes: string[]): bo
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
  *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. */
-export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean, only: Only = NOBODY): VisSection[] {
+export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean, only: Only): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -66,11 +66,20 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
 export type Only = { repos: string[]; authors: string[] }
 export const NOBODY: Only = { repos: [], authors: [] }
 
+/** What the repo and author pickers can offer. Same shape as `Only`, but these are the choices, not the pick. */
+export type Options = { repos: string[]; authors: string[] }
+
 /** Every repo and author on the raw board, sorted, so a pick never hides the options to undo it. */
-export function whoIs(d: StateData | null): Only {
+export function whoIs(d: StateData | null): Options {
   const prs = (d?.sections || []).flatMap((s) => s.prs || [])
   const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b))
   return { repos: uniq(prs.map((p) => p.repo)), authors: uniq(prs.map((p) => p.author)) }
+}
+
+/** One picker's list: the board's options, then any pick that left the board (merged away, window
+ *  narrowed) so it can still be unticked. picker(many) drops a ticked value that is not in its list. */
+export function pickable(opts: Options, only: Only, which: keyof Only): string[] {
+  return [...opts[which], ...only[which].filter((v) => !opts[which].includes(v))]
 }
 
 /** REVIEWED lists one entry per REVIEW; the newest keeps the row and the rest fold under it. */
@@ -163,7 +172,7 @@ export function walkBucket(keys: string[], cur: readonly string[], dir: 1 | -1):
  * filter emptying the section makes it false — type `/foo` and MINE says you have nothing open. The
  * queue line is only true when nothing is narrowing the board.
  */
-export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean, only: Only = NOBODY): string {
+export function emptyLine(d: StateData | null, name: string, query: string, failing: boolean, drafts: boolean, only: Only): string {
   if (query.trim() || failing || drafts || only.repos.length || only.authors.length) return 'Nothing matches the filter.'
   const win = settings(d).window
   if (name === 'REVIEWED' && win) return `Nothing reviewed in the last ${win}h.`
