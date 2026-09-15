@@ -30,7 +30,7 @@ type Got = { at: number; summary: string; prs: { repo: string; number: number; t
 
 /** One followed user's floating card: what they have been on for the last 3 days, in the model's words. */
 export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i: number; every: number; dock: HTMLElement | null; onPatch: (part: Partial<Followed>) => void; onClose: () => void }) {
-  const { box, el, drag, style } = useFloatBox(
+  const { box, el, drag, grip, style } = useFloatBox(
     `story:${f.login}`,
     () => ({ x: window.innerWidth - 360 - i * 28, y: 70 + i * 28, w: 340, h: 230, max: false }),
     '.iconbtn',
@@ -154,6 +154,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
             </details>
           ) : null}
         </div>
+        {box.max ? null : <div className="fgrip" title="drag to resize" {...grip} />}
       </div>
     </>
   )

@@ -32,6 +32,7 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
   const [box, setBox] = useState(() => stored(key, make))
   const el = useRef<HTMLDivElement>(null)
   const grab = useRef<{ dx: number; dy: number } | null>(null)
+  const sizing = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
 
   useEffect(() => {
     try {
@@ -77,6 +78,23 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     },
   }
 
+  /** A corner handle of our own. ponytail: `resize: both` alone does not answer in the Linux app's webview
+   *  when a scrolling child covers the corner, so a box that needs resizing there spreads these on a div. */
+  const grip = {
+    onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (box.max) return
+      e.stopPropagation()
+      sizing.current = { x: e.clientX, y: e.clientY, w: box.w, h: box.h }
+      e.currentTarget.setPointerCapture(e.pointerId)
+    },
+    onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => {
+      const s = sizing.current
+      if (s) setBox((b) => fit({ ...b, w: Math.max(280, s.w + e.clientX - s.x), h: Math.max(160, s.h + e.clientY - s.y) }))
+    },
+    onPointerUp: () => (sizing.current = null),
+    onLostPointerCapture: () => (sizing.current = null),
+  }
+
   const style = box.max ? undefined : { left: box.x, top: box.y, width: box.w, height: box.h }
-  return { box, el, drag, style }
+  return { box, el, drag, grip, style }
 }
