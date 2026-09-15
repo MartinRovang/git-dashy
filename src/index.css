@@ -568,6 +568,10 @@
   .krow { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
   .krow kbd { min-width: 44px; height: 20px; font-size: 11px; color: var(--ink2); }
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
+  .story .keys p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+  .story summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
+  .story .bar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
+                       border: 1px solid var(--edge); border-radius: 6px; height: 24px; color-scheme: dark; }
 
   /* the pane header's options button */
   .tab.opt { font-family: var(--sans); font-size: 12px; border-color: var(--edge); background: var(--bg4); color: var(--ink3); }

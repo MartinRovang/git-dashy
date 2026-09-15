@@ -19,7 +19,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, team,
+    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, story, team,
     textdiff, update,
 };
 
@@ -855,6 +855,19 @@ fn get_collaborators(state: &State, query: &Query) -> Out {
     Ok(json!({"logins": logins}))
 }
 
+/// ponytail: blocks this request's thread for the model call; every request has its own thread.
+fn get_story(_state: &State, query: &Query) -> Out {
+    let login = q(query, "login");
+    if !story::login_ok(login) {
+        return Err(Fail::new(400, "login must be a GitHub username"));
+    }
+    Ok(story::get(
+        login,
+        story::clamp_days(q(query, "days")),
+        !q(query, "fresh").is_empty(),
+    )?)
+}
+
 // ---------------------------------------------------------------- routes: POST
 
 type Body = Map<String, Value>;
@@ -1546,6 +1559,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/bind" => get_bind,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
+        "/api/story" => get_story,
         _ => return None,
     })
 }

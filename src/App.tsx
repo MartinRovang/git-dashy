@@ -5,6 +5,8 @@ import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
+import { Story } from './components/Story'
+import { follow, loadFollowed, saveFollowed, setDays, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -34,6 +36,13 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
+  const [followed, setFollowedState] = useState(loadFollowed)
+  const setFollowed = (f: (l: Followed[]) => Followed[]) =>
+    setFollowedState((l) => {
+      const next = f(l)
+      saveFollowed(next)
+      return next
+    })
   // the PR the actions popup is about, and where to put it. One state for both the pane's Options
   // button and a right-click on a row.
   const [menuAt, setMenuAt] = useState<{ p: Row; at: Anchor } | null>(null)
@@ -533,7 +542,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void prompt('GitHub username to follow:').then((l) => l.trim() && setFollowed((f) => follow(f, l.trim())))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -661,6 +670,9 @@ export default function App() {
           onClose={() => setMenuAt(null)}
         />
       ) : null}
+      {followed.map((f, i) => (
+        <Story key={f.login} f={f} i={i} onDays={(d) => setFollowed((l) => setDays(l, f.login, d))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
+      ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />
