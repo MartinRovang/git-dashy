@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
+import { ALL, NOBODY, type Only, pickable, whoIs, buckets, flat, FOLDABLE, forView, groups, inBucket, isRead, isRefetching, onScreen, pick, pickBucket, remember, UNFOLDED, visible, walkBucket } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -30,6 +30,8 @@ export default function App() {
   // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
   // counts zero and goes flat, which is the honest state rather than a contradiction.
   const [onlyDrafts, setOnlyDrafts] = useState(false)
+  // ponytail: session-only like the rest of the filter row; a setting if people want it to survive a launch
+  const [only, setOnly] = useState<Only>(NOBODY)
   // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
@@ -89,7 +91,10 @@ export default function App() {
     }, 500)
   }
 
-  const secs = useMemo(() => visible(data, query, failing, onlyDrafts), [data, query, failing, onlyDrafts])
+  const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only), [data, query, failing, onlyDrafts, only])
+  const opts = useMemo(() => whoIs(data), [data])
+  const pickOnly = (which: keyof Only) =>
+    picker(`only these ${which}`, pickable(opts, only, which), only[which], String, (v) => setOnly((o) => ({ ...o, [which]: v })), true)
   // folds are the board's: in the graph a node of a folded section is still clickable, so nothing is folded there
   const rows = useMemo(() => flat(secs, bucket, expanded, view === 'graph' ? UNFOLDED : unfolded), [secs, bucket, expanded, unfolded, view])
   const { row: current, chosen } = pick(rows, sel)
@@ -533,7 +538,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -579,6 +584,7 @@ export default function App() {
                 read={read}
                 onReadAll={() => markRead(onScreen(secs, bucket, unfolded))}
                 query={query}
+                only={only}
                 onQuery={setQuery}
                 failing={failing}
                 onFailing={() => setFailing((v) => !v)}
