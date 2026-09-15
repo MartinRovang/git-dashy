@@ -6,7 +6,7 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, patch, people, unfollow, type Followed } from './stories'
+import { follow, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -39,8 +39,6 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
-  // where minimized story cards sit: the footer, handed to them once it is in the DOM
-  const [dock, setDock] = useState<HTMLDivElement | null>(null)
   const [followed, setFollowedState] = useState<Followed[]>([])
   useEffect(() => {
     api('/api/stories')
@@ -49,7 +47,7 @@ export default function App() {
       .catch(() => {})
   }, [])
   // the post goes here, not inside a state updater: React may run an updater twice. The list the server
-  // kept (deduped, checked, capped) replaces ours once it answers, so a card it will not serve goes away.
+  // kept (deduped, checked, capped) replaces ours once it answers, so a pill it will not serve goes away.
   const setFollowed = (f: (l: Followed[]) => Followed[]) => {
     const next = f(followed)
     setFollowedState(next)
@@ -769,7 +767,11 @@ export default function App() {
         <span>⏎ pane</span>
         <span>r review</span>
         <span>? all keys</span>
-        <div className="dock" ref={setDock} />
+        <div className="dock">
+          {followed.map((f) => (
+            <Story key={f.login} login={f.login} every={data?.interval || 0} onUnfollow={() => setFollowed((l) => unfollow(l, f.login))} />
+          ))}
+        </div>
         <div style={{ flex: 1 }} />
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
@@ -800,9 +802,6 @@ export default function App() {
           onClose={() => setMenuAt(null)}
         />
       ) : null}
-      {followed.map((f, i) => (
-        <Story key={f.login} f={f} i={i} every={data?.interval || 0} dock={dock} onPatch={(part) => setFollowed((l) => patch(l, f.login, part))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
-      ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

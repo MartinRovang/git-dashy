@@ -571,10 +571,6 @@
   .krow { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
   .krow kbd { min-width: 44px; height: 20px; font-size: 11px; color: var(--ink2); }
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
-  .story .keys p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
-  .story .keys ul { margin: 0 0 10px; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
-  .story .keys li { margin-bottom: 4px; }
-  .story .keys li::marker { color: var(--pink); }
   /* the loading card: bars where the bullets will be, and the label and bars share one sweep */
   .skel { display: flex; flex-direction: column; gap: 9px; padding-top: 2px; }
   .skel i, .shimtext { background: linear-gradient(90deg, var(--bg4) 25%, var(--edge) 50%, var(--bg4) 75%);
@@ -585,27 +581,33 @@
               -webkit-background-clip: text; background-clip: text; color: transparent; }
   @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
   @media (prefers-reduced-motion: reduce) { .skel i, .shimtext { animation: none; } }
-  /* minimized cards: a chip per user in the footer, and a drop-up above it when their story changes */
-  .dock { display: flex; gap: 6px; align-items: center; }
-  .dock .chip { position: relative; }
-  .dock .chip > button { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px;
-                         border: 1px solid var(--edge); background: var(--bg4); color: var(--ink2);
-                         font-family: var(--mono); font-size: 11px; cursor: pointer; }
-  .dock .chip > button:hover { border-color: var(--dim3); color: var(--ink); }
-  .dock .chip.news > button { border-color: var(--pink); color: var(--ink); }
+  /* followed users: a pill each in the footer, a pop-up above it on click or when new work comes in */
+  .dock { display: flex; gap: 6px; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .dock::-webkit-scrollbar { display: none; }
+  .dock .chip { flex-shrink: 0; display: flex; align-items: center; height: 22px; padding: 0; gap: 0; border-radius: 11px;
+                border: 1px solid var(--edge); background: var(--bg4); }
+  .dock .chip:hover, .dock .chip.on { border-color: var(--dim3); }
+  .dock .chip.news { border-color: var(--pink); }
+  .dock .chip > button { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 4px 0 9px; border: 0;
+                         background: none; color: var(--ink2); font-family: var(--mono); font-size: 11px; cursor: pointer; }
+  .dock .chip:is(:hover, .on, .news) > button:first-child { color: var(--ink); }
+  .dock .chip > button.x { padding: 0 8px 0 3px; color: var(--dim3); font-size: 13px; }
+  .dock .chip > button.x:hover { color: var(--red); }
   .dock .chip > button i { width: 6px; height: 6px; border-radius: 50%; background: var(--pink); }
-  .dock .pop { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 10; width: 320px; max-height: 50vh; overflow-y: auto;
+  .dock .pop { position: fixed; bottom: 42px; z-index: 10; width: 360px; max-height: 60vh; overflow-y: auto;
                padding: 10px 12px; background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
-               box-shadow: 0 18px 60px rgba(0,0,0,0.55); animation: pop-up .18s ease-out; }
+               box-shadow: 0 18px 60px rgba(0,0,0,0.55); animation: pop-up .18s ease-out; cursor: default; }
   .dock .poph { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .dock .poph b { font-size: 13px; }
   .dock .poph span { font-family: var(--mono); font-size: 10.5px; color: var(--pink); }
-  .dock .pop ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--ink2); }
+  .dock .pop ul { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--ink2); }
+  .dock .pop li { margin-bottom: 4px; }
+  .dock .pop ul.go { cursor: pointer; }
   .dock .pop li::marker { color: var(--pink); }
-  .dock .pop p { margin: 0; font-size: 12.5px; color: var(--ink2); }
+  .dock .pop p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--ink2); }
+  .dock .pop .updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); margin: -4px 0 10px; }
+  .dock .pop summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
   @keyframes pop-up { from { opacity: 0; transform: translateY(6px); } }
-  .story .updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); margin: -4px 0 10px; }
-  .story summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
 
   /* the pane header's options button */
   .tab.opt { font-family: var(--sans); font-size: 12px; border-color: var(--edge); background: var(--bg4); color: var(--ink3); }

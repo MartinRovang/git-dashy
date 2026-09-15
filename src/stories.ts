@@ -1,15 +1,14 @@
-// Who the floating story cards follow. The server keeps the list (~/.prs_stories.json): this page's own
+// Who the footer story pills follow. The server keeps the list (~/.prs_stories.json): this page's own
 // storage is per origin, and the port changes every launch.
 
-/** `min`: the card sits in the footer as a chip. */
-export type Followed = { login: string; min?: boolean }
+export type Followed = { login: string }
 
 /** GitHub logins are case-insensitive, so every lookup here is too. */
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 /** Add once. */
 export const follow = (list: Followed[], login: string): Followed[] =>
-  list.some((f) => same(f.login, login)) ? list : [...list, { login, min: false }]
+  list.some((f) => same(f.login, login)) ? list : [...list, { login }]
 
 export const unfollow = (list: Followed[], login: string) => list.filter((f) => !same(f.login, login))
 
@@ -59,5 +58,10 @@ export function fuzzy(q: string, logins: string[]): string[] {
   return scored.sort((a, b) => b[0] - a[0]).map(([, l]) => l)
 }
 
-export const patch = (list: Followed[], login: string, part: Partial<Followed>) =>
-  list.map((f) => (same(f.login, login) ? { ...f, ...part } : f))
+export type Pr = { repo: string; number: number; title: string; url: string; updatedAt?: string }
+export type Got = { at: number; summary: string; prs: Pr[] }
+
+/** PRs in `next` that are new or were pushed since `prev`. A story saved before PRs carried `updatedAt`
+ *  cannot tell, so it reports nothing rather than every PR. */
+export const moved = (prev: Got, next: Got): Pr[] =>
+  prev.prs.some((q) => !q.updatedAt) ? [] : next.prs.filter((p) => !prev.prs.some((q) => q.url === p.url && q.updatedAt === p.updatedAt))

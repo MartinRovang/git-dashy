@@ -17,7 +17,7 @@ const VOICES = ['review', 'caveman', 'bot']
 const HUNTERS = ['ponytail', 'security', 'tests', 'perf', 'humanizer']
 const SUBS = ['all', 'open', 'off']
 const INTERVALS = [60, 120, 300, 600, 900]
-const WINDOWS = [6, 24, 168, 720, null]
+const WINDOWS = [1, 3, 6, 24, 168, 720, null]
 const PROMOTE_AT = 2
 
 type Pre = { at: number; moved: boolean } | null
@@ -69,6 +69,8 @@ function mkPr(n: number, title: string, repo: string, author: string, hours: num
 }
 
 const S = {
+  follow: [{ login: 'frank' }, { login: 'alice' }] as { login: string }[],
+  storyCalls: {} as Record<string, number>,
   rows: [] as Row[],
   reviewText: {} as Record<string, string>,
   reviewInfo: {} as Record<string, ReviewInfo>,
@@ -386,9 +388,22 @@ function postSettings(b: Body) {
   return json(200, { ok: true })
 }
 
+// a followed user's story; every poll after the first finds one more PR, so the "new work" pop-up shows
+function story(login: string) {
+  const n = (S.storyCalls[login] = (S.storyCalls[login] || 0) + 1)
+  const pr = (i: number) => ({ repo: 'acme/api', number: 200 + i, title: `${login}'s change #${i}`, url: `https://github.com/acme/api/pull/${200 + i}`, updatedAt: `t${i}` })
+  return {
+    summary: `- ${login} is reworking auth middleware in acme/api\n- reviewing small fixes in acme/dashboard`,
+    prs: Array.from({ length: n + 1 }, (_, i) => pr(i)),
+    at: n === 1 ? secs() - 120 : secs(),
+  }
+}
+
 function handleApi(method: string, path: string, query: URLSearchParams, body: Body) {
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
+    if (path === '/api/stories') return json(200, { follow: S.follow })
+    if (path === '/api/story') return json(200, story(query.get('login') || ''))
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
       const owner = repo.split('/')[0]
@@ -511,6 +526,10 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
 
   if (method === 'POST') {
     if (path === '/api/review') return postReview(body)
+    if (path === '/api/stories') {
+      S.follow = ((body as { follow?: { login: string }[] }).follow || []).map((f) => ({ login: f.login }))
+      return json(200, { follow: S.follow })
+    }
     if (path === '/api/auto') {
       S.auto = bool(body, 'on')
       return json(200, { ok: true })
