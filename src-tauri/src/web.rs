@@ -19,7 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    bind, config, diff, github, install, knowledge, log as review_log, memory, review, team, textdiff, update,
+    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, team,
+    textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -65,6 +66,8 @@ fn team_error() -> String {
 
 /// Everything one frame of the GUI needs, as plain JSON.
 pub fn payload(state: &State) -> Value {
+    // one read for the count, the flag and the rows, so they cannot describe different files
+    let auto_scope = autorev::scope();
     let (
         sections,
         reviews,
@@ -91,7 +94,7 @@ pub fn payload(state: &State) -> Value {
             inner.fetched_at,
             inner.fetching,
             inner.auto,
-            inner.pending_rr().len(),
+            inner.pending_rr(&|r| auto_scope.armed(r)).len(),
             inner.update.clone(),
             inner.asks.clone(),
             inner.notices.clone(),
@@ -174,6 +177,11 @@ pub fn payload(state: &State) -> Value {
         "fetching": fetching,
         "error": error,
         "auto": auto,
+        // ponytail: the boolean, not "is the list empty". A store holding nothing but an --off row
+        // is a non-empty list while auto still covers everything, so a page deriving the rule from
+        // the rows gets it backwards. The rule lives in autorev.rs and says so here.
+        "autoEverywhere": auto_scope.everywhere(),
+        "autoScope": auto_scope.listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -584,6 +592,7 @@ fn get_debug(state: &State, _q: &Query) -> Out {
             "selfReviews": config::tilde(&cfg.self_dir),
             "backups": config::tilde(&cfg.backups),
             "bindings": config::tilde(&cfg.bindings),
+            "autoReview": config::tilde(&cfg.autorev),
             "teams": config::tilde(&cfg.teams),
             "registry": config::tilde(&cfg.registry),
             "corpus": config::tilde(&cfg.corpus_home),
@@ -893,6 +902,33 @@ fn post_review(state: &State, body: &Body) -> Out {
 }
 
 fn post_auto(state: &State, body: &Body) -> Out {
+    // arming is a scope change, not the master switch. `owner` carries the owner and `repo` the
+    // repo: a truthy FLAG that re-read `repo` through owner_of() meant a client sending the owner
+    // name in `owner` — the obvious reading — widened a repo arm to the whole org by coincidence.
+    let (repo, owner) = (text(body, "repo"), text(body, "owner"));
+    if !repo.is_empty() || !owner.is_empty() {
+        // ponytail: explicit. `truthy` reads a missing key as false, so {"repo": "acme/api"} with no
+        // `on` DISARMED it — a caller that forgot the field got the opposite of what it asked for,
+        // silently. #86's toggle is about to be written against this route.
+        let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
+            return Err(Fail::new(400, "a scope change needs on: true or on: false"));
+        };
+        // ponytail: the same answer `auto_cmd` gives. It silently preferred `owner` and dropped
+        // `repo`, so the two surfaces resolved one body two ways, and #86's toggle is written
+        // against this one.
+        if !repo.is_empty() && !owner.is_empty() {
+            return Err(Fail::new(400, "name a repo or an owner, not both"));
+        }
+        fail_if(if owner.is_empty() {
+            autorev::set(&repo, on)
+        } else {
+            autorev::set_owner(&owner, on)
+        })?;
+        // ponytail: the no-batch rule is tick()'s, not this route's. `gitdashy auto` writes the same
+        // store from another process, so suppressing it here left the CLI path firing the batch.
+        state.wake();
+        return Ok(json!({"ok": true}));
+    }
     // ponytail: include_existing only when the page says so: it asks first, with the count, as `a` did.
     state.set_auto(truthy(body, "on"), truthy(body, "includeExisting"));
     Ok(json!({"ok": true}))
@@ -2010,6 +2046,117 @@ mod tests {
             )
             .0,
             404
+        );
+    }
+
+    /// The route carries two different jobs on one path: the master switch, and the per-repo scope.
+    /// A body with no `repo` must still be the switch, or turning auto on would arm nothing.
+    #[test]
+    fn the_auto_route_arms_a_repo_without_touching_the_switch() {
+        let _g = autorev::test_lock(); // config.autorev is process-global; one lock for every test that moves it
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.autorev = d.path().join("autorev"));
+        let (base, token, state) = served();
+
+        post(&format!("{base}/api/auto"), json!({"on": true}), &token);
+        assert!(state.lock().auto, "no repo named, so this is the master switch");
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoScope"],
+            json!([])
+        );
+
+        post(&format!("{base}/api/auto"), json!({"on": false}), &token);
+        assert!(!state.lock().auto);
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "on": true}),
+            &token,
+        );
+        assert!(!state.lock().auto, "arming a repo must not flip the switch");
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoScope"],
+            json!([{"target": "acme/api", "on": true}])
+        );
+        assert!(autorev::scope().armed("acme/api") && !autorev::scope().armed("other/thing"));
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["autoEverywhere"],
+            json!(false)
+        );
+
+        // the owner is its own value, not a flag that re-reads `repo`
+        post(
+            &format!("{base}/api/auto"),
+            json!({"owner": "acme", "on": true}),
+            &token,
+        );
+        assert!(
+            autorev::scope().armed("acme/web"),
+            "the owner rule reaches a sibling repo"
+        );
+        post(
+            &format!("{base}/api/auto"),
+            json!({"owner": "acme", "on": false}),
+            &token,
+        );
+        assert!(!autorev::scope().armed("acme/web") && autorev::scope().armed("acme/api"));
+
+        // a store holding nothing but an --off row is a non-empty list while auto still covers
+        // everything, so the flag and the rows must not be derived from each other
+        post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "on": false}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(
+            d["autoEverywhere"],
+            json!(true),
+            "nothing armed, so auto covers everything"
+        );
+        assert_eq!(
+            d["autoScope"],
+            json!([{"target": "acme/*", "on": false}, {"target": "acme/api", "on": false}])
+        );
+
+        // a scope change with no `on` is a caller bug, not a disarm: truthy() read it as false
+        let (code, body) = post(&format!("{base}/api/auto"), json!({"repo": "acme/api"}), &token);
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("a scope change needs on: true or on: false"))
+        );
+
+        // both at once resolves one way here and another in the CLI unless it is refused
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "acme/api", "owner": "beta", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("name a repo or an owner, not both"))
+        );
+        assert!(
+            !autorev::scope().listed().iter().any(|(t, _)| t == "beta/*"),
+            "the refused body wrote nothing"
+        );
+
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"repo": "notes", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("notes is not an owner/name"))
+        );
+        let (code, body) = post(
+            &format!("{base}/api/auto"),
+            json!({"owner": "acme/api", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("acme/api is not an owner"))
         );
     }
 

@@ -10,7 +10,8 @@ use log::{debug, error, info};
 
 use crate::types::{Detail, DiffFile, Finding, Mark, Pr, Section};
 use crate::{
-    config, diff, github, heartbeat, install, log as review_log, memory, mirror, review, team, update,
+    autorev, config, diff, github, heartbeat, install, log as review_log, memory, mirror, review, team,
+    update,
 };
 
 /// The desktop popup's icon. Python pointed notify-send at dashy/notify.png on disk; the binary
@@ -95,6 +96,10 @@ pub struct Inner {
     pub diffing: HashSet<DiffKey>,
     /// RR urls present when auto was switched on; None while auto is off.
     pub auto_baseline: Option<HashSet<String>>,
+    /// The auto-review scope as of the last tick, so the tick can see what just became covered.
+    /// None until the first tick, which counts as "everything was covered" — `set_auto` has already
+    /// baselined by then.
+    pub auto_scope: Option<autorev::Scope>,
     /// ponytail: the PR's updatedAt (or head) when a finished status was last seen. A verdict
     /// describes one revision; once the PR moves, it is stale and must stop masking what GitHub now says.
     pub seen_at: HashMap<String, String>,
@@ -123,12 +128,32 @@ impl Inner {
             .collect()
     }
     /// Review-requested urls with no verdict or review in flight.
-    pub fn pending_rr(&self) -> Vec<String> {
-        self.rr_urls()
+    /// The RR urls auto would actually start, so the number someone consents to is the number that
+    /// will run. ponytail: scope-filtered — the "Also review the N already listed?" prompt counted
+    /// PRs in repos auto is not armed for, and that is the count the answer is given against.
+    pub fn pending_rr(&self, armed: &dyn Fn(&str) -> bool) -> Vec<String> {
+        self.rr_prs()
             .into_iter()
-            .filter(|u| !self.reviews.contains_key(u))
+            .filter(|p| !self.reviews.contains_key(&p.url) && armed(p.repo()))
+            .map(|p| p.url)
             .collect()
     }
+    /// Take up a new auto-review scope: whatever it newly covers joins the baseline, so widening
+    /// never fires a batch — whoever widened it, and from whichever process.
+    ///
+    /// ponytail: a method rather than four lines in tick(), because the test for it was otherwise
+    /// a copy of those lines asserting that `None.as_mut()` does nothing, which no change to this
+    /// crate could ever fail.
+    pub fn absorb_scope(&mut self, scope: &autorev::Scope) {
+        // no previous scope is the first tick: everything counted as covered, and set_auto has
+        // already baselined by then, so nothing here is new
+        let prev = self.auto_scope.replace(scope.clone()).unwrap_or_default();
+        let newly = newly_covered(&self.rr_prs(), &prev, scope);
+        if let Some(b) = self.auto_baseline.as_mut() {
+            b.extend(newly);
+        }
+    }
+
     fn rr_prs(&self) -> Vec<Pr> {
         self.sections
             .iter()
@@ -137,6 +162,41 @@ impl Inner {
             .cloned()
             .collect()
     }
+}
+
+/// The urls that just came into scope: listed now, not covered before, covered now.
+///
+///
+/// They join the baseline, so widening never fires a batch — whoever widened it. `a` asks before
+/// reviewing a backlog and shows the count; arming a repo goes through no such gate, and the writer
+/// may be another process entirely, which is why this is the tick's job and not the route's.
+///
+/// ponytail: a function, because the block it came from is inside tick(), which fetches. The route
+/// used to do this and the CLI path fired the batch anyway.
+fn newly_covered(rr: &[Pr], prev: &autorev::Scope, now: &autorev::Scope) -> Vec<String> {
+    rr.iter()
+        .filter(|p| !prev.armed(p.repo()) && now.armed(p.repo()))
+        .map(|p| p.url.clone())
+        .collect()
+}
+
+/// The review-requested PRs auto should start on this tick.
+///
+/// Three conditions, and each has cost a bug: new since auto was switched on (or it reviews the
+/// backlog you were already ignoring), no verdict and none in flight (or it reviews the same head
+/// twice), and in a repo auto is armed for (or one `a` reviews every repo the token can see).
+///
+/// ponytail: a function because the loop it came from is inside tick(), which fetches. Nothing could
+/// drive it, and `armed` is the third condition to be added there — the first two were never tested.
+fn auto_starts(
+    rr: Vec<Pr>,
+    baseline: &HashSet<String>,
+    reviews: &HashMap<String, String>,
+    armed: &dyn Fn(&str) -> bool,
+) -> Vec<Pr> {
+    rr.into_iter()
+        .filter(|p| !baseline.contains(&p.url) && !reviews.contains_key(&p.url) && armed(p.repo()))
+        .collect()
 }
 
 /// Drop every entry the predicate names, so one PR keeps one entry, not one per push or review.
@@ -300,9 +360,14 @@ impl State {
 
     /// include_existing: review what is already listed too, not just what shows up later.
     pub fn set_auto(&self, on: bool, include_existing: bool) {
+        // ponytail: the scope is read HERE too, so the next tick sees no widening. Without it, a
+        // scope armed from the CLI seconds earlier still looked new to that tick, which folded the
+        // very PRs just consented to into the baseline — fewer ran than the count asked about.
+        let scope = autorev::scope();
         let wake = {
             let mut inner = self.lock();
             inner.auto = on;
+            inner.auto_scope = Some(scope);
             inner.auto_baseline = if !on {
                 None
             } else if include_existing {
@@ -315,16 +380,6 @@ impl State {
         if on && include_existing {
             wake.set(); // refetch now so the listed PRs start without waiting for the next tick
         }
-    }
-
-    /// Review-requested PRs with no verdict or review in flight.
-    pub fn pending_rr(&self) -> Vec<Pr> {
-        let inner = self.lock();
-        inner
-            .rr_prs()
-            .into_iter()
-            .filter(|p| !inner.reviews.contains_key(&p.url))
-            .collect()
     }
 
     /// The thread's landing: the row's status, nothing spinning, nothing kept.
@@ -589,6 +644,10 @@ impl State {
         // longer than GRACE made a healthy dashboard read as dead until it came round again, and one
         // slow team pull is enough at a 120s git timeout. So the tick beats again at the end.
         heartbeat::beat(interval);
+        // ponytail: one read of the store for the whole tick, and OUTSIDE the lock — asking per row
+        // would reopen the file once per PR, two rows in one tick could disagree if a click landed
+        // between them, and none of that IO needs the state mutex held.
+        let scope = autorev::scope();
         let new: Vec<Pr> = {
             let mut inner = self.lock();
             inner.sections = data.clone();
@@ -662,13 +721,16 @@ impl State {
                     }
                 }
             }
-            inner.pending = inner.pending_rr();
+            inner.pending = inner.pending_rr(&|r| scope.armed(r));
+            // ponytail: HERE, not in the route that writes the store. `gitdashy auto` is a separate
+            // process, so the dashboard learns about a widened scope by reading the file on the next
+            // tick — and suppressing the batch in post_auto left the CLI path firing the very batch
+            // the route was careful to avoid. The tick is where every writer converges.
+            inner.absorb_scope(&scope);
             match (&inner.auto, &inner.auto_baseline) {
-                (true, Some(baseline)) => inner
-                    .rr_prs()
-                    .into_iter()
-                    .filter(|p| !baseline.contains(&p.url) && !inner.reviews.contains_key(&p.url))
-                    .collect(),
+                (true, Some(baseline)) => {
+                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
+                }
                 _ => Vec::new(),
             }
         };
@@ -833,6 +895,249 @@ mod tests {
         assert!(notify_cmd(&gone, "ASSIGNED").is_none()); // a deleted account; notify() swallows this
     }
 
+    /// A PR in a named repo, so the armed-scope leg can be aimed.
+    fn pr_in(url: &str, repo: &str) -> Pr {
+        let mut p = pr(url);
+        p.repository.name_with_owner = repo.into();
+        p.repository.name = repo.split('/').next_back().unwrap_or(repo).into();
+        p
+    }
+
+    fn started(
+        rr: Vec<Pr>,
+        baseline: &[&str],
+        reviewed: &[&str],
+        armed: &dyn Fn(&str) -> bool,
+    ) -> Vec<String> {
+        let b: HashSet<String> = baseline.iter().map(|s| s.to_string()).collect();
+        let r: HashMap<String, String> = reviewed
+            .iter()
+            .map(|s| (s.to_string(), "✓".to_string()))
+            .collect();
+        auto_starts(rr, &b, &r, armed)
+            .into_iter()
+            .map(|p| p.url)
+            .collect()
+    }
+
+    #[test]
+    fn auto_starts_what_is_new_and_unreviewed_in_an_armed_repo() {
+        let every = |_: &str| true;
+        let rr = || vec![pr_in("new", "a/b"), pr_in("old", "a/b"), pr_in("done", "a/b")];
+        assert_eq!(started(rr(), &[], &[], &every), ["new", "old", "done"]);
+        assert_eq!(started(rr(), &["old"], &[], &every), ["new", "done"]);
+        assert_eq!(started(rr(), &["old"], &["done"], &every), ["new"]);
+    }
+
+    /// The whole point of the store: one `a` must not review every repo the token can see.
+    #[test]
+    fn auto_skips_a_repo_it_is_not_armed_for() {
+        let only_b = |repo: &str| repo == "a/b";
+        let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
+        assert_eq!(started(rr, &[], &[], &only_b), ["mine"]);
+    }
+
+    /// The "Also review the N already listed?" prompt is the number someone consents against, so it
+    /// counts what auto will actually start, not every review request on the board.
+    #[test]
+    fn the_pending_count_only_counts_repos_auto_is_armed_for() {
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![
+                pr_in("mine", "a/b"),
+                pr_in("theirs", "other/thing"),
+                pr_in("done", "a/b"),
+            ]),
+            None,
+        )];
+        st.lock().reviews.insert("done".into(), "✓ approved".into());
+        let every = |_: &str| true;
+        let only_b = |repo: &str| repo == "a/b";
+        assert_eq!(st.lock().pending_rr(&every), ["mine", "theirs"]);
+        assert_eq!(st.lock().pending_rr(&only_b), ["mine"]);
+    }
+
+    /// The invariant the CLI path broke: the dashboard learns about a widened scope by reading the
+    /// file on the next tick, so whoever widened it, what is already listed there must not start.
+    #[test]
+    fn widening_the_scope_baselines_what_is_already_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        // the third repo is covered by NEITHER scope: it must not join the baseline just because
+        // the previous scope did not cover it either
+        let rr = vec![
+            pr_in("mine", "a/b"),
+            pr_in("theirs", "other/thing"),
+            pr_in("untouched", "third/one"),
+        ];
+
+        crate::autorev::set("a/b", true);
+        let narrow = crate::autorev::scope();
+        crate::autorev::set("other/thing", true);
+        let wide = crate::autorev::scope();
+
+        assert_eq!(newly_covered(&rr, &narrow, &wide), ["theirs"]);
+        // and with that url in the baseline, the tick starts nothing
+        assert_eq!(
+            started(rr.clone(), &["theirs"], &[], &|r| wide.armed(r)),
+            ["mine"]
+        );
+        assert_eq!(
+            started(rr, &["theirs", "mine"], &[], &|r| wide.armed(r)),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn narrowing_the_scope_covers_nothing_new() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
+        let everywhere = crate::autorev::scope(); // nothing armed
+        crate::autorev::set("a/b", true);
+        let narrow = crate::autorev::scope();
+        assert_eq!(newly_covered(&rr, &everywhere, &narrow), Vec::<String>::new());
+    }
+
+    /// The genuine None branch: absorb_scope on a State that has never taken one. Passing two
+    /// defaults to newly_covered() never reached `unwrap_or_default()` at all.
+    #[test]
+    fn the_first_scope_a_state_takes_covers_nothing_new() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b")]),
+            None,
+        )];
+        st.set_auto(true, true); // an empty baseline, and everything listed consented to
+        assert!(st.lock().auto_scope.is_some(), "set_auto takes the scope up too");
+
+        let mut inner = st.lock();
+        assert!(inner.auto_baseline.clone().unwrap().is_empty());
+        inner.absorb_scope(&crate::autorev::scope());
+        assert!(
+            inner.auto_baseline.clone().unwrap().is_empty(),
+            "the scope did not move, so nothing was baselined out of the consent just given"
+        );
+    }
+
+    /// Arming while auto is off must leave the baseline None, so a later `a` still snapshots
+    /// normally rather than finding a half-filled set.
+    #[test]
+    fn absorbing_a_scope_does_nothing_while_auto_is_off() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        crate::autorev::set("a/b", true);
+        st.lock().absorb_scope(&crate::autorev::scope());
+        crate::autorev::set("other/thing", true);
+        st.lock().absorb_scope(&crate::autorev::scope());
+        assert!(
+            st.lock().auto_baseline.is_none(),
+            "auto is off, so there is no baseline to fill"
+        );
+
+        st.set_auto(true, false); // a later `a` still snapshots normally
+        assert_eq!(st.lock().auto_baseline.clone().unwrap().len(), 2);
+    }
+
+    /// The scope must ADVANCE, not just be read. Left on the first one, a repo armed at one tick
+    /// stays "newly covered" at every later tick, so PRs arriving in it keep joining the baseline
+    /// and auto never starts anything there again.
+    #[test]
+    fn a_repo_stops_being_new_once_its_scope_has_been_taken_up() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b")]),
+            None,
+        )];
+        st.set_auto(true, true);
+
+        crate::autorev::set("other/thing", true); // widen
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        st.lock().absorb_scope(&crate::autorev::scope());
+        assert_eq!(
+            st.lock().auto_baseline.clone().unwrap().len(),
+            1,
+            "what other/thing already had joins the baseline once"
+        );
+
+        // a NEW PR arrives in that same repo on a later tick; the scope has not moved, so it starts
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![
+                pr_in("mine", "a/b"),
+                pr_in("theirs", "other/thing"),
+                pr_in("fresh", "other/thing"),
+            ]),
+            None,
+        )];
+        st.lock().absorb_scope(&crate::autorev::scope());
+        let seen = st.lock().auto_baseline.clone().unwrap();
+        assert!(
+            !seen.contains("fresh"),
+            "a repo armed earlier is not newly covered again; its new PRs must start"
+        );
+    }
+
+    /// The seam the consent count sat on: `a` reads the scope too, so a repo armed from the CLI
+    /// seconds earlier does not look new to the next tick and get baselined out of what was asked.
+    #[test]
+    fn what_was_just_consented_to_is_not_baselined_away() {
+        let d = tempfile::tempdir().unwrap();
+        let _g = crate::autorev::test_lock();
+        crate::config::update(|c| c.autorev = d.path().join("autorev"));
+        crate::autorev::set("a/b", true);
+
+        let st = State::new();
+        st.lock().sections = vec![section(
+            "REVIEW REQUESTED",
+            Some(vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")]),
+            None,
+        )];
+        crate::autorev::set("other/thing", true); // the CLI widens it
+        st.set_auto(true, true); // then `a`, with the count that widening produced
+
+        st.lock().absorb_scope(&crate::autorev::scope());
+        assert!(
+            st.lock().auto_baseline.clone().unwrap().is_empty(),
+            "the tick must not baseline what the prompt had already counted"
+        );
+    }
+
+    #[test]
+    fn auto_starts_nothing_when_nothing_is_armed() {
+        let none = |_: &str| false;
+        assert_eq!(
+            started(vec![pr_in("mine", "a/b")], &[], &[], &none),
+            Vec::<String>::new()
+        );
+    }
+
     #[test]
     fn set_auto_baselines_the_listed_rr_and_off_clears_it() {
         let st = State::new();
@@ -842,10 +1147,7 @@ mod tests {
             None,
         )];
         st.lock().reviews.insert("done".into(), "✓ approved".into());
-        assert_eq!(
-            st.pending_rr().iter().map(|p| p.url.as_str()).collect::<Vec<_>>(),
-            ["old"]
-        );
+        assert_eq!(st.lock().pending_rr(&|_| true), ["old"]);
         st.set_auto(true, false);
         assert_eq!(st.lock().auto_baseline.clone().unwrap().len(), 2);
         assert!(!st.lock().wake.is_set());

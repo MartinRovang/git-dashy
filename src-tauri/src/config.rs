@@ -134,6 +134,8 @@ pub struct Config {
     pub self_dir: PathBuf,
     pub backups: PathBuf,
     pub bindings: PathBuf,
+    /// Which repos auto-review is armed for. Its own store: see autorev.rs.
+    pub autorev: PathBuf,
     /// Mirrors `gitdashy init` registered.
     pub registry: PathBuf,
     pub corpus_home: PathBuf,
@@ -190,6 +192,7 @@ impl Default for Config {
             self_dir: home().join(".prs_reviews"),
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
+            autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),
             registry: home().join(".prs_mirrors"),
             corpus_home: home().join(".agent-corpus"),
             demo: false,

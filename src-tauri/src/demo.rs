@@ -168,6 +168,7 @@ pub fn install() {
         c.backups = root.join("backups");
         c.registry = root.join("mirrors");
         c.bindings = root.join("bindings");
+        c.autorev = root.join("autorev");
     });
     crate::memory::append("", "run make lint before flagging style", "");
     crate::memory::append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore", "");

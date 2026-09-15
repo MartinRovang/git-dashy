@@ -12,7 +12,8 @@ use serde_json::Value;
 use crate::config::{self, VERSION};
 use crate::types::{Pr, Repository};
 use crate::{
-    bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge, memory,
+    autorev, bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge,
+    memory,
 };
 use crate::{mirror, review as review_mod, team};
 
@@ -40,6 +41,7 @@ const COMMANDS: &[&str] = &[
     "setup",
     "init",
     "bind",
+    "auto",
     "friction",
     "api",
     "drafts",
@@ -144,6 +146,16 @@ pub enum Command {
         forget: bool,
         #[arg(long)]
         owner: Option<String>,
+        #[arg(long)]
+        list: bool,
+    },
+    /// Which repos auto-review is armed for. No arguments reports.
+    Auto {
+        repo: Option<String>,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        off: bool,
         #[arg(long)]
         list: bool,
     },
@@ -608,6 +620,88 @@ fn reads(repo: &str, label: &str) -> String {
         "  reviews of {label} read: {whose}{}",
         if text.is_empty() { " (nothing to read)" } else { "" }
     )
+}
+
+/// Which repos auto-review is armed for.
+///
+/// ponytail: a bare `gitdashy auto` REPORTS, the same rule `bind` has. Naming no repo and asking for
+/// no change is a question, and answering it by arming whatever directory you are standing in is a
+/// write nobody asked for.
+fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: bool) -> i32 {
+    let on = !off;
+    let show = || {
+        for line in autorev::report(&autorev::scope()) {
+            println!("{line}");
+        }
+    };
+    // ponytail: BEFORE every write. --list is a read-only question, and bind() learned this one
+    // command over: gating it behind a check on the thing you were asking about turned
+    // `bind <typo> --list` into an exit instead of an answer. Here it was worse — `auto --owner acme
+    // --list` armed the org and returned before reading the store.
+    if list {
+        show();
+        return 0;
+    }
+    let positional = positional.filter(|p| !p.is_empty());
+    let owner = owner.filter(|o| !o.is_empty());
+    // ponytail: a positional we cannot read is a TYPO, not an absence — the same trap bind() names.
+    // Checked BEFORE --owner, or `auto not-a-slug --owner acme` armed the org and swallowed the typo.
+    let named = match &positional {
+        Some(p) if p.contains('/') => p.clone(),
+        Some(typo) => {
+            return fail(format!(
+                "gitdashy: {} is not owner/name — auto takes a full slug, or --owner OWNER",
+                pyrepr(typo)
+            ))
+        }
+        None => String::new(),
+    };
+    if !named.is_empty() && owner.is_some() {
+        return fail("gitdashy: name a repo or an owner, not both");
+    }
+    if let Some(owner) = owner {
+        let err = autorev::set_owner(&owner, on);
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+        let o = bind_mod::owner_key(&owner);
+        // what the store now SAYS, not what was written: a lone --off leaves auto covering everything
+        println!(
+            "gitdashy: {o}/* {}  (a repo of its own still overrides it)",
+            if autorev::scope().armed_owner(&o) {
+                "is auto-reviewed"
+            } else {
+                "is not auto-reviewed"
+            }
+        );
+        show();
+        return 0;
+    }
+    if named.is_empty() {
+        // ponytail: --off with nothing to turn off silently reported, so a mistyped command looked
+        // like it had worked. A flag that changes nothing is a question that was asked wrong.
+        if off {
+            return fail("gitdashy: --off needs a repo or --owner OWNER");
+        }
+        show();
+        return 0;
+    }
+    let err = autorev::set(&named, on);
+    if !err.is_empty() {
+        return fail(format!("gitdashy: {err}"));
+    }
+    // the folded key, not what was typed, and the state, not the write
+    let k = bind_mod::key(&named);
+    println!(
+        "gitdashy: {k} {}",
+        if autorev::scope().armed(&k) {
+            "is auto-reviewed"
+        } else {
+            "is not auto-reviewed"
+        }
+    );
+    show();
+    0
 }
 
 /// Bind a repo to a team, so reviews of it are told that team's brief and no other.
@@ -1412,6 +1506,12 @@ pub fn run(args: Vec<String>) -> i32 {
             owner,
             list,
         }) => bind(repo, team, forget, owner, list),
+        Some(Command::Auto {
+            repo,
+            owner,
+            off,
+            list,
+        }) => auto_cmd(repo, owner, off, list),
         Some(Command::Friction {
             claude_hook,
             repo,
@@ -1458,6 +1558,84 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("gitdashy").chain(args.iter().copied())).unwrap()
+    }
+
+    /// --list is a question. It must answer before anything in this command writes, whatever else
+    /// is on the line — the bug this pins armed acme/* and returned before ever reading the store.
+    #[test]
+    fn auto_list_answers_without_writing_whatever_else_is_asked() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+
+        assert_eq!(auto_cmd(None, Some("acme".into()), false, true), 0);
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, false, true), 0);
+        assert_eq!(
+            auto_cmd(Some("not-a-slug".into()), None, false, true),
+            0,
+            "a typo is not an error for a question"
+        );
+        assert!(!store.exists(), "--list wrote to the store");
+        assert!(crate::autorev::scope().everywhere());
+
+        // and without --list the same calls do write
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, false, false), 0);
+        assert!(crate::autorev::scope().armed("acme/api") && !crate::autorev::scope().armed("other/thing"));
+        assert_eq!(auto_cmd(None, Some("beta".into()), false, false), 0);
+        assert!(crate::autorev::scope().armed("beta/anything"));
+        assert_eq!(auto_cmd(Some("acme/api".into()), None, true, false), 0);
+        assert!(
+            !crate::autorev::scope().armed("acme/api"),
+            "--off disarms it again"
+        );
+    }
+
+    /// A bare `gitdashy auto` reports: naming no repo and asking for no change is a question, and
+    /// answering it by arming whatever directory you are standing in is a write nobody asked for.
+    #[test]
+    fn a_bare_auto_reports_rather_than_arming_here() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+        assert_eq!(auto_cmd(None, None, false, false), 0);
+        assert!(!store.exists());
+    }
+
+    /// Which wins when both are given: neither. Before the typo guard moved above --owner,
+    /// `auto not-a-slug --owner acme` armed the org and swallowed the typo.
+    #[test]
+    fn auto_refuses_a_repo_and_an_owner_together() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("autorev");
+        config::update(|c| c.autorev = store.clone());
+        assert_eq!(
+            auto_cmd(Some("acme/api".into()), Some("beta".into()), false, false),
+            1
+        );
+        assert_eq!(
+            auto_cmd(None, None, true, false),
+            1,
+            "--off with nothing to turn off is a question asked wrong, not a report"
+        );
+        assert_eq!(
+            auto_cmd(Some("not-a-slug".into()), Some("acme".into()), false, false),
+            1,
+            "the typo is caught before --owner arms anything"
+        );
+        assert!(!store.exists());
+    }
+
+    #[test]
+    fn auto_refuses_a_key_it_cannot_read() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.autorev = d.path().join("autorev"));
+        assert_eq!(auto_cmd(Some("notes".into()), None, false, false), 1);
+        assert_eq!(auto_cmd(None, Some("acme/api".into()), false, false), 1);
+        assert!(crate::autorev::scope().everywhere());
     }
 
     #[test]
@@ -1554,6 +1732,28 @@ mod tests {
         assert!(matches!(
             parse(&["install", "--uninstall"]).command,
             Some(Command::Install { uninstall: true, .. })
+        ));
+        let Some(Command::Auto {
+            repo,
+            owner,
+            off,
+            list,
+        }) = parse(&["auto", "acme/api", "--owner", "acme", "--off", "--list"]).command
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (repo.as_deref(), owner.as_deref(), off, list),
+            (Some("acme/api"), Some("acme"), true, true)
+        );
+        assert!(matches!(
+            parse(&["auto"]).command,
+            Some(Command::Auto {
+                repo: None,
+                owner: None,
+                off: false,
+                list: false
+            })
         ));
         assert!(matches!(
             parse(&["self-review", "12", "--repo", "a/b", "--model", "opus"]).command,

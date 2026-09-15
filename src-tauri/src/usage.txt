@@ -10,6 +10,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy install [--full [--corpus URL]] [--dry-run] [--yes] [--no-setup] [--uninstall]
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
+       gitdashy auto [owner/name] [--off] | --owner OWNER [--off] | --list
        gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
@@ -71,6 +72,12 @@ bind says which team a repo belongs to, and that decides everything the team kno
   log, once, so nothing you had yesterday disappears; after that it is yours to change and --forget
   sticks. Defaults to this directory's origin; --list shows every rule. A bare `bind` reports and changes
   no binding of its own — though joining a team seeds from its log on any command, including this one.
+
+auto says which repos `a` auto-reviews. The board spans whatever the token can see, so with nothing
+  armed auto covers every repo on it — name one and it covers only what is named. --owner OWNER arms a
+  whole org in one line, and a repo of its own still overrides it, so the one repo under that owner you
+  do not want reviewed can be left out with `auto owner/repo --off`. A lone --off is not a decision to
+  arm the rest: while nothing is armed, auto still covers everything. A bare `gitdashy auto` reports.
 
 drafts shows what a review proposed and no second review has confirmed — the store nothing else can
   show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,

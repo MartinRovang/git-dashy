@@ -164,6 +164,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy init --into DIR --loader FILE` | once per repo — sessions there also read that repo's facts |
 | `gitdashy setup` | asks who you are and what the work is for; `install --full` asks only the first, because a brief belongs to a repo and not to a machine |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
+| `gitdashy auto [owner/name]` | which repos auto mode reviews; `--owner OWNER`, `--off`, `--list`. Bare, it reports |
 | `gitdashy drafts` | what a review proposed and no second review has confirmed yet; `--count` is one line for a session hook |
 | `gitdashy teams [--new NAME] [--join URL] [--connect URL] [--leave KEY]` | start, join, connect or leave a team; bare, it lists what each covers |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
@@ -425,6 +426,15 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
 
+The board spans whatever the token can see, so with nothing armed auto covers every repo on it.
+`gitdashy auto owner/name` arms one, and from then on auto covers only what is armed; `--owner
+OWNER` arms a whole org and a repo of its own still overrides it, so the one repo under that owner
+you do not want reviewed can be left out with `gitdashy auto owner/repo --off`. A lone `--off` is
+not a decision to arm the rest: while nothing is armed, auto still covers everything. `gitdashy
+auto` reports. Widening the scope does not fire a batch, whether you widened it from the dashboard,
+from the command line or by editing the file: the tick that notices a repo has come into scope
+treats what it already has listed as seen, and only what arrives next starts.
+
 ### Agent sessions
 
 What the reviews learn is worth having open in the editor too. `gitdashy sync-memory --into PATH`
@@ -608,6 +618,7 @@ src-tauri/
     memory.rs       ~/.prs_memory store, drafts, pools, and the dream cleanup
     team.rs         git-backed sync of the log and memory
     bind.rs         which team a repo belongs to
+    autorev.rs      which repos auto mode reviews
     mirror.rs       read-only copies of the memory, for agent sessions
     install.rs      wiring: CLAUDE.md imports, hooks, the corpus, setup briefs
     update.rs       release check and self-update
