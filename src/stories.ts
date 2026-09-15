@@ -61,6 +61,7 @@ export function fuzzy(q: string, logins: string[]): string[] {
 export type Pr = { repo: string; number: number; title: string; url: string; updatedAt?: string }
 export type Got = { at: number; summary: string; prs: Pr[] }
 
-/** PRs in `next` that are new or were pushed since `prev`. */
+/** PRs in `next` that are new or were pushed since `prev`. A story saved before PRs carried `updatedAt`
+ *  cannot tell, so it reports nothing rather than every PR. */
 export const moved = (prev: Got, next: Got): Pr[] =>
-  next.prs.filter((p) => !prev.prs.some((q) => q.url === p.url && q.updatedAt === p.updatedAt))
+  prev.prs.some((q) => !q.updatedAt) ? [] : next.prs.filter((p) => !prev.prs.some((q) => q.url === p.url && q.updatedAt === p.updatedAt))

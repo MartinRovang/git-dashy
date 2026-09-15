@@ -39,4 +39,6 @@ it('only PRs that are new or were pushed since the last story count as new work'
   expect(moved(prev, { at: 2, summary: '', prs: [pr(1), pr(2, 'b'), pr(4)] }).map((p) => p.number)).toEqual([2, 4])
   // pr 3 ageing out alone is nothing new
   expect(moved(prev, { ...prev, prs: [pr(1), pr(2)] })).toEqual([])
+  // a story cached before updatedAt existed
+  expect(moved({ ...prev, prs: [{ ...pr(1), updatedAt: undefined }] }, { ...prev, prs: [pr(1), pr(4)] })).toEqual([])
 })

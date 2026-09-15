@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use crate::{config, github, llm};
 
 const TIMEOUT: u64 = 180;
-/// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
+/// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a story
 /// per followed user on Opus adds up. Haiku is a bare name, the claude CLI, so a setup that reviews through
 /// `provider:model` (and may have no CLI) keeps its own model instead.
 const HAIKU: &str = "haiku";
@@ -204,8 +204,8 @@ pub fn sig(nodes: &[Value]) -> String {
     seen.join(" ")
 }
 
-/// The story for `login`. The search runs every call, so the card can poll; the model runs only when
-/// the PRs moved since the saved story, or on `fresh` (the card's ⟳).
+/// The story for `login`. The search runs every call, so the pill can poll; the model runs only when
+/// the PRs moved since the saved story, or on `fresh` (the pop-up's ⟳).
 pub fn get(login: &str, fresh: bool) -> Result<Value> {
     let (days, key) = (DAYS, login.to_lowercase());
     let cfg = config::get();
@@ -234,7 +234,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
         format!("No pull requests from {login} in the last {days} day(s).")
     } else {
         // ponytail: never pass tools here. PR titles come from any repo and are the prompt; with --safe-mode,
-        // an empty cwd and no --allowedTools the worst a title can do is make the card say something false.
+        // an empty cwd and no --allowedTools the worst a title can do is make the story say something false.
         // and low effort, whatever is picked: that is for reviews, and deep reasoning over PR titles is spend
         // for nothing
         llm::ask_at(
@@ -313,6 +313,8 @@ mod tests {
         let doc = page("is:pr author:bob \"x");
         assert!(doc.contains(r#"search(query: "is:pr author:bob \"x", type: ISSUE, first: 20)"#));
         assert!(!doc.contains("statusCheckRollup"));
+        // what sig() and the page's new-work check compare on
+        assert!(doc.contains("updatedAt"));
     }
 
     #[test]

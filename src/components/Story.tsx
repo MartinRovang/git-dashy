@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, errorText } from '../api'
 import { useNow } from '../usePoll'
 import { moved, type Got, type Pr } from '../stories'
@@ -36,12 +36,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
   /** A check still out: the next poll tick skips rather than stacking a second one on it. */
   const inflight = useRef(false)
   const el = useRef<HTMLDivElement>(null)
-  /** Where the pop-up sits: fixed above the pill, so a dock that scrolls sideways does not clip it. */
-  const [left, setLeft] = useState(0)
-  const place = () => {
-    const r = el.current?.getBoundingClientRect()
-    if (r) setLeft(Math.max(8, Math.min(r.left, window.innerWidth - 368)))
-  }
+  const pop = useRef<HTMLDivElement>(null)
 
   /** `quiet` is the poll: no skeleton, and a failed check keeps the story already there. */
   const load = (fresh: boolean, quiet = false) => {
@@ -57,10 +52,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
           if (last.current && next.at !== last.current.at) {
             const moves = moved(last.current, next)
             // a PR only ageing out of the window rewrites the story but is not new work
-            if (moves.length) {
-              place()
-              setNews(moves)
-            }
+            if (moves.length) setNews(moves)
           }
           last.current = next
           setGot(next)
@@ -90,10 +82,27 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
     setOpen(false)
   }
   const toggle = () => {
-    place()
     setNews([])
     setOpen((o) => !o)
   }
+  // the pop-up is fixed (a dock that scrolls sideways would clip it), so it is put over its pill by hand,
+  // again whenever the window or the dock moves under it
+  const shown = open || news.length > 0
+  useLayoutEffect(() => {
+    if (!shown) return
+    const place = () => {
+      const r = el.current?.getBoundingClientRect()
+      if (r && pop.current) pop.current.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 368))}px`
+    }
+    place()
+    const dock = el.current?.parentElement
+    window.addEventListener('resize', place)
+    dock?.addEventListener('scroll', place)
+    return () => {
+      window.removeEventListener('resize', place)
+      dock?.removeEventListener('scroll', place)
+    }
+  }, [shown])
   // a click anywhere else, or Esc, puts the pop-up away.
   // ponytail: Esc captures and stops, like ActsMenu, since the board reads Escape as "open the menu"
   useEffect(() => {
@@ -123,7 +132,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
         ×
       </button>
       {open ? (
-        <div className="pop" style={{ left }} role="dialog" aria-label={`${login}'s story`}>
+        <div ref={pop} className="pop" role="dialog" aria-label={`${login}'s story`}>
           <div className="poph">
             <b>{login}</b>
             <div style={{ flex: 1 }} />
@@ -165,7 +174,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
           ) : null}
         </div>
       ) : news.length ? (
-        <div className="pop" style={{ left }} role="status">
+        <div ref={pop} className="pop" role="status">
           <div className="poph">
             <b>{login}</b>
             <span>new work</span>

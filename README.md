@@ -543,19 +543,19 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 ## Following people
 
 **+ follow** in the top bar fuzzy-finds anyone who authored or reviewed a PR on the board (or takes any
-GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
-over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
-from its corner grip, `–` minimizes it to a chip in the footer, `⟳` asks again, `✕` unfollows.
+GitHub username you type) and adds a pill for them to the footer. Click the pill for a pop-up with a few
+bullets on what they have worked on over the last day, written from the PRs they opened or updated, and
+the list of those PRs. `⟳` in the pop-up asks again; `×` on the pill unfollows.
 
-Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
-search; the model only runs when that person's PRs changed since the last story. When a minimized card's
-story changes, its chip lights up and the new bullets drop up above it.
+Pills check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
+search; the model only runs when that person's PRs changed since the last story. When a check finds PRs
+that are new or were pushed since the last one, the pill lights up and those PRs, and only those, pop up
+above it.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
-`openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.
-Following is meant for a handful of people: every card is one search per refresh, so fifty cards (the cap)
-on a short interval is a lot of GitHub traffic. Who you follow, which cards are
-minimized, and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
+`openrouter:` or `local:`, in which case the stories use that model too. They always run at low effort.
+Following is meant for a handful of people: every pill is one search per refresh, so fifty (the cap)
+on a short interval is a lot of GitHub traffic. Who you follow and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
 (`--demo` writes nothing).
 
 ## Versioning & self-update
