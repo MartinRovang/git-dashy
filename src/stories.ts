@@ -3,9 +3,9 @@
 
 export type Followed = { login: string; days: number }
 
-/** Add once (GitHub logins are case-insensitive), a week by default. */
+/** Add once (GitHub logins are case-insensitive), three days by default. */
 export const follow = (list: Followed[], login: string): Followed[] =>
-  list.some((f) => f.login.toLowerCase() === login.toLowerCase()) ? list : [...list, { login, days: 7 }]
+  list.some((f) => f.login.toLowerCase() === login.toLowerCase()) ? list : [...list, { login, days: 3 }]
 
 export const unfollow = (list: Followed[], login: string) => list.filter((f) => f.login !== login)
 

@@ -569,6 +569,20 @@
   .krow kbd { min-width: 44px; height: 20px; font-size: 11px; color: var(--ink2); }
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
   .story .keys p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+  .story .keys ul { margin: 0 0 10px; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+  .story .keys li { margin-bottom: 4px; }
+  .story .keys li::marker { color: var(--pink); }
+  /* the loading card: bars where the bullets will be, and the label and bars share one sweep */
+  .skel { display: flex; flex-direction: column; gap: 9px; padding-top: 2px; }
+  .skel i, .shimtext { background: linear-gradient(90deg, var(--bg4) 25%, var(--edge) 50%, var(--bg4) 75%);
+                       background-size: 200% 100%; animation: skel 1.6s linear infinite; }
+  .skel i { display: block; height: 11px; border-radius: 4px; }
+  .shimtext { align-self: flex-start; font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+              background-image: linear-gradient(90deg, var(--dim3) 25%, var(--ink) 50%, var(--dim3) 75%);
+              -webkit-background-clip: text; background-clip: text; color: transparent; }
+  @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel i, .shimtext { animation: none; } }
+  .story .updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); margin: -4px 0 10px; }
   .story summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim3); padding-bottom: 4px; }
   .story .bar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
                        border: 1px solid var(--edge); border-radius: 6px; height: 24px; color-scheme: dark; }
