@@ -28,7 +28,6 @@ const KEYS: [string, [string, string][]][] = [
       ['v', 'Read the full review'],
       ['y', 'Copy the PR URL'],
       ['+', 'Request a review'],
-      ['H', 'When this repo posts a review'],
       ['Y', 'Read the one waiting to post'],
       ['␣', 'On a reviewed row: its older runs'],
     ],

@@ -618,3 +618,29 @@
 
   /* the Esc menu names the board key that does the same thing, before the current value */
   .modal .opt kbd.hint { margin-left: 6px; }
+
+  /* ponytail: a two-button group, not a switch. Both answers are on screen with their own words, so
+     "what happens when a review finishes" is read rather than inferred from which way a toggle sits. */
+  .fields .pair { display: flex; align-items: center; gap: 7px; padding: 3px 0; min-height: 26px; }
+  .fields .pair > span { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim);
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fields .pair > i { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--dim3);
+                      flex-shrink: 0; width: 52px; text-align: right;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg { display: flex; flex-shrink: 0; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 10.5px; padding: 2px 7px; border: 0; background: var(--bg4);
+                color: var(--dim2); cursor: pointer; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--edge); }
+  .seg button:hover { color: var(--ink2); }
+  .seg button[aria-pressed='true'] { background: var(--bg); color: var(--ink); }
+  /* held is the one that changes what lands on a PR, so it is the one that gets a colour */
+  .seg button[aria-pressed='true']:last-child { color: var(--violet); }
+
+  /* every rule on the machine, so nothing about this is invisible */
+  .rules { margin-top: 8px; border-top: 1px solid var(--line2); padding-top: 7px;
+           display: flex; flex-direction: column; gap: 4px; }
+  .rules > div { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; }
+  .rules b { font-family: var(--mono); font-weight: 500; color: var(--ink3); flex: 1; min-width: 0;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rules span { font-family: var(--mono); font-size: 9.5px; color: var(--dim3); flex-shrink: 0; }
+  .rules.none { font-size: 10.5px; color: var(--dim3); line-height: 1.4; }

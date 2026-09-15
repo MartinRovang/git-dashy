@@ -251,6 +251,7 @@ function buildPayload() {
     },
     asks: S.asks,
     notices: S.notices,
+    postingRules: postingRules(),
   }
 }
 
@@ -273,6 +274,7 @@ function detail(url: string) {
       { name: 'preview deploy', state: 'ok' },
     ],
     brief: { whose: teamOf(r.repo), empty: false },
+    posting: postingOf(r.repo),
     pre: r.pre,
     review: info
       ? {
@@ -370,6 +372,27 @@ function postReview(b: Body) {
   return json(200, { ok: true })
 }
 
+/** repo beats owner beats the default, the same chain the store resolves. One place, so the detail
+ *  and the /api/posting route cannot disagree. */
+function postingOf(repo: string) {
+  const owner = repo.split('/')[0]
+  const mine = S.posting[repo]
+  const theirs = S.postingOwners[owner]
+  const one = (ran: 'manual' | 'auto') => ({
+    value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
+    via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
+    ownerValue: theirs?.[ran] ?? 'post',
+  })
+  return { repo, owner, manual: one('manual'), auto: one('auto') }
+}
+
+/** Every rule that exists, owners first. */
+function postingRules() {
+  const owners = Object.entries(S.postingOwners).map(([o, r]) => ({ target: `${o}/*`, ...r }))
+  const repos = Object.entries(S.posting).map(([t, r]) => ({ target: t, ...r }))
+  return [...owners, ...repos]
+}
+
 function postSettings(b: Body) {
   const s = S.settings
   for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
@@ -391,24 +414,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/state') return json(200, buildPayload())
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
-      const owner = repo.split('/')[0]
-      const mine = S.posting[repo]
-      const theirs = S.postingOwners[owner]
       const key = `${repo}#${query.get('number') || ''}`
-      // repo beats owner beats the default, the same chain the store resolves
-      const one = (ran: 'manual' | 'auto') => ({
-        value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
-        via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
-        ownerValue: theirs?.[ran] ?? 'post',
-      })
       const h = S.held[key]
-      return json(200, {
-        repo,
-        owner,
-        manual: one('manual'),
-        auto: one('auto'),
-        held: h ? { ...h, moved: !!h.moved } : null,
-      })
+      return json(200, { ...postingOf(repo), held: h ? { ...h, moved: !!h.moved } : null })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))

@@ -189,6 +189,9 @@ pub fn payload(state: &State) -> Value {
         // the rows gets it backwards. The rule lives in autorev.rs and says so here.
         "autoEverywhere": auto_scope.everywhere(),
         "autoScope": auto_scope.listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
+        // every posting rule on this machine, so the rail can show the whole picture rather than
+        // one repo's answer with no way to see what else is set
+        "postingRules": posting_rules_json(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -267,6 +270,10 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
         "files": d.as_ref().and_then(|d| d.files),
         "checks": d.as_ref().map(|d| d.checks.clone()).unwrap_or_default(),
         "brief": {"whose": whose, "empty": text.is_empty()},
+        // ponytail: resolved HERE, not in the page. Which rule wins is autorev's rule, and the rail
+        // shows the answer for the selected repo — so the page must not be the third place that
+        // implements repo-beats-owner-beats-default.
+        "posting": posting_json(pr.repo()),
         "pre": pre_json(pre),
         "review": rev.as_ref().map(|rev| json!({
             "verdict": config::status(&rev.verdict).unwrap_or(""),
@@ -842,6 +849,63 @@ fn get_bind(_state: &State, query: &Query) -> Out {
         .map(|k| json!({"key": k, "name": team::info(k).name}))
         .collect();
     Ok(json!({"repo": repo, "kind": kind, "to": to, "owner": owner_of(repo), "teams": teams}))
+}
+
+/// What happens to one repo's reviews: the word in force, whose rule it is, and the owner's own
+/// word, which is what a "set the whole owner" control writes.
+fn posting_json(repo: &str) -> Value {
+    let p = autorev::posting();
+    let owner = owner_of(repo);
+    let key = bind::key(repo);
+    let one = |rules: &autorev::Rules| {
+        let via = if rules.repos.contains_key(&key) {
+            "repo"
+        } else if rules.owners.contains_key(&owner) {
+            "owner"
+        } else {
+            ""
+        };
+        json!({
+            "value": rules.of(repo).word(),
+            "via": via,
+            "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
+        })
+    };
+    json!({"repo": key, "owner": owner, "manual": one(&p.manual), "auto": one(&p.auto)})
+}
+
+/// Every rule that exists, so nothing about this is invisible: (target, manual, auto), owners first.
+fn posting_rules_json() -> Vec<Value> {
+    let p = autorev::posting();
+    let mut targets: Vec<String> = p
+        .manual
+        .listed()
+        .into_iter()
+        .chain(p.auto.listed())
+        .map(|(t, _)| t)
+        .collect();
+    targets.sort();
+    targets.dedup();
+    // owners first, the way Rules::listed orders one set
+    targets.sort_by_key(|t| !t.ends_with("/*"));
+    targets
+        .into_iter()
+        .map(|t| {
+            let bare = t.strip_suffix("/*").unwrap_or(&t);
+            let (m, a) = if t.ends_with("/*") {
+                (
+                    p.manual.owners.get(bare).copied().unwrap_or_default(),
+                    p.auto.owners.get(bare).copied().unwrap_or_default(),
+                )
+            } else {
+                (
+                    p.manual.repos.get(bare).copied().unwrap_or_default(),
+                    p.auto.repos.get(bare).copied().unwrap_or_default(),
+                )
+            };
+            json!({"target": t, "manual": m.word(), "auto": a.word()})
+        })
+        .collect()
 }
 
 /// What happens to this repo's reviews, and where each answer came from.
@@ -2284,6 +2348,67 @@ mod tests {
     /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
     /// `o` flips that one, and flipping it from the effective value wrote back what was already
     /// there whenever a repo row had carved the owner out.
+    /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
+    /// itself. And it lists every rule, so nothing about this is only discoverable by clicking.
+    #[test]
+    fn the_detail_carries_the_posting_answer_and_the_payload_every_rule() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, _state) = served();
+        let ask = || get(&format!("{base}/api/pr?url={}", pr().url), Some(&token)).1["posting"].clone();
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
+
+        assert_eq!(ask()["manual"]["value"], "post");
+        assert_eq!(ask()["auto"]["value"], "post");
+        assert_eq!(
+            rules(),
+            json!([]),
+            "nothing set is an empty table, not a missing one"
+        );
+
+        autorev::set_post_owner("a", autorev::Ran::Auto, autorev::Post::Hold);
+        let p = ask();
+        assert_eq!(
+            p["auto"],
+            json!({"value": "hold", "via": "owner", "ownerValue": "hold"})
+        );
+        assert_eq!(p["manual"]["value"], "post", "the other kind is untouched");
+
+        // the carve-out: the repo posts, the owner still holds, and both are listed
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Now);
+        let p = ask();
+        assert_eq!(
+            p["auto"],
+            json!({"value": "post", "via": "repo", "ownerValue": "hold"})
+        );
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold"},
+                {"target": "a/b", "manual": "post", "auto": "post"},
+            ]),
+            "a target set on one axis still lists the other"
+        );
+
+        // a target on BOTH axes must appear once, and an owner that sorts after a repo must still
+        // come first — with `a/*` and `a/b` alone, alphabetical order happens to agree
+        autorev::set_post("a/b", autorev::Ran::Manual, autorev::Post::Hold);
+        autorev::set_post_owner("zeta", autorev::Ran::Manual, autorev::Post::Hold);
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold"},
+                {"target": "zeta/*", "manual": "hold", "auto": "post"},
+                {"target": "a/b", "manual": "hold", "auto": "post"},
+            ]),
+            "owners first, then repos, and a/b listed once for both axes"
+        );
+    }
+
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
         let _g = autorev::test_lock();

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { StateData } from '../types'
+import type { Posting, StateData } from '../types'
 import { counts } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
@@ -11,6 +11,9 @@ type Props = {
   onTeams: () => void
   onModal: (name: string) => void
   onAuto: () => void
+  /** What happens to the selected repo's reviews, resolved by the server; null with no PR selected. */
+  posting: Posting | null
+  onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', owner: boolean) => void
   onAskAgain: (kind: string, key: string) => void
   collapsed: boolean
   onCollapse: () => void
@@ -95,7 +98,7 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onAskAgain, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, posting, onPosting, onAskAgain, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -114,6 +117,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // ponytail: `waiting` is what a NO is holding back, not what is waiting for an answer — the rows
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
+  const rules = d?.postingRules || []
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -175,6 +179,61 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <span>Auto-run on new PRs</span>
             <span className="sw" />
           </button>
+
+          {/* ponytail: here, and spelled out. It was a modal behind `H` on a row showing two lines of
+              "post it / wait for a key · via acme/*", so both options were never on screen at once
+              and nothing said what else was set. Running a review is the expensive half; posting is
+              the half you cannot take back, and that choice should not be something you discover. */}
+          <div className="sub">
+            when a review finishes <em>{posting ? posting.repo : 'pick a PR'}</em>
+          </div>
+          {posting ? (
+            <>
+              {(['manual', 'auto'] as const).map((ran) => (
+                <div className="pair" key={ran}>
+                  <span>{ran === 'manual' ? 'you ran it' : 'auto ran it'}</span>
+                  <div className="seg" role="group">
+                    {(['post', 'hold'] as const).map((w) => (
+                      <button
+                        key={w}
+                        aria-pressed={posting[ran].value === w}
+                        title={
+                          w === 'post'
+                            ? 'the verdict goes on the PR as soon as it is written'
+                            : 'the verdict waits on disk; Y reads it and posts or drops it'
+                        }
+                        onClick={() => onPosting(ran, w, false)}
+                      >
+                        {w === 'post' ? 'post it' : 'hold it'}
+                      </button>
+                    ))}
+                  </div>
+                  <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
+                    {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'this repo' : 'default'}
+                  </i>
+                </div>
+              ))}
+              <button className="fld" onClick={() => onPosting('auto', posting.auto.ownerValue === 'hold' ? 'post' : 'hold', true)}>
+                <span>
+                  all of {posting.owner}/* {posting.auto.ownerValue === 'hold' ? 'holds' : 'posts'} what auto ran
+                </span>
+                <span className="sw" />
+              </button>
+            </>
+          ) : null}
+          {rules.length ? (
+            <div className="rules">
+              {rules.map((r) => (
+                <div key={r.target}>
+                  <b>{r.target}</b>
+                  <span>you {r.manual === 'hold' ? 'hold' : 'post'}</span>
+                  <span>auto {r.auto === 'hold' ? 'holds' : 'posts'}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">every repo posts its reviews — nothing is set</div>
+          )}
         </Group>
 
         <Group
