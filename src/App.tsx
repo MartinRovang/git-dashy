@@ -15,7 +15,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
+import { askConsents, draftsScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -163,6 +163,13 @@ export default function App() {
       'welcome',
     )
   }, [hinted])
+
+  // Once after an update: what changed since the version that ran before. Closing it tells the server.
+  const changelog = data?.changelog
+  useEffect(() => {
+    if (!changelog) return
+    whatsNew(changelog, dataRef.current?.version).onClose = () => void post('/api/changelog', {})
+  }, [changelog])
 
   useEffect(() => {
     if (!flash) return

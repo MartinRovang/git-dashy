@@ -135,6 +135,87 @@ fn asset_ready(version: &str) -> bool {
     }
 }
 
+/// The notes to show once after an update, or "". The first launch that knows about `seen` records
+/// this version and shows nothing: a fresh install has nothing to catch up on. `seen` moves on once the
+/// page dismisses the notes (see `mark_seen`), so notes that could not be fetched (offline) come back
+/// next launch.
+pub fn changelog() -> String {
+    let c = config::get();
+    if c.demo {
+        return String::new();
+    }
+    if c.seen.is_empty() {
+        mark_seen();
+        return String::new();
+    }
+    if vkey(&c.seen) >= vkey(config::VERSION) {
+        return String::new();
+    }
+    match releases() {
+        Ok(body) => notes(&body, &c.seen, config::VERSION, usize::MAX),
+        Err(e) => {
+            log::warn!("release notes: {e}");
+            String::new()
+        }
+    }
+}
+
+/// The last few releases up to this version, for the menu's "What's new" when the update's own notes are gone.
+pub fn recent() -> Result<String, String> {
+    Ok(notes(&releases()?, "", config::VERSION, 10))
+}
+
+/// The releases API's JSON. ponytail: no token, like the download; 60 calls an hour per IP.
+fn releases() -> Result<String, String> {
+    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100");
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(15)))
+            .build(),
+    );
+    agent
+        .get(&url)
+        .call()
+        .and_then(|mut r| r.body_mut().read_to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Record this version as the one whose notes were shown.
+pub fn mark_seen() {
+    let mut c = config::get();
+    c.seen = config::VERSION.to_string();
+    let saved = config::snapshot(&c);
+    config::update(|cfg| cfg.seen = c.seen.clone());
+    if let Err(e) = config::save(&saved) {
+        log::warn!("could not save the seen version: {e}");
+    }
+}
+
+/// The bodies of the releases after `from` up to and including `to`, newest first and at most `max`,
+/// from the releases API's JSON. ponytail: the API's first page only (100), enough unless someone skips 100 releases.
+fn notes(releases: &str, from: &str, to: &str, max: usize) -> String {
+    let list: Vec<serde_json::Value> = serde_json::from_str(releases).unwrap_or_default();
+    let mut picked: Vec<(String, String)> = list
+        .iter()
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str()?;
+            (vkey(tag) > vkey(from) && vkey(tag) <= vkey(to)).then(|| {
+                (
+                    tag.to_string(),
+                    r["body"].as_str().unwrap_or("").trim().to_string(),
+                )
+            })
+        })
+        .collect();
+    picked.sort_by_key(|(tag, _)| std::cmp::Reverse(vkey(tag)));
+    picked.truncate(max);
+    picked
+        .iter()
+        .map(|(tag, body)| format!("{tag}\n\n{body}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// The release asset name for this machine: gitdashy-{linux-x86_64,macos-arm64,macos-x86_64,windows-x86_64.exe}.
 pub fn asset_name() -> String {
     asset_for(std::env::consts::OS, std::env::consts::ARCH)
@@ -313,6 +394,24 @@ mod tests {
             verify(b"hi", "<html>404</html>").unwrap_err(),
             "no checksum published"
         );
+    }
+
+    #[test]
+    fn notes_cover_every_skipped_release_newest_first() {
+        let json = r#"[
+            {"tag_name":"v2.20.0","body":"twenty"},
+            {"tag_name":"v2.19.1","body":null},
+            {"tag_name":"v2.19.0","body":"nineteen"},
+            {"tag_name":"v2.18.2","body":"already had it"},
+            {"tag_name":"v2.21.0","body":"not installed yet"}
+        ]"#;
+        assert_eq!(
+            notes(json, "2.18.2", "2.20.0", usize::MAX),
+            "v2.20.0\n\ntwenty\n\nv2.19.1\n\n\n\nv2.19.0\n\nnineteen"
+        );
+        assert_eq!(notes(json, "2.20.0", "2.20.0", usize::MAX), "");
+        assert_eq!(notes(json, "", "2.20.0", 1), "v2.20.0\n\ntwenty"); // the menu's recent few
+        assert_eq!(notes("rate limited", "2.18.2", "2.20.0", usize::MAX), ""); // not a list, nothing to show
     }
 
     #[test]

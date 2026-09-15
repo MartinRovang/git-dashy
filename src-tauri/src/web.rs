@@ -87,6 +87,7 @@ pub fn payload(state: &State) -> Value {
         update,
         asks,
         notices,
+        changelog,
     ) = {
         let inner = state.lock();
         (
@@ -104,6 +105,7 @@ pub fn payload(state: &State) -> Value {
             inner.update.clone(),
             inner.asks.clone(),
             inner.notices.clone(),
+            inner.changelog.clone(),
         )
     };
     let cfg = config::get();
@@ -214,6 +216,7 @@ pub fn payload(state: &State) -> Value {
         },
         "asks": asks,
         "notices": notices,
+        "changelog": changelog,
     })
 }
 
@@ -1480,6 +1483,12 @@ fn post_notices(state: &State, _body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+fn post_changelog(state: &State, _body: &Body) -> Out {
+    state.lock().changelog.clear();
+    update::mark_seen();
+    Ok(json!({"ok": true}))
+}
+
 /// A JSON value that names one of `options`, as Python's `body[key] in options`.
 fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
     let s = v.as_str()?;
@@ -1693,6 +1702,11 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
+        "/api/changelog" => |_, _| {
+            update::recent()
+                .map(|text| json!({"text": text}))
+                .map_err(|e| Fail::new(502, format!("release notes: {e}")))
+        },
         _ => return None,
     })
 }
@@ -1719,6 +1733,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/update" => post_update,
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
+        "/api/changelog" => post_changelog,
         "/api/stories" => post_stories,
         _ => return None,
     })

@@ -111,6 +111,8 @@ export type StateData = {
   knowledge: Knowledge
   asks: Ask[]
   notices: string[]
+  /** Release notes since the last version run, "" once dismissed. */
+  changelog: string
 }
 
 export type Finding = { kind: string; text: string; loc?: string }

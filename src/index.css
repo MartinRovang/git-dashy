@@ -69,7 +69,7 @@
         background: var(--bg4); color: var(--ink3);
         display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
   .ib:hover { border-color: var(--dim3); color: var(--ink); }
-  .ib .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+  .ib .spinner { flex: none; }
 
   .body { flex: 1; min-height: 0; display: flex; }
 
@@ -235,6 +235,10 @@
   .modal .mh b { font-size: 14px; font-weight: 600; }
   .modal .mh em { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--dim2); margin-left: auto; }
   .modal .mb { padding: 14px 18px; overflow-y: auto; font-size: 13px; line-height: 1.55; color: var(--ink2); }
+  /* the "what's new" header: edge to edge under the title, fading into the modal instead of ending on a line */
+  .modal:has(.news) { max-width: min(560px, 92vw); }
+  .modal .mb .news { display: block; width: calc(100% + 36px); margin: -14px -18px 4px; aspect-ratio: 3.4; object-fit: cover;
+                     mask-image: linear-gradient(to bottom, #000 55%, transparent); }
   .modal .mf { padding: 10px 18px 14px; border-top: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .modal .mf .sp { flex: 1; }
   .modal .kv { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; }

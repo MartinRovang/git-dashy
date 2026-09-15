@@ -118,6 +118,8 @@ pub struct Inner {
     pub asks: Vec<serde_json::Value>,
     /// Lines the page shows once and acknowledges.
     pub notices: Vec<String>,
+    /// Release notes since the last version run, shown once after an update. See update::changelog.
+    pub changelog: String,
     /// The session token the server answers on; a re-exec after an update keeps it.
     pub token: String,
     pub wake: Arc<Wake>,

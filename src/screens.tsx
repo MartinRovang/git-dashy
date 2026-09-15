@@ -501,6 +501,23 @@ export async function updateScreen(ctx: Ctx) {
   })
 }
 
+/** The release notes under the header picture: once after an update, and again from the menu. */
+export function whatsNew(text: string, version = '') {
+  const m = open({
+    title: "what's new",
+    sub: `v${version}`,
+    body: () => (
+      <>
+        <img className="news" src="/whats-new.webp" alt="" />
+        <pre>{text}</pre>
+      </>
+    ),
+    foot: [['q', 'close', () => close(m)]],
+  })
+  m.keys = { Escape: () => close(m) }
+  return m
+}
+
 export function escMenu(ctx: Ctx) {
   let idx = 0
   // the fourth slot is the board key that does the same thing, where there is one
@@ -510,6 +527,12 @@ export function escMenu(ctx: Ctx) {
       ['Theme', s.theme || 'pencil', () => void cycleTheme(ctx)],
       ['Notify', s.notify ? 'on' : 'off', () => void ctx.setting('notify', !s.notify)],
       ['Refresh', '', async () => { await ctx.call('/api/refresh', {}, 'refreshing…'); close(m) }, 'f'],
+      ["What's new", '', async () => {
+        const r = await api('/api/changelog')
+        if (!r.ok) return ctx.flash(`✗ ${await errorText(r)}`)
+        close(m)
+        whatsNew((await r.json()).text, ctx.getData()?.version)
+      }],
       ['Debug', '', () => { close(m); void debugScreen(ctx) }],
       ['Quit', '', () => void ctx.quit(), 'q'],
     ]
