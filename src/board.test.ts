@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -464,6 +464,18 @@ describe('TEAM sources', () => {
     expect(inScope({ repo: 'x/y', team: 'core' }, ['team:core'])).toBe(true)
     // unbound under a team-bound owner: pick() gave it no team, so the team chip does not claim it
     expect(inScope({ repo: 'acme/forgotten', team: '' }, ['team:core'])).toBe(false)
+  })
+
+  it('collects everyone under one chip, once each, and nobody from a chip with no rows', () => {
+    const d = state([
+      { name: 'MINE', prs: [pr({ repo: 'Acme/api', author: 'bob', reviewers: '✓carol ·bob' })] },
+      { name: 'TEAM', prs: [pr({ repo: 'acme/web', author: 'amy' }), pr({ repo: 'other/x', author: 'dave' })] },
+    ])
+    // bob authors one and reviews it: once. dave is under another owner: not at all.
+    expect(underScope(d, 'org:acme')).toEqual(['amy', 'bob', 'carol'])
+    expect(underScope(d, 'org:other')).toEqual(['dave'])
+    expect(underScope(d, 'team:core')).toEqual([])
+    expect(underScope(null, 'org:acme')).toEqual([])
   })
 
   it('splits TEAM into logged verdicts and OTHER, and drops an empty OTHER', () => {

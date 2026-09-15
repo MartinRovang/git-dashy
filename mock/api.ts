@@ -396,10 +396,11 @@ function postingOf(repo: string) {
   return { repo, owner, manual: one('manual'), auto: one('auto') }
 }
 
-/** Every rule that exists, owners first. */
+/** Every rule that exists, owners first — and each half sorted, the way posting_rules_json does it. */
 function postingRules() {
-  const owners = Object.entries(S.postingOwners).map(([o, r]) => ({ target: `${o}/*`, ...r }))
-  const repos = Object.entries(S.posting).map(([t, r]) => ({ target: t, ...r }))
+  const by = (a: { target: string }, b: { target: string }) => a.target.localeCompare(b.target)
+  const owners = Object.entries(S.postingOwners).map(([o, r]) => ({ target: `${o}/*`, ...r })).sort(by)
+  const repos = Object.entries(S.posting).map(([t, r]) => ({ target: t, ...r })).sort(by)
   return [...owners, ...repos]
 }
 

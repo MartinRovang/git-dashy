@@ -2,6 +2,7 @@
 // the URL-ish UI state, so nothing needs its own state.
 import type { CodeRow, Pr, Row, Section, StateData } from './types'
 import { rowState, SECTION_EMPTY, tone } from './tokens'
+import { people } from './stories'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
 
@@ -12,6 +13,13 @@ export function settings(d: StateData | null) {
 /** A TEAM row's source is on: its owner's org chip, or the team its repo is bound to. */
 export function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
   return scopes.includes(`org:${p.repo.split('/')[0].toLowerCase()}`) || (!!p.team && scopes.includes(`team:${p.team}`))
+}
+
+/** Everyone the board shows under one `team:x` or `org:y` chip, ready to follow: authors and reviewers of
+ *  its rows, deduped by `people`, in its order. Rows the sources toggles have hidden are still in `d`, so
+ *  this is every PR the board holds under that scope, not only the visible ones. */
+export function underScope(d: StateData | null, scope: string): string[] {
+  return people((d?.sections || []).flatMap((s) => s.prs).filter((p): p is Pr => !!p && inScope(p, [scope])))
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.

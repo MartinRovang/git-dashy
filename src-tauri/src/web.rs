@@ -853,6 +853,14 @@ fn get_bind(_state: &State, query: &Query) -> Out {
 
 /// What happens to one repo's reviews: the word in force, whose rule it is, and the owner's own
 /// word, which is what a "set the whole owner" control writes.
+///
+/// ponytail: the owner's OWN word too, not only the effective one. `o` flips the owner rule, and
+/// flipping it from the effective value wrote back what was already there whenever a repo row had
+/// carved the owner out -- a no-op the flash reported as a change.
+///
+/// ponytail: the one resolver. Both routes that answer "what happens to this repo" come through here;
+/// the copy `get_posting` used to keep had already drifted, returning the raw repo where this returns
+/// the folded key.
 fn posting_json(repo: &str) -> Value {
     let p = autorev::posting();
     let owner = owner_of(repo);
@@ -917,26 +925,6 @@ fn get_posting(state: &State, query: &Query) -> Out {
     if repo.is_empty() {
         return Err(Fail::new(400, "no row selected"));
     }
-    let p = autorev::posting();
-    let owner = owner_of(repo);
-    let one = |rules: &autorev::Rules| {
-        let r = bind::key(repo);
-        let via = if rules.repos.contains_key(&r) {
-            "repo"
-        } else if rules.owners.contains_key(&owner) {
-            "owner"
-        } else {
-            ""
-        };
-        // ponytail: the owner's OWN word too, not only the effective one. `o` flips the owner rule,
-        // and flipping it from the effective value wrote back what was already there whenever a repo
-        // row had carved the owner out — a no-op the flash reported as a change.
-        json!({
-            "value": rules.of(repo).word(),
-            "via": via,
-            "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
-        })
-    };
     let n: u64 = q(query, "number").parse().unwrap_or(0);
     let h = held::get(repo, n);
     // ponytail: the head the verdict was written against, next to the one on the board now. Pressing
@@ -949,21 +937,17 @@ fn get_posting(state: &State, query: &Query) -> Out {
         .find(|p| p.repo() == repo && p.number == n)
         .map(|p| p.head.clone())
         .unwrap_or_default();
-    Ok(json!({
-        "repo": repo,
-        "owner": owner,
-        "manual": one(&p.manual),
-        "auto": one(&p.auto),
-        "held": h.map(|h| json!({
-            "verdict": h.verdict.verdict,
-            "summary": h.verdict.summary,
-            "body": h.verdict.body,
-            "model": h.model,
-            "at": h.at,
-            // neither side knowing its head is not a move; only two we can compare and that differ
-            "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
-        })),
-    }))
+    let mut out = posting_json(repo);
+    out["held"] = json!(h.map(|h| json!({
+        "verdict": h.verdict.verdict,
+        "summary": h.verdict.summary,
+        "body": h.verdict.body,
+        "model": h.model,
+        "at": h.at,
+        // neither side knowing its head is not a move; only two we can compare and that differ
+        "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
+    })));
+    Ok(out)
 }
 
 fn get_dream(_state: &State, _q: &Query) -> Out {
@@ -2403,11 +2387,8 @@ mod tests {
         );
     }
 
-    /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
-    /// `o` flips that one, and flipping it from the effective value wrote back what was already
-    /// there whenever a repo row had carved the owner out.
     /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
-    /// itself. And it lists every rule, so nothing about this is only discoverable by clicking.
+    /// itself, and the payload lists every rule that exists.
     #[test]
     fn the_detail_carries_the_posting_answer_and_the_payload_every_rule() {
         let _g = autorev::test_lock();
@@ -2467,6 +2448,9 @@ mod tests {
         );
     }
 
+    /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
+    /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
+    /// already there whenever a repo row had carved the owner out.
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
         let _g = autorev::test_lock();
@@ -2516,6 +2500,29 @@ mod tests {
         assert_eq!(
             j["manual"]["value"], "post",
             "the other kind is untouched throughout"
+        );
+
+        // ponytail: one resolver, asserted. This route and the detail each used to carry their own
+        // copy of repo-beats-owner-beats-default, and the copies had already drifted on `repo`.
+        autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Hold);
+        let mut route = get(
+            &format!("{base}/api/posting?repo={}&number=7", pr().repo()),
+            Some(&token),
+        )
+        .1;
+        let detail = get(&format!("{base}/api/pr?url={}", pr().url), Some(&token)).1["posting"].clone();
+        assert_eq!(route["held"], json!(null));
+        route.as_object_mut().unwrap().remove("held");
+        assert_eq!(route, detail, "the same repo, the same answer, every field");
+
+        // the drift the copies actually had: the detail folded the repo through bind::key and the route
+        // did not, so the two disagreed on any repo that is not already lowercase
+        let mixed = get(&format!("{base}/api/posting?repo=A/B&number=7"), Some(&token)).1;
+        assert_eq!(mixed["repo"], "a/b", "the folded key, not what was typed");
+        assert_eq!(
+            mixed["auto"], detail["auto"],
+            "and the same rule it resolves for a/b"
         );
     }
 

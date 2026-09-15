@@ -72,7 +72,7 @@ export type PostWord = 'post' | 'hold'
 /** One axis of the answer for a repo: the word in force, whose rule it is, and the owner's own. */
 export type PostRule = { value: PostWord; via: '' | 'repo' | 'owner'; ownerValue: PostWord }
 export type Posting = { repo: string; owner: string; manual: PostRule; auto: PostRule }
-/** Every rule on the machine, so nothing about this is invisible. */
+/** Every rule on the machine, in the order web.rs builds them. */
 export type PostingRule = { target: string; manual: PostWord; auto: PostWord }
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }

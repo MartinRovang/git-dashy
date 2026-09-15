@@ -393,9 +393,10 @@
   /* ponytail: the drag grip sits at right:-3px, so a plain overflow:hidden clips half of it and all
      of its dragging highlight. Clip the scroll axis only. */
   .side { padding: 0; gap: 0; overflow-x: visible; overflow-y: clip; }
-  /* ponytail: !important because the grip writes an inline width while you drag, and an inline style
-     outranks any rule. The drag clears it on release, so this is the belt to that braces — a
-     collapse that silently does nothing is the worst kind of dead control. */
+  /* ponytail: !important because an inline width outranks any rule, and the grip writes one while you
+     drag. The drag clears it on release, which is the actual fix; this holds the collapse against the
+     next thing that writes an inline width on this box. A collapse that does nothing is worse than no
+     collapse button. */
   .side.shut { width: 106px !important; }
 
   /* just the collapse button: the top bar owns the wordmark and the version, and it stays on screen
@@ -685,7 +686,7 @@
   /* held is the one that changes what lands on a PR, so it is the one that gets a colour */
   .seg button[aria-pressed='true']:last-child { color: var(--violet); }
 
-  /* every rule on the machine, so nothing about this is invisible */
+  /* the rules table under the posting controls */
   .rules { margin-top: 8px; border-top: 1px solid var(--line2); padding-top: 7px;
            display: flex; flex-direction: column; gap: 4px; }
   .rules > div { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; }
@@ -703,7 +704,8 @@
   .sub em .lnk { font: inherit; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
                  padding: 0 4px; border: 0; background: none; color: var(--dim3); cursor: pointer; }
   .sub em .lnk:hover { color: var(--pink); }
-  .sub em .lnk[aria-pressed='true'] { color: var(--ink3); cursor: default; }
+  .sub em .lnk[aria-pressed='true'], .sub em .lnk:disabled { color: var(--ink3); cursor: default; }
+  .sub em .lnk:disabled:hover { color: var(--ink3); }
   .sub em { display: flex; margin-left: auto; opacity: 1; }
 
   /* the footer's own plain-word button, next to the dock a followed card minimises into */

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { Posting, StateData } from '../types'
 import { counts } from '../board'
 import { every, span } from '../tokens'
@@ -94,11 +94,12 @@ function Sources({
       <div className="sub">
         <kbd className="hint">O</kbd> sources
         <em>
-          {/* explicit, not a chip that means the opposite of itself when it is already on */}
-          <button className="lnk" aria-pressed={all} onClick={() => onAll(options)}>
+          {/* explicit, not a chip that means the opposite of itself when it is already on. Disabled when
+              it is already true: pressing it otherwise posts a setting nothing changed and flashes it. */}
+          <button className="lnk" aria-pressed={all} disabled={all} onClick={() => onAll(options)}>
             all
           </button>
-          <button className="lnk" aria-pressed={!picked.length} onClick={() => onAll([])}>
+          <button className="lnk" aria-pressed={!picked.length} disabled={!picked.length} onClick={() => onAll([])}>
             none
           </button>
         </em>
@@ -268,43 +269,55 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
 
           {/* ponytail: here, and spelled out. It was a modal behind `H` on a row showing two lines of
               "post it / wait for a key · via acme/*", so both options were never on screen at once
-              and nothing said what else was set. Running a review is the expensive half; posting is
-              the half you cannot take back, and that choice should not be something you discover. */}
+              and nothing said what else was set. Posting is the part you cannot take back, so the
+              setting should not be hidden behind a key. */}
           <div className="sub">
             when a review finishes <em>{posting ? posting.repo : 'pick a PR'}</em>
           </div>
           {posting ? (
             <>
               {(['manual', 'auto'] as const).map((ran) => (
-                <div className="pair" key={ran}>
-                  <span>{ran === 'manual' ? 'you ran it' : 'auto ran it'}</span>
-                  <div className="seg" role="group">
-                    {(['post', 'hold'] as const).map((w) => (
-                      <button
-                        key={w}
-                        aria-pressed={posting[ran].value === w}
-                        title={
-                          w === 'post'
-                            ? 'the verdict goes on the PR as soon as it is written'
-                            : 'the verdict waits on disk; Y reads it and posts or drops it'
-                        }
-                        onClick={() => onPosting(ran, w, false)}
-                      >
-                        {w === 'post' ? 'post it' : 'hold it'}
-                      </button>
-                    ))}
+                <Fragment key={ran}>
+                  <div className="pair">
+                    <span>{ran === 'manual' ? 'you ran it' : 'auto ran it'}</span>
+                    <div className="seg" role="group">
+                      {(['post', 'hold'] as const).map((w) => (
+                        <button
+                          key={w}
+                          aria-pressed={posting[ran].value === w}
+                          title={
+                            w === 'post'
+                              ? 'the verdict goes on the PR as soon as it is written'
+                              : 'the verdict waits on disk; Y reads it and posts or drops it'
+                          }
+                          onClick={() => onPosting(ran, w, false)}
+                        >
+                          {w === 'post' ? 'post it' : 'hold it'}
+                        </button>
+                      ))}
+                    </div>
+                    <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
+                      {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'this repo' : 'default'}
+                    </i>
                   </div>
-                  <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
-                    {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'this repo' : 'default'}
-                  </i>
-                </div>
+                  {/* ponytail: one per axis, and both carry aria-pressed. A single auto-only toggle left an
+                      owner-wide manual rule listed in the table below that nothing on screen could set or
+                      clear, and without aria-pressed the switch sat in its off position whatever the rule
+                      said. */}
+                  <button
+                    className="fld"
+                    aria-pressed={posting[ran].ownerValue === 'hold'}
+                    title={`the rule for every repo under ${posting.owner}, which a rule on one repo still overrides`}
+                    onClick={() => onPosting(ran, posting[ran].ownerValue === 'hold' ? 'post' : 'hold', true)}
+                  >
+                    <span>
+                      all of {posting.owner}/* {posting[ran].ownerValue === 'hold' ? 'holds' : 'posts'}{' '}
+                      {ran === 'manual' ? 'what you run' : 'what auto runs'}
+                    </span>
+                    <span className="sw" />
+                  </button>
+                </Fragment>
               ))}
-              <button className="fld" onClick={() => onPosting('auto', posting.auto.ownerValue === 'hold' ? 'post' : 'hold', true)}>
-                <span>
-                  all of {posting.owner}/* {posting.auto.ownerValue === 'hold' ? 'holds' : 'posts'} what auto ran
-                </span>
-                <span className="sw" />
-              </button>
             </>
           ) : null}
           {rules.length ? (

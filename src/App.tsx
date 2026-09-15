@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, UNFOLDED, buckets, flat, forView, groups, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, type Only, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, type Only, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -50,8 +50,7 @@ export default function App() {
     ).then((l) => l && setFollowed((f) => follow(f, l)))
   /** Follow everyone the board shows working under one team or org. */
   const followScope = (scope: string) => {
-    const rows = (data?.sections || []).flatMap((x) => x.prs).filter((p) => inScope(p, [scope]))
-    const who = people(rows)
+    const who = underScope(data, scope)
     if (!who.length) {
       setFlash(`nobody on the board under ${scope}`)
       return
@@ -86,6 +85,8 @@ export default function App() {
   const [pane, setPane] = useState(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
+  /** Bumped to re-ask for the detail when something we wrote changed what it says. */
+  const [detailAge, setDetailAge] = useState(0)
   const [diff, setDiff] = useState<Code | null>(null)
   const [codeOpen, setCodeOpen] = useState(false)
   // the viewer floats over a live board: keys go to whichever of the two was clicked last
@@ -249,6 +250,9 @@ export default function App() {
   }, [])
 
   // The pane's detail: a second request per PR, re-asked while the server reports pending.
+  // ponytail: `detailAge` as well. A posting write changes the answer the detail carries, and reload()
+  // only refreshes /api/state -- so the control that wrote it went on showing the old word, and pressing
+  // it again wrote back what was already there.
   useEffect(() => {
     if (!pane || !url) return
     let alive = true
@@ -270,7 +274,7 @@ export default function App() {
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [pane, url])
+  }, [pane, url, detailAge])
 
   // The diff, only while the code viewer is open.
   useEffect(() => {
@@ -428,7 +432,7 @@ export default function App() {
       return
     }
     const m = open({
-      title: `waiting to post — ${d.repo}#${p.number}`,
+      title: `waiting to post — ${p.repo}#${p.number}`,
       sub: `${d.held.model} · ${d.held.verdict}`,
       wide: true,
       body: () => (
@@ -648,7 +652,7 @@ export default function App() {
               '/api/posting',
               { repo: current?.repo, ran, post, owner },
               `${owner ? `${detail?.posting?.owner}/*` : current?.repo}: ${ran === 'auto' ? 'auto' : 'your'} reviews ${post === 'hold' ? 'wait' : 'post'}`,
-            )
+            ).then(() => setDetailAge((n) => n + 1))
           }
           onAskAgain={onAskAgain}
           collapsed={railShut}

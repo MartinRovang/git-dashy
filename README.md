@@ -132,6 +132,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `Y` | on a row waiting to post: read the held review, then post it or drop it |
+| `F` | follow someone: a floating card of what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
@@ -553,14 +554,13 @@ follows everyone it has a PR from.
 Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
 search; the model only runs when that person's PRs changed since the last story.
 
-**A card marks itself when someone changes direction.** Every rewritten story is compared against the one
+A card marks itself when someone changes direction. Every rewritten story is compared against the one
 before it, in the same model call, and the bar is a *different problem* — even alongside the old one.
 Picking up an auth rewrite next to the export job is a change of direction; moving from export pagination
 to export retries is more of the same export work, and says nothing. Only the first kind marks the card:
 one line at the top of it, a dot on its footer chip, and — while it is minimized — the line and the new
 bullets drop up above the chip. Reading it clears the mark, and nothing else does: a mark raised while you
-were away survives later rewrites until you have seen it. "No change" is the answer the model is asked for
-and almost always gives.
+were away survives later rewrites until you have seen it. The model answers "no change" almost every time.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
 `openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.

@@ -169,6 +169,8 @@ pub fn search(login: &str, days: u64, now: chrono::DateTime<chrono::Utc>) -> Str
 
 /// The word the shift line starts with, in the prompt and in what comes back.
 const SHIFT: &str = "SHIFT:";
+/// How much of the last summary goes back into the next prompt. Five bullets fit well inside it.
+const CARRY_MAX: usize = 800;
 
 /// Asked for only when there is an earlier story to compare against. The bar is a *different problem*,
 /// even alongside the old one: picking up an auth rewrite next to the export job is a shift, moving from
@@ -213,8 +215,13 @@ fn prompt(login: &str, days: u64, prs: &[Value], before: Option<&str>) -> String
 /// leaves `None`, and a reply that is *only* a shift line is kept whole as the story: the card losing its
 /// summary is a worse failure than a mark that does not appear.
 pub fn split(out: &str) -> (Option<String>, String) {
+    // ponytail: get(), not a byte slice. SHIFT.len() bytes into a line that opens with an em dash or an
+    // emoji lands mid-character, and the panic is inside get() holding this login's lock, after the model
+    // has already been paid for -- every later poll of that card repeating it.
     let is_shift = |l: &str| {
-        l.trim_start().len() >= SHIFT.len() && l.trim_start()[..SHIFT.len()].eq_ignore_ascii_case(SHIFT)
+        l.trim_start()
+            .get(..SHIFT.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(SHIFT))
     };
     let line = out.lines().find(|l| is_shift(l));
     let summary = out
@@ -249,6 +256,10 @@ fn compare_to(saved: &Value) -> Option<&str> {
         .filter(|a| !a.is_empty())
         .and(saved["summary"].as_str())
         .filter(|b| !b.trim().is_empty())
+        // ponytail: capped. This is the one place model output re-enters a prompt, so text a PR title
+        // talked the model into writing survives the reply it was written in. Labelled as data like
+        // every title is, and now unable to grow past a card's worth.
+        .map(|b| &b[..b.floor_char_boundary(CARRY_MAX.min(b.len()))])
 }
 
 /// The shift the story carries out. One nobody has read outlives the next rewrite -- otherwise a shift
@@ -270,8 +281,14 @@ fn forget(v: &mut Value, key: &str) {
 }
 
 /// Forget the shift on `login`'s story: the mark is gone once the card has been read.
+///
+/// ponytail: the same per-login lock `get` holds. A refresh reads the saved story, then spends up to
+/// three minutes in the model; a mark dismissed inside that window was carried straight back by
+/// `carry` from the copy the refresh was already holding, and the card re-marked itself.
 pub fn seen(login: &str) {
     let key = login.to_lowercase();
+    let lock = lock_for(&key);
+    let _waiting = lock.lock().unwrap_or_else(|e| e.into_inner());
     with_file(|v| forget(v, &key))
 }
 
@@ -439,6 +456,14 @@ mod tests {
             );
         }
         assert_eq!(split(story), (None, story.to_string()));
+        // a line that opens with a multi-byte character used to be sliced mid-character and panic
+        for wide in ["\u{2014} \u{2014} pagination", "\u{1f680} shipping it", "\u{e5}"] {
+            assert_eq!(
+                split(&format!("{wide}\n{story}")),
+                (None, format!("{wide}\n{story}")),
+                "{wide}"
+            );
+        }
         assert_eq!(
             split(&format!("SHIFT: **an auth rewrite**\n{story}")),
             (Some("an auth rewrite".to_string()), story.to_string())
@@ -478,6 +503,18 @@ mod tests {
             None
         );
         assert_eq!(compare_to(&Value::Null), None);
+
+        // the one place model output re-enters a prompt, so it is capped -- and the cap lands on a
+        // character, not a byte: 800 falls inside the 267th em dash
+        let long = json!({"summary": "- x".repeat(500), "prs": [{"number": 1}]});
+        assert_eq!(compare_to(&long).unwrap().len(), CARRY_MAX);
+        let wide = json!({"summary": "\u{2014}".repeat(400), "prs": [{"number": 1}]});
+        let cut = compare_to(&wide).unwrap();
+        assert!(
+            cut.len() <= CARRY_MAX && cut.len() > CARRY_MAX - 3,
+            "{}",
+            cut.len()
+        );
     }
 
     #[test]
