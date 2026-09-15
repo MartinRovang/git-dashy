@@ -132,6 +132,8 @@ pub struct Config {
     pub settings: Option<PathBuf>,
     /// Pre-reviews of your own PRs.
     pub self_dir: PathBuf,
+    /// Reviews that finished and are waiting to be posted. See held.rs.
+    pub held_dir: PathBuf,
     pub backups: PathBuf,
     pub bindings: PathBuf,
     /// Which repos auto-review is armed for. Its own store: see autorev.rs.
@@ -190,6 +192,7 @@ impl Default for Config {
             keyhints: true,
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
+            held_dir: home().join(".prs_held"),
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
             autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),

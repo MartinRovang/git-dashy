@@ -1,6 +1,6 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
-import type { CodeRow, Row, Section, StateData } from './types'
+import type { CodeRow, Pr, Row, Section, StateData } from './types'
 import { rowState, SECTION_EMPTY, tone } from './tokens'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
@@ -237,6 +237,17 @@ export function remember(read: Record<string, string>, prs: Pick<Row, 'url' | 'u
 export function pick(rows: Row[], sel: string): { row: Row | null; chosen: boolean } {
   const found = rows.find((p) => p.uid === sel)
   return { row: found || rows[0] || null, chosen: !!found }
+}
+
+/** Whether this PR already has a verdict the author has seen.
+ *
+ * ponytail: the ONE place that asks. The hold path writes its verdict into `review` so the row can
+ * say "waiting to post", and `tone()` matches it — so every caller that forgot `!waiting` treated a
+ * held review as a posted one. It was got right in the row state and in the actions menu and missed
+ * in the `r` handler, which is two out of three by habit and one bug.
+ */
+export function isReviewed(p: Pr): boolean {
+  return !p.waiting && !!tone(p.review)
 }
 
 export function selected(rows: Row[], sel: string): Row | null {

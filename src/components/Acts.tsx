@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
-import { tone } from '../tokens'
+import { isReviewed } from '../board'
 
 export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
@@ -13,7 +13,7 @@ export function acts(p: Row, d: Detail | null): Act[] {
   const out: Act[] = []
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
-  const reviewed = !!(p.review && !p.busy && tone(p.review))
+  const reviewed = !p.busy && isReviewed(p)
   if (rr)
     out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
   if (mine)
@@ -30,6 +30,8 @@ export function acts(p: Row, d: Detail | null): Act[] {
   out.push(['o', '', 'Open in browser', 'github', false, 'open'])
   out.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
   if (mine) out.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
+  if (p.waiting) out.push(['Y', 'go', 'Read the review waiting to post', 'nothing posted yet', false, 'waiting'])
+  out.push(['H', '', 'When this repo posts a review', '', false, 'posting'])
   out.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
   out.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
   return out

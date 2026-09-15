@@ -165,6 +165,7 @@ pub fn install() {
         c.local_memory = memory.clone();
         // and a demo pre-review lands where the pane looks for it, not in ~/.prs_reviews
         c.self_dir = root.join("prs-demo-reviews");
+        c.held_dir = root.join("prs-demo-held");
         c.backups = root.join("backups");
         c.registry = root.join("mirrors");
         c.bindings = root.join("bindings");

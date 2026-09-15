@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use crate::types::{CheckResult, LogEntry, Pr, Verdict};
-use crate::{bind, config, github, llm, log as rlog, memory, team};
+use crate::{autorev, bind, config, github, held, llm, log as rlog, memory, team};
 
 pub const PROMPT: &str =
     "Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
@@ -773,13 +773,61 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     Ok((format!("{shown} (not posted){waiting}"), dest))
 }
 
-/// Review the PR, post the verdict, log it. The row's status string.
-/// PORT-NOTE: as with self_review, Python returned "error: ..." instead of raising; this is never Err.
-pub fn review(pr: &Pr, model: &str) -> Result<String> {
-    Ok(review_inner(pr, model).unwrap_or_else(|e| error_status(&e)))
+/// Post a review that was held, and forget it. The row's status string.
+///
+/// ponytail: the model is never asked again. The verdict was computed once and parked whole, so
+/// releasing a hold is two GitHub writes and a log entry — pressing the key a week later posts the
+/// review you read, not a fresh one that may say something else.
+pub fn post_held(h: &held::Held) -> Result<String> {
+    let (repo, n) = (h.pr.repo(), h.pr.number);
+    let c = config::get();
+    if !c.demo {
+        if !h.hello.is_empty() {
+            github::comment(repo, n, &h.hello)?;
+            // ponytail: recorded the moment it lands. A post that fails after the hello went up used
+            // to leave the file with `hello` still set, so every retry greeted the author again.
+            let mut said = h.clone();
+            said.hello = String::new();
+            // ponytail: logged, not returned. Failing here after the hello landed would hand back an
+            // error with `hello` still on disk, so the retry greets the author a second time — the
+            // very thing this write exists to prevent.
+            if let Err(e) = held::put(&said) {
+                log::error!("could not record the hello for {repo}#{n}: {e:#}");
+            }
+        }
+        github::post_review(repo, n, &h.verdict.verdict, &h.verdict.body)?;
+    }
+    // ponytail: dropped HERE, the instant the review is on the PR, and not after the log. The first
+    // draft had it last so a crash left the review recoverable — but what it actually left was a
+    // file whose review had already gone up, and the next `p` posted the whole thing again. A lost
+    // log line costs a re-review later; a second post is on someone else's PR. Cheaper failure wins.
+    held::drop(repo, n)?;
+    // ponytail: the review IS posted by here, so the row must say so whatever the log does. Returning
+    // the error put "error: ..." on the row, which tone() does not match — so `r` was offered again
+    // and a second review could go up under a `post` policy. Same trade as above.
+    let status = match rlog::log_review(&h.pr, &h.model, &h.verdict, None) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("posted {repo}#{n} but could not log it: {e:#}");
+            config::status(&h.verdict.verdict)
+                .unwrap_or("reviewed")
+                .to_string()
+        }
+    };
+    team::push(&format!("review {repo}#{n}: {}", h.verdict.verdict));
+    Ok(status)
 }
 
-fn review_inner(pr: &Pr, model: &str) -> Result<String> {
+/// Review the PR and either post the verdict or park it. The row's status string.
+///
+/// `ran` says which decision applies: pressing `r` is a different one from letting auto run
+/// unattended, and a repo can settle them differently.
+/// PORT-NOTE: as with self_review, Python returned "error: ..." instead of raising; this is never Err.
+pub fn review(pr: &Pr, model: &str, ran: autorev::Ran) -> Result<String> {
+    Ok(review_inner(pr, model, ran).unwrap_or_else(|e| error_status(&e)))
+}
+
+fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran) -> Result<String> {
     let (repo, n) = (pr.repo(), pr.number);
     let c = config::get();
     let mut prev = rlog::last(&pr.url);
@@ -824,11 +872,29 @@ fn review_inner(pr: &Pr, model: &str) -> Result<String> {
             ("why", table(WHY, &c.depth).unwrap_or("set by the reviewer")),
         ],
     );
-    if !c.demo {
+    // ponytail: read ONCE, before the hello. The review takes minutes; reading it again afterwards
+    // would let a policy change mid-review decide the fate of a review it was not asked about, and
+    // the hello is already on the PR by then either way.
+    let hold = autorev::posting().of(repo, ran) == autorev::Post::Hold;
+    // ponytail: no hello when it is held. "Reviewing this now" on a PR whose verdict may never be
+    // posted is a promise to the author that nobody made; it is held with the verdict and goes up
+    // with it, so the PR still reads in order.
+    if !c.demo && !hold {
         github::comment(repo, n, &hello)?;
     }
     let v = verdict(repo, n, model, prev.as_ref())?;
-    if !c.demo {
+    if hold {
+        // ponytail: the memory half still runs below. Drafts are local and gated by their own
+        // consent; holding the POST is about what lands on someone else's PR, not about what this
+        // machine learned.
+        held::put(&held::Held {
+            pr: pr.clone(),
+            model: model.to_string(),
+            verdict: v.clone(),
+            hello,
+            at: crate::state::now(),
+        })?;
+    } else if !c.demo {
         github::post_review(repo, n, &v.verdict, &v.body)?;
     }
     // drafts, and whatever a second review confirmed
@@ -843,6 +909,22 @@ fn review_inner(pr: &Pr, model: &str) -> Result<String> {
     match std::panic::catch_unwind(|| memory::cross_check(repo, model)) {
         Ok(more) => promoted.extend(more),
         Err(_) => log::error!("cross-check failed for {repo}"),
+    }
+    // ponytail: the log is the record of a POSTED review — it is what REVIEWED lists and what the
+    // next review is told the previous verdict was. Logging one that never went up would make the
+    // board claim a review happened on a PR whose author never saw it. It is written when the hold
+    // is released instead.
+    if hold {
+        let shown = config::status(&v.verdict).unwrap_or(&v.verdict);
+        // ponytail: BOTH pushes, the same two the posted path makes. memory::append writes into the
+        // team checkouts as well as your own, so committing only yours left a tracked file modified
+        // there — and pool_drafts' own ponytail records what that costs: the next tick's
+        // `pull --rebase` fails with "Please commit or stash them". The window here is until a
+        // release, which may be never, and push_dir's ponytail is the recorded finding about an
+        // unrelated push sweeping the change in under the wrong message.
+        team::push(&format!("memory: {repo}#{n} (held)"));
+        team::push_dir(&c.memory_dir, &format!("memory: {repo}#{n} (held)"), "mine");
+        return Ok(format!("{shown} (waiting to post)"));
     }
     let status = rlog::log_review(pr, model, &v, None)?;
     team::push(&format!("review {repo}#{n}: {}", v.verdict));
@@ -861,6 +943,182 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips
+    /// the two GitHub calls, which is the half a test cannot drive — everything after them is here.
+    #[test]
+    fn posting_a_held_review_logs_it_and_forgets_it() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("reviewed.jsonl");
+            c.memory_dir = d.path().join("memory");
+        });
+        let h = held::Held {
+            pr: Pr {
+                number: 7,
+                url: "https://x/acme/api/7".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                repository: crate::types::Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "request_changes".into(),
+                summary: "one real bug".into(),
+                body: "## Findings".into(),
+                ..Default::default()
+            },
+            hello: "Reviewing".into(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+        assert!(held::get("acme/api", 7).is_some());
+
+        let status = post_held(&h).unwrap();
+        assert_eq!(status, config::status("request_changes").unwrap());
+        assert!(held::get("acme/api", 7).is_none(), "posted, so no longer waiting");
+        let logged = std::fs::read_to_string(d.path().join("reviewed.jsonl")).unwrap();
+        assert!(
+            logged.contains("acme/api"),
+            "the log is written HERE, not when the hold was taken"
+        );
+        assert!(logged.contains("request_changes"));
+    }
+
+    /// The model is never asked again: the verdict parked is the verdict posted, whenever the key
+    /// is pressed.
+    #[test]
+    fn posting_a_held_review_posts_what_was_parked() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("reviewed.jsonl");
+            c.memory_dir = d.path().join("memory");
+        });
+        let mut h = held::Held {
+            pr: Pr {
+                number: 9,
+                url: "https://x/acme/api/9".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                repository: crate::types::Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "approve".into(),
+                body: "looks right".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+        // whatever the board says now, the parked verdict is what goes up
+        h = held::get("acme/api", 9).unwrap();
+        assert_eq!(h.verdict.verdict, "approve");
+        assert_eq!(post_held(&h).unwrap(), config::status("approve").unwrap());
+    }
+
+    /// Dropped the moment the review is on the PR, before the log. A log write that fails after
+    /// that must NOT leave the file, or the next press posts the same review again.
+    #[test]
+    fn a_failed_log_does_not_leave_the_review_to_post_again() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("reviewed.jsonl");
+            c.memory_dir = d.path().join("memory");
+        });
+        let h = held::Held {
+            pr: Pr {
+                number: 11,
+                url: "https://x/acme/api/11".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                repository: crate::types::Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                ..Default::default()
+            },
+            model: "opus".into(),
+            // log_review refuses a verdict it does not know, which is the step before the drop
+            verdict: Verdict {
+                verdict: "nonsense".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+        // the log refuses a verdict it does not know, and that must not become the row's status:
+        // the review is already on the PR, so `r` must not be offered again
+        let status = post_held(&h).expect("the post landed, so this is not a failure");
+        assert!(
+            !status.starts_with("error"),
+            "an error row offers `r` again: {status:?}"
+        );
+        assert!(
+            held::get("acme/api", 11).is_none(),
+            "the review went up, so the file is gone whatever the log did"
+        );
+    }
+
+    /// The same rule with a verdict the board knows: the log cannot be written at all, and the row
+    /// still reads as the verdict — which `tone()` matches, so `r` stays hidden and no second review
+    /// can go up.
+    #[test]
+    fn a_log_that_cannot_be_written_still_leaves_the_verdict_on_the_row() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        // a directory where the log file should be: every write to it fails
+        std::fs::create_dir_all(d.path().join("reviewed.jsonl")).unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("reviewed.jsonl");
+            c.memory_dir = d.path().join("memory");
+        });
+        let h = held::Held {
+            pr: Pr {
+                number: 13,
+                url: "https://x/acme/api/13".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                repository: crate::types::Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "request_changes".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+        let status = post_held(&h).expect("the review posted, so this is not a failure");
+        assert_eq!(status, config::status("request_changes").unwrap());
+        assert!(!status.starts_with("error"));
+        assert!(
+            held::get("acme/api", 13).is_none(),
+            "and it is not waiting any more"
+        );
     }
 
     #[test]
