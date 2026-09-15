@@ -235,7 +235,8 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     } else {
         // ponytail: never pass tools here. PR titles come from any repo and are the prompt; with --safe-mode,
         // an empty cwd and no --allowedTools the worst a title can do is make the card say something false.
-        // and no effort: the picked one is for reviews, and max reasoning over PR titles is spend for nothing
+        // and low effort, whatever is picked: that is for reviews, and deep reasoning over PR titles is spend
+        // for nothing
         llm::ask_at(
             &prompt(login, days, &prs),
             &model(&cfg.model),
@@ -243,7 +244,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
             "",
             TIMEOUT,
             &[],
-            "",
+            "low",
         )?
         .0
         .trim()
