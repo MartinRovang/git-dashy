@@ -229,7 +229,7 @@ mod tests {
         let a = json!({"url": "u/1", "updatedAt": "t1"});
         let b = json!({"url": "u/2", "updatedAt": "t1"});
         assert_eq!(sig(&[a.clone(), b.clone()]), sig(&[b.clone(), a.clone()]));
-        assert_ne!(sig(&[a.clone()]), sig(&[a.clone(), b]));
+        assert_ne!(sig(std::slice::from_ref(&a)), sig(&[a.clone(), b]));
         assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "updatedAt": "t2"})]));
     }
 }
