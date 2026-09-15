@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -296,12 +296,12 @@ describe('selected', () => {
 })
 
 describe('forView: the graph draws the whole board', () => {
-  const dirty = { query: 'api', failing: true, drafts: true, bucket: ['MINE'] }
+  const dirty = { query: 'api', failing: true, drafts: true, hidden: true, bucket: ['MINE'] }
 
   it('switching to the graph clears every part of the filter row', () => {
     // the bucket is the one that bit: a node outside the pick resolved to a uid flat() never made,
     // and selected() answered with rows[0] — the pane opened on some other PR
-    expect(forView('graph', dirty)).toEqual({ query: '', failing: false, drafts: false, bucket: [ALL] })
+    expect(forView('graph', dirty)).toEqual({ query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] })
   })
 
   it('switching back to the board changes nothing, so your tab survives the round trip', () => {
@@ -457,6 +457,18 @@ describe('visible: hidden PRs', () => {
 
   it('brings it back once it moves past the mark', () => {
     expect(titles(d({ updatedAt: '2026-09-02T00:00:00Z' }))).toEqual(['stale', 'live'])
+  })
+
+  it('toggleHidden hides a url at its newest time across sections, and unhides it from any of its rows', () => {
+    const rows = [
+      { url: 'u', updatedAt: '2026-09-01T00:00:00Z' }, // REVIEWED: the log's time
+      { url: 'u', updatedAt: '2026-09-03T00:00:00Z' }, // MERGED: GitHub's
+      { url: 'other', updatedAt: '2026-09-05T00:00:00Z' },
+    ]
+    const on = toggleHidden({ keep: 't' }, rows, 'u')
+    expect(on).toEqual({ keep: 't', u: '2026-09-03T00:00:00Z' })
+    expect(rows.slice(0, 2).every((r) => isRead(on, r))).toBe(true)
+    expect(toggleHidden(on, rows, 'u')).toEqual({ keep: 't' })
   })
 })
 

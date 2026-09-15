@@ -2732,7 +2732,7 @@ mod tests {
         assert_eq!(
             post(
                 &format!("{base}/api/settings"),
-                json!({"read": {"https://x/1": "t1"}}),
+                json!({"read": {"https://x/1": "t1"}, "hidden": {"https://x/2": "t2"}}),
                 &token
             )
             .0,
@@ -2740,8 +2740,12 @@ mod tests {
         );
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(
-            (saved["read"]["https://x/1"].as_str(), saved["scopes"][0].as_str()),
-            (Some("t1"), Some("team:k"))
+            (
+                saved["read"]["https://x/1"].as_str(),
+                saved["hidden"]["https://x/2"].as_str(),
+                saved["scopes"][0].as_str()
+            ),
+            (Some("t1"), Some("t2"), Some("team:k"))
         );
         assert_eq!(
             post(&format!("{base}/api/settings"), json!({"read": {"u": 3}}), &token).0,
@@ -2749,6 +2753,7 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
+        assert_eq!(d["settings"]["hidden"]["https://x/2"], "t2");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port
         // every launch, so a localStorage flag would show the hint again on every open.
         assert_eq!(d["settings"]["hinted"], json!(false));

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -83,12 +83,12 @@ export default function App() {
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    const f = forView(v, { query, failing, drafts: onlyDrafts, bucket })
+    const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
+    setShowHidden(f.hidden)
     setBucket(f.bucket)
-    if (v === 'graph') setShowHidden(false) // the chip lives in the queue; the graph cannot clear it
     // a node picked in the graph may sit in a folded section; open it so the board shows the selection
     const at = current?.section || ''
     if (v === 'board' && chosen && FOLDABLE.includes(at)) setUnfolded((u) => ({ ...u, [at]: true }))
@@ -116,13 +116,16 @@ export default function App() {
   // same optimistic shape as `marked`: the page's copy wins over the polled one once set
   const [hid, setHid] = useState<Record<string, string> | null>(null)
   const hidden = useMemo(() => hid || data?.settings.hidden || {}, [hid, data])
+  // chained, not fired at once: two quick toggles on two connections could land in the wrong order
+  const savingHidden = useRef<Promise<unknown>>(Promise.resolve())
   const toggleHide = (p: Row) => {
-    const all = (data?.sections || []).flatMap((s) => s.prs).filter((x) => x.url === p.url)
-    const next = isRead(hidden, p) ? Object.fromEntries(Object.entries(hidden).filter(([u]) => u !== p.url)) : remember(hidden, all.length ? all : [p])
+    const next = toggleHidden(hidden, (data?.sections || []).flatMap((s) => s.prs), p.url)
     setHid(next)
-    post('/api/settings', { hidden: next })
-      .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`hidden PRs not saved: ${t}`))))
-      .catch(() => setFlash('hidden PRs not saved'))
+    savingHidden.current = savingHidden.current.then(() =>
+      post('/api/settings', { hidden: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`hidden PRs not saved: ${t}`))))
+        .catch(() => setFlash('hidden PRs not saved')),
+    )
   }
 
   const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only, hidden, showHidden), [data, query, failing, onlyDrafts, only, hidden, showHidden])
@@ -629,7 +632,8 @@ export default function App() {
     if (k === 'f') return one(onRefresh)
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
-    if (k === 'X' && p) return one(() => toggleHide(p))
+    // a chosen row only: hiding the fallback guess would take a PR off the board you never looked at
+    if (k === 'X' && p && chosen) return one(() => toggleHide(p))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
     if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))

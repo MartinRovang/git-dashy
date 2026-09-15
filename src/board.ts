@@ -135,7 +135,7 @@ export function pickBucket(bucket: readonly string[], key: string): string[] {
   return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
 }
 
-export type Filters = { query: string; failing: boolean; drafts: boolean; bucket: string[] }
+export type Filters = { query: string; failing: boolean; drafts: boolean; hidden: boolean; bucket: string[] }
 
 /** The filter row after a view switch: cleared for the graph, untouched for the board.
  *
@@ -145,7 +145,7 @@ export type Filters = { query: string; failing: boolean; drafts: boolean; bucket
  * this is the third field that has been forgotten in it.
  */
 export function forView(v: 'board' | 'graph', cur: Filters): Filters {
-  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : cur
+  return v === 'graph' ? { query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] } : cur
 }
 
 /** The two filter chips over the bucket on screen, with the rule for when one goes dead.
@@ -236,6 +236,14 @@ export function remember(read: Record<string, string>, prs: Pick<Row, 'url' | 'u
   // row the log's), and marking one must not rewind the other to unread
   for (const p of prs) if (!isRead(all, p)) all[p.url] = p.updatedAt
   return Object.fromEntries(Object.entries(all).sort((a, b) => b[1].localeCompare(a[1])).slice(0, keep))
+}
+
+/** The hidden map with `url` unhidden if it is hidden, or hidden at the newest time of `rows` — every
+ *  row the board has for that url, so a PR in MERGED and REVIEWED goes out of both. */
+export function toggleHidden(hidden: Record<string, string>, rows: Pick<Row, 'url' | 'updatedAt'>[], url: string): Record<string, string> {
+  const mine = rows.filter((r) => r.url === url)
+  if (mine.some((r) => isRead(hidden, r))) return Object.fromEntries(Object.entries(hidden).filter(([u]) => u !== url))
+  return remember(hidden, mine)
 }
 
 /** The selected row, and whether it is the one that was actually chosen.
