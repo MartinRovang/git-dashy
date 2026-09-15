@@ -105,7 +105,7 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
         </div>
       ) : null}
       <span className="ib" title="refresh now (f)" onClick={onRefresh}>
-        <span className={spinning ? 'spin' : undefined}>⟳</span>
+        {spinning ? <span className="spinner" /> : <span>⟳</span>}
         <kbd className="hint">f</kbd>
       </span>
       <div className={`toggle${d?.auto ? ' on' : ''}`} title="auto-run on new PRs (a)" onClick={onAuto}>
