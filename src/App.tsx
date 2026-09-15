@@ -6,13 +6,13 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, setDays, unfollow, type Followed } from './stories'
+import { follow, people, setDays, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
+import { confirm, findLogin, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span, tone } from './tokens'
@@ -548,7 +548,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void prompt('GitHub username to follow:').then((l) => l.trim() && setFollowed((f) => follow(f, l.trim())))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
+      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}

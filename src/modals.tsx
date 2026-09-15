@@ -3,6 +3,7 @@
 // so the async actions that use them read the same as gui.html.
 import type { ReactNode } from 'react'
 import { useEffect, useSyncExternalStore } from 'react'
+import { fuzzy, isLogin } from './stories'
 
 export type Foot = [key: string, label: string, fn: () => void, cls?: string]
 
@@ -200,6 +201,52 @@ export function picker(
   }
 }
 
+/** Type to fuzzy-find a login among `logins`, or follow one that is not there. Resolves "" on Esc. */
+export function findLogin(title: string, logins: string[], following: string[]): Promise<string> {
+  return new Promise((res) => {
+    let q = ''
+    let idx = 0
+    const shown = () => {
+      const hits = fuzzy(q, logins).slice(0, 50)
+      const typed = q.trim()
+      return isLogin(typed) && !hits.some((l) => l.toLowerCase() === typed.toLowerCase()) ? [...hits, typed] : hits
+    }
+    const done = (v: string) => {
+      close(m)
+      res(v)
+    }
+    const move = (by: number) => {
+      const n = shown().length
+      if (n) idx = (idx + by + n) % n
+      bump()
+    }
+    const m = open({
+      title,
+      dismiss: false,
+      focus: '#mi',
+      body: () => (
+        <>
+          <input type="text" id="mi" placeholder="a GitHub username" autoComplete="off" onChange={(e) => { q = e.target.value; idx = 0; bump() }} />
+          <div style={{ marginTop: 8 }}>
+            {shown().map((l, i) => (
+              <div key={l} className={`opt${i === idx ? ' on' : ''}`} onClick={() => done(l)}>
+                <span className="tick">{following.some((f) => f.toLowerCase() === l.toLowerCase()) ? '✓' : ''}</span>
+                <span>{logins.includes(l) ? l : `follow “${l}”`}</span>
+              </div>
+            ))}
+            {logins.length || q ? null : <div style={{ color: 'var(--dim2)' }}>nobody on the board yet: type a username</div>}
+          </div>
+        </>
+      ),
+      foot: [
+        ['Enter', 'follow', () => { const l = shown()[idx]; if (l) done(l) }, 'go'],
+        ['Esc', 'cancel', () => done('')],
+      ],
+    })
+    m.keys = { Enter: () => m.foot![0][2](), Escape: () => done(''), ArrowDown: () => move(1), ArrowUp: () => move(-1) }
+  })
+}
+
 /** The stack. Mounted once, next to the app. */
 export function ModalHost() {
   useSyncExternalStore(subscribe, snapshot)
@@ -208,7 +255,7 @@ export function ModalHost() {
       const m = topModal()
       if (!m) return
       const key = e.ctrlKey && e.key === 's' ? 'ctrl+s' : e.key
-      if (/input|textarea/i.test((e.target as HTMLElement).tagName) && !['Escape', 'Enter', 'ctrl+s'].includes(key)) return
+      if (/input|textarea/i.test((e.target as HTMLElement).tagName) && !['Escape', 'Enter', 'ctrl+s', 'ArrowUp', 'ArrowDown'].includes(key)) return
       if (/textarea/i.test((e.target as HTMLElement).tagName) && key === 'Enter') return
       const foot = m.foot?.find(([k]) => k === key)
       const fn = foot ? foot[2] : m.keys?.[key]
