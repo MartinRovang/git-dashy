@@ -32,7 +32,7 @@ fn model(picked: &str) -> String {
 /// One lock per login, held across search, model and write: a second poll for the same user waits, then
 /// finds the story the first one saved instead of paying for it again.
 static RUNNING: Mutex<Option<HashMap<String, Arc<Mutex<()>>>>> = Mutex::new(None);
-/// The file as last read or written: `{"follow": [{login, min}], "cache": {"login": story}}`.
+/// The file as last read or written: `{"follow": [{login}], "cache": {"login": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
 
@@ -81,7 +81,7 @@ pub fn clean(list: &Value) -> Value {
                     return None;
                 }
                 seen.push(low);
-                Some(json!({"login": login, "min": f["min"].as_bool().unwrap_or(false)}))
+                Some(json!({"login": login}))
             })
             .take(50)
             .collect(),
@@ -157,7 +157,7 @@ pub fn login_ok(s: &str) -> bool {
 }
 
 /// How far back a story looks.
-pub const DAYS: u64 = 3;
+pub const DAYS: u64 = 1;
 
 pub fn search(login: &str, days: u64, now: chrono::DateTime<chrono::Utc>) -> String {
     let since = now - chrono::Duration::days(days as i64);
@@ -216,7 +216,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let lock = lock_for(&key);
     let _running = lock.lock().unwrap_or_else(|e| e.into_inner());
-    // ponytail: one page, the newest 20. Three days of one author rarely fills it, and the rest would cost a
+    // ponytail: one page, the newest 20. A day of one author rarely fills it, and the rest would cost a
     // round trip each on every poll.
     let q = search(login, days, chrono::Utc::now());
     let got = github::gql(&page(&q), 20).map_err(|e| anyhow!(e.0))?;
@@ -284,7 +284,7 @@ mod tests {
         let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "min": true}]);
         assert_eq!(
             clean(&raw),
-            json!([{"login": "Bob", "min": false}, {"login": "amy", "min": true}])
+            json!([{"login": "Bob"}, {"login": "amy"}])
         );
         assert_eq!(clean(&json!(null)), json!([]));
     }

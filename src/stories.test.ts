@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { follow, fuzzy, isLogin, patch, people, unfollow } from './stories'
+import { follow, fuzzy, moved, isLogin, people, unfollow } from './stories'
 
 describe('followed users', () => {
   it('adds a login once, and drops it again', () => {
     const one = follow([], 'Bob')
-    expect(one).toEqual([{ login: 'Bob', min: false }])
+    expect(one).toEqual([{ login: 'Bob' }])
     expect(follow(one, 'bob')).toBe(one)
-    expect(patch(one, 'Bob', { min: true })).toEqual([{ login: 'Bob', min: true }])
     expect(unfollow(one, 'BOB')).toEqual([])
-    expect(patch(one, 'bob', { min: true })[0].min).toBe(true)
   })
 })
 
@@ -33,4 +31,13 @@ describe('finding someone to follow', () => {
     expect(fuzzy('zz', logins)).toEqual([])
     expect(fuzzy('', logins)).toBe(logins)
   })
+})
+
+it('only PRs that are new or were pushed since the last story count as new work', () => {
+  const pr = (n: number) => ({ repo: 'acme/api', number: n, title: `t${n}`, url: `https://gh/acme/api/pull/${n}` })
+  const prev = { at: 1, summary: '', prs: [pr(1), pr(2), pr(3)], sig: `${pr(1).url}@a ${pr(2).url}@a ${pr(3).url}@a` }
+  const next = { at: 2, summary: '', prs: [pr(1), pr(2), pr(4)], sig: `${pr(1).url}@a ${pr(2).url}@b ${pr(4).url}@a` }
+  expect(moved(prev, next).map((p) => p.number)).toEqual([2, 4])
+  // pr 3 ageing out alone is nothing new
+  expect(moved(prev, { ...prev, prs: [pr(1), pr(2)], sig: `${pr(1).url}@a ${pr(2).url}@a` })).toEqual([])
 })
