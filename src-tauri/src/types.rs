@@ -160,6 +160,13 @@ pub struct Verdict {
     pub depth_used: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub depth_reason: String,
+    /// Depth and effort the review was started with: read once with the prompt, and what the log records.
+    /// ponytail: carried on the verdict, not read again at log time. The review takes minutes and the
+    /// settings can change under it; a held review is logged whenever it is released.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub depth: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
 }
 
 /// One dashboard section: MINE, REVIEW REQUESTED, ASSIGNED, REVIEWED.
