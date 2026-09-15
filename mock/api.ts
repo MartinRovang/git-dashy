@@ -10,6 +10,16 @@ import type { Plugin } from 'vite'
 const TARGET = 'http://127.0.0.1:7777'
 
 const THEMES = ['pencil', 'dashy', 'dracula', 'gruvbox', 'nord']
+// several of each kind, so the sources rows are worth grouping in dev too
+const SCOPES = [
+  'team:teamdashy',
+  'team:acme-guild',
+  'team:platform',
+  'org:acme',
+  'org:a',
+  'org:other',
+  'org:infra',
+]
 const MODELS = ['opus', 'sonnet', 'fable']
 const DEPTHS = ['adaptive', 'low', 'medium', 'high']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -238,7 +248,7 @@ function buildPayload() {
     running: S.rows.filter((r) => r.busy).length,
     update: '',
     settings: { ...S.settings },
-    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
+    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: SCOPES },
     knowledge: {
       memory: '~/.prs_memory',
       store: '',

@@ -51,6 +51,77 @@ function Pills({ label, values }: { label: string; values: string[] }) {
   )
 }
 
+/** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
+ *
+ * ponytail: grouped, and the prefix is the heading. One flat wrapped row of `team:neomedsys`
+ * `org:martinrovang` chips repeated the prefix on every one of them, right-aligned itself into a
+ * ragged block, and gave no way to say "all of them" — which is the answer most of the time.
+ */
+function Sources({
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  options: string[]
+  picked: string[]
+  onToggle: (v: string) => void
+  onAll: (v: string[]) => void
+}) {
+  if (!options.length) {
+    return (
+      <>
+        <div className="sub">
+          <kbd className="hint">O</kbd> sources
+        </div>
+        <div className="rules none">nothing seen yet — a team or an org shows up once it has a PR</div>
+      </>
+    )
+  }
+  const groups: [string, string, string][] = [
+    ['team:', 'teams', 'a repo bound to one of your teams'],
+    ['org:', 'orgs', 'every repo under that owner'],
+  ]
+  const all = options.length === picked.length
+  return (
+    <>
+      <div className="sub">
+        <kbd className="hint">O</kbd> sources
+        <em>
+          {/* explicit, not a chip that means the opposite of itself when it is already on */}
+          <button className="lnk" aria-pressed={all} onClick={() => onAll(options)}>
+            all
+          </button>
+          <button className="lnk" aria-pressed={!picked.length} onClick={() => onAll([])}>
+            none
+          </button>
+        </em>
+      </div>
+      {groups.map(([prefix, label, why]) => {
+        const mine = options.filter((v) => v.startsWith(prefix))
+        if (!mine.length) return null
+        return (
+          <div className="srcs" key={prefix}>
+            <b title={why}>{label}</b>
+            <div className="chips">
+              {mine.map((v) => (
+                <i
+                  key={v}
+                  className={picked.includes(v) ? 'on' : ''}
+                  title={`${v} — ${why}`}
+                  onClick={() => onToggle(v)}
+                >
+                  {v.slice(prefix.length)}
+                </i>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 /** A settings group: a caret and a one-line summary when open, a stacked digest when collapsed.
  *
  * ponytail: the collapsed rail shows a digest. A column of icons tells you which group to click and
@@ -266,13 +337,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, po
             <span>Show key hints</span>
             <span className="sw" />
           </button>
-          <Row k="O" label="sources">
-            {o.scopes.length ? (
-              <Chips values={s.scopes || []} options={o.scopes} onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))} />
-            ) : (
-              <b style={{ color: 'var(--dim2)' }}>none seen yet</b>
-            )}
-          </Row>
+          <Sources
+            options={o.scopes}
+            picked={s.scopes || []}
+            onToggle={(v) => setting('scopes', toggle(s.scopes || [], v))}
+            onAll={(v) => setting('scopes', v)}
+          />
           <Row k="t" label="history">
             <Select
               value={s.window == null ? 'all' : String(s.window)}

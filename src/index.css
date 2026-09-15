@@ -644,3 +644,15 @@
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rules span { font-family: var(--mono); font-size: 9.5px; color: var(--dim3); flex-shrink: 0; }
   .rules.none { font-size: 10.5px; color: var(--dim3); line-height: 1.4; }
+
+  /* sources: the prefix is the heading, so a chip carries only the name */
+  .srcs { display: flex; align-items: baseline; gap: 8px; padding: 2px 0 4px; }
+  .srcs > b { flex-shrink: 0; width: 34px; font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+              letter-spacing: .08em; color: var(--dim3); }
+  .srcs .chips { flex: 1; min-width: 0; justify-content: flex-start; }
+  /* a plain word that acts, next to a heading that does not */
+  .sub em .lnk { font: inherit; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
+                 padding: 0 4px; border: 0; background: none; color: var(--dim3); cursor: pointer; }
+  .sub em .lnk:hover { color: var(--pink); }
+  .sub em .lnk[aria-pressed='true'] { color: var(--ink3); cursor: default; }
+  .sub em { display: flex; margin-left: auto; opacity: 1; }
