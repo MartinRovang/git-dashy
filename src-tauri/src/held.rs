@@ -76,7 +76,7 @@ pub fn get(repo: &str, n: u64) -> Option<Held> {
 
 /// Whether this PR has a review waiting. `repo` is folded, so the caller may pass the raw name.
 ///
-/// ponytail: the one door. `waiting()` returns folded keys because the filenames are folded, and a
+/// ponytail: the only lookup. `waiting()` returns folded keys because the filenames are folded, and a
 /// caller comparing them against a raw `nameWithOwner` silently never matched — `MartinRovang` is
 /// this repo's own owner, and every fixture was lowercase, so nothing caught it.
 pub fn is_waiting(set: &HashSet<(String, u64)>, repo: &str, n: u64) -> bool {
@@ -244,7 +244,7 @@ mod tests {
 
     /// The fold lowercases, so the set's keys are lowercase and a raw nameWithOwner never matches.
     /// `MartinRovang/git-dashy` is this repo's own owner and every other fixture here is lowercase,
-    /// which is exactly why nothing caught it.
+    /// so no test caught it.
     #[test]
     fn a_mixed_case_repo_is_found_by_the_name_the_board_uses() {
         let (_g, _d) = fresh();

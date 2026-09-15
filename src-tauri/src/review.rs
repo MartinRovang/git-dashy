@@ -804,8 +804,7 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     held::drop(repo, n)?;
     // ponytail: the review IS posted by here, so the row must say so whatever the log does. Returning
     // the error put "error: ..." on the row, which tone() does not match — so `r` was offered again
-    // and a second review could go up under a `post` policy. A lost log line costs a re-review later;
-    // that costs someone else's PR.
+    // and a second review could go up under a `post` policy. Same trade as above.
     let status = match rlog::log_review(&h.pr, &h.model, &h.verdict, None) {
         Ok(s) => s,
         Err(e) => {
@@ -1068,13 +1067,57 @@ mod tests {
         // the log refuses a verdict it does not know, and that must not become the row's status:
         // the review is already on the PR, so `r` must not be offered again
         let status = post_held(&h).expect("the post landed, so this is not a failure");
-        assert_eq!(
-            status, "reviewed",
-            "an unknown verdict has no status word of its own"
+        assert!(
+            !status.starts_with("error"),
+            "an error row offers `r` again: {status:?}"
         );
         assert!(
             held::get("acme/api", 11).is_none(),
             "the review went up, so the file is gone whatever the log did"
+        );
+    }
+
+    /// The same rule with a verdict the board knows: the log cannot be written at all, and the row
+    /// still reads as the verdict — which `tone()` matches, so `r` stays hidden and no second review
+    /// can go up.
+    #[test]
+    fn a_log_that_cannot_be_written_still_leaves_the_verdict_on_the_row() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        // a directory where the log file should be: every write to it fails
+        std::fs::create_dir_all(d.path().join("reviewed.jsonl")).unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("reviewed.jsonl");
+            c.memory_dir = d.path().join("memory");
+        });
+        let h = held::Held {
+            pr: Pr {
+                number: 13,
+                url: "https://x/acme/api/13".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                repository: crate::types::Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "request_changes".into(),
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: 100.0,
+        };
+        held::put(&h).unwrap();
+        let status = post_held(&h).expect("the review posted, so this is not a failure");
+        assert_eq!(status, config::status("request_changes").unwrap());
+        assert!(!status.starts_with("error"));
+        assert!(
+            held::get("acme/api", 13).is_none(),
+            "and it is not waiting any more"
         );
     }
 

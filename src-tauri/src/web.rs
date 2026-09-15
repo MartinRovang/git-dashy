@@ -2393,11 +2393,8 @@ mod tests {
         );
     }
 
-    /// Dropping a held review must clear the STATUS as well as the file. The hold wrote its verdict
-    /// into the row, so removing only the file left it reading "changes requested (waiting to post)"
-    /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
     /// bind::key lowercases, so the filenames are folded and a raw nameWithOwner never matched.
-    /// Every other fixture here is lowercase, which is exactly why nothing caught it.
+    /// Every other fixture here is lowercase, so no test caught it.
     #[test]
     fn a_mixed_case_repo_still_marks_its_row_as_waiting() {
         let _g = autorev::test_lock();
@@ -2480,6 +2477,9 @@ mod tests {
         );
     }
 
+    /// Dropping a held review must clear the STATUS as well as the file. The hold wrote its verdict
+    /// into the row, so removing only the file left it reading "changes requested (waiting to post)"
+    /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
     #[test]
     fn discarding_a_held_review_leaves_the_row_clean() {
         let _g = autorev::test_lock();
