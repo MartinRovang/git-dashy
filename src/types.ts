@@ -86,6 +86,8 @@ export type Settings = {
   hunter?: string[]
   scopes?: string[]
   read?: Record<string, string>
+  /** url -> the updatedAt it was hidden at; a PR that moves past it shows again. */
+  hidden?: Record<string, string>
   interval?: number
   [key: string]: unknown
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
@@ -33,6 +33,7 @@ export default function App() {
   // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
   // counts zero and goes flat, which is the honest state rather than a contradiction.
   const [onlyDrafts, setOnlyDrafts] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
   // ponytail: session-only like the rest of the filter row; a setting if people want it to survive a launch
   const [only, setOnly] = useState<Only>(NOBODY)
   // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
@@ -82,10 +83,11 @@ export default function App() {
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    const f = forView(v, { query, failing, drafts: onlyDrafts, bucket })
+    const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
+    setShowHidden(f.hidden)
     setBucket(f.bucket)
     // a node picked in the graph may sit in a folded section; open it so the board shows the selection
     const at = current?.section || ''
@@ -111,7 +113,26 @@ export default function App() {
     }, 500)
   }
 
-  const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only), [data, query, failing, onlyDrafts, only])
+  // same optimistic shape as `marked`: the page's copy wins over the polled one once set
+  const [hid, setHid] = useState<Record<string, string> | null>(null)
+  const hidden = useMemo(() => hid || data?.settings.hidden || {}, [hid, data])
+  // chained, not fired at once: two quick toggles on two connections could land in the wrong order
+  const savingHidden = useRef<Promise<unknown>>(Promise.resolve())
+  const toggleHide = (p: Row) => {
+    const next = toggleHidden(hidden, (data?.sections || []).flatMap((s) => s.prs), p.url)
+    setHid(next)
+    savingHidden.current = savingHidden.current.then(() =>
+      post('/api/settings', { hidden: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`hidden PRs not saved: ${t}`))))
+        .catch(() => setFlash('hidden PRs not saved')),
+    )
+  }
+
+  const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only, hidden, showHidden), [data, query, failing, onlyDrafts, only, hidden, showHidden])
+  const hiddenN = useMemo(
+    () => new Set(inBucket(showHidden ? secs : visible(data, query, failing, onlyDrafts, only, hidden, true), bucket).flatMap((s) => s.prs.map((x) => x.url))).size,
+    [secs, data, query, failing, onlyDrafts, only, hidden, showHidden, bucket],
+  )
   const opts = useMemo(() => whoIs(data), [data])
   const pickOnly = (which: keyof Only) =>
     picker(`only these ${which}`, pickable(opts, only, which), only[which], String, (v) => setOnly((o) => ({ ...o, [which]: v })), true)
@@ -540,6 +561,7 @@ export default function App() {
       posting: () => void postingScreen(p),
       waiting: () => void waitingScreen(p),
       memory: () => void memoryEditor(ctx, p.repo),
+      hide: () => toggleHide(p),
     }
     fns[name]?.()
   }
@@ -610,6 +632,8 @@ export default function App() {
     if (k === 'f') return one(onRefresh)
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
+    // a chosen row only: hiding the fallback guess would take a PR off the board you never looked at
+    if (k === 'X' && p && chosen) return one(() => toggleHide(p))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
     if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
@@ -720,6 +744,9 @@ export default function App() {
                 onFailing={() => setFailing((v) => !v)}
                 drafts={onlyDrafts}
                 onDrafts={() => setOnlyDrafts((v) => !v)}
+                hiddenN={hiddenN}
+                showHidden={showHidden}
+                onHidden={() => setShowHidden((v) => !v)}
                 bucket={bucket}
                 onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
@@ -797,6 +824,7 @@ export default function App() {
         <ActsMenu
           p={rows.find((r) => r.uid === menuAt.p.uid) || menuAt.p}
           d={detail?.url === menuAt.p.url ? detail : null}
+          hidden={isRead(hidden, menuAt.p)}
           at={menuAt.at}
           onAct={doAct}
           onClose={() => setMenuAt(null)}
