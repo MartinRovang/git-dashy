@@ -10,7 +10,7 @@ use log::{debug, error, info};
 
 use crate::types::{Detail, DiffFile, Finding, Mark, Pr, Section};
 use crate::{
-    autorev, config, diff, github, heartbeat, install, log as review_log, memory, mirror, review, team,
+    autorev, config, diff, github, heartbeat, held, install, log as review_log, memory, mirror, review, team,
     update,
 };
 
@@ -411,7 +411,9 @@ impl State {
     }
 
     /// False when a review of this PR is already running, and nothing was started.
-    pub fn start_review(&self, pr: &Pr) -> bool {
+    /// `ran` says whose decision this was: you pressed `r`, or auto started it. A repo can settle
+    /// the two differently, so the review has to carry it all the way to the post.
+    pub fn start_review(&self, pr: &Pr, ran: autorev::Ran) -> bool {
         let model = config::get().model;
         let (me, pr) = (self.clone(), pr.clone());
         if !self.begin(&pr.url, "reviewing...") {
@@ -422,7 +424,7 @@ impl State {
             // catch would leave it spinning for the rest of the session with nothing to press. Catch here
             // too, and the row says what happened.
             info!("review {} with {}", pr.url, model);
-            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model))) {
+            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran))) {
                 Ok(Ok(status)) => status,
                 Ok(Err(e)) => {
                     error!("review {} failed: {e:#}", pr.url);
@@ -435,6 +437,34 @@ impl State {
             };
             info!("review {} -> {}", pr.url, status);
             me.finish(&pr.url, status);
+        });
+        true
+    }
+
+    /// Post a review that was waiting, with the row spinning while it goes.
+    ///
+    /// ponytail: a thread and `begin`/`finish`, like every other review action. Posting is two
+    /// network calls; doing it in the handler would hold the UI, and the row would say nothing was
+    /// happening.
+    pub fn start_post_held(&self, h: held::Held) -> bool {
+        let url = h.pr.url.clone();
+        if !self.begin(&url, "posting...") {
+            return false;
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let status = match catch_unwind(AssertUnwindSafe(|| review::post_held(&h))) {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    error!("post held {url} failed: {e:#}");
+                    format!("error: {e}").chars().take(88).collect()
+                }
+                Err(e) => {
+                    error!("post held {url} failed: {}", panic_text(&*e));
+                    format!("error: {}", panic_text(&*e)).chars().take(88).collect()
+                }
+            };
+            me.finish(&url, status);
         });
         true
     }
@@ -735,7 +765,8 @@ impl State {
             }
         };
         for p in &new {
-            self.start_review(p); // already running is not an error here: auto only skips it
+            // already running is not an error here: auto only skips it
+            self.start_review(p, autorev::Ran::Auto);
         }
         let asks: Vec<&Section> = data
             .iter()

@@ -131,6 +131,8 @@ button somewhere on the page.
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `H` | when this repo posts a review: `r` and auto settle separately, and `o` sets the whole owner. Held means the verdict is written to `~/.prs_held` and posts nothing until you press `Y` and say so. Posting is the default, so a repo you never set behaves as it always has |
+| `Y` | on a row waiting to post: read the held review, then post it or drop it |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
@@ -426,12 +428,20 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 *after* you turn it on. `--auto` also reviews what is already listed; `a` asks whether to include
 the ones on screen or leave them as the baseline.
 
+**Whether a finished review posts is a separate question again.** The expensive half of a review is
+running it; the irreversible half is posting it. `H` on a row settles that per repo, separately for
+reviews you start with `r` and for ones auto starts: post it, as always, or hold it. A held review is
+written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts it
+or drops it. The model is never asked again — the verdict you read is the verdict that goes up. No
+opening comment is posted for a held review either, so a PR never says it is being reviewed by
+something that may never arrive.
+
 The board spans whatever the token can see, so with nothing armed auto covers every repo on it.
 `gitdashy auto owner/name` arms one, and from then on auto covers only what is armed; `--owner
 OWNER` arms a whole org and a repo of its own still overrides it, so the one repo under that owner
 you do not want reviewed can be left out with `gitdashy auto owner/repo --off`. A lone `--off` is
 not a decision to arm the rest: while nothing is armed, auto still covers everything. `gitdashy
-auto` reports. Widening the scope does not fire a batch, whether you widened it from the dashboard,
+auto` reports where it applies, and what is set to wait. Widening the scope does not fire a batch, whether you widened it from the dashboard,
 from the command line or by editing the file: the tick that notices a repo has come into scope
 treats what it already has listed as seen, and only what arrives next starts.
 
@@ -618,7 +628,8 @@ src-tauri/
     memory.rs       ~/.prs_memory store, drafts, pools, and the dream cleanup
     team.rs         git-backed sync of the log and memory
     bind.rs         which team a repo belongs to
-    autorev.rs      which repos auto mode reviews
+    autorev.rs      which repos auto mode reviews, and whether a verdict posts
+    held.rs         ~/.prs_held: finished reviews waiting for a keypress
     mirror.rs       read-only copies of the memory, for agent sessions
     install.rs      wiring: CLAUDE.md imports, hooks, the corpus, setup briefs
     update.rs       release check and self-update

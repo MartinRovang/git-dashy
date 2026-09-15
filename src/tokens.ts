@@ -13,6 +13,8 @@ export const PALETTE: Record<string, { fg: string; bg: string; border: string }>
   running: { fg: 'var(--cyan)', bg: wash('--cyan', 10), border: wash('--cyan', 28) },
   error: { fg: 'var(--red)', bg: wash('--red', 8), border: wash('--red', 22) },
   idle: { fg: 'var(--dim)', bg: wash('--dim', 8), border: 'var(--edge)' },
+  // violet, the colour unread already uses: something here is yours to act on
+  waiting: { fg: 'var(--violet)', bg: wash('--violet', 12), border: wash('--violet', 32) },
 }
 // ponytail: the theme's own accents, so avatars follow a theme swap instead of staying neon.
 const AVATARS = ['var(--pink)', 'var(--cyan)', 'var(--green)', 'var(--amber)', 'var(--violet)', 'var(--ink3)']
@@ -94,6 +96,9 @@ export function rowState(p: Pr): { key: string; label: string } {
     const el = p.since ? Math.max(0, Math.floor(Date.now() / 1000 - p.since)) : 0
     return { key: 'running', label: `${(p.review || 'reviewing').replace(/\.\.\.$/, '')}… ${elapsed(el)}` }
   }
+  // ponytail: ahead of the verdict, and it IS the verdict — held, so the author has not seen it.
+  // Showing "changes requested" on a row whose review never went up reads as posted.
+  if (p.waiting) return { key: 'waiting', label: 'waiting to post' }
   for (const s of [p.review, p.status, p.prev]) {
     const t = tone(s)
     if (t) return { key: t, label: s.replace(/^[✓✗~·↻●]\s*/, '') }

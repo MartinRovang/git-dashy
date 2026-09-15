@@ -10,7 +10,8 @@ import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
-import { confirm, modalCount, ModalHost, notice, picker, prompt, repaint, viewer } from './modals'
+import { close, confirm, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
+import type { Foot } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span, tone } from './tokens'
@@ -366,6 +367,92 @@ export default function App() {
     picker(`request review · ${p.repo}#${p.number}`, logins, '', String, ask)
   }
 
+  /// What happens to this repo's reviews, and the one waiting if there is one.
+  async function postingScreen(p: Row) {
+    const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
+    if (!r.ok) {
+      setFlash(`✗ ${await errorText(r)}`)
+      return
+    }
+    const d = await r.json()
+    const where = (via: string) => (via === 'owner' ? ` · via ${d.owner}/*` : via === 'repo' ? '' : ' · default')
+    const set = (ran: string, now: string, owner: boolean) =>
+      void call(
+        '/api/posting',
+        { repo: p.repo, ran, post: now === 'hold' ? 'post' : 'hold', owner },
+        `${owner ? `${d.owner}/*` : d.repo}: ${ran} reviews ${now === 'hold' ? 'post' : 'wait'}`,
+      )
+    const rows: [string, string, string, () => void][] = [
+      ['you press r', d.manual.value, where(d.manual.via), () => set('manual', d.manual.value, false)],
+      ['auto runs it', d.auto.value, where(d.auto.via), () => set('auto', d.auto.value, false)],
+    ]
+    let idx = 0
+    const m = open({
+      title: `posting — ${d.repo}`,
+      sub: d.held ? 'one review is waiting' : undefined,
+      body: () => (
+        <>
+          <div className="prose" style={{ marginBottom: 10 }}>
+            A held review is written to disk and posts nothing until you say so. Nothing changes for a
+            repo you never set.
+          </div>
+          {rows.map(([label, value, via], i) => (
+            <div key={label} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
+              <span className="tick">{i === idx ? '▸' : ''}</span>
+              <span>when {label}</span>
+              <em style={{ color: value === 'hold' ? 'var(--violet)' : 'var(--dim2)' }}>
+                {value === 'hold' ? 'wait for a key' : 'post it'}
+                {via}
+              </em>
+            </div>
+          ))}
+        </>
+      ),
+      foot: [
+        ['⏎', 'flip this one', () => pick(idx), 'go'],
+        ['o', `the whole ${d.owner}/*`, () => rows[idx] && set(idx === 0 ? 'manual' : 'auto', rows[idx][1], true)],
+        ['Esc', 'close', () => close(m)],
+      ] as Foot[],
+    })
+    const pick = (i: number) => {
+      idx = i
+      rows[i][3]()
+      close(m)
+    }
+    m.keys = {
+      j: () => { idx = (idx + 1) % rows.length; repaint() },
+      k: () => { idx = (idx - 1 + rows.length) % rows.length; repaint() },
+      Enter: () => pick(idx),
+      Escape: () => close(m),
+    }
+  }
+
+  /// Read the review that is waiting, then post it or drop it.
+  async function waitingScreen(p: Row) {
+    const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
+    if (!r.ok) {
+      setFlash(`✗ ${await errorText(r)}`)
+      return
+    }
+    const d = await r.json()
+    if (!d.held) {
+      setFlash('nothing waiting on this PR')
+      return
+    }
+    const m = open({
+      title: `waiting to post — ${d.repo}#${p.number}`,
+      sub: `${d.held.model} · ${d.held.verdict}`,
+      wide: true,
+      body: () => <pre>{d.held.body}</pre>,
+      foot: [
+        ['p', 'post it', () => { close(m); void call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…') }, 'go'],
+        ['x', 'drop it', () => { close(m); void call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped') }, 'warn'],
+        ['Esc', 'leave it waiting', () => close(m)],
+      ] as Foot[],
+    })
+    m.keys = { Escape: () => close(m) }
+  }
+
   async function bindScreen(p: Row) {
     const r = await api(`/api/bind?repo=${encodeURIComponent(p.repo)}`)
     if (!r.ok) {
@@ -406,6 +493,8 @@ export default function App() {
       copy: () => void copyUrl(p),
       reviewer: () => void addReviewer(p),
       bind: () => void bindScreen(p),
+      posting: () => void postingScreen(p),
+      waiting: () => void waitingScreen(p),
       memory: () => void memoryEditor(ctx, p.repo),
     }
     fns[name]?.()
@@ -489,6 +578,8 @@ export default function App() {
     if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
     if (k === 'W') return one(() => void draftsScreen(ctx))
     if (k === 'b' && p) return one(() => void bindScreen(p))
+    if (k === 'H' && p) return one(() => void postingScreen(p))
+    if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)
     if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))

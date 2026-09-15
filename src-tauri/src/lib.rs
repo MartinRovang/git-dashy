@@ -12,6 +12,7 @@ pub mod diff;
 pub mod friction;
 pub mod github;
 pub mod heartbeat;
+pub mod held;
 pub mod install;
 pub mod knowledge;
 pub mod llm;

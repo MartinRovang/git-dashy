@@ -30,6 +30,8 @@ export type Pr = {
   kind: string
   breaking: boolean
   pre: Pre
+  /** A finished review nobody has posted yet. */
+  waiting?: boolean
 }
 
 export type Section = { name: string; prs: Pr[]; error: string }

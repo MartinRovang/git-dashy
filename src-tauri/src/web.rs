@@ -19,7 +19,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, install, knowledge, log as review_log, memory, review, team,
+    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, team,
     textdiff, update,
 };
 
@@ -68,6 +68,12 @@ fn team_error() -> String {
 pub fn payload(state: &State) -> Value {
     // one read for the count, the flag and the rows, so they cannot describe different files
     let auto_scope = autorev::scope();
+    // ponytail: one read of the held store for the whole payload. It is small and usually empty, but
+    // asking per row would open it once per PR on every poll.
+    let waiting: std::collections::HashSet<(String, u64)> = held::all()
+        .into_iter()
+        .map(|h| (h.pr.repo().to_string(), h.pr.number))
+        .collect();
     let (
         sections,
         reviews,
@@ -163,6 +169,9 @@ pub fn payload(state: &State) -> Value {
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
                 "pre": pre_json(pre),
+                // a finished review nobody has posted yet. The row says so, because a verdict
+                // sitting in a file nothing points at is a verdict nobody reads.
+                "waiting": waiting.contains(&(p.repo().to_string(), p.number)),
             }));
         }
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
@@ -837,6 +846,44 @@ fn get_bind(_state: &State, query: &Query) -> Out {
     Ok(json!({"repo": repo, "kind": kind, "to": to, "owner": owner_of(repo), "teams": teams}))
 }
 
+/// What happens to this repo's reviews, and where each answer came from.
+///
+/// ponytail: `via` as well as the value. A review that stops posting with nothing on screen saying
+/// which rule decided it looks like a bug, and the rule may be an owner-wide one set months ago.
+fn get_posting(_state: &State, query: &Query) -> Out {
+    let repo = q(query, "repo");
+    if repo.is_empty() {
+        return Err(Fail::new(400, "no row selected"));
+    }
+    let p = autorev::posting();
+    let owner = owner_of(repo);
+    let one = |rules: &autorev::Rules| {
+        let r = bind::key(repo);
+        let via = if rules.repos.contains_key(&r) {
+            "repo"
+        } else if rules.owners.contains_key(&owner) {
+            "owner"
+        } else {
+            ""
+        };
+        json!({"value": rules.of(repo).word(), "via": via})
+    };
+    let h = held::get(repo, q(query, "number").parse().unwrap_or(0));
+    Ok(json!({
+        "repo": repo,
+        "owner": owner,
+        "manual": one(&p.manual),
+        "auto": one(&p.auto),
+        "held": h.map(|h| json!({
+            "verdict": h.verdict.verdict,
+            "summary": h.verdict.summary,
+            "body": h.verdict.body,
+            "model": h.model,
+            "at": h.at,
+        })),
+    }))
+}
+
 fn get_dream(_state: &State, _q: &Query) -> Out {
     let mut j = job("dream");
     if let Some(result) = j["result"].as_object_mut() {
@@ -893,7 +940,7 @@ fn post_review(state: &State, body: &Body) -> Out {
     let started = if truthy(body, "self") {
         state.start_self_review(&pr)
     } else {
-        state.start_review(&pr)
+        state.start_review(&pr, autorev::Ran::Manual)
     };
     if !started {
         return Err(Fail::new(409, "already running"));
@@ -1171,6 +1218,49 @@ fn post_bind(state: &State, body: &Body) -> Out {
         _ => return Err(Fail::new(400, "op must be bind, owner or forget")),
     };
     fail_if(err)?;
+    state.wake();
+    Ok(json!({"ok": true}))
+}
+
+/// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
+fn post_posting(state: &State, body: &Body) -> Out {
+    let (repo, op) = (text(body, "repo"), text(body, "op"));
+    if repo.is_empty() {
+        return Err(Fail::new(400, "no row selected"));
+    }
+    if op == "release" || op == "discard" {
+        let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
+        let Some(h) = held::get(&repo, n) else {
+            return Err(Fail::new(404, "nothing waiting for that PR"));
+        };
+        if op == "discard" {
+            fail_if(
+                held::drop(&repo, n)
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
+            )?;
+            state.wake();
+            return Ok(json!({"ok": true, "status": "dropped"}));
+        }
+        // ponytail: on a thread with the row spinning, like every other review action. Posting is
+        // two network calls and this handler answers the UI.
+        state.start_post_held(h);
+        return Ok(json!({"ok": true}));
+    }
+    let ran = match text(body, "ran").as_str() {
+        "manual" => autorev::Ran::Manual,
+        "auto" => autorev::Ran::Auto,
+        _ => return Err(Fail::new(400, "ran must be manual or auto")),
+    };
+    let Some(p) = autorev::Post::parse_word(&text(body, "post")) else {
+        return Err(Fail::new(400, "post must be post or hold"));
+    };
+    fail_if(if truthy(body, "owner") {
+        autorev::set_post_owner(&owner_of(&repo), ran, p)
+    } else {
+        autorev::set_post(&repo, ran, p)
+    })?;
     state.wake();
     Ok(json!({"ok": true}))
 }
@@ -1544,6 +1634,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/share" => get_share,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
+        "/api/posting" => get_posting,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         _ => return None,
@@ -1564,6 +1655,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/share" => post_share,
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
+        "/api/posting" => post_posting,
         "/api/dream" => post_dream,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,

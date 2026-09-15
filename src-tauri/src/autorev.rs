@@ -89,6 +89,183 @@ impl Scope {
     }
 }
 
+/// What happens to a finished review.
+///
+/// ponytail: stored as a word, not a bool. The next settling is a threshold ("post unless the change
+/// is big"), and a bool would need the file rewritten to take one.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum Post {
+    /// Posted the moment it finishes, as it always has been. The default, so a store nobody has
+    /// touched behaves exactly as before.
+    #[default]
+    Now,
+    /// Written to ~/.prs_held and left for a keypress.
+    Hold,
+}
+
+impl Post {
+    pub fn parse_word(s: &str) -> Option<Post> {
+        Post::parse(s)
+    }
+    fn parse(s: &str) -> Option<Post> {
+        match s {
+            "post" => Some(Post::Now),
+            "hold" => Some(Post::Hold),
+            _ => None,
+        }
+    }
+    pub fn word(&self) -> &'static str {
+        match self {
+            Post::Now => "post",
+            Post::Hold => "hold",
+        }
+    }
+}
+
+/// Which review a rule is about. Two independent settings: pressing `r` yourself is a different
+/// decision from letting auto run unattended, and the operator asked for both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ran {
+    /// You pressed `r`.
+    Manual,
+    /// Auto started it.
+    Auto,
+}
+
+impl Ran {
+    fn field(&self) -> &'static str {
+        match self {
+            Ran::Manual => "post_manual",
+            Ran::Auto => "post_auto",
+        }
+    }
+}
+
+/// The rules for one kind of review.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Rules {
+    pub repos: HashMap<String, Post>,
+    pub owners: HashMap<String, Post>,
+}
+
+impl Rules {
+    /// A repo row beats an owner row beats the default — the chain `armed` already uses.
+    ///
+    /// ponytail: a name this cannot fold gets the DEFAULT, not the safe direction. The fold is a
+    /// lookup key; failing it means no rule was found, and inventing one for a row whose name did
+    /// not come back would change behaviour on a broken row rather than on a decision.
+    pub fn of(&self, repo: &str) -> Post {
+        let r = key(repo);
+        if r.is_empty() {
+            return Post::default();
+        }
+        if let Some(v) = self.repos.get(&r) {
+            return *v;
+        }
+        let o = r.split('/').next().unwrap_or("");
+        *self.owners.get(o).unwrap_or(&Post::default())
+    }
+
+    /// (target, policy), owners then repos, each sorted. Owners read back as `acme/*`.
+    pub fn listed(&self) -> Vec<(String, Post)> {
+        let mut repos: Vec<(String, Post)> = self.repos.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut owners: Vec<(String, Post)> =
+            self.owners.iter().map(|(k, v)| (format!("{k}/*"), *v)).collect();
+        repos.sort_by(|a, b| a.0.cmp(&b.0));
+        owners.sort_by(|a, b| a.0.cmp(&b.0));
+        owners.extend(repos);
+        owners
+    }
+}
+
+/// Both sets of rules, from one read.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Posting {
+    pub manual: Rules,
+    pub auto: Rules,
+}
+
+impl Posting {
+    pub fn of(&self, repo: &str, ran: Ran) -> Post {
+        match ran {
+            Ran::Manual => self.manual.of(repo),
+            Ran::Auto => self.auto.of(repo),
+        }
+    }
+    pub fn rules(&self, ran: Ran) -> &Rules {
+        match ran {
+            Ran::Manual => &self.manual,
+            Ran::Auto => &self.auto,
+        }
+    }
+}
+
+/// One read of the store for the posting rules.
+///
+/// ponytail: the same file as `scope()`, and the two cannot see each other's rows — `scope()` skips
+/// any line without an `auto` boolean, and this skips any without a `post_*` word. The reason bind.rs
+/// could not take a second field was its `touched` set, which three rules read; this store has no
+/// equivalent.
+pub fn posting() -> Posting {
+    let mut out = Posting::default();
+    for line in read().lines() {
+        let Ok(Value::Object(e)) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        for ran in [Ran::Manual, Ran::Auto] {
+            let Some(p) = e.get(ran.field()).and_then(|v| v.as_str()).and_then(Post::parse) else {
+                continue;
+            };
+            let rules = match ran {
+                Ran::Manual => &mut out.manual,
+                Ran::Auto => &mut out.auto,
+            };
+            if let Some(Value::String(o)) = e.get("owner") {
+                let o = owner_key(o);
+                if !o.is_empty() {
+                    rules.owners.insert(o, p);
+                }
+            } else if let Some(Value::String(r)) = e.get("repo") {
+                let r = key(r);
+                if !r.is_empty() {
+                    rules.repos.insert(r, p);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Say what happens to `repo`'s reviews of one kind. Returns "" or why it did not.
+pub fn set_post(repo: &str, ran: Ran, p: Post) -> String {
+    let r = key(repo);
+    if r.is_empty() {
+        return format!("{repo} is not an owner/name");
+    }
+    if posting().rules(ran).repos.get(&r) == Some(&p) {
+        return String::new();
+    }
+    append_word(&[("repo", &r)], ran, p)
+}
+
+/// The same for a whole owner.
+pub fn set_post_owner(owner: &str, ran: Ran, p: Post) -> String {
+    let o = owner_key(owner);
+    if o.is_empty() {
+        return format!("{owner} is not an owner");
+    }
+    if posting().rules(ran).owners.get(&o) == Some(&p) {
+        return String::new();
+    }
+    append_word(&[("owner", &o)], ran, p)
+}
+
+fn append_word(fields: &[(&str, &str)], ran: Ran, p: Post) -> String {
+    let mut all: Vec<(&str, &str)> = fields.to_vec();
+    all.push((ran.field(), p.word()));
+    bind::append_to(store(), &all, None)
+}
+
 /// One read of the store. A line with no usable key, or no `auto` boolean, is skipped.
 pub fn scope() -> Scope {
     let mut out = Scope::default();
@@ -375,6 +552,125 @@ mod tests {
         assert!(!scope().armed("notes"));
         set("acme/api", true);
         assert!(!scope().armed(""));
+    }
+
+    #[test]
+    fn nothing_set_posts_everything_as_it_always_has() {
+        let (_g, _d) = fresh();
+        let p = posting();
+        assert_eq!(p.of("acme/api", Ran::Manual), Post::Now);
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Now);
+        assert!(p.manual.listed().is_empty() && p.auto.listed().is_empty());
+    }
+
+    /// Two independent settings: pressing `r` is a different decision from letting auto run.
+    #[test]
+    fn manual_and_auto_are_set_apart() {
+        let (_g, _d) = fresh();
+        assert_eq!(set_post("acme/api", Ran::Auto, Post::Hold), "");
+        let p = posting();
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Hold);
+        assert_eq!(
+            p.of("acme/api", Ran::Manual),
+            Post::Now,
+            "the other kind is untouched"
+        );
+
+        set_post("acme/api", Ran::Manual, Post::Hold);
+        assert_eq!(posting().of("acme/api", Ran::Manual), Post::Hold);
+    }
+
+    #[test]
+    fn a_repo_rule_beats_an_owner_rule_beats_the_default() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        assert_eq!(posting().of("acme/api", Ran::Auto), Post::Hold);
+        assert_eq!(posting().of("other/thing", Ran::Auto), Post::Now);
+
+        set_post("acme/api", Ran::Auto, Post::Now);
+        assert_eq!(
+            posting().of("acme/api", Ran::Auto),
+            Post::Now,
+            "the repo row wins"
+        );
+        assert_eq!(posting().of("acme/web", Ran::Auto), Post::Hold);
+    }
+
+    #[test]
+    fn the_last_word_on_a_target_wins() {
+        let (_g, _d) = fresh();
+        set_post("acme/api", Ran::Auto, Post::Hold);
+        set_post("acme/api", Ran::Auto, Post::Now);
+        assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now);
+    }
+
+    #[test]
+    fn saying_the_same_posting_rule_twice_writes_nothing() {
+        let (_g, d) = fresh();
+        set_post("acme/api", Ran::Auto, Post::Hold);
+        let before = std::fs::read_to_string(d.path().join("autorev")).unwrap();
+        assert_eq!(set_post("acme/api", Ran::Auto, Post::Hold), "");
+        assert_eq!(std::fs::read_to_string(d.path().join("autorev")).unwrap(), before);
+    }
+
+    #[test]
+    fn a_key_it_cannot_read_is_refused_by_the_posting_rules_too() {
+        let (_g, _d) = fresh();
+        assert!(set_post("notes", Ran::Auto, Post::Hold).contains("owner/name"));
+        assert!(set_post_owner("acme/api", Ran::Auto, Post::Hold).contains("is not an owner"));
+        assert_eq!(posting(), Posting::default());
+    }
+
+    /// The two readers share one file and must not see each other's rows.
+    #[test]
+    fn the_arm_flag_and_the_posting_rules_do_not_read_each_other() {
+        let (_g, _d) = fresh();
+        set("acme/api", true);
+        assert_eq!(
+            posting(),
+            Posting::default(),
+            "an arm row says nothing about posting"
+        );
+
+        set_post("acme/web", Ran::Auto, Post::Hold);
+        assert!(
+            scope().armed("acme/api"),
+            "a posting row did not disturb the scope"
+        );
+        assert!(!scope().armed("acme/web"), "and did not arm anything either");
+        assert_eq!(
+            scope().listed(),
+            vec![("acme/api".to_string(), true)],
+            "the posting row is invisible to the scope"
+        );
+    }
+
+    #[test]
+    fn a_word_it_does_not_know_is_not_a_rule() {
+        let (_g, d) = fresh();
+        std::fs::create_dir_all(d.path()).unwrap();
+        std::fs::write(
+            d.path().join("autorev"),
+            "{\"repo\": \"acme/api\", \"post_auto\": \"maybe\"}\n",
+        )
+        .unwrap();
+        assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now);
+    }
+
+    #[test]
+    fn posting_rules_list_owners_first_and_sort_each() {
+        let (_g, _d) = fresh();
+        set_post("zeta/one", Ran::Auto, Post::Hold);
+        set_post("acme/api", Ran::Auto, Post::Now);
+        set_post_owner("beta", Ran::Auto, Post::Hold);
+        assert_eq!(
+            posting().auto.listed(),
+            vec![
+                ("beta/*".to_string(), Post::Hold),
+                ("acme/api".to_string(), Post::Now),
+                ("zeta/one".to_string(), Post::Hold),
+            ]
+        );
     }
 
     #[test]
