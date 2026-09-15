@@ -1162,7 +1162,7 @@ pub fn clone(repo: &str, dest: &Path) -> String {
     let auth = if local { HashMap::new() } else { github::git_auth() };
     let dest_s = dest.to_string_lossy();
     if note(
-        &remote(&["git", "clone", "-q", &url, &dest_s], Some(&auth), None),
+        &remote(&["git", "clone", "-q", "--", &url, &dest_s], Some(&auth), None),
         "join",
     ) {
         github::persist_auth(dest); // the env config does not survive the clone; the checkout needs its own
@@ -1857,6 +1857,15 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let rel = t.path().to_string_lossy().to_string();
         assert!(looks_local(&rel));
+    }
+
+    #[test]
+    fn clone_reads_a_dash_leading_repo_as_a_repo_not_an_option() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = tempfile::tempdir().unwrap();
+        // the '@' passes it through untouched, so git sees it exactly as typed
+        let err = clone("--upload-pack=nope@x", &t.path().join("dest"));
+        assert!(err.contains("'--upload-pack=nope@x' does not exist"), "{err}");
     }
 
     #[test]
