@@ -17,6 +17,9 @@ type Props = {
   onFailing: () => void
   drafts: boolean
   onDrafts: () => void
+  hiddenN: number
+  showHidden: boolean
+  onHidden: () => void
   bucket: string[]
   onBucket: (name: string) => void
   expanded: Record<string, boolean>
@@ -192,6 +195,11 @@ export function Queue(p: Props) {
               {c.label} <b>{c.n}</b>
             </button>
           ))}
+          {p.hiddenN || p.showHidden ? (
+            <button className="chip" aria-pressed={p.showHidden} onClick={p.onHidden}>
+              Hidden <b>{p.hiddenN}</b>
+            </button>
+          ) : null}
           {unread ? (
             <button className="chip" onClick={p.onReadAll}>
               Read all <b>{unread}</b>

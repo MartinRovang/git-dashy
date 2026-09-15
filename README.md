@@ -121,6 +121,7 @@ button somewhere on the page.
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
+| `X` | hide the selected PR until it moves (a push, a comment), or unhide it; the **Hidden** chip in the filter bar shows only the hidden ones |
 | `m` | pick the model: opus / sonnet / fable / haiku |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |

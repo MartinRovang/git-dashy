@@ -1623,8 +1623,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
         wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
     }
-    if let Some(v) = body.get("read") {
-        // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    let marks = |key: &str| -> Result<Option<HashMap<String, String>>, Fail> {
+        let Some(v) = body.get(key) else { return Ok(None) };
         let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
             m.iter()
                 .map(|(u, t)| {
@@ -1634,13 +1635,18 @@ fn post_settings(state: &State, body: &Body) -> Out {
                 })
                 .collect()
         });
-        let Some(got) = got else {
-            return Err(Fail::new(
+        got.map(Some).ok_or_else(|| {
+            Fail::new(
                 400,
-                "read must be an object of url to updatedAt, at most 5000",
-            ));
-        };
+                format!("{key} must be an object of url to updatedAt, at most 5000"),
+            )
+        })
+    };
+    if let Some(got) = marks("read")? {
         c.read = got;
+    }
+    if let Some(got) = marks("hidden")? {
+        c.hidden = got;
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
@@ -2682,6 +2688,7 @@ mod tests {
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
             json!({"read": {"u": 1}}),
+            json!({"hidden": {"u": 1}}),
             json!({"read": {"x".repeat(513): "t"}}),
             json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
         ] {
@@ -2725,7 +2732,7 @@ mod tests {
         assert_eq!(
             post(
                 &format!("{base}/api/settings"),
-                json!({"read": {"https://x/1": "t1"}}),
+                json!({"read": {"https://x/1": "t1"}, "hidden": {"https://x/2": "t2"}}),
                 &token
             )
             .0,
@@ -2733,8 +2740,12 @@ mod tests {
         );
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(
-            (saved["read"]["https://x/1"].as_str(), saved["scopes"][0].as_str()),
-            (Some("t1"), Some("team:k"))
+            (
+                saved["read"]["https://x/1"].as_str(),
+                saved["hidden"]["https://x/2"].as_str(),
+                saved["scopes"][0].as_str()
+            ),
+            (Some("t1"), Some("t2"), Some("team:k"))
         );
         assert_eq!(
             post(&format!("{base}/api/settings"), json!({"read": {"u": 3}}), &token).0,
@@ -2742,6 +2753,7 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
+        assert_eq!(d["settings"]["hidden"]["https://x/2"], "t2");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port
         // every launch, so a localStorage flag would show the hint again on every open.
         assert_eq!(d["settings"]["hinted"], json!(false));
