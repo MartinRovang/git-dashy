@@ -1438,7 +1438,10 @@ fn post_posting(state: &State, body: &Body) -> Out {
     if p.is_none() && word != autorev::CLEAR {
         return Err(Fail::new(400, "post must be post, hold or none"));
     }
-    if repo.is_empty() == owner.is_empty() {
+    if repo.is_empty() && owner.is_empty() {
+        return Err(Fail::new(400, "name a repo or an owner"));
+    }
+    if !repo.is_empty() && !owner.is_empty() {
         return Err(Fail::new(400, "name a repo or an owner, not both"));
     }
     fail_if(match (p, repo.is_empty()) {
@@ -2707,16 +2710,15 @@ mod tests {
 
         // ponytail: one or the other, never both and never neither. The flag this replaced meant a body
         // naming the owner in `owner` -- the obvious reading -- set a rule on `repo`'s whole org instead.
-        for bad in [
-            json!({"repo": "acme/api", "owner": "acme", "ran": "auto", "post": "hold"}),
-            json!({"ran": "auto", "post": "hold"}),
+        for (bad, said) in [
+            (
+                json!({"repo": "acme/api", "owner": "acme", "ran": "auto", "post": "hold"}),
+                "name a repo or an owner, not both",
+            ),
+            (json!({"ran": "auto", "post": "hold"}), "name a repo or an owner"),
         ] {
             let (code, body) = post(&format!("{base}/api/posting"), bad.clone(), &token);
-            assert_eq!(
-                (code, body["error"].as_str()),
-                (400, Some("name a repo or an owner, not both")),
-                "{bad}"
-            );
+            assert_eq!((code, body["error"].as_str()), (400, Some(said)), "{bad}");
         }
 
         // the route folds the repo it is asked about: `A/B` and `a/b` are one repo, one rule

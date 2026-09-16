@@ -105,3 +105,9 @@ export function followAll(list: Followed[], who: string[], max = FOLLOW_MAX): { 
  *  ponytail: a poll that STARTED before the dismissal answers with the shift still on it -- the server had not
  *  been told yet -- and raising it again would undo the dismissal the moment it was made. */
 export const shownShift = (shift: string | undefined, began: number, dismissedAt: number) => (began < dismissedAt ? '' : shift || '')
+
+/** The direction line an open pop-up shows: the one it opened with, until it is closed.
+ *
+ *  ponytail: not whatever the last poll brought. Opening the pill tells the server the mark was read, so the
+ *  next poll answers with no shift, and a line drawn from that answer vanished while it was being read. */
+export const lineOnScreen = (open: boolean, openedWith: string, fromPoll: string) => (open && openedWith ? openedWith : fromPoll)

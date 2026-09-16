@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, errorText, post } from '../api'
 import { useNow } from '../usePoll'
-import { moved, type Got, type Pr, shownShift } from '../stories'
+import { lineOnScreen, moved, type Got, type Pr, shownShift } from '../stories'
 
 /** The model's "- " lines as a list; anything that is not a list (an older cached story) as a paragraph. */
 function Summary({ text }: { text: string }) {
@@ -86,6 +86,9 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
    *  which lists the pull requests that actually moved. This is a judgement about them, so it earns its own
    *  mark rather than riding the one that means "something was pushed". */
   const shift = got?.shift || ''
+  /** The shift the pop-up opened with, kept until it closes: see lineOnScreen. */
+  const [openedWith, setOpenedWith] = useState('')
+  const line = lineOnScreen(open, openedWith, shift)
   /** Tell the server the mark has been read. Not the local copy: the line has to stay up while the pop-up
    *  is open, or opening the pill is the one gesture that guarantees you never read it. */
   const markRead = () => {
@@ -101,6 +104,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
   const done = () => {
     setNews([])
     forgetShift()
+    setOpenedWith('')
   }
   const close = () => {
     // the server is told here, since this is the only path every dismissal goes through
@@ -111,6 +115,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
   const toggle = () => {
     markRead()
     if (open) done()
+    else setOpenedWith(shift)
     setOpen((o) => !o)
   }
 
@@ -201,10 +206,10 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
           ) : null}
           {/* the mark, above the story it changed into. It survives this render: `read` has already told
               the server, and taking the line away the instant the pop-up opens is the one way to miss it. */}
-          {shift ? (
+          {line ? (
             <div className="shiftline" role="status">
               <b>new direction</b>
-              <span>{shift}</span>
+              <span>{line}</span>
             </div>
           ) : null}
           {/* above the story, not instead of it: a failed ⟳ leaves the last good one readable */}

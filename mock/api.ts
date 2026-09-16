@@ -796,7 +796,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const ran = str(body, 'ran')
       // like the route: `owner` is the owner NAME, and it is one or the other
       const owner = str(body, 'owner')
-      if (!repo === !owner) return json(400, { error: 'name a repo or an owner, not both' })
+      if (!repo && !owner) return json(400, { error: 'name a repo or an owner' })
+      if (repo && owner) return json(400, { error: 'name a repo or an owner, not both' })
       const word = str(body, 'post')
       if (word !== 'post' && word !== 'hold' && word !== 'none')
         return json(400, { error: 'post must be post, hold or none' })

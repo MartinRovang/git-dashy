@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { follow, fuzzy, moved, isLogin, people, unfollow, followAll, shownShift } from './stories'
+import { follow, fuzzy, moved, isLogin, people, unfollow, followAll, shownShift, lineOnScreen } from './stories'
 
 describe('followed users', () => {
   it('adds a login once, and drops it again', () => {
@@ -68,5 +68,15 @@ describe('a dismissed change of direction', () => {
     expect(shownShift('an auth rewrite', 100, 150)).toBe('')
     expect(shownShift('an auth rewrite', 200, 150)).toBe('an auth rewrite')
     expect(shownShift(undefined, 200, 0)).toBe('')
+  })
+})
+
+describe('the direction line in an open pop-up', () => {
+  it('stays while the pop-up is open, even after a poll brings no shift', () => {
+    expect(lineOnScreen(true, 'an auth rewrite', '')).toBe('an auth rewrite')
+  })
+  it('follows the poll once it is closed, or when it opened with none', () => {
+    expect(lineOnScreen(false, 'an auth rewrite', '')).toBe('')
+    expect(lineOnScreen(true, '', 'a migration')).toBe('a migration')
   })
 })

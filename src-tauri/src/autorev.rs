@@ -108,7 +108,7 @@ pub enum Post {
 /// ponytail: a third word, not a missing field. The store is append-only, so "there is no rule here" has
 /// to be something you can write down -- and a line with no `post_*` field at all is how an /api/auto row
 /// is told apart from a posting one, which this must not disturb. Without it an owner rule, once set,
-/// could never be taken off: every repo under it was governed forever.
+/// could never be taken off: no repo under it could get its own rule back.
 pub const CLEAR: &str = "none";
 
 impl Post {
@@ -298,8 +298,8 @@ fn append_raw(fields: &[(&str, &str)], ran: Ran, word: &str) -> String {
 /// The field that switches an owner to "each repo on its own" (true) or back (false).
 pub const PER_REPO: &str = "per_repo";
 
-fn set_per_repo(owner: &str, on: bool, before: &Posting) -> String {
-    if before.per_repo.contains(owner) == on {
+fn set_per_repo(owner: &str, on: bool, was: bool) -> String {
+    if was == on {
         return String::new();
     }
     bind::append_to(store(), &[("owner", owner)], Some((PER_REPO, on)))
@@ -378,7 +378,7 @@ pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
         }
     }
     // last: the mode flips only once every rule it relies on is written
-    set_per_repo(&o, !on, &before)
+    set_per_repo(&o, !on, before.per_repo.contains(&o))
 }
 
 /// Take the rule off one repo, so it goes back to following its owner. A repo with no rule is a no-op.
@@ -1005,6 +1005,25 @@ mod tests {
         govern("acme", false, &[]);
         assert!(scope().armed("acme/api"));
         assert!(posting().per_repo.contains("acme"));
+    }
+
+    #[test]
+    fn switching_back_on_holds_what_a_repo_was_set_to_post_while_the_owner_held() {
+        // on can make a repo hold that posted, never the reverse: the owner's own hold counts
+        let (_g, _d) = fresh();
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        govern("acme", false, &board);
+        for r in &board {
+            set_post(r, Ran::Auto, Post::Now);
+        }
+        govern("acme", true, &board);
+        let p = posting();
+        assert_eq!(p.auto.owners.get("acme"), Some(&Post::Hold));
+        assert!(
+            board.iter().all(|r| p.of(r, Ran::Auto) == Post::Hold),
+            "both hold again"
+        );
     }
 
     #[test]
