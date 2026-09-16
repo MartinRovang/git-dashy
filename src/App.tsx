@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, type Only, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, patch, people, unfollow, type Followed } from './stories'
+import { follow, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -15,7 +15,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, draftsScreen, dreamScreen, escMenu, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
+import { askConsents, draftsScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -33,15 +33,14 @@ export default function App() {
   // are on the board at all; this chip narrows to them, so the two compose — hide drafts and the chip
   // counts zero and goes flat, which is the honest state rather than a contradiction.
   const [onlyDrafts, setOnlyDrafts] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
   // ponytail: session-only like the rest of the filter row; a setting if people want it to survive a launch
   const [only, setOnly] = useState<Only>(NOBODY)
   // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
-  // where minimized story cards sit: the footer, handed to them once it is in the DOM
-  const [dock, setDock] = useState<HTMLDivElement | null>(null)
-  /** Ask who, then follow them. The footer and the rail's View group both call it. */
+  /** Ask who, then follow them. The footer button and the rail's View group both call it. */
   const followSomeone = () =>
     void findLogin(
       'Follow someone',
@@ -66,7 +65,7 @@ export default function App() {
       .catch(() => {})
   }, [])
   // the post goes here, not inside a state updater: React may run an updater twice. The list the server
-  // kept (deduped, checked, capped) replaces ours once it answers, so a card it will not serve goes away.
+  // kept (deduped, checked, capped) replaces ours once it answers, so a pill it will not serve goes away.
   const setFollowed = (f: (l: Followed[]) => Followed[]) => {
     const next = f(followed)
     setFollowedState(next)
@@ -97,16 +96,19 @@ export default function App() {
   const [stopped, setStopped] = useState(false)
   // the fetchedAt a history change was made on: until a newer fetch lands, the board is the old window
   const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
+  // f was pressed: the ticks count that answers it (Infinity until the POST says), and the ⟳ spins till then
+  const [pressed, setPressed] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph') => {
     setView(v)
-    const f = forView(v, { query, failing, drafts: onlyDrafts, bucket })
+    const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
+    setShowHidden(f.hidden)
     setBucket(f.bucket)
     // a node picked in the graph may sit in a folded section; open it so the board shows the selection
     const at = current?.section || ''
@@ -132,7 +134,26 @@ export default function App() {
     }, 500)
   }
 
-  const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only), [data, query, failing, onlyDrafts, only])
+  // same optimistic shape as `marked`: the page's copy wins over the polled one once set
+  const [hid, setHid] = useState<Record<string, string> | null>(null)
+  const hidden = useMemo(() => hid || data?.settings.hidden || {}, [hid, data])
+  // chained, not fired at once: two quick toggles on two connections could land in the wrong order
+  const savingHidden = useRef<Promise<unknown>>(Promise.resolve())
+  const toggleHide = (p: Row) => {
+    const next = toggleHidden(hidden, (data?.sections || []).flatMap((s) => s.prs), p.url)
+    setHid(next)
+    savingHidden.current = savingHidden.current.then(() =>
+      post('/api/settings', { hidden: next })
+        .then((r) => (r.ok ? null : errorText(r).then((t) => setFlash(`hidden PRs not saved: ${t}`))))
+        .catch(() => setFlash('hidden PRs not saved')),
+    )
+  }
+
+  const secs = useMemo(() => visible(data, query, failing, onlyDrafts, only, hidden, showHidden), [data, query, failing, onlyDrafts, only, hidden, showHidden])
+  const hiddenN = useMemo(
+    () => new Set(inBucket(showHidden ? secs : visible(data, query, failing, onlyDrafts, only, hidden, true), bucket).flatMap((s) => s.prs.map((x) => x.url))).size,
+    [secs, data, query, failing, onlyDrafts, only, hidden, showHidden, bucket],
+  )
   const opts = useMemo(() => whoIs(data), [data])
   const pickOnly = (which: keyof Only) =>
     picker(`only these ${which}`, pickable(opts, only, which), only[which], String, (v) => setOnly((o) => ({ ...o, [which]: v })), true)
@@ -161,6 +182,13 @@ export default function App() {
       'welcome',
     )
   }, [hinted])
+
+  // Once after an update: what changed since the version that ran before. Closing it tells the server.
+  const changelog = data?.changelog
+  useEffect(() => {
+    if (!changelog) return
+    whatsNew(changelog, dataRef.current?.version).onClose = () => void post('/api/changelog', {})
+  }, [changelog])
 
   useEffect(() => {
     if (!flash) return
@@ -341,7 +369,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.asks])
 
-  const onRefresh = () => call('/api/refresh', {}, 'refreshing…')
+  useEffect(() => {
+    if (pressed != null && data && data.ticks >= pressed) setPressed(null)
+  }, [data, pressed])
+  const onRefresh = () => {
+    setPressed(Infinity)
+    call('/api/refresh', {}, 'refreshing…').then(
+      (r) => setPressed(r ? r.answeredBy : null),
+      () => setPressed(null),
+    )
+  }
   const onAuto = async () => {
     const on = !data?.auto
     let includeExisting = false
@@ -498,6 +535,7 @@ export default function App() {
       bind: () => void bindScreen(p),
       waiting: () => void waitingScreen(p),
       memory: () => void memoryEditor(ctx, p.repo),
+      hide: () => toggleHide(p),
     }
     fns[name]?.()
   }
@@ -568,6 +606,8 @@ export default function App() {
     if (k === 'f') return one(onRefresh)
     if (k === 'a') return one(onAuto)
     if (k === 'D') return one(() => void setting('drafts', !data?.settings.drafts))
+    // a chosen row only: hiding the fallback guess would take a PR off the board you never looked at
+    if (k === 'X' && p && chosen) return one(() => toggleHide(p))
     if (k === ' ' && p?.section === 'REVIEWED') return one(() => setExpanded((x) => ({ ...x, [p.url]: !x[p.url] })))
     if ('mdexhstiO'.includes(k)) return one(() => pickSetting(k))
     if (k === 'o' && p) return one(() => void call('/api/open', { url: p.url }))
@@ -626,7 +666,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -655,6 +695,7 @@ export default function App() {
             ).then(() => setDetailAge((n) => n + 1))
           }
           onAskAgain={onAskAgain}
+          onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
         />
@@ -689,6 +730,9 @@ export default function App() {
                 onFailing={() => setFailing((v) => !v)}
                 drafts={onlyDrafts}
                 onDrafts={() => setOnlyDrafts((v) => !v)}
+                hiddenN={hiddenN}
+                showHidden={showHidden}
+                onHidden={() => setShowHidden((v) => !v)}
                 bucket={bucket}
                 onBucket={(key) => setBucket((cur) => pickBucket(cur, key))}
                 expanded={expanded}
@@ -736,10 +780,14 @@ export default function App() {
         <span>⏎ pane</span>
         <span>r review</span>
         <span>? all keys</span>
-        <div className="dock" ref={setDock} />
-        {/* ponytail: here, next to the dock a followed card minimises into. The control that adds
-            one was in the top bar, three feet from where its result appears. */}
-        <button className="lnk foot" title="follow someone: a floating card of what they are working on" onClick={followSomeone}>
+        <div className="dock">
+          {followed.map((f) => (
+            <Story key={f.login} login={f.login} every={data?.interval || 0} onUnfollow={() => setFollowed((l) => unfollow(l, f.login))} />
+          ))}
+        </div>
+        {/* ponytail: here, beside the pills it adds. The control was in the top bar, the whole width of
+            the window away from where its result appears. */}
+        <button className="lnk foot" title="follow someone: what they are working on, in a footer pill" onClick={followSomeone}>
           + follow
         </button>
         <div style={{ flex: 1 }} />
@@ -767,14 +815,12 @@ export default function App() {
         <ActsMenu
           p={rows.find((r) => r.uid === menuAt.p.uid) || menuAt.p}
           d={detail?.url === menuAt.p.url ? detail : null}
+          hidden={isRead(hidden, menuAt.p)}
           at={menuAt.at}
           onAct={doAct}
           onClose={() => setMenuAt(null)}
         />
       ) : null}
-      {followed.map((f, i) => (
-        <Story key={f.login} f={f} i={i} every={data?.interval || 0} dock={dock} onPatch={(part) => setFollowed((l) => patch(l, f.login, part))} onClose={() => setFollowed((l) => unfollow(l, f.login))} />
-      ))}
       {flash ? <div className="toast">{flash}</div> : null}
       {video ? <FloatingVideo /> : null}
       <ModalHost />

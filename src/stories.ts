@@ -1,15 +1,14 @@
-// Who the floating story cards follow. The server keeps the list (~/.prs_stories.json): this page's own
+// Who the footer story pills follow. The server keeps the list (~/.prs_stories.json): this page's own
 // storage is per origin, and the port changes every launch.
 
-/** `min`: the card sits in the footer as a chip. */
-export type Followed = { login: string; min?: boolean }
+export type Followed = { login: string }
 
 /** GitHub logins are case-insensitive, so every lookup here is too. */
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 /** Add once. */
 export const follow = (list: Followed[], login: string): Followed[] =>
-  list.some((f) => same(f.login, login)) ? list : [...list, { login, min: false }]
+  list.some((f) => same(f.login, login)) ? list : [...list, { login }]
 
 export const unfollow = (list: Followed[], login: string) => list.filter((f) => !same(f.login, login))
 
@@ -59,5 +58,21 @@ export function fuzzy(q: string, logins: string[]): string[] {
   return scored.sort((a, b) => b[0] - a[0]).map(([, l]) => l)
 }
 
-export const patch = (list: Followed[], login: string, part: Partial<Followed>) =>
-  list.map((f) => (same(f.login, login) ? { ...f, ...part } : f))
+export type Pr = { repo: string; number: number; title: string; url: string; head?: string }
+export type Got = {
+  at: number
+  summary: string
+  prs: Pr[]
+  /** One sentence, only when the model judged this a different problem from the last story. */
+  shift?: string
+}
+
+/** PRs in `next` that were pushed to (head commit changed) or never seen before, then `seen` learns them.
+ *  ponytail: `seen` only grows. Search drops PRs from a page at random and hands them back a poll later;
+ *  against only the last poll those came back as new work. A PR with no known head (a story cached before
+ *  heads) is learnt, not reported. */
+export function moved(seen: Map<string, string | undefined>, next: Got): Pr[] {
+  const out = next.prs.filter((p) => (seen.has(p.url) ? !!seen.get(p.url) && seen.get(p.url) !== p.head : true))
+  for (const p of next.prs) seen.set(p.url, p.head)
+  return out
+}

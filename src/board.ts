@@ -24,8 +24,17 @@ export function underScope(d: StateData | null, scope: string): string[] {
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
- *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. */
-export function visible(d: StateData | null, query: string, failing: boolean, onlyDrafts: boolean, only: Only): VisSection[] {
+ *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. Hidden PRs are left out,
+ *  or with `showHidden` they are all that is left. */
+export function visible(
+  d: StateData | null,
+  query: string,
+  failing: boolean,
+  onlyDrafts: boolean,
+  only: Only,
+  hidden: Record<string, string> = {},
+  showHidden = false,
+): VisSection[] {
   const q = query.trim().toLowerCase()
   const s = settings(d)
   const cutoff = s.window ? Date.now() - s.window * 3600 * 1000 : 0
@@ -44,6 +53,7 @@ export function visible(d: StateData | null, query: string, failing: boolean, on
         if (sourced && !inScope(p, s.scopes || [])) return false // the window is in the search itself
         if (failing && tone(p.checks) !== 'changes') return false
         if (onlyDrafts && !p.isDraft) return false
+        if (isRead(hidden, p) !== showHidden) return false // same rule as read: a PR that moves comes back
         if (only.repos.length && !only.repos.includes(p.repo)) return false
         if (only.authors.length && !only.authors.includes(p.author)) return false
         if (!q) return true
@@ -133,7 +143,7 @@ export function pickBucket(bucket: readonly string[], key: string): string[] {
   return bucket.includes(key) && !bucket.includes(ALL) ? (rest.length ? rest : [ALL]) : [...rest, key]
 }
 
-export type Filters = { query: string; failing: boolean; drafts: boolean; bucket: string[] }
+export type Filters = { query: string; failing: boolean; drafts: boolean; hidden: boolean; bucket: string[] }
 
 /** The filter row after a view switch: cleared for the graph, untouched for the board.
  *
@@ -143,7 +153,7 @@ export type Filters = { query: string; failing: boolean; drafts: boolean; bucket
  * this is the third field that has been forgotten in it.
  */
 export function forView(v: 'board' | 'graph', cur: Filters): Filters {
-  return v === 'graph' ? { query: '', failing: false, drafts: false, bucket: [ALL] } : cur
+  return v === 'graph' ? { query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] } : cur
 }
 
 /** The two filter chips over the bucket on screen, with the rule for when one goes dead.
@@ -234,6 +244,14 @@ export function remember(read: Record<string, string>, prs: Pick<Row, 'url' | 'u
   // row the log's), and marking one must not rewind the other to unread
   for (const p of prs) if (!isRead(all, p)) all[p.url] = p.updatedAt
   return Object.fromEntries(Object.entries(all).sort((a, b) => b[1].localeCompare(a[1])).slice(0, keep))
+}
+
+/** The hidden map with `url` unhidden if it is hidden, or hidden at the newest time of `rows` — every
+ *  row the board has for that url, so a PR in MERGED and REVIEWED goes out of both. */
+export function toggleHidden(hidden: Record<string, string>, rows: Pick<Row, 'url' | 'updatedAt'>[], url: string): Record<string, string> {
+  const mine = rows.filter((r) => r.url === url)
+  if (mine.some((r) => isRead(hidden, r))) return Object.fromEntries(Object.entries(hidden).filter(([u]) => u !== url))
+  return remember(hidden, mine)
 }
 
 /** The selected row, and whether it is the one that was actually chosen.

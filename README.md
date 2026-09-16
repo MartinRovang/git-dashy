@@ -116,11 +116,12 @@ button somewhere on the page.
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |
 | `a` | toggle auto mode |
-| `t` | pick the REVIEWED window: 1h / 4h / 6h / all |
+| `t` | pick the REVIEWED window: 1h / 3h / 6h / 1d / 1w / 1mo / all |
 | `Space` | on a REVIEWED row: unfold / fold the older reviews of that PR (stacked under the newest, collapsed by default) |
 | `s` | pick summary lines: all / open PRs only / off |
 | `/` | focus the filter box: title, repo, author or number; `Esc` clears it |
 | `D` | show / hide draft PRs (hidden by default) |
+| `X` | hide the selected PR until it moves (a push, a comment), or unhide it; the **Hidden** chip in the filter bar shows only the hidden ones |
 | `m` | pick the model: opus / sonnet / fable / haiku |
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
@@ -545,29 +546,29 @@ the target path first (`.git/info/exclude` keeps the rule out of the tracked `.g
 ## Following people
 
 **+ follow** in the footer, or `F`, fuzzy-finds anyone who authored or reviewed a PR on the board (or takes
-any GitHub username you type) and opens a floating card for them: a few bullets on what they have worked on
-over the last 3 days, written from the PRs they opened or updated. Drag a card by its header, resize it
-from its corner grip, `–` minimizes it to a chip in the footer beside the button, `⟳` asks again, `✕`
-unfollows. The rail's **view** group also lists every team and org the board is showing; clicking one
-follows everyone it has a PR from.
+any GitHub username you type) and adds a pill for them beside the button. Click the pill for a pop-up with a
+few bullets on what they have worked on over the last day, written from the PRs they opened or updated, and
+the list of those PRs. `⟳` in the pop-up asks again; `×` on the pill unfollows. The rail's **view** group
+also lists every team and org the board is showing; clicking one follows everyone it has a PR from.
 
-Cards check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
-search; the model only runs when that person's PRs changed since the last story.
+Pills check on the board's refresh interval (not while the window is hidden). Each check is one GitHub
+search; the model only runs when that person's PRs changed since the last story. When a check finds PRs
+that are new or were pushed since the last one, the pill lights up and those PRs, and only those, pop up
+above it.
 
-A card marks itself when someone changes direction. Every rewritten story is compared against the one
-before it, in the same model call, and the bar is a *different problem* — even alongside the old one.
-Picking up an auth rewrite next to the export job is a change of direction; moving from export pagination
-to export retries is more of the same export work, and says nothing. Only the first kind marks the card:
-one line at the top of it, a dot on its footer chip, and — while it is minimized — the line and the new
-bullets drop up above the chip. Reading it clears the mark, and nothing else does: a mark raised while you
+A pill also marks itself when someone changes direction, which is a different claim from "something was
+pushed" and gets its own mark. Every rewritten story is compared against the one before it, in the same
+model call, and the bar is a *different problem* — even alongside the old one. Picking up an auth rewrite
+next to the export job is a change of direction; moving from export pagination to export retries is more of
+the same export work, and says nothing. Only the first kind marks the pill, and the pop-up opens with one
+line saying what is new. Opening it is what clears the mark, and nothing else does: a mark raised while you
 were away survives later rewrites until you have seen it. The model answers "no change" almost every time.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
-`openrouter:` or `local:`, in which case the cards use that model too. They always run at low effort.
-Following is meant for a handful of people: every card is one search per refresh, so fifty cards (the cap)
-on a short interval is a lot of GitHub traffic. Who you follow, which cards are
-minimized, and the last story per person are kept in `~/.prs_stories.json`, beside the settings file
-(`--demo` writes nothing).
+`openrouter:` or `local:`, in which case the stories use that model too. They always run at low effort.
+Following is meant for a handful of people: every pill is one search per refresh, so fifty (the cap)
+on a short interval is a lot of GitHub traffic. Who you follow and the last story per person are kept in
+`~/.prs_stories.json`, beside the settings file (`--demo` writes nothing).
 
 ## Versioning & self-update
 

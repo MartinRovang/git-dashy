@@ -18,6 +18,9 @@ use crate::{
 /// carries it and writes it out once, beside the other temp files.
 pub const NOTIFY_ICON: &[u8] = include_bytes!("../ui/notify.png");
 
+/// How long a popup waits for its Open click before notify-send is killed, so an undismissed one cannot hold a thread forever.
+const NOTIFY_WAIT: Duration = Duration::from_secs(600);
+
 /// Seconds since the epoch, as Python's time.time().
 pub fn now() -> f64 {
     SystemTime::now()
@@ -71,6 +74,8 @@ pub struct Inner {
     pub sections: Vec<Section>,
     pub fetched_at: Option<f64>,
     pub fetching: bool,
+    /// Ticks finished, landed or failed, since start. `f` spins until the count it was answered with.
+    pub ticks: u64,
     /// Why the last refresh failed, "" while ticks are landing. See run_loop.
     pub error: String,
     pub auto: bool,
@@ -113,6 +118,8 @@ pub struct Inner {
     pub asks: Vec<serde_json::Value>,
     /// Lines the page shows once and acknowledges.
     pub notices: Vec<String>,
+    /// Release notes since the last version run, shown once after an update. See update::changelog.
+    pub changelog: String,
     /// The session token the server answers on; a re-exec after an update keeps it.
     pub token: String,
     pub wake: Arc<Wake>,
@@ -553,12 +560,16 @@ impl State {
     /// One tick, and the failure path: true when it landed.
     fn refresh(&self, t0: f64) -> bool {
         let failed = match catch_unwind(AssertUnwindSafe(|| self.tick_inner(t0))) {
-            Ok(Ok(())) => return true,
+            Ok(Ok(())) => {
+                self.lock().ticks += 1;
+                return true;
+            }
             Ok(Err(e)) => format!("{e:#}"),
             Err(e) => panic_text(&*e),
         };
         error!("tick failed: {failed}"); // ponytail: the whole point: a failed tick is a row, not the end
         let mut inner = self.lock();
+        inner.ticks += 1;
         inner.fetching = false;
         inner.error = last_line(&failed, 60, "error");
         false
@@ -566,6 +577,13 @@ impl State {
 
     pub fn wake(&self) {
         self.waker().set();
+    }
+
+    /// Wake the loop, and the `ticks` count that answers it: a tick that ran after this call.
+    pub fn wake_answered_by(&self) -> u64 {
+        let n = answered_by(&self.lock()); // read BEFORE waking: a tick the wake starts must not count as already running
+        self.wake();
+        n
     }
 
     /// Pool and cross-check drafts on a thread of their own. Returns at once; never raises.
@@ -858,16 +876,22 @@ pub fn notify(pr: &Pr, section: &str) {
         return;
     };
     let url = pr.url.clone();
-    // ponytail: -A blocks until dismissed, so wait in a thread; notify-send only (Linux)
+    // ponytail: -A blocks until dismissed, so wait in a thread, killed after NOTIFY_WAIT; notify-send only (Linux)
     std::thread::spawn(move || {
         // a popup is decoration; the refresh loop must outlive it
-        let out = std::process::Command::new(&argv[0]).args(&argv[1..]).output();
+        let out = review::run_timed(std::process::Command::new(&argv[0]).args(&argv[1..]), NOTIFY_WAIT);
         if let Ok(out) = out {
-            if String::from_utf8_lossy(&out.stdout).trim() == "open" {
+            if out.trim() == "open" {
                 github::open_in_browser(&url);
             }
         }
     });
+}
+
+/// A tick already running when `f` lands started before it, and the woken one only runs after it.
+/// ponytail: a tick past `wake.clear()` that has not set `fetching` yet counts as answering; it has not fetched anything yet.
+fn answered_by(inner: &Inner) -> u64 {
+    inner.ticks + 1 + inner.fetching as u64
 }
 
 #[cfg(test)]
@@ -896,6 +920,17 @@ mod tests {
             prs,
             err: err.map(String::from),
         }
+    }
+
+    #[test]
+    fn a_press_during_a_tick_waits_for_the_next_one() {
+        let mut inner = Inner {
+            ticks: 5,
+            ..Default::default()
+        };
+        assert_eq!(answered_by(&inner), 6);
+        inner.fetching = true;
+        assert_eq!(answered_by(&inner), 7);
     }
 
     #[test]

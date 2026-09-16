@@ -19,6 +19,7 @@ pub mod llm;
 pub mod log;
 pub mod memory;
 pub mod mirror;
+pub mod report;
 pub mod review;
 pub mod shell;
 pub mod state;

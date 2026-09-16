@@ -228,7 +228,7 @@ fn fill(template: &str, vals: &[(&str, &str)]) -> String {
 }
 
 /// A subprocess' stdout, killed when `timeout` passes. Err carries stderr, or why it could not run.
-fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
+pub(crate) fn run_timed(cmd: &mut Command, timeout: Duration) -> Result<String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -691,10 +691,13 @@ fn verdict(repo: &str, n: u64, model: &str, prev: Option<&LogEntry>) -> Result<V
     } else {
         Vec::new()
     };
-    let (answer, cost, ms) = llm::ask(&text, model, LENS, &tools, TIMEOUT, &env)?;
+    // the effort read with the prompt, so the one recorded below is the one the model got
+    let (answer, cost, ms) = llm::ask_at(&text, model, LENS, &tools, TIMEOUT, &env, &c.effort)?;
     let mut v = parse_verdict(&answer)?;
     v.cost = cost;
     v.ms = Some(ms);
+    v.depth = c.depth.clone();
+    v.effort = c.effort.clone();
     Ok(with_depth_note(v, &c.depth))
 }
 
@@ -945,6 +948,39 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test]
+    fn run_timed_kills_a_command_that_outlives_its_timeout() {
+        let started = Instant::now();
+        assert!(run_timed(Command::new("sleep").arg("5"), Duration::from_millis(200)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(
+            run_timed(Command::new("echo").arg("open"), Duration::from_secs(5)).unwrap(),
+            "open\n"
+        );
+    }
+
+    /// The verdict carries the depth and effort its prompt was built with. Demo answers for the model
+    /// and skips the author lookup, so this runs the real verdict() with nothing leaving the machine.
+    #[test]
+    fn verdict_records_the_depth_and_effort_it_built_the_prompt_with() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.memory_dir = d.path().join("memory");
+            c.local_memory = d.path().join("memory");
+            c.bindings = d.path().join("bindings");
+            c.teams = d.path().join("teams");
+            c.team = d.path().join("team");
+            c.instructions = String::new();
+            c.depth = "low".into();
+            c.effort = "high".into();
+        });
+        let v = verdict("acme/api", 7, "opus", None).unwrap();
+        assert_eq!(v.depth, "low");
+        assert_eq!(v.effort, "high");
+    }
+
     /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips
     /// the two GitHub calls, which is the half a test cannot drive — everything after them is here.
     #[test]
@@ -973,6 +1009,8 @@ mod tests {
                 verdict: "request_changes".into(),
                 summary: "one real bug".into(),
                 body: "## Findings".into(),
+                depth: "high".into(),
+                effort: "low".into(),
                 ..Default::default()
             },
             hello: "Reviewing".into(),
@@ -980,8 +1018,13 @@ mod tests {
         };
         held::put(&h).unwrap();
         assert!(held::get("acme/api", 7).is_some());
+        // changed while the review waited to be released
+        config::update(|c| {
+            c.depth = "adaptive".into();
+            c.effort = "medium".into();
+        });
 
-        let status = post_held(&h).unwrap();
+        let status = post_held(&held::get("acme/api", 7).unwrap()).unwrap();
         assert_eq!(status, config::status("request_changes").unwrap());
         assert!(held::get("acme/api", 7).is_none(), "posted, so no longer waiting");
         let logged = std::fs::read_to_string(d.path().join("reviewed.jsonl")).unwrap();
@@ -990,6 +1033,9 @@ mod tests {
             "the log is written HERE, not when the hold was taken"
         );
         assert!(logged.contains("request_changes"));
+        let e: Value = serde_json::from_str(logged.trim()).unwrap();
+        assert_eq!(e["depth"], "high", "the depth it ran with, read back off disk");
+        assert_eq!(e["effort"], "low");
     }
 
     /// The model is never asked again: the verdict parked is the verdict posted, whenever the key

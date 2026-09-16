@@ -9,7 +9,7 @@ export type Act = [key: string, cls: string, label: string, note: string, off: b
  *
  *  `d` is the detail of the SELECTED PR, so a right-click on some other row passes null and loses
  *  only the rows that need it — the full review, and the team the bind would use. */
-export function acts(p: Row, d: Detail | null): Act[] {
+export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   const out: Act[] = []
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
@@ -33,6 +33,7 @@ export function acts(p: Row, d: Detail | null): Act[] {
   if (p.waiting) out.push(['Y', 'go', 'Read the review waiting to post', 'nothing posted yet', false, 'waiting'])
   out.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
   out.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
+  out.push(['X', '', hidden ? 'Unhide this PR' : 'Hide this PR', hidden ? '' : 'until it moves', false, 'hide'])
   return out
 }
 
@@ -45,12 +46,14 @@ export type Anchor = { x: number; y: number }
 export function ActsMenu({
   p,
   d,
+  hidden,
   at,
   onAct,
   onClose,
 }: {
   p: Row
   d: Detail | null
+  hidden: boolean
   at: Anchor
   onAct: (name: string, target: Row) => void
   onClose: () => void
@@ -99,7 +102,7 @@ export function ActsMenu({
         <span className="mono">#{p.number}</span>
         <span>{p.repo}</span>
       </div>
-      {acts(p, d).map(([k, cls, label, note, off, act]) => (
+      {acts(p, d, hidden).map(([k, cls, label, note, off, act]) => (
         <button
           key={act}
           role="menuitem"

@@ -21,6 +21,7 @@ type Props = {
   posting: Posting | null
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', owner: boolean) => void
   onAskAgain: (kind: string, key: string) => void
+  onReport: (op: 'start' | 'open') => void
   collapsed: boolean
   onCollapse: () => void
 }
@@ -176,13 +177,14 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, posting, onPosting, onAskAgain, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, posting, onPosting, onAskAgain, onReport, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
+  const rep = k.report
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
-  // each group opens and shuts on its own; the rail scrolls if you open all three
-  const [open, setOpen] = useState<Record<string, boolean>>({ agent: true })
+  // each group opens and shuts on its own; the rail scrolls if you open them all
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   const flip = (name: string) => {
     if (collapsed) {
       // the rail is 106px: the fields have nowhere to render, so widen it and land on this group
@@ -494,6 +496,37 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               ),
             )}
           </div>
+        </Group>
+
+        <Group
+          k="tools"
+          label="Tools"
+          summary={rep?.job.running ? 'writing Friday report…' : rep?.latest ? `report ${rep.latest}` : 'Friday report'}
+          digest={<Ln label="report" value={rep?.job.running ? 'writing…' : rep?.latest || 'none'} off={!rep?.latest && !rep?.job.running} />}
+          open={!!open.tools}
+          onToggle={() => flip('tools')}
+          collapsed={collapsed}
+        >
+          <div className="sub">
+            Friday report <em>7 days</em>
+          </div>
+          <div className="tags">
+            {/* one report a session: once it is written, open is all there is to do */}
+            {rep?.job.running ? (
+              <button className="tag" disabled>
+                writing… {rep.job.elapsed || 0}s
+              </button>
+            ) : rep?.latest ? (
+              <button className="tag" title={`open the ${rep.latest} report in the browser`} onClick={() => onReport('open')}>
+                open {rep.latest}
+              </button>
+            ) : (
+              <button className="tag" onClick={() => onReport('start')}>
+                generate
+              </button>
+            )}
+          </div>
+          {rep?.job.error ? <div className="note">⚠ report: {rep.job.error}</div> : null}
         </Group>
       </div>
 

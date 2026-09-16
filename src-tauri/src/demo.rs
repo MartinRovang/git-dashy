@@ -165,6 +165,7 @@ pub fn install() {
         c.local_memory = memory.clone();
         // and a demo pre-review lands where the pane looks for it, not in ~/.prs_reviews
         c.self_dir = root.join("prs-demo-reviews");
+        c.reports = root.join("prs-demo-reports");
         c.held_dir = root.join("prs-demo-held");
         c.backups = root.join("backups");
         c.registry = root.join("mirrors");
@@ -268,7 +269,16 @@ pub fn review(pr: &Pr, model: &str) -> String {
         None,
     ];
     match &verdicts[TURN.fetch_add(1, Ordering::SeqCst) % verdicts.len()] {
-        Some(v) => crate::log::log_review(pr, model, v, None).unwrap_or_else(|e| format!("error: {e}")),
+        Some(v) => {
+            // demo has no review that read the settings, so it logs the current ones
+            let c = config::get();
+            let v = Verdict {
+                depth: c.depth.clone(),
+                effort: c.effort.clone(),
+                ..v.clone()
+            };
+            crate::log::log_review(pr, model, &v, None).unwrap_or_else(|e| format!("error: {e}"))
+        }
         None => "error: claude: rate limit exceeded, retry in 60s".into(),
     }
 }

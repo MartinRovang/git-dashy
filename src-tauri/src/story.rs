@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use crate::{config, github, llm};
 
 const TIMEOUT: u64 = 180;
-/// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a card
+/// ponytail: fixed, not the picked review model. A few sentences over PR titles is Haiku's job, and a story
 /// per followed user on Opus adds up. Haiku is a bare name, the claude CLI, so a setup that reviews through
 /// `provider:model` (and may have no CLI) keeps its own model instead.
 const HAIKU: &str = "haiku";
@@ -32,7 +32,7 @@ fn model(picked: &str) -> String {
 /// One lock per login, held across search, model and write: a second poll for the same user waits, then
 /// finds the story the first one saved instead of paying for it again.
 static RUNNING: Mutex<Option<HashMap<String, Arc<Mutex<()>>>>> = Mutex::new(None);
-/// The file as last read or written: `{"follow": [{login, min}], "cache": {"login": story}}`.
+/// The file as last read or written: `{"follow": [{login}], "cache": {"login": story}}`.
 /// ponytail: one lock over read-modify-write, and --demo (no settings file) keeps it in memory only.
 static FILE: Mutex<Option<Value>> = Mutex::new(None);
 
@@ -81,7 +81,7 @@ pub fn clean(list: &Value) -> Value {
                     return None;
                 }
                 seen.push(low);
-                Some(json!({"login": login, "min": f["min"].as_bool().unwrap_or(false)}))
+                Some(json!({"login": login}))
             })
             .take(50)
             .collect(),
@@ -95,9 +95,19 @@ fn prune(v: &mut Value, keep: &[String]) {
     }
 }
 
-/// Whether the saved story can stand: the same PRs it was written from, and no ⟳.
+/// Whether the saved story can stand: no ⟳, and every PR the search found is one it was written from, at
+/// the same head. Fewer is fine: search leaves PRs off a page at random and hands them back a poll later.
+/// ponytail: so a PR ageing out of the window stays in the story until something new comes along; an empty
+/// search still rewrites it, so a quiet day says so. A push landing on the poll search dropped a PR from
+/// writes the story without it, and the model runs again when it comes back; a union of saved and found PRs
+/// would save that second run.
 fn stands(saved: &Value, now_sig: &str, fresh: bool) -> bool {
-    !fresh && saved["sig"].as_str() == Some(now_sig)
+    let Some(was) = saved["sig"].as_str() else {
+        return false;
+    };
+    !fresh
+        && (now_sig == was
+            || !now_sig.is_empty() && now_sig.split(' ').all(|p| was.split(' ').any(|w| w == p)))
 }
 
 pub fn followed() -> Value {
@@ -140,7 +150,7 @@ fn lock_for(key: &str) -> Arc<Mutex<()>> {
 /// board fragment also pulls checks, review requests and reviews for every node.
 fn page(search: &str) -> String {
     format!(
-        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url updatedAt repository {{ nameWithOwner }} }} }} }} }}",
+        "{{ s: search(query: {}, type: ISSUE, first: 20) {{ nodes {{ ... on PullRequest {{ number title url headRefOid repository {{ nameWithOwner }} }} }} }} }}",
         Value::String(search.into())
     )
 }
@@ -157,7 +167,7 @@ pub fn login_ok(s: &str) -> bool {
 }
 
 /// How far back a story looks.
-pub const DAYS: u64 = 3;
+pub const DAYS: u64 = 1;
 
 pub fn search(login: &str, days: u64, now: chrono::DateTime<chrono::Utc>) -> String {
     let since = now - chrono::Duration::days(days as i64);
@@ -292,8 +302,10 @@ pub fn seen(login: &str) {
     with_file(|v| forget(v, &key))
 }
 
-/// What the story was written from: every PR in the window and when it last moved. Same PRs, same
-/// updatedAt, same story; a new PR, a push, or one ageing out of the window changes it.
+/// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
+/// same story; a new PR, a push, or one ageing out of the window changes it, though `stands` lets a
+/// shrink keep the story. ponytail: not updatedAt, which CI, bots and comments bump every few seconds with
+/// nothing pushed.
 pub fn sig(nodes: &[Value]) -> String {
     let mut seen: Vec<String> = nodes
         .iter()
@@ -301,7 +313,7 @@ pub fn sig(nodes: &[Value]) -> String {
             format!(
                 "{}@{}",
                 n["url"].as_str().unwrap_or(""),
-                n["updatedAt"].as_str().unwrap_or("")
+                n["headRefOid"].as_str().unwrap_or("")
             )
         })
         .collect();
@@ -309,8 +321,8 @@ pub fn sig(nodes: &[Value]) -> String {
     seen.join(" ")
 }
 
-/// The story for `login`. The search runs every call, so the card can poll; the model runs only when
-/// the PRs moved since the saved story, or on `fresh` (the card's ⟳).
+/// The story for `login`. The search runs every call, so the pill can poll; the model runs only when
+/// the PRs moved since the saved story, or on `fresh` (the pop-up's ⟳).
 pub fn get(login: &str, fresh: bool) -> Result<Value> {
     let (days, key) = (DAYS, login.to_lowercase());
     let cfg = config::get();
@@ -321,7 +333,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let lock = lock_for(&key);
     let _running = lock.lock().unwrap_or_else(|e| e.into_inner());
-    // ponytail: one page, the newest 20. Three days of one author rarely fills it, and the rest would cost a
+    // ponytail: one page, the newest 20. A day of one author rarely fills it, and the rest would cost a
     // round trip each on every poll.
     let q = search(login, days, chrono::Utc::now());
     let got = github::gql(&page(&q), 20).map_err(|e| anyhow!(e.0))?;
@@ -333,7 +345,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
     }
     let prs: Vec<Value> = nodes
         .iter()
-        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"]}))
+        .map(|n| json!({"repo": n["repository"]["nameWithOwner"], "number": n["number"], "title": n["title"], "url": n["url"], "head": n["headRefOid"]}))
         .collect();
     let before = compare_to(&saved);
     let (shift, summary) = if prs.is_empty() {
@@ -343,7 +355,7 @@ pub fn get(login: &str, fresh: bool) -> Result<Value> {
         )
     } else {
         // ponytail: never pass tools here. PR titles come from any repo and are the prompt; with --safe-mode,
-        // an empty cwd and no --allowedTools the worst a title can do is make the card say something false.
+        // an empty cwd and no --allowedTools the worst a title can do is make the story say something false.
         // and low effort, whatever is picked: that is for reviews, and deep reasoning over PR titles is spend
         // for nothing
         split(
@@ -395,10 +407,7 @@ mod tests {
     #[test]
     fn a_saved_follow_list_comes_back_checked() {
         let raw = json!([{"login": "Bob", "days": 30}, {"login": "bob"}, {"login": "x y"}, "junk", {"login": "amy", "min": true}]);
-        assert_eq!(
-            clean(&raw),
-            json!([{"login": "Bob", "min": false}, {"login": "amy", "min": true}])
-        );
+        assert_eq!(clean(&raw), json!([{"login": "Bob"}, {"login": "amy"}]));
         assert_eq!(clean(&json!(null)), json!([]));
     }
 
@@ -409,6 +418,14 @@ mod tests {
         assert!(!stands(&saved, "u/1@t1", true));
         assert!(!stands(&saved, "u/1@t2", false));
         assert!(!stands(&Value::Null, "", false));
+        // search leaving a PR off is not a new story; a new PR or no PRs at all is
+        let two = json!({"sig": "u/1@t1 u/2@t1"});
+        assert!(stands(&two, "u/2@t1", false));
+        assert!(!stands(&two, "u/2@t1 u/3@t1", false));
+        // a push to a PR still in a smaller result
+        assert!(!stands(&two, "u/1@t2", false));
+        assert!(!stands(&two, "", false));
+        assert!(stands(&json!({"sig": ""}), "", false));
     }
 
     #[test]
@@ -551,6 +568,8 @@ mod tests {
         let doc = page("is:pr author:bob \"x");
         assert!(doc.contains(r#"search(query: "is:pr author:bob \"x", type: ISSUE, first: 20)"#));
         assert!(!doc.contains("statusCheckRollup"));
+        // what sig() and the page's new-work check compare on
+        assert!(doc.contains("headRefOid"));
     }
 
     #[test]
@@ -572,10 +591,10 @@ mod tests {
 
     #[test]
     fn the_story_is_rewritten_only_when_the_prs_moved() {
-        let a = json!({"url": "u/1", "updatedAt": "t1"});
-        let b = json!({"url": "u/2", "updatedAt": "t1"});
+        let a = json!({"url": "u/1", "headRefOid": "t1"});
+        let b = json!({"url": "u/2", "headRefOid": "t1"});
         assert_eq!(sig(&[a.clone(), b.clone()]), sig(&[b.clone(), a.clone()]));
         assert_ne!(sig(std::slice::from_ref(&a)), sig(&[a.clone(), b]));
-        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "updatedAt": "t2"})]));
+        assert_ne!(sig(&[a]), sig(&[json!({"url": "u/1", "headRefOid": "t2"})]));
     }
 }

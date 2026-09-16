@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, review, story,
-    team, textdiff, update,
+    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, report, review,
+    story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -81,11 +81,13 @@ pub fn payload(state: &State) -> Value {
         arrived,
         fetched_at,
         fetching,
+        ticks,
         auto,
         pending,
         update,
         asks,
         notices,
+        changelog,
     ) = {
         let inner = state.lock();
         (
@@ -97,11 +99,13 @@ pub fn payload(state: &State) -> Value {
             inner.arrived.clone(),
             inner.fetched_at,
             inner.fetching,
+            inner.ticks,
             inner.auto,
             inner.pending_rr(&|r| auto_scope.armed(r)).len(),
             inner.update.clone(),
             inner.asks.clone(),
             inner.notices.clone(),
+            inner.changelog.clone(),
         )
     };
     let cfg = config::get();
@@ -182,6 +186,7 @@ pub fn payload(state: &State) -> Value {
         "fetchedAt": fetched_at,
         "interval": cfg.interval,
         "fetching": fetching,
+        "ticks": ticks,
         "error": error,
         "auto": auto,
         // ponytail: the boolean, not "is the list empty". A store holding nothing but an --off row
@@ -202,6 +207,10 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": THEMES,
                     "scopes": scopes},
         "knowledge": {
+            "report": {
+                "job": job("report"),
+                "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
+            },
             "memory": knowledge::show(&knowledge::effective()) + &knowledge::history_note(),
             "store": if knowledge::store_moved() { knowledge::show(&cfg.teams) } else { String::new() },
             "teams": names.iter().map(|k| json!({"key": k, "name": team::info(k).name, "arrived": arrived.get(k).copied().unwrap_or(0)})).collect::<Vec<_>>(),
@@ -214,6 +223,7 @@ pub fn payload(state: &State) -> Value {
         },
         "asks": asks,
         "notices": notices,
+        "changelog": changelog,
     })
 }
 
@@ -604,6 +614,7 @@ fn get_debug(state: &State, _q: &Query) -> Out {
             "log": config::tilde(&cfg.log),
             "debugLog": config::tilde(&cfg.debug_log),
             "selfReviews": config::tilde(&cfg.self_dir),
+            "reports": config::tilde(&cfg.reports),
             "backups": config::tilde(&cfg.backups),
             "bindings": config::tilde(&cfg.bindings),
             "autoReview": config::tilde(&cfg.autorev),
@@ -1100,8 +1111,7 @@ fn post_auto(state: &State, body: &Body) -> Out {
 
 fn post_refresh(state: &State, _body: &Body) -> Out {
     diff::retry(); // f means "look again", so a diff GitHub failed to read is worth retrying
-    state.wake();
-    Ok(json!({"ok": true}))
+    Ok(json!({"ok": true, "answeredBy": state.wake_answered_by()}))
 }
 
 /// Open a PR, or its pre-review file, with the desktop. Only things on the board, never a free path.
@@ -1393,6 +1403,22 @@ fn post_posting(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Start the Friday report in the background, or open the newest one written.
+fn post_report(_state: &State, body: &Body) -> Out {
+    match text(body, "op").as_str() {
+        "start" => {
+            start_job("report", report::write);
+            Ok(json!({"ok": true}))
+        }
+        "open" => {
+            let path = report::latest().ok_or_else(|| Fail::new(404, "no report yet"))?;
+            github::open_in_browser(&path.to_string_lossy());
+            Ok(json!({"ok": true}))
+        }
+        _ => Err(Fail::new(400, "op must be start or open")),
+    }
+}
+
 fn post_dream(_state: &State, body: &Body) -> Out {
     let op = text(body, "op");
     if op == "start" {
@@ -1550,6 +1576,7 @@ fn post_quit(_state: &State, _body: &Body) -> Out {
     // ponytail: the request threads have nothing to flush; the reply goes out, then the process ends
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(200));
+        report::clear();
         std::process::exit(0);
     });
     Ok(json!({"ok": true}))
@@ -1557,6 +1584,12 @@ fn post_quit(_state: &State, _body: &Body) -> Out {
 
 fn post_notices(state: &State, _body: &Body) -> Out {
     state.lock().notices.clear();
+    Ok(json!({"ok": true}))
+}
+
+fn post_changelog(state: &State, _body: &Body) -> Out {
+    state.lock().changelog.clear();
+    update::mark_seen();
     Ok(json!({"ok": true}))
 }
 
@@ -1572,10 +1605,8 @@ fn pick<'a>(v: &Value, options: &[&'a str]) -> Option<&'a str> {
 /// the GitHub API: 0 would spin it flat out against your rate limit, and a string would break inside
 /// the refresh thread, where nothing is watching. Nothing lands until every key checked out.
 fn post_settings(state: &State, body: &Body) -> Out {
-    // every request has its own thread: without this, two posts copy the config, and the later save
-    // undoes the other's change. ponytail: one global lock, settings posts are rare and quick
-    static SAVING: Mutex<()> = Mutex::new(());
-    let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    // every request has its own thread; see config::SAVING
+    let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     let mut wake = false;
     if let Some(v) = body.get("interval") {
@@ -1705,8 +1736,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
         wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
     }
-    if let Some(v) = body.get("read") {
-        // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
+    let marks = |key: &str| -> Result<Option<HashMap<String, String>>, Fail> {
+        let Some(v) = body.get(key) else { return Ok(None) };
         let got: Option<HashMap<String, String>> = v.as_object().filter(|m| m.len() <= 5000).and_then(|m| {
             m.iter()
                 .map(|(u, t)| {
@@ -1716,13 +1748,18 @@ fn post_settings(state: &State, body: &Body) -> Out {
                 })
                 .collect()
         });
-        let Some(got) = got else {
-            return Err(Fail::new(
+        got.map(Some).ok_or_else(|| {
+            Fail::new(
                 400,
-                "read must be an object of url to updatedAt, at most 5000",
-            ));
-        };
+                format!("{key} must be an object of url to updatedAt, at most 5000"),
+            )
+        })
+    };
+    if let Some(got) = marks("read")? {
         c.read = got;
+    }
+    if let Some(got) = marks("hidden")? {
+        c.hidden = got;
     }
     if body.contains_key("hinted") {
         c.hinted = truthy(body, "hinted");
@@ -1767,6 +1804,11 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
+        "/api/changelog" => |_, _| {
+            update::recent()
+                .map(|text| json!({"text": text}))
+                .map_err(|e| Fail::new(502, format!("release notes: {e}")))
+        },
         _ => return None,
     })
 }
@@ -1787,12 +1829,14 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
         "/api/dream" => post_dream,
+        "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
         "/api/path" => post_path,
         "/api/update" => post_update,
         "/api/quit" => post_quit,
         "/api/notices" => post_notices,
+        "/api/changelog" => post_changelog,
         "/api/stories" => post_stories,
         "/api/story/seen" => post_story_seen,
         _ => return None,
@@ -2869,6 +2913,7 @@ mod tests {
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
             json!({"read": {"u": 1}}),
+            json!({"hidden": {"u": 1}}),
             json!({"read": {"x".repeat(513): "t"}}),
             json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
         ] {
@@ -2912,7 +2957,7 @@ mod tests {
         assert_eq!(
             post(
                 &format!("{base}/api/settings"),
-                json!({"read": {"https://x/1": "t1"}}),
+                json!({"read": {"https://x/1": "t1"}, "hidden": {"https://x/2": "t2"}}),
                 &token
             )
             .0,
@@ -2920,8 +2965,12 @@ mod tests {
         );
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(
-            (saved["read"]["https://x/1"].as_str(), saved["scopes"][0].as_str()),
-            (Some("t1"), Some("team:k"))
+            (
+                saved["read"]["https://x/1"].as_str(),
+                saved["hidden"]["https://x/2"].as_str(),
+                saved["scopes"][0].as_str()
+            ),
+            (Some("t1"), Some("t2"), Some("team:k"))
         );
         assert_eq!(
             post(&format!("{base}/api/settings"), json!({"read": {"u": 3}}), &token).0,
@@ -2929,6 +2978,7 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["theme"], "nord");
+        assert_eq!(d["settings"]["hidden"]["https://x/2"], "t2");
         // The welcome hint is remembered HERE, not in the webview: its origin is a new random port
         // every launch, so a localStorage flag would show the hint again on every open.
         assert_eq!(d["settings"]["hinted"], json!(false));
@@ -2945,6 +2995,62 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["keyhints"], json!(false));
+    }
+
+    #[test]
+    fn a_report_route_answers_only_start_and_open_and_open_needs_a_report() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::update(|c| c.reports = dir.path().to_path_buf());
+        let (base, token, _state) = served();
+        assert_eq!(
+            post(&format!("{base}/api/report"), json!({"op": "delete"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&format!("{base}/api/report"), json!({"op": "open"}), &token).0,
+            404
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["knowledge"]["report"]["latest"], Value::Null);
+        config::update(|c| c.reports = config::Config::default().reports);
+    }
+
+    #[test]
+    fn closing_the_changelog_clears_it_and_records_the_version() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        config::update(|c| c.settings = Some(file.clone()));
+        let (base, token, state) = served();
+        state.lock().changelog = "v9.9.9\n\nnotes".into();
+        assert_eq!(
+            get(&format!("{base}/api/state"), Some(&token)).1["changelog"],
+            "v9.9.9\n\nnotes"
+        );
+        assert_eq!(post(&format!("{base}/api/changelog"), json!({}), &token).0, 200);
+        assert_eq!(state.lock().changelog, "");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(saved["seen"], config::VERSION);
+        // a dismiss waits for a settings write in progress, so neither save undoes the other
+        config::update(|c| c.seen = String::new());
+        let held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
+        std::thread::scope(|sc| {
+            let dismiss = sc.spawn(|| post(&format!("{base}/api/changelog"), json!({}), &token));
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert_eq!(
+                config::get().seen,
+                "",
+                "saved while a settings write held the lock"
+            );
+            drop(held);
+            assert_eq!(dismiss.join().unwrap().0, 200);
+        });
+        assert_eq!(config::get().seen, config::VERSION);
+        config::update(|c| {
+            c.settings = None;
+            c.seen = String::new();
+        });
     }
 
     #[test]

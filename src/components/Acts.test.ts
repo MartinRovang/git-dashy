@@ -34,6 +34,11 @@ const keys = (p: Row, d: Detail | null = null) => acts(p, d).map(([, , , , , act
 const one = (p: Row, name: string) => acts(p, null).find(([, , , , , act]) => act === name)
 
 describe('acts: what one PR offers', () => {
+  it('offers hide, or unhide on a hidden row', () => {
+    expect(acts(row(), null).find(([, , , , , act]) => act === 'hide')?.[2]).toBe('Hide this PR')
+    expect(acts(row(), null, true).find(([, , , , , act]) => act === 'hide')?.[2]).toBe('Unhide this PR')
+  })
+
   it('every row can be opened, copied, bound and have its memory edited', () => {
     for (const section of ['REVIEW REQUESTED', 'MINE', 'ASSIGNED', 'REVIEWED']) {
       expect(keys(row({ section }))).toEqual(expect.arrayContaining(['code', 'open', 'copy', 'bind', 'memory']))

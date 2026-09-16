@@ -114,6 +114,15 @@ fn offer(tag: &str, ready: impl FnOnce(&str) -> bool) -> String {
     tag.to_string()
 }
 
+/// A plain agent that gives up after `secs`.
+fn agent(secs: u64) -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(secs)))
+            .build(),
+    )
+}
+
 /// Whether this machine's asset for `version` can be fetched. One HEAD, and only on a newer tag, so the
 /// normal tick pays nothing. No token on it, same as the download.
 fn asset_ready(version: &str) -> bool {
@@ -121,11 +130,7 @@ fn asset_ready(version: &str) -> bool {
         "https://github.com/{REPO}/releases/download/v{version}/{}",
         asset_name()
     );
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build(),
-    );
+    let agent = agent(15);
     match agent.head(&url).call() {
         Ok(_) => true,
         Err(e) => {
@@ -133,6 +138,117 @@ fn asset_ready(version: &str) -> bool {
             false
         }
     }
+}
+
+/// What launch should do about release notes.
+#[derive(Debug, PartialEq)]
+enum Due {
+    /// Nothing to show.
+    Skip,
+    /// A fresh install: nothing to catch up on, so record this version and show nothing.
+    Record,
+    /// Show the releases after `from`, at most `max` of them.
+    Show(String, usize),
+}
+
+/// `seen` is the version whose notes were last shown, `fresh` is true when no settings file exists yet.
+/// ponytail: an existing settings file with no `seen` is someone upgrading from before `seen` existed;
+/// their previous version is unknown, so they get this version's notes only.
+fn due(seen: &str, version: &str, demo: bool, fresh: bool) -> Due {
+    match (demo, seen.is_empty(), fresh) {
+        (true, _, _) => Due::Skip,
+        (_, true, true) => Due::Record,
+        (_, true, false) => Due::Show(String::new(), 1),
+        _ if vkey(seen) >= vkey(version) => Due::Skip,
+        _ => Due::Show(seen.to_string(), usize::MAX),
+    }
+}
+
+/// The notes to show once after an update, or "". `seen` moves on once the page dismisses them (see
+/// `mark_seen`), so notes that could not be fetched (offline) come back next launch.
+pub fn changelog() -> String {
+    let c = config::get();
+    let fresh = !c.settings.as_deref().is_some_and(|p| p.exists());
+    let (from, max) = match due(&c.seen, config::VERSION, c.demo, fresh) {
+        Due::Skip => return String::new(),
+        Due::Record => {
+            mark_seen();
+            return String::new();
+        }
+        Due::Show(from, max) => (from, max),
+    };
+    match releases() {
+        Ok(body) => {
+            let text = notes(&body, &from, config::VERSION, max);
+            if text.is_empty() {
+                // a build ahead of the newest release, or a reply that is not a list: stop asking every launch
+                log::warn!("no release notes after v{from} up to v{}", config::VERSION);
+                mark_seen();
+            }
+            text
+        }
+        Err(e) => {
+            log::warn!("release notes: {e}");
+            String::new()
+        }
+    }
+}
+
+/// The last few releases up to this version, for the menu's "What's new" when the update's own notes are gone.
+pub fn recent() -> Result<String, String> {
+    if config::get().demo {
+        return Err("no release notes in demo".into());
+    }
+    Ok(notes(&releases()?, "", config::VERSION, 10))
+}
+
+/// The releases API's JSON. ponytail: no token, like the download; 60 calls an hour per IP.
+fn releases() -> Result<String, String> {
+    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100");
+    let agent = agent(15);
+    agent
+        .get(&url)
+        .call()
+        .and_then(|mut r| r.body_mut().read_to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Record this version as the one whose notes were shown.
+pub fn mark_seen() {
+    // a settings post at launch must not undo this, nor this undo it
+    let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut c = config::get();
+    c.seen = config::VERSION.to_string();
+    let saved = config::snapshot(&c);
+    config::update(|cfg| cfg.seen = c.seen.clone());
+    if let Err(e) = config::save(&saved) {
+        log::warn!("could not save the seen version: {e}");
+    }
+}
+
+/// The bodies of the releases after `from` up to and including `to`, newest first and at most `max`,
+/// from the releases API's JSON. ponytail: the API's first page only (100), enough unless someone skips 100 releases.
+fn notes(releases: &str, from: &str, to: &str, max: usize) -> String {
+    let list: Vec<serde_json::Value> = serde_json::from_str(releases).unwrap_or_default();
+    let mut picked: Vec<(String, String)> = list
+        .iter()
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str().filter(|t| !t.contains('-'))?; // no pre-releases, as newest_tag
+            (vkey(tag) > vkey(from) && vkey(tag) <= vkey(to)).then(|| {
+                (
+                    tag.to_string(),
+                    r["body"].as_str().unwrap_or("").trim().to_string(),
+                )
+            })
+        })
+        .collect();
+    picked.sort_by_key(|(tag, _)| std::cmp::Reverse(vkey(tag)));
+    picked.truncate(max);
+    picked
+        .iter()
+        .map(|(tag, body)| format!("{tag}\n\n{body}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// The release asset name for this machine: gitdashy-{linux-x86_64,macos-arm64,macos-x86_64,windows-x86_64.exe}.
@@ -173,11 +289,7 @@ fn install(version: &str) -> Result<std::path::PathBuf, String> {
     log::debug!("GET {url}");
     // ponytail: a plain agent here, redirects and all: releases bounce to objects.githubusercontent.com
     // and no token is on this request, so there is nothing to leak.
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(300)))
-            .build(),
-    );
+    let agent = agent(300);
     let mut resp = agent
         .get(&url)
         .call()
@@ -312,6 +424,38 @@ mod tests {
         assert_eq!(
             verify(b"hi", "<html>404</html>").unwrap_err(),
             "no checksum published"
+        );
+    }
+
+    #[test]
+    fn notes_cover_every_skipped_release_newest_first() {
+        let json = r#"[
+            {"tag_name":"v2.20.0","body":"twenty"},
+            {"tag_name":"v2.19.1","body":null},
+            {"tag_name":"v2.19.0","body":"nineteen"},
+            {"tag_name":"v2.18.2","body":"already had it"},
+            {"tag_name":"v2.21.0","body":"not installed yet"},
+            {"tag_name":"v2.20.0-rc1","body":"a pre-release"}
+        ]"#;
+        assert_eq!(
+            notes(json, "2.18.2", "2.20.0", usize::MAX),
+            "v2.20.0\n\ntwenty\n\nv2.19.1\n\n\n\nv2.19.0\n\nnineteen"
+        );
+        assert_eq!(notes(json, "2.20.0", "2.20.0", usize::MAX), "");
+        assert_eq!(notes(json, "", "2.20.0", 1), "v2.20.0\n\ntwenty"); // the menu's recent few
+        assert_eq!(notes("rate limited", "2.18.2", "2.20.0", usize::MAX), ""); // not a list, nothing to show
+    }
+
+    #[test]
+    fn launch_shows_notes_only_after_an_update() {
+        assert_eq!(due("2.19.0", "2.21.0", true, false), Due::Skip); // demo
+        assert_eq!(due("", "2.21.0", false, true), Due::Record); // fresh install
+        assert_eq!(due("", "2.21.0", false, false), Due::Show(String::new(), 1)); // from before `seen`
+        assert_eq!(due("2.21.0", "2.21.0", false, false), Due::Skip);
+        assert_eq!(due("2.22.0", "2.21.0", false, false), Due::Skip); // downgraded
+        assert_eq!(
+            due("2.19.0", "2.21.0", false, false),
+            Due::Show("2.19.0".into(), usize::MAX)
         );
     }
 

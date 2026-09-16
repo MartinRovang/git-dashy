@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { follow, fuzzy, isLogin, patch, people, unfollow } from './stories'
+import { follow, fuzzy, moved, isLogin, people, unfollow } from './stories'
 
 describe('followed users', () => {
   it('adds a login once, and drops it again', () => {
     const one = follow([], 'Bob')
-    expect(one).toEqual([{ login: 'Bob', min: false }])
+    expect(one).toEqual([{ login: 'Bob' }])
     expect(follow(one, 'bob')).toBe(one)
-    expect(patch(one, 'Bob', { min: true })).toEqual([{ login: 'Bob', min: true }])
     expect(unfollow(one, 'BOB')).toEqual([])
-    expect(patch(one, 'bob', { min: true })[0].min).toBe(true)
   })
 })
 
@@ -33,4 +31,19 @@ describe('finding someone to follow', () => {
     expect(fuzzy('zz', logins)).toEqual([])
     expect(fuzzy('', logins)).toBe(logins)
   })
+})
+
+it('only PRs pushed to or never seen count as new work', () => {
+  const pr = (n: number, head: string | undefined = 'a') => ({ repo: 'acme/api', number: n, title: `t${n}`, url: `https://gh/acme/api/pull/${n}`, head })
+  const got = (...prs: ReturnType<typeof pr>[]) => ({ at: 1, summary: '', prs })
+  const seen = new Map<string, string | undefined>()
+  moved(seen, got(pr(1), pr(2), pr(3)))
+  expect(moved(seen, got(pr(1), pr(2, 'b'), pr(4))).map((p) => p.number)).toEqual([2, 4])
+  // search leaving pr 3 out, then handing it back, is nothing new
+  expect(moved(seen, got(pr(1), pr(2, 'b')))).toEqual([])
+  expect(moved(seen, got(pr(1), pr(2, 'b'), pr(3)))).toEqual([])
+  // a story cached before heads existed
+  const old = new Map<string, string | undefined>()
+  moved(old, got(pr(1, undefined)))
+  expect(moved(old, got(pr(1)))).toEqual([])
 })

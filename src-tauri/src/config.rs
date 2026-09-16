@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,7 @@ pub const KINDS: &[&str] = &[
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.
-pub const WINDOWS: &[Option<u64>] = &[Some(6), Some(24), Some(168), Some(720), None];
+pub const WINDOWS: &[Option<u64>] = &[Some(1), Some(3), Some(6), Some(24), Some(168), Some(720), None];
 pub const SPLASH_MIN: f64 = 1.0;
 
 /// Verdict -> the status string every row and log reader shows.
@@ -121,6 +121,8 @@ pub struct Config {
     /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
     /// localStorage because the webview's origin changes every launch (see `hinted`). The page keeps the newest.
     pub read: HashMap<String, String>,
+    /// url -> the updatedAt it was hidden at, same shape as `read`: a PR that moves past it shows again.
+    pub hidden: HashMap<String, String>,
     /// The welcome hint has been shown. ponytail: config, not localStorage: the GUI serves itself on
     /// a fresh random port every launch, so the webview's origin, and its storage with it, is new
     /// each time. Anything that must be remembered across launches belongs on this side.
@@ -128,10 +130,14 @@ pub struct Config {
     /// Show the key hint on every button and settings row. On by default; the sheet and the rail's
     /// View group both switch it.
     pub keyhints: bool,
+    /// The version whose release notes were last shown; "" before the first launch that recorded one.
+    pub seen: String,
     /// Runtime picks land here. `None` (demo) means never write.
     pub settings: Option<PathBuf>,
     /// Pre-reviews of your own PRs.
     pub self_dir: PathBuf,
+    /// Friday reports, one HTML file per day written.
+    pub reports: PathBuf,
     /// Reviews that finished and are waiting to be posted. See held.rs.
     pub held_dir: PathBuf,
     pub backups: PathBuf,
@@ -188,10 +194,13 @@ impl Default for Config {
             drafts: false,
             scopes: Vec::new(),
             read: HashMap::new(),
+            hidden: HashMap::new(),
             hinted: false,
             keyhints: true,
+            seen: String::new(),
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
+            reports: home().join(".prs_reports"),
             held_dir: home().join(".prs_held"),
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
@@ -223,9 +232,13 @@ pub struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyhints: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -336,11 +349,17 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.read {
         c.read = v;
     }
+    if let Some(v) = saved.hidden {
+        c.hidden = v;
+    }
     if let Some(v) = saved.hinted {
         c.hinted = v;
     }
     if let Some(v) = saved.keyhints {
         c.keyhints = v;
+    }
+    if let Some(v) = saved.seen {
+        c.seen = v;
     }
     if let (Some(v), false) = (saved.depth, env("PRS_DEPTH")) {
         c.depth = v;
@@ -382,8 +401,10 @@ pub fn snapshot(c: &Config) -> Saved {
         drafts: Some(c.drafts),
         scopes: Some(c.scopes.clone()),
         read: Some(c.read.clone()),
+        hidden: Some(c.hidden.clone()),
         hinted: Some(c.hinted),
         keyhints: Some(c.keyhints),
+        seen: Some(c.seen.clone()),
         depth: Some(c.depth.clone()),
         effort: Some(c.effort.clone()),
         notify: Some(c.notify),
@@ -392,6 +413,13 @@ pub fn snapshot(c: &Config) -> Saved {
         hunter: Some(c.hunter.clone()),
     }
 }
+
+/// Held across every read-change-save of the settings. Without it two writers copy the config, and the
+/// later save undoes the other's change: in memory, and in the file a restart reads.
+/// ponytail: one global lock, settings writes are rare and quick. It covers the writers that SAVE
+/// (post_settings, update::mark_seen); a plain `config::update` elsewhere does not take it, and
+/// post_settings' whole-config write can still undo one that lands mid-post.
+pub static SAVING: Mutex<()> = Mutex::new(());
 
 /// Persist the settings. ponytail: `settings: None` (demo) means never write.
 pub fn save(values: &Saved) -> std::io::Result<()> {
@@ -434,7 +462,7 @@ mod tests {
         let none = |_: &str| false;
         let json = r#"{
             "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
-            "hinted":true,"keyhints":false,"depth":"high","effort":"max","notify":true,
+            "hinted":true,"keyhints":false,"seen":"2.1.0","depth":"high","effort":"max","notify":true,
             "theme":"nord","voice":["caveman"],"hunter":["security"]
         }"#;
         let saved: Saved = serde_json::from_str(json).unwrap();
@@ -449,6 +477,7 @@ mod tests {
         assert_eq!(c.read.get("u").map(String::as_str), Some("t"));
         assert!(c.hinted);
         assert!(!c.keyhints);
+        assert_eq!(c.seen, "2.1.0");
         assert_eq!(c.depth, "high");
         assert_eq!(c.effort, "max");
         assert!(c.notify);

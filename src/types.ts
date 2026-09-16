@@ -56,6 +56,8 @@ export type Options = {
 }
 
 export type Knowledge = {
+  /** The Friday report's background job, and the newest report on disk by date ("2026-09-15"). */
+  report?: { job: { running: boolean; elapsed?: number; error?: string }; latest: string | null }
   memory: string
   store: string
   teams: Team[]
@@ -102,6 +104,8 @@ export type Settings = {
   hunter?: string[]
   scopes?: string[]
   read?: Record<string, string>
+  /** url -> the updatedAt it was hidden at; a PR that moves past it shows again. */
+  hidden?: Record<string, string>
   interval?: number
   [key: string]: unknown
 }
@@ -112,6 +116,8 @@ export type StateData = {
   fetchedAt: number | null
   interval: number
   fetching: boolean
+  /** Ticks finished, landed or failed, since the server started. See post_refresh. */
+  ticks: number
   error: string
   auto: boolean
   pending: number
@@ -124,6 +130,8 @@ export type StateData = {
   asks: Ask[]
   notices: string[]
   postingRules?: PostingRule[]
+  /** Release notes since the last version run, "" once dismissed. */
+  changelog: string
 }
 
 export type Finding = { kind: string; text: string; loc?: string }

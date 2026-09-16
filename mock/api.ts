@@ -3,7 +3,11 @@
 // the drafts recurrence gate (promote just removes the draft) and the Host/token guard.
 // Active when no backend answers on :7777; force with DASHY_MOCK=1, disable with DASHY_MOCK=0.
 // DASHY_MOCK_N=400 adds that many synthetic PRs, to try the graph on a big board.
+import { spawn } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { get as httpGet } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 
@@ -27,7 +31,7 @@ const VOICES = ['review', 'caveman', 'bot']
 const HUNTERS = ['ponytail', 'security', 'tests', 'perf', 'humanizer']
 const SUBS = ['all', 'open', 'off']
 const INTERVALS = [60, 120, 300, 600, 900]
-const WINDOWS = [6, 24, 168, 720, null]
+const WINDOWS = [1, 3, 6, 24, 168, 720, null]
 const PROMOTE_AT = 2
 
 type Pre = { at: number; moved: boolean } | null
@@ -79,6 +83,8 @@ function mkPr(n: number, title: string, repo: string, author: string, hours: num
 }
 
 const S = {
+  follow: [{ login: 'frank' }, { login: 'alice' }] as { login: string }[],
+  storyCalls: {} as Record<string, number>,
   rows: [] as Row[],
   reviewText: {} as Record<string, string>,
   reviewInfo: {} as Record<string, ReviewInfo>,
@@ -106,6 +112,10 @@ const S = {
   fetching: false,
   fetchedAt: secs(),
   notices: [] as string[],
+  reportAt: 0,
+  reportLatest: null as string | null,
+  // shown once per dev server start, as after an update; closing it clears it like /api/changelog does
+  changelog: "v2.21.0\n\n## What's Changed\n* feat: release notes after an update\n* fix: the refresh button shows a spinner",
   asks: [] as { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }[],
   // what a "no" left held back, so the rail's consent rows and its asks count are reachable in dev
   refused: [] as { kind: string; key: string; what: string }[],
@@ -116,6 +126,7 @@ const S = {
   postingOwners: {} as Record<string, { manual?: string; auto?: string }>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
+  ticks: 0,
   cursor: 0,
   overlaps: { running: false, t0: 0, error: '', result: null as unknown[] | null, idle: true },
   dream: { running: false, t0: 0, error: '', result: null as unknown | null, idle: true },
@@ -243,6 +254,7 @@ function buildPayload() {
     fetchedAt: S.fetchedAt,
     interval: S.settings.interval,
     fetching: S.fetching,
+    ticks: S.ticks,
     error: '',
     auto: S.auto,
     pending: S.rows.filter((r) => r.section === 'REVIEW REQUESTED').length,
@@ -252,6 +264,11 @@ function buildPayload() {
     settings: { ...S.settings },
     options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: SCOPES },
     knowledge: {
+      // the Friday report takes 4s here, so the row's writing state is visible in dev
+      report: {
+        job: S.reportAt && secs() - S.reportAt < 4 ? { running: true, elapsed: Math.round(secs() - S.reportAt) } : { running: false },
+        latest: S.reportAt && secs() - S.reportAt >= 4 ? new Date().toISOString().slice(0, 10) : S.reportLatest,
+      },
       memory: '~/.prs_memory',
       store: '',
       teams: S.teams.map((t) => ({ key: t.key, name: t.name, arrived: 0 })),
@@ -264,6 +281,7 @@ function buildPayload() {
     asks: S.asks,
     notices: S.notices,
     postingRules: postingRules(),
+    changelog: S.changelog,
   }
 }
 
@@ -434,9 +452,23 @@ function postSettings(b: Body) {
   return json(200, { ok: true })
 }
 
+// a followed user's story; every poll after the first finds one more PR, so the "new work" pop-up shows
+function story(login: string) {
+  const n = (S.storyCalls[login] = (S.storyCalls[login] || 0) + 1)
+  const pr = (i: number) => ({ repo: 'acme/api', number: 200 + i, title: `${login}'s change #${i}`, url: `https://github.com/acme/api/pull/${200 + i}`, head: `h${i}` })
+  return {
+    summary: `- ${login} is reworking auth middleware in acme/api\n- reviewing small fixes in acme/dashboard`,
+    prs: Array.from({ length: n + 1 }, (_, i) => pr(i)),
+    at: n === 1 ? secs() - 120 : secs(),
+  }
+}
+
 function handleApi(method: string, path: string, query: URLSearchParams, body: Body) {
   if (method === 'GET') {
     if (path === '/api/state') return json(200, buildPayload())
+    if (path === '/api/stories') return json(200, { follow: S.follow })
+    if (path === '/api/changelog') return json(200, { text: S.changelog || 'v2.21.0\n\n(the mock has no older notes)' })
+    if (path === '/api/story') return json(200, story(query.get('login') || ''))
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
       const key = `${repo}#${query.get('number') || ''}`
@@ -544,6 +576,10 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
 
   if (method === 'POST') {
     if (path === '/api/review') return postReview(body)
+    if (path === '/api/stories') {
+      S.follow = ((body as { follow?: { login: string }[] }).follow || []).map((f) => ({ login: f.login }))
+      return json(200, { follow: S.follow })
+    }
     if (path === '/api/auto') {
       S.auto = bool(body, 'on')
       return json(200, { ok: true })
@@ -557,8 +593,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       setTimeout(() => {
         S.fetching = false
         S.fetchedAt = secs()
+        S.ticks += 1
       }, 400)
-      return json(200, { ok: true })
+      return json(200, { ok: true, answeredBy: S.ticks + 1 })
     }
     if (path === '/api/open') {
       const r = S.rows.find((x) => x.url === str(body, 'url'))
@@ -737,6 +774,20 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/path') return json(200, { ok: true })
     if (path === '/api/update') return json(200, { ok: true })
     if (path === '/api/quit') return json(200, { ok: true })
+    if (path === '/api/report') {
+      if (body.op === 'start') S.reportAt = secs()
+      if (body.op === 'open') {
+        // like the server: a file, opened by the OS. The real page comes from src-tauri/src/report.rs.
+        const file = join(tmpdir(), 'gitdashy-mock-report.html')
+        writeFileSync(file, '<!doctype html><meta charset="utf-8"><title>Friday report · mock</title><body style="font:15px/1.6 system-ui;max-width:760px;margin:40px auto;padding:0 16px"><p style="color:#777">Friday report · mock</p><h1>The week</h1><p>The mock has no model; the real report is written by the review model.</p></body>')
+        spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [file], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
+      }
+      return json(200, { ok: true })
+    }
+    if (path === '/api/changelog') {
+      S.changelog = ''
+      return json(200, { ok: true })
+    }
     if (path === '/api/notices') {
       S.notices = []
       return json(200, { ok: true })

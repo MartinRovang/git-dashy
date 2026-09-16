@@ -125,13 +125,18 @@ export function prompt(text: string, value = '', title = 'gitdashy'): Promise<st
   })
 }
 
-/** Read-only text, like less. Returns the modal so a caller can add a key of its own. */
-export function viewer(title: string, text: string, sub = '') {
+/** Read-only text, like less, under an optional `head`. Returns the modal so a caller can add a key of its own. */
+export function viewer(title: string, text: string, sub = '', head?: ReactNode) {
   const m = open({
     title,
     sub,
-    wide: true,
-    body: () => <pre>{text}</pre>,
+    wide: !head,
+    body: () => (
+      <>
+        {head}
+        <pre>{text}</pre>
+      </>
+    ),
     foot: [['q', 'close', () => close(m)]],
   })
   m.keys = { Escape: () => close(m) }

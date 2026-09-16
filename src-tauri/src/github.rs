@@ -1081,7 +1081,7 @@ pub fn comment(repo: &str, number: u64, body: &str) -> Result<(), Error> {
     .map(|_| ())
 }
 
-/// xdg-open / open / start, detached.
+/// xdg-open / open / start, waited on off-thread so no zombie is left per open.
 pub fn open_in_browser(url: &str) {
     let mut cmd = if cfg!(target_os = "macos") {
         Command::new("open")
@@ -1092,7 +1092,11 @@ pub fn open_in_browser(url: &str) {
     } else {
         Command::new("xdg-open")
     };
-    let _ = cmd.arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    if let Ok(mut child) = cmd.arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 const CLIPBOARDS: &[&[&str]] = &[
