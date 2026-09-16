@@ -239,6 +239,39 @@ pub fn land(
     Some(h)
 }
 
+/// Fill one detail cache entry from `read`, and free its key whatever `read` does.
+///
+/// ponytail: the write and the key are one step, here, because a panic that skipped the removal left
+/// a key nothing starts again — want_detail returns early for anything still in flight, so that
+/// revision's pane said loading for the rest of the session. Treat a panic as a failed read; `f`
+/// clears those. Taking the read as an argument is what lets a test panic on purpose.
+fn fill_detail(me: &State, key: DetailKey, read: impl FnOnce() -> Option<Detail>) {
+    let got = catch_unwind(AssertUnwindSafe(read)).unwrap_or_else(|e| {
+        error!("detail {} failed: {}", key.0, panic_text(&*e));
+        None
+    });
+    let mut inner = me.lock();
+    // ponytail: drop what we knew about this PR at any other revision, so the cache cannot grow one
+    // entry per push for a branch someone is iterating on.
+    evict(&mut inner.details, |k| k.0 == key.0);
+    inner.details.insert(key.clone(), got);
+    inner.detailing.remove(&key);
+}
+
+/// The same for one diff.
+///
+/// ponytail: `diff::retry` bumps the generation only when ITS cache holds a failure, so a panic above
+/// that layer — anchoring a mark, say — would be cleared by nothing at all.
+fn fill_diff(me: &State, key: DiffKey, read: impl FnOnce() -> DiffCache) {
+    let got = catch_unwind(AssertUnwindSafe(read))
+        .map_err(|e| error!("diff {}#{} failed: {}", key.0, key.1, panic_text(&*e)))
+        .ok();
+    let mut inner = me.lock();
+    evict(&mut inner.diffs, |k| k.0 == key.0 && k.1 == key.1);
+    inner.diffs.insert(key.clone(), got);
+    inner.diffing.remove(&key);
+}
+
 /// True while a review or pre-review of this PR is running.
 ///
 /// ponytail: membership, not a suffix. The status channel also carries a truncated stderr line, so
@@ -323,15 +356,7 @@ impl State {
             inner.detailing.insert(key.clone());
         }
         let (me, repo, number) = (self.clone(), pr.repo().to_string(), pr.number);
-        std::thread::spawn(move || {
-            let got = github::detail(&repo, number);
-            let mut inner = me.lock();
-            // ponytail: drop what we knew about this PR at any other revision, so the cache cannot
-            // grow one entry per push for a branch someone is iterating on.
-            evict(&mut inner.details, |k| k.0 == key.0);
-            inner.details.insert(key.clone(), got);
-            inner.detailing.remove(&key);
-        });
+        std::thread::spawn(move || fill_detail(&me, key, || github::detail(&repo, number)));
         None
     }
 
@@ -383,14 +408,19 @@ impl State {
             head.to_string(),
             findings.to_vec(),
         );
-        std::thread::spawn(move || {
-            let got = diff::load(&repo, number, &head, &findings);
-            let mut inner = me.lock();
-            evict(&mut inner.diffs, |k| k.0 == repo && k.1 == number);
-            inner.diffs.insert(key.clone(), Some(got));
-            inner.diffing.remove(&key);
-        });
+        std::thread::spawn(move || fill_diff(&me, key, || diff::load(&repo, number, &head, &findings)));
         None
+    }
+
+    /// Forget the reads that FAILED, so the next look tries them again; keep the ones that landed.
+    ///
+    /// ponytail: the twin of diff::retry, for the caches on this side. A failed detail read was cached
+    /// as None and nothing here was ever cleared, so one dropped request pinned that revision's pane on
+    /// loading until the PR moved. Failures only, or `f` would refetch a pane that is already right.
+    pub fn retry_reads(&self) {
+        let mut inner = self.lock();
+        inner.details.retain(|_, v| v.is_some());
+        inner.diffs.retain(|_, v| v.is_some());
     }
 
     /// include_existing: review what is already listed too, not just what shows up later.
@@ -1142,6 +1172,56 @@ mod tests {
         evict(&mut cache, |k| k.0 == "u");
         assert_eq!(cache.len(), 1);
         assert!(cache.contains_key(&("v".to_string(), "1".to_string())));
+    }
+
+    /// The line the fix turns on: whatever the read does, its key must not stay in flight. Nothing
+    /// starts a read that is still running, so the pane would say loading until the PR moved.
+    #[test]
+    fn a_panicking_read_frees_its_key_and_counts_as_a_failure() {
+        let s = State::new();
+        let key: DetailKey = ("u".into(), "1".into());
+        s.lock().detailing.insert(key.clone());
+        fill_detail(&s, key.clone(), || panic!("boom"));
+        {
+            let inner = s.lock();
+            assert!(!inner.detailing.contains(&key), "the key must not stay in flight");
+            assert!(
+                matches!(inner.details.get(&key), Some(None)),
+                "a panic is a read that failed"
+            );
+        }
+
+        let key: DiffKey = ("acme/api".into(), 7, "head".into(), Vec::new(), 0);
+        s.lock().diffing.insert(key.clone());
+        fill_diff(&s, key.clone(), || panic!("boom"));
+        let inner = s.lock();
+        assert!(!inner.diffing.contains(&key), "the key must not stay in flight");
+        assert!(matches!(inner.diffs.get(&key), Some(None)));
+    }
+
+    /// `f` is "go and look again": the reads that failed are dropped so the next look retries them,
+    /// and the ones that landed stay, so pressing it does not refetch the whole pane.
+    #[test]
+    fn a_refresh_forgets_the_reads_that_failed_and_keeps_the_rest() {
+        let s = State::new();
+        let diff_key = |n: u64| -> DiffKey { ("acme/api".into(), n, "head".into(), Vec::new(), 0) };
+        {
+            let mut inner = s.lock();
+            inner
+                .details
+                .insert(("landed".into(), "1".into()), Some(Detail::default()));
+            inner.details.insert(("failed".into(), "1".into()), None);
+            inner.diffs.insert(diff_key(1), Some((Vec::new(), Vec::new())));
+            inner.diffs.insert(diff_key(2), None);
+        }
+        s.retry_reads();
+        let inner = s.lock();
+        assert_eq!(inner.details.len(), 1, "the failed detail is gone");
+        assert!(inner
+            .details
+            .contains_key(&("landed".to_string(), "1".to_string())));
+        assert_eq!(inner.diffs.len(), 1, "the failed diff is gone");
+        assert!(inner.diffs.contains_key(&diff_key(1)));
     }
 
     #[test]

@@ -1145,6 +1145,7 @@ fn post_auto(state: &State, body: &Body) -> Out {
 
 fn post_refresh(state: &State, _body: &Body) -> Out {
     diff::retry(); // f means "look again", so a diff GitHub failed to read is worth retrying
+    state.retry_reads(); // and the pane's own caches, where a failed detail read sat for good
     Ok(json!({"ok": true, "answeredBy": state.wake_answered_by()}))
 }
 
@@ -3490,6 +3491,28 @@ mod tests {
         let bad: Body =
             serde_json::from_value(json!({"op": "again", "kind": "nonsense", "key": "org-t"})).unwrap();
         assert_eq!(post_consent(&state, &bad).unwrap_err().0, 400);
+    }
+
+    /// `f` is the only thing that clears a read that failed: without this call a detail the network
+    /// dropped sat in the cache as "still loading" until the PR itself moved.
+    #[test]
+    fn a_refresh_clears_the_reads_that_failed() {
+        let state = State::new();
+        {
+            let mut inner = state.lock();
+            inner.details.insert(("failed".into(), "1".into()), None);
+            inner.details.insert(
+                ("landed".into(), "1".into()),
+                Some(crate::types::Detail::default()),
+            );
+        }
+        let body: Body = serde_json::from_value(json!({})).unwrap();
+        post_refresh(&state, &body).unwrap();
+        let inner = state.lock();
+        assert_eq!(inner.details.len(), 1, "the failed read is gone");
+        assert!(inner
+            .details
+            .contains_key(&("landed".to_string(), "1".to_string())));
     }
 
     #[test]
