@@ -1534,12 +1534,9 @@ fn post_settings(state: &State, body: &Body) -> Out {
         let Some(n) = n else {
             return Err(Fail::new(400, "interval must be a number"));
         };
-        let Ok(n) = u64::try_from(n) else {
+        let Some(n) = u64::try_from(n).ok().filter(|n| config::interval_ok(*n)) else {
             return Err(Fail::new(400, "interval must be 30s to a day"));
         };
-        if !config::interval_ok(n) {
-            return Err(Fail::new(400, "interval must be 30s to a day"));
-        }
         c.interval = n;
         wake = true; // a shorter interval should not wait out the longer one it replaced
     }

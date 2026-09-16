@@ -340,7 +340,7 @@ pub fn load() {
 /// It is a function now because that is the only way the precedence below can be asserted.
 pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let (Some(v), false) = (saved.model.filter(|v| model_ok(v)), env("PRS_MODEL")) {
-        c.model = v;
+        c.model = v.trim().to_string(); // trimmed on the way in, as post_settings does
     }
     if let Some(v) = saved.interval.filter(|v| interval_ok(*v)) {
         c.interval = v;
@@ -408,7 +408,7 @@ pub fn interval_ok(v: u64) -> bool {
     (INTERVAL_MIN..=INTERVAL_MAX).contains(&v)
 }
 
-/// A model name is a name: openrouter's carry a slash, so the rule is length, not a list.
+/// Model names vary (openrouter's contain a slash), so only length is checked.
 pub fn model_ok(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.chars().count() <= 60
@@ -555,20 +555,37 @@ mod tests {
     /// the default stands. `"interval": 0` is the one that cost something — a refresh every ten seconds.
     #[test]
     fn a_bad_saved_value_leaves_the_default() {
+        let d = Config::default();
         let json = r#"{
             "model":"","interval":0,"depth":"nope","effort":"turbo","theme":"neon",
             "subs":"open"
         }"#;
-        let saved: Saved = serde_json::from_str(json).unwrap();
-        let d = Config::default();
         let mut c = Config::default();
-        apply(&mut c, saved, &|_| false);
+        apply(&mut c, serde_json::from_str(json).unwrap(), &|_| false);
         assert_eq!(c.model, d.model);
         assert_eq!(c.interval, d.interval);
         assert_eq!(c.depth, d.depth);
         assert_eq!(c.effort, d.effort);
         assert_eq!(c.theme, d.theme);
         assert_eq!(c.sub, "open", "a good value in the same file still lands");
+
+        // the far end of each range, which is where an off-by-one would hide
+        let json = format!(
+            r#"{{"model":"{}","interval":{}}}"#,
+            "x".repeat(61),
+            INTERVAL_MAX + 1
+        );
+        let mut c = Config::default();
+        apply(&mut c, serde_json::from_str(&json).unwrap(), &|_| false);
+        assert_eq!(c.model, d.model);
+        assert_eq!(c.interval, d.interval);
+
+        // and the edges themselves are taken
+        let json = format!(r#"{{"model":"{}","interval":{}}}"#, "x".repeat(60), INTERVAL_MAX);
+        let mut c = Config::default();
+        apply(&mut c, serde_json::from_str(&json).unwrap(), &|_| false);
+        assert_eq!(c.model, "x".repeat(60));
+        assert_eq!(c.interval, INTERVAL_MAX);
     }
 
     #[test]
