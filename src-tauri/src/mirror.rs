@@ -178,6 +178,39 @@ fn absolute(path: &Path) -> PathBuf {
     }
 }
 
+/// The nearest ancestor of `path` that exists — `path` itself when it does. Git has to be run from
+/// somewhere real, and the paths asked about here need not exist yet.
+fn nearest_dir(path: &Path) -> PathBuf {
+    let mut base = path.to_path_buf();
+    while !base.is_dir() {
+        match base.parent() {
+            Some(p) if p != base => base = p.to_path_buf(),
+            _ => break,
+        }
+    }
+    base
+}
+
+/// The git repo `path` sits in, asked from the nearest directory that exists. `Ok(None)` when it is in
+/// none, Err when git could not be asked.
+///
+/// ponytail: one walk and one question, and the two callers answer a failed git DIFFERENTLY on
+/// purpose: here an Err refuses (see tracked_checked — a git that cannot be asked must not let memory
+/// into someone's history), while install::toplevel reads it as "no repo" and skips an ignore rule.
+/// Written out twice, that difference was an accident nobody had chosen.
+pub(crate) fn toplevel_checked(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let dir = nearest_dir(&absolute(path));
+    let out = run_git(
+        &["-C", &dir.to_string_lossy(), "rev-parse", "--show-toplevel"],
+        GIT_TIMEOUT,
+    )?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(Some(PathBuf::from(root)).filter(|r| !r.as_os_str().is_empty()))
+}
+
 /// True when git would commit a file written at `path`: inside a repo and not ignored. Err when git
 /// could not be asked (missing, or hung).
 ///
@@ -186,20 +219,11 @@ fn absolute(path: &Path) -> PathBuf {
 /// answer counts as tracked, so a broken git call refuses rather than leaking memory into someone's history.
 pub fn tracked_checked(path: &Path, names: &[&str]) -> std::io::Result<bool> {
     let full = absolute(path);
-    let mut base = full.clone();
-    while !base.is_dir() {
-        match base.parent() {
-            Some(p) if p != base => base = p.to_path_buf(),
-            _ => break,
-        }
-    }
-    let base_s = base.to_string_lossy().to_string();
-    if !run_git(&["-C", &base_s, "rev-parse", "--show-toplevel"], GIT_TIMEOUT)?
-        .status
-        .success()
-    {
+    let base = nearest_dir(&full);
+    if toplevel_checked(&full)?.is_none() {
         return Ok(false); // not a git repo: nothing to leak into
     }
+    let base_s = base.to_string_lossy().to_string();
     // ponytail: EVERY name we write, not just the first. An ignore rule matching general.md but not
     // repo.md would answer "ignored" and we would then commit the other one: the exact leak this prevents.
     for n in names {
@@ -469,6 +493,26 @@ mod tests {
         std::fs::write(repo.join(".git/info/exclude"), "mirror/\n").unwrap();
         assert!(!tracked(&into, NAMES));
         assert!(!tracked(&d.path().join("plain"), NAMES)); // outside any repo
+    }
+
+    /// The walk and the question both callers share: asked about a path that is not there yet, from
+    /// the nearest directory that is.
+    #[test]
+    fn toplevel_is_found_from_a_path_that_does_not_exist_yet() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&["init", "-q", repo.to_str().unwrap()]);
+        let root = toplevel_checked(&repo.join("mirror").join("not").join("there"))
+            .unwrap()
+            .expect("inside the repo");
+        assert_eq!(
+            std::fs::canonicalize(&root).unwrap(),
+            std::fs::canonicalize(&repo).unwrap()
+        );
+        assert!(toplevel_checked(&d.path().join("plain").join("deeper"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]

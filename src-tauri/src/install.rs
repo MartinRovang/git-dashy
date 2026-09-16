@@ -900,17 +900,13 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// The git repo `path` sits in, or None: asked from the nearest directory that exists.
+///
+/// ponytail: the walk and the question live in mirror::toplevel_checked, which is the other half of
+/// this pair. A git that cannot be answered reads as None here on purpose: the only thing this feeds
+/// is the ignore rule wire_repo writes, and mirror::sync asks the strict version again before it
+/// writes anything into that path.
 fn toplevel(path: &Path) -> Option<PathBuf> {
-    let mut base = path.to_path_buf();
-    while !base.is_dir() {
-        match base.parent() {
-            Some(p) if p != base => base = p.to_path_buf(),
-            _ => break,
-        }
-    }
-    git(&base, &["rev-parse", "--show-toplevel"])
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    crate::mirror::toplevel_checked(path).ok().flatten()
 }
 
 /// The directory holding info/exclude. ponytail: NOT <root>/.git: in a linked worktree or a

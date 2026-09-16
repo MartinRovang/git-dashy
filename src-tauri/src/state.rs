@@ -478,36 +478,60 @@ impl State {
         true
     }
 
+    /// Run one job for a row and land it a status, whatever the job does.
+    ///
+    /// ponytail: the row spins until a status arrives, so a failure the work does not catch would
+    /// leave it spinning for the rest of the session with nothing to press. On the calling thread,
+    /// not spawned — `start` is the spawning half, and a test can drive this one.
+    fn run_job(&self, url: &str, what: &str, work: impl FnOnce() -> anyhow::Result<String>) {
+        let status = match catch_unwind(AssertUnwindSafe(work)) {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                error!("{what} {url} failed: {e:#}");
+                format!("error: {e}").chars().take(88).collect()
+            }
+            Err(e) => {
+                error!("{what} {url} failed: {}", panic_text(&*e));
+                format!("error: {}", panic_text(&*e)).chars().take(88).collect()
+            }
+        };
+        info!("{what} {url} -> {status}");
+        self.finish(url, status);
+    }
+
+    /// Claim the row, run `work` off this thread, land a status. False when something is already
+    /// running for that PR, in which case nothing was started.
+    ///
+    /// ponytail: one definition for the three actions that start work on a row. Written out three
+    /// times, their error handling had drifted: the held post logged nothing at all, not even what it
+    /// landed. Every one of them reports its result now. Only the review logs a START, because only it
+    /// has something to say there — which model it is about to spend.
+    fn start(
+        &self,
+        url: &str,
+        spinner: &str,
+        what: &'static str,
+        work: impl FnOnce() -> anyhow::Result<String> + Send + 'static,
+    ) -> bool {
+        if !self.begin(url, spinner) {
+            return false;
+        }
+        let (me, url) = (self.clone(), url.to_string());
+        std::thread::spawn(move || me.run_job(&url, what, work));
+        true
+    }
+
     /// False when a review of this PR is already running, and nothing was started.
     /// `ran` says whose decision this was: you pressed `r`, or auto started it. A repo can settle
     /// the two differently, so the review has to carry it all the way to the post.
     /// `ask` is what the person starting it typed for this one review, "" for none.
     pub fn start_review(&self, pr: &Pr, ran: autorev::Ran, ask: &str) -> bool {
         let model = config::get().model;
-        let (me, pr, ask) = (self.clone(), pr.clone(), ask.to_string());
-        if !self.begin(&pr.url, "reviewing...") {
-            return false;
-        }
-        std::thread::spawn(move || {
-            // ponytail: the row spins until this thread writes a status, so a failure review() does not
-            // catch would leave it spinning for the rest of the session with nothing to press. Catch here
-            // too, and the row says what happened.
+        let (pr, url, ask) = (pr.clone(), pr.url.clone(), ask.to_string());
+        self.start(&url, "reviewing...", "review", move || {
             info!("review {} with {}", pr.url, model);
-            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran, &ask))) {
-                Ok(Ok(status)) => status,
-                Ok(Err(e)) => {
-                    error!("review {} failed: {e:#}", pr.url);
-                    format!("error: {e}").chars().take(88).collect()
-                }
-                Err(e) => {
-                    error!("review {} failed: {}", pr.url, panic_text(&*e));
-                    format!("error: {}", panic_text(&*e)).chars().take(88).collect()
-                }
-            };
-            info!("review {} -> {}", pr.url, status);
-            me.finish(&pr.url, status);
-        });
-        true
+            review::review(&pr, &model, ran, &ask)
+        })
     }
 
     /// Forget a held review's status, so the row goes back to what the board says it is.
@@ -529,25 +553,7 @@ impl State {
     /// happening.
     pub fn start_post_held(&self, h: held::Held) -> bool {
         let url = h.pr.url.clone();
-        if !self.begin(&url, "posting...") {
-            return false;
-        }
-        let me = self.clone();
-        std::thread::spawn(move || {
-            let status = match catch_unwind(AssertUnwindSafe(|| review::post_held(&h))) {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => {
-                    error!("post held {url} failed: {e:#}");
-                    format!("error: {e}").chars().take(88).collect()
-                }
-                Err(e) => {
-                    error!("post held {url} failed: {}", panic_text(&*e));
-                    format!("error: {}", panic_text(&*e)).chars().take(88).collect()
-                }
-            };
-            me.finish(&url, status);
-        });
-        true
+        self.start(&url, "posting...", "post held", move || review::post_held(&h))
     }
 
     /// Claim a row for a short write that must not interleave with a turn: accepting or keeping a revision.
@@ -640,27 +646,11 @@ impl State {
     /// False when a review of this PR is already running, and nothing was started.
     pub fn start_self_review(&self, pr: &Pr) -> bool {
         let model = config::get().model;
-        let (me, pr) = (self.clone(), pr.clone());
-        if !self.begin(&pr.url, "pre-reviewing...") {
-            return false;
-        }
-        std::thread::spawn(move || {
-            // ponytail: same reason as start_review: a dead thread must not wedge the row
-            let status = match catch_unwind(AssertUnwindSafe(|| review::self_review(&pr, &model))) {
-                Ok(Ok((status, _dest))) => status, // ponytail: the path is not kept: it is derivable
-                Ok(Err(e)) => {
-                    error!("self-review {} failed: {e:#}", pr.url);
-                    format!("error: {e}").chars().take(88).collect()
-                }
-                Err(e) => {
-                    error!("self-review {} failed: {}", pr.url, panic_text(&*e));
-                    format!("error: {}", panic_text(&*e)).chars().take(88).collect()
-                }
-            };
-            info!("self-review {} -> {}", pr.url, status);
-            me.finish(&pr.url, status);
-        });
-        true
+        let (pr, url) = (pr.clone(), pr.url.clone());
+        self.start(&url, "pre-reviewing...", "self-review", move || {
+            // ponytail: the path is not kept: it is derivable
+            review::self_review(&pr, &model).map(|(status, _dest)| status)
+        })
     }
 
     /// Refresh forever on this thread. A tick that fails is reported and retried; it never ends the thread.
@@ -1175,6 +1165,31 @@ mod tests {
         evict(&mut cache, |k| k.0 == "u");
         assert_eq!(cache.len(), 1);
         assert!(cache.contains_key(&("v".to_string(), "1".to_string())));
+    }
+
+    /// However a job ends, the row gets a status: it spins until one lands, and nothing else writes one.
+    #[test]
+    fn a_job_lands_the_row_a_status_however_it_ends() {
+        let s = State::new();
+        let status = |s: &State| s.lock().reviews.get("u").cloned().unwrap_or_default();
+        // claimed first, as start() claims it: otherwise "it stopped spinning" asserts nothing
+        let claim = |s: &State| assert!(s.begin("u", "working..."), "the row was free");
+
+        claim(&s);
+        s.run_job("u", "job", || Ok("✓ approved".into()));
+        assert_eq!(status(&s), "✓ approved");
+        claim(&s);
+        s.run_job("u", "job", || Err(anyhow::anyhow!("no token")));
+        assert_eq!(status(&s), "error: no token");
+        claim(&s);
+        s.run_job("u", "job", || panic!("boom"));
+        assert_eq!(status(&s), "error: boom");
+        assert!(!s.lock().running.contains("u"), "and the row stops spinning");
+
+        // the row is one line: a long failure is clipped to fit it, not wrapped into it
+        claim(&s);
+        s.run_job("u", "job", || Err(anyhow::anyhow!("{}", "x".repeat(200))));
+        assert_eq!(status(&s).chars().count(), 88);
     }
 
     /// The line the fix turns on: whatever the read does, its key must not stay in flight. Nothing
