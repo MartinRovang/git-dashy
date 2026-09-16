@@ -508,7 +508,7 @@ impl State {
     /// ponytail: your message is on disk before the model sees it, so the conversation shows it at once;
     /// the answer is appended to the file as it is when the answer lands, and a review dropped in the
     /// meantime is not brought back.
-    pub fn start_talk(&self, h: held::Held, message: Option<String>) -> bool {
+    pub fn start_talk(&self, on: review::Talk, h: held::Held, message: Option<String>) -> bool {
         let url = h.pr.url.clone();
         let label = if message.is_some() {
             "discussing..."
@@ -525,9 +525,9 @@ impl State {
                 text: m.clone(),
                 at: now(),
             });
-            if let Err(e) = held::put(&h) {
+            if let Err(e) = on.put(&h) {
                 error!("discussion of {url} not saved: {e:#}");
-                self.finish(&url, review::held_status(&h.verdict));
+                self.finish(&url, on.status(&h.verdict));
                 return false;
             }
         }
@@ -538,7 +538,7 @@ impl State {
                 None => review::revise(&h).map(|v| (None, Some(v))),
             }));
             let (repo, n) = (h.pr.repo().to_string(), h.pr.number);
-            let Some(mut now_held) = held::get(&repo, n) else {
+            let Some(mut now_held) = on.get(&repo, n) else {
                 // dropped while the agent was answering: nothing to add the answer to
                 me.finish(&url, String::new());
                 me.forget_review(&url);
@@ -560,10 +560,10 @@ impl State {
                 Ok(Err(e)) => now_held.thread.push(failed(format!("{e:#}"))),
                 Err(e) => now_held.thread.push(failed(panic_text(&*e))),
             }
-            if let Err(e) = held::put(&now_held) {
+            if let Err(e) = on.put(&now_held) {
                 error!("discussion of {url} not saved: {e:#}");
             }
-            me.finish(&url, review::held_status(&now_held.verdict));
+            me.finish(&url, on.status(&now_held.verdict));
         });
         true
     }

@@ -381,6 +381,121 @@ fn self_review_path_in(dir: &Path, repo: &str, n: u64) -> PathBuf {
 /// ponytail: the FILESYSTEM is the state. It was an in-memory dict, so restarting gitdashy left every
 /// pre-review on disk unreachable: `p` would silently run a new one over a file already sitting there.
 /// A deterministic name means nothing has to be remembered across a restart.
+/// The conversation beside a pre-review: `<stem>__<n>.talk.json`, next to the `.md`.
+///
+/// ponytail: beside the markdown, not in it. The `.md` is read as it is -- by you, and handed to other
+/// agents -- and a transcript inside it changes what every one of them reads. It is a `Held` because it
+/// is the same thing: the PR, the model, the verdict, the session, the thread and a waiting revision.
+pub fn self_talk_path(repo: &str, n: u64) -> PathBuf {
+    self_review_path(repo, n).with_extension("talk.json")
+}
+
+pub fn self_talk(repo: &str, n: u64) -> Option<held::Held> {
+    let text = std::fs::read_to_string(self_talk_path(repo, n)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn put_self_talk(h: &held::Held) -> Result<()> {
+    let p = self_talk_path(h.pr.repo(), h.pr.number);
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(h)?)?;
+    std::fs::rename(&tmp, &p)?;
+    Ok(())
+}
+
+/// The pre-review as it is written to disk. `at` is when it was reviewed, which a revision keeps.
+fn self_markdown(repo: &str, n: u64, at: f64, model: &str, v: &Verdict) -> String {
+    let when = chrono::DateTime::from_timestamp(at as i64, 0)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default();
+    let header = fill(
+        SELF_HEADER,
+        &[
+            ("repo", repo),
+            ("n", &n.to_string()),
+            ("at", &when),
+            ("model", model),
+            ("depth", &v.depth),
+            ("verdict", config::status(&v.verdict).unwrap_or(&v.verdict)),
+            ("summary", &v.summary),
+        ],
+    );
+    format!("{header}{}\n", v.body)
+}
+
+/// Put an accepted revision where the pre-review is read from.
+///
+/// ponytail: the file's time is put back. `self_review_state` says a PR moved since its pre-review by
+/// comparing the PR against this file's mtime, and a revision is a reading of the same moment, written
+/// in the session that read it. Letting the rewrite stamp it now would hide a push made in between.
+pub fn accept_self_revision(h: &held::Held) -> Result<()> {
+    let dest = self_review_path(h.pr.repo(), h.pr.number);
+    let was = std::fs::metadata(&dest).and_then(|m| m.modified()).ok();
+    std::fs::write(
+        &dest,
+        self_markdown(h.pr.repo(), h.pr.number, h.at, &h.model, &h.verdict),
+    )?;
+    if let Some(t) = was {
+        std::fs::File::options()
+            .write(true)
+            .open(&dest)?
+            .set_modified(t)?;
+    }
+    Ok(())
+}
+
+/// Which saved review a discussion is about. Both are a `Held` on disk, in different places, and each
+/// shows a different status on its row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Talk {
+    /// A finished review of someone else's PR, waiting to post: ~/.prs_held.
+    Held,
+    /// A pre-review of your own PR, which is never posted: beside its `.md`.
+    Pre,
+}
+
+impl Talk {
+    pub fn get(self, repo: &str, n: u64) -> Option<held::Held> {
+        match self {
+            Talk::Held => held::get(repo, n),
+            Talk::Pre => self_talk(repo, n),
+        }
+    }
+    pub fn put(self, h: &held::Held) -> Result<()> {
+        match self {
+            Talk::Held => held::put(h).map(|_| ()),
+            Talk::Pre => put_self_talk(h),
+        }
+    }
+    pub fn status(self, v: &Verdict) -> String {
+        match self {
+            Talk::Held => held_status(v),
+            Talk::Pre => self_status(v),
+        }
+    }
+    /// Put an accepted revision where it is read from. For a held review that is the verdict the post
+    /// reads, already in the file; a pre-review is read from its markdown, which has to be rewritten.
+    pub fn accept(self, h: &held::Held) -> Result<()> {
+        self.put(h)?;
+        match self {
+            Talk::Held => Ok(()),
+            Talk::Pre => accept_self_revision(h),
+        }
+    }
+}
+
+/// "✗ changes requested (not posted)": a pre-review's row status.
+pub fn self_status(v: &Verdict) -> String {
+    format!(
+        "{} (not posted)",
+        config::status(&v.verdict).unwrap_or(&v.verdict)
+    )
+}
+
 pub fn self_review_at(repo: &str, n: u64) -> f64 {
     mtime(&self_review_path(repo, n))
 }
@@ -791,7 +906,7 @@ fn session_of(h: &held::Held) -> Result<&str> {
     }
     if !llm::session_ok(&h.session) {
         return Err(anyhow!(
-            "this review was held before discussions were saved; drop it and review the PR again"
+            "this review was written before discussions were saved; run it again to discuss it"
         ));
     }
     Ok(&h.session)
@@ -915,7 +1030,18 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     let (repo, n) = (pr.repo(), pr.number);
     // ponytail: no `prev`: PREV claims "you already reviewed this", and a real reviewer's verdict is
     // not ours to speak for
-    let v = verdict(repo, n, model, None, "", llm::Session::None)?;
+    // a session, so the pre-review can be discussed like a held review
+    let session = if llm::provider(model).0 == "claude" {
+        llm::new_session_id()
+    } else {
+        String::new()
+    };
+    let named = if session.is_empty() {
+        llm::Session::None
+    } else {
+        llm::Session::New(&session)
+    };
+    let v = verdict(repo, n, model, None, "", named)?;
     let c = config::get();
     std::fs::create_dir_all(&c.self_dir)?;
     let dest = self_review_path(repo, n);
@@ -926,26 +1052,27 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
         // carry these across; that is the kind of silent exception nobody remembers is there.
         team::push_dir(&c.memory_dir, &format!("memory: pre-review {repo}#{n}"), "mine");
     }
-    let shown = config::status(&v.verdict).unwrap_or(&v.verdict).to_string();
-    let header = fill(
-        SELF_HEADER,
-        &[
-            ("repo", repo),
-            ("n", &n.to_string()),
-            ("at", &chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()),
-            ("model", model),
-            ("depth", &c.depth),
-            ("verdict", &shown),
-            ("summary", &v.summary),
-        ],
-    );
-    std::fs::write(&dest, format!("{header}{}\n", v.body))?;
+    let at = crate::state::now();
+    std::fs::write(&dest, self_markdown(repo, n, at, model, &v))?;
+    // ponytail: a fresh conversation every run, written over the last one. A re-run is a new review in
+    // a new session; the old thread was about findings this one may not have.
+    let talk = held::Held {
+        pr: pr.clone(),
+        model: model.to_string(),
+        verdict: v.clone(),
+        at,
+        session,
+        ..Default::default()
+    };
+    if let Err(e) = put_self_talk(&talk) {
+        log::error!("pre-review conversation for {repo}#{n} not saved: {e:#}");
+    }
     let waiting = if kept.is_empty() {
         String::new()
     } else {
         format!(" · {} waiting", kept.len())
     };
-    Ok((format!("{shown} (not posted){waiting}"), dest))
+    Ok((format!("{}{waiting}", self_status(&v)), dest))
 }
 
 /// Post a review that was held, and forget it. The row's status string.
@@ -1181,8 +1308,8 @@ mod tests {
         let id = "5e3ae8e0-544e-4128-88af-fe301d354aae";
         assert_eq!(cannot_discuss(&held("opus", id)), "");
         assert!(cannot_discuss(&held("openrouter:x-ai/grok-4", id)).contains("needs the claude CLI"));
-        assert!(cannot_discuss(&held("opus", "")).contains("held before discussions were saved"));
-        assert!(cannot_discuss(&held("opus", "--resume")).contains("held before discussions were saved"));
+        assert!(cannot_discuss(&held("opus", "")).contains("written before discussions were saved"));
+        assert!(cannot_discuss(&held("opus", "--resume")).contains("written before discussions were saved"));
     }
 
     #[test]

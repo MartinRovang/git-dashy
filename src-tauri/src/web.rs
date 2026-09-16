@@ -660,7 +660,29 @@ fn get_prereview(state: &State, query: &Query) -> Out {
     }
     let path = review::self_review_path(pr.repo(), pr.number);
     let text = std::fs::read_to_string(&path)?;
-    Ok(json!({"path": path, "text": text, "moved": moved}))
+    // null when the pre-review was written before its conversation was saved: the screen says why
+    let talk = review::self_talk(pr.repo(), pr.number).map(|h| {
+        let mut t = talk_json(state, &h);
+        t["verdict"] = json!(h.verdict.verdict);
+        t
+    });
+    Ok(json!({"path": path, "text": text, "moved": moved, "talk": talk}))
+}
+
+/// Talk about your own PR's pre-review, the way a held review is discussed. Nothing here is posted.
+fn post_prereview(state: &State, body: &Body) -> Out {
+    let (pr, _) = need_pr(state, &text(body, "url"))?;
+    let op = text(body, "op");
+    if !TALK_OPS.contains(&op.as_str()) {
+        return Err(Fail::new(400, "op must be discuss, revise, accept or keep"));
+    }
+    let Some(h) = review::self_talk(pr.repo(), pr.number) else {
+        return Err(Fail::new(
+            409,
+            "this pre-review was written before discussions were saved; run it again to discuss it",
+        ));
+    };
+    talk(state, review::Talk::Pre, h, &op, body)
 }
 
 fn get_memory(_state: &State, query: &Query) -> Out {
@@ -909,14 +931,7 @@ fn get_posting(state: &State, query: &Query) -> Out {
             "at": h.at,
             // neither side knowing its head is not a move; only two we can compare and that differ
             "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
-            "instructions": h.verdict.instructions,
-            "thread": h.thread,
-            "proposed": h.proposed.as_ref().map(|v| json!({
-                "verdict": v.verdict, "summary": v.summary, "body": v.body,
-            })),
-            // "" when it can be discussed; otherwise the sentence the modal shows instead of a box
-            "cannotDiscuss": review::cannot_discuss(&h),
-            "busy": state.busy(&h.pr.url),
+            "talk": talk_json(state, &h),
         })),
     }))
 }
@@ -989,6 +1004,71 @@ fn repo_of(body: &Body) -> Option<String> {
 /// The longest instructions or discussion message taken, in characters. A few paragraphs is the use;
 /// anything past this is a paste gone wrong, and it would ride along in every turn of the session.
 const ASK_MAX: usize = 8000;
+
+/// What can be done to a saved review from its screen: talk about it, ask for a revision, take it or not.
+const TALK_OPS: [&str; 4] = ["discuss", "revise", "accept", "keep"];
+
+/// One of TALK_OPS on a held review or a pre-review. Both routes come here, so the two cannot drift.
+fn talk(state: &State, on: review::Talk, mut h: held::Held, op: &str, body: &Body) -> Out {
+    // nothing about a saved review changes while the agent is still answering about it
+    if state.busy(&h.pr.url) {
+        return Err(Fail::new(409, "the agent is still working on this review"));
+    }
+    match op {
+        "discuss" | "revise" => {
+            let why = review::cannot_discuss(&h);
+            if !why.is_empty() {
+                return Err(Fail::new(409, &why));
+            }
+            let message = if op == "discuss" {
+                let m = text(body, "text");
+                if m.trim().is_empty() {
+                    return Err(Fail::new(400, "say something"));
+                }
+                if m.chars().count() > ASK_MAX {
+                    return Err(Fail::new(400, "that message is too long"));
+                }
+                Some(m)
+            } else {
+                None
+            };
+            if !state.start_talk(on, h, message) {
+                return Err(Fail::new(409, "the agent is still working on this review"));
+            }
+            Ok(json!({"ok": true}))
+        }
+        // ponytail: accept is the only thing that puts a revision where the review is read from, and it
+        // needs a revision to be waiting; keep throws the revision away and leaves the review alone
+        "accept" => {
+            let Some(v) = h.proposed.take() else {
+                return Err(Fail::new(409, "no revision is waiting"));
+            };
+            h.verdict = v;
+            fail_if(on.accept(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
+            state.set_status(&h.pr.url, on.status(&h.verdict));
+            Ok(json!({"ok": true}))
+        }
+        _ => {
+            h.proposed = None;
+            fail_if(on.put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
+            Ok(json!({"ok": true}))
+        }
+    }
+}
+
+/// A conversation, as the screen reads it: the same shape for a held review and a pre-review.
+fn talk_json(state: &State, h: &held::Held) -> Value {
+    json!({
+        "instructions": h.verdict.instructions,
+        "thread": h.thread,
+        "proposed": h.proposed.as_ref().map(|v| json!({
+            "verdict": v.verdict, "summary": v.summary, "body": v.body,
+        })),
+        // "" when it can be discussed; otherwise the sentence the screen shows instead of a box
+        "cannotDiscuss": review::cannot_discuss(h),
+        "busy": state.busy(&h.pr.url),
+    })
+}
 
 fn post_review(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
@@ -1289,55 +1369,12 @@ fn post_posting(state: &State, body: &Body) -> Out {
     if repo.is_empty() {
         return Err(Fail::new(400, "no row selected"));
     }
-    if ["discuss", "revise", "accept", "keep"].contains(&op.as_str()) {
+    if TALK_OPS.contains(&op.as_str()) {
         let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
-        let Some(mut h) = held::get(&repo, n) else {
+        let Some(h) = held::get(&repo, n) else {
             return Err(Fail::new(404, "nothing waiting for that PR"));
         };
-        // nothing about a held review changes while the agent is still answering about it
-        if state.busy(&h.pr.url) {
-            return Err(Fail::new(409, "the agent is still working on this review"));
-        }
-        return match op.as_str() {
-            "discuss" | "revise" => {
-                let why = review::cannot_discuss(&h);
-                if !why.is_empty() {
-                    return Err(Fail::new(409, &why));
-                }
-                let message = if op == "discuss" {
-                    let m = text(body, "text");
-                    if m.trim().is_empty() {
-                        return Err(Fail::new(400, "say something"));
-                    }
-                    if m.chars().count() > ASK_MAX {
-                        return Err(Fail::new(400, "that message is too long"));
-                    }
-                    Some(m)
-                } else {
-                    None
-                };
-                if !state.start_talk(h, message) {
-                    return Err(Fail::new(409, "the agent is still working on this review"));
-                }
-                Ok(json!({"ok": true}))
-            }
-            // ponytail: accept is the only thing that puts a revision where the post reads from, and it
-            // needs a revision to be waiting; keep throws the revision away and leaves the verdict alone
-            "accept" => {
-                let Some(v) = h.proposed.take() else {
-                    return Err(Fail::new(409, "no revision is waiting"));
-                };
-                h.verdict = v;
-                fail_if(held::put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
-                state.set_status(&h.pr.url, review::held_status(&h.verdict));
-                Ok(json!({"ok": true}))
-            }
-            _ => {
-                h.proposed = None;
-                fail_if(held::put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
-                Ok(json!({"ok": true}))
-            }
-        };
+        return talk(state, review::Talk::Held, h, &op, body);
     }
     if op == "release" || op == "discard" {
         let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1811,6 +1848,7 @@ fn get_route(path: &str) -> Option<Get> {
 fn post_route(path: &str) -> Option<Post> {
     Some(match path {
         "/api/review" => post_review,
+        "/api/prereview" => post_prereview,
         "/api/auto" => post_auto,
         "/api/settings" => post_settings,
         "/api/refresh" => post_refresh,
@@ -2520,7 +2558,8 @@ mod tests {
         .unwrap();
         let url = format!("{base}/api/posting");
         let act = |b: Value| post(&url, b, &token);
-        let read = || get(&format!("{url}?repo={repo}&number={n}"), Some(&token)).1["held"].clone();
+        let held_of = || get(&format!("{url}?repo={repo}&number={n}"), Some(&token)).1["held"].clone();
+        let read = || held_of()["talk"].clone();
         let settle = || {
             let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
             while state.busy(&pr().url) {
@@ -2562,7 +2601,7 @@ mod tests {
         settle();
         assert_eq!(read()["proposed"]["verdict"], "comment");
         assert_eq!(
-            read()["verdict"],
+            held_of()["verdict"],
             "request_changes",
             "not over the verdict until accepted"
         );
@@ -2574,9 +2613,8 @@ mod tests {
         );
 
         assert_eq!(act(json!({"op": "accept", "repo": repo, "number": n})).0, 200);
-        let h = read();
         assert_eq!(
-            (h["verdict"].as_str(), h["proposed"].is_null()),
+            (held_of()["verdict"].as_str(), read()["proposed"].is_null()),
             (Some("comment"), true)
         );
         assert_eq!(
@@ -2606,6 +2644,122 @@ mod tests {
         let (code, body) = act(json!({"op": "discuss", "repo": repo, "number": n, "text": "hi"}));
         assert_eq!(code, 409);
         assert!(body["error"].as_str().unwrap().contains("needs the claude CLI"));
+    }
+
+    /// A pre-review discussed the same way, in demo mode: the conversation lives beside the markdown, and
+    /// an accepted revision rewrites the markdown without making it look newer than it is.
+    #[test]
+    fn a_pre_review_can_be_discussed_and_an_accepted_revision_keeps_its_old_time() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+            c.self_dir = d.path().join("self");
+        });
+        let (base, token, state) = served();
+        std::fs::create_dir_all(d.path().join("self")).unwrap();
+        let md = review::self_review_path(pr().repo(), pr().number);
+        std::fs::write(&md, "# Pre-review\n\nthe original body\n").unwrap();
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&md)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+        review::put_self_talk(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            session: "5e3ae8e0-544e-4128-88af-fe301d354aae".into(),
+            at: 1_700_000_000.0,
+            verdict: crate::types::Verdict {
+                verdict: "request_changes".into(),
+                body: "the original body".into(),
+                depth: "high".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+        let url = format!("{base}/api/prereview");
+        let act = |b: Value| post(&url, b, &token);
+        let read = || get(&format!("{url}?url={}", pr().url), Some(&token)).1["talk"].clone();
+        let settle = || {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while state.busy(&pr().url) {
+                assert!(std::time::Instant::now() < until, "the turn never finished");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+
+        assert_eq!(
+            (read()["cannotDiscuss"].as_str(), read()["verdict"].as_str()),
+            (Some(""), Some("request_changes"))
+        );
+        assert_eq!(
+            act(json!({"url": pr().url, "op": "discuss", "text": "is this really blocking?"})).0,
+            200
+        );
+        settle();
+        let who: Vec<String> = read()["thread"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["who"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(who, ["you", "agent"]);
+        let body = std::fs::read_to_string(&md).unwrap();
+        assert!(
+            !body.contains("is this really blocking"),
+            "the conversation never goes in the markdown"
+        );
+
+        assert_eq!(act(json!({"url": pr().url, "op": "revise"})).0, 200);
+        settle();
+        assert_eq!(read()["proposed"]["verdict"], "comment");
+        assert!(
+            std::fs::read_to_string(&md)
+                .unwrap()
+                .contains("the original body"),
+            "not until accepted"
+        );
+
+        assert_eq!(act(json!({"url": pr().url, "op": "accept"})).0, 200);
+        let body = std::fs::read_to_string(&md).unwrap();
+        assert!(
+            body.contains("demo: the revised review") && !body.contains("the original body"),
+            "{body}"
+        );
+        assert_eq!(
+            std::fs::metadata(&md).unwrap().modified().unwrap(),
+            written,
+            "rewritten at its old time, so a push since it is not hidden"
+        );
+        assert!(read()["proposed"].is_null());
+    }
+
+    #[test]
+    fn a_pre_review_with_no_saved_conversation_says_to_run_it_again() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.self_dir = d.path().join("self"));
+        let (base, token, _state) = served();
+        let url = format!("{base}/api/prereview");
+        let (code, body) = post(
+            &url,
+            json!({"url": pr().url, "op": "discuss", "text": "hi"}),
+            &token,
+        );
+        assert_eq!(code, 409);
+        assert!(body["error"].as_str().unwrap().contains("run it again"));
+        let (code, body) = post(&url, json!({"url": pr().url, "op": "release"}), &token);
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("op must be discuss, revise, accept or keep")),
+            "a pre-review is never posted"
+        );
     }
 
     #[test]
