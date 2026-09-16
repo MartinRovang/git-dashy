@@ -1027,6 +1027,7 @@ fn post_auto(state: &State, body: &Body) -> Out {
 
 fn post_refresh(state: &State, _body: &Body) -> Out {
     diff::retry(); // f means "look again", so a diff GitHub failed to read is worth retrying
+    state.retry_reads(); // and the pane's own caches, where a failed detail read sat for good
     Ok(json!({"ok": true, "answeredBy": state.wake_answered_by()}))
 }
 
