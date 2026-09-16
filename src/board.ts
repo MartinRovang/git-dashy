@@ -422,3 +422,6 @@ export function talkControls(t: Talk | null, draft: string) {
     decide: idle && !!t.proposed,
   }
 }
+
+/** The item one `step` along from `i` in a list of `len`, wrapping at both ends; 0 for an empty list. */
+export const pageTo = (i: number, step: number, len: number) => (len ? (((i + step) % len) + len) % len : 0)

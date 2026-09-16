@@ -6,6 +6,7 @@ import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, vi
 import type { Ask, Row, StateData } from './types'
 import type { LEvent } from './learning'
 import { LearningChart } from './components/LearningChart'
+import { pageTo } from './board'
 
 export type Ctx = {
   getData: () => StateData | null
@@ -18,6 +19,21 @@ export type Ctx = {
 }
 
 type Json = Record<string, unknown>
+
+/** ‹ previous and next › for a screen that shows one item at a time.
+ *
+ *  ponytail: buttons as well as keys. These screens paged with j and k only, and the footer never said so, so
+ *  with a mouse the first item was the only one there was. As footer entries the keys still work -- ModalHost
+ *  fires an entry's key -- and they are left out when there is nothing to page to. No Esc entry either: Esc
+ *  closes every screen. */
+function pager(len: number, go: (step: number) => void): Foot[] {
+  return len > 1
+    ? [
+        ['k', '‹ previous', () => go(-1)],
+        ['j', 'next ›', () => go(1)],
+      ]
+    : []
+}
 
 export async function memoryEditor(ctx: Ctx, repo: string) {
   const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}`)
@@ -93,23 +109,24 @@ export async function draftsScreen(ctx: Ctx) {
         </>
       )
     },
-    foot: [
-      ['t', 'make it a fact', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'); await load(); repaint() }, 'go'],
-      ['x', 'drop', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'); await load(); repaint() }, 'warn'],
-      ['s', 'scan for repeats', () => overlapScreen(ctx, async () => { i = 0; await load(); repaint() })],
-      ['Esc', 'close', () => close(m)],
-    ] as Foot[],
+    foot: [],
   })
+  const actions: Foot[] = [
+    ['t', 'make it a fact', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'); await load(); refresh() }, 'go'],
+    ['x', 'drop', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'); await load(); refresh() }, 'warn'],
+    ['s', 'scan for repeats', () => overlapScreen(ctx, async () => { i = 0; await load(); refresh() })],
+  ]
+  const go = (step: number) => {
+    i = pageTo(i, step, items.length)
+    refresh()
+  }
+  // the footer follows the list: a drop can leave one item, and then there is nothing to page to
   const refresh = () => {
     m.sub = `${items.length ? i + 1 : 0}/${items.length}`
+    m.foot = [...pager(items.length, go), ...actions]
     repaint()
   }
-  m.keys = {
-    j: () => { if (items.length) { i = (i + 1) % items.length; refresh() } },
-    k: () => { if (items.length) { i = (i - 1 + items.length) % items.length; refresh() } },
-    Escape: () => close(m),
-    q: () => close(m),
-  }
+  m.keys = { Escape: () => close(m), q: () => close(m) }
   refresh()
 }
 
@@ -232,24 +249,23 @@ export async function shareScreen(ctx: Ctx, p: Row | null) {
     },
     foot: [],
   })
+  const go = (step: number) => {
+    i = pageTo(i, step, items.length)
+    refresh()
+  }
   const refresh = () => {
     const it = items[i]
     m.sub = `${items.length ? i + 1 : 0}/${items.length}`
     m.foot = [
+      ...pager(items.length, go),
       ...(it && !it.sent
         ? ([['t', 'send it', async () => { await ctx.call('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'); await load(); refresh() }, 'go']] as Foot[])
         : []),
       ...(it
         ? ([['x', it.sent ? 'forget it everywhere' : 'forget', async () => { await ctx.call('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'); await load(); refresh() }, 'warn']] as Foot[])
         : []),
-      ['Esc', 'close', () => close(m)],
     ] as Foot[]
-    m.keys = {
-      j: () => { if (items.length) { i = (i + 1) % items.length; refresh() } },
-      k: () => { if (items.length) { i = (i - 1 + items.length) % items.length; refresh() } },
-      Escape: () => close(m),
-      q: () => close(m),
-    }
+    m.keys = { Escape: () => close(m), q: () => close(m) }
     repaint()
   }
   refresh()
