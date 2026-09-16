@@ -291,13 +291,57 @@ fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<Stri
     })
 }
 
+/// Keys `salvage` threw away, until someone says so. Drained by the dashboard into a notice.
+static DROPPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The settings keys a damaged file lost, taken once. The caller is expected to show them.
+pub fn dropped_settings() -> Vec<String> {
+    std::mem::take(&mut *DROPPED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 impl Saved {
-    /// Read a settings file; `{}` for a missing or broken one.
+    /// Read a settings file; `{}` for a missing one, and whatever parses of a damaged one.
     pub fn read(path: &Path) -> Saved {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Saved::default();
+        };
+        serde_json::from_str(&text).unwrap_or_else(|_| Saved::salvage(&text))
+    }
+
+    /// Field by field, keeping the ones that parse.
+    ///
+    /// ponytail: serde stops at the FIRST value it cannot read, and the whole file was thrown away
+    /// with it. `"interval": "300"` — a number written as a string by a hand edit, an older version
+    /// or a merge — silently took the model, the depth and every other setting with it, and the next
+    /// save (a settings change, or mark_seen after an update) wrote the defaults over the file. The
+    /// one bad field is dropped instead, and `apply` then holds what is left to the same rules as
+    /// the settings screen.
+    fn salvage(text: &str) -> Saved {
+        let Ok(fields) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text) else {
+            log::warn!("settings: not a JSON object, so none of it was read");
+            return Saved::default();
+        };
+        let (mut kept, mut dropped) = (serde_json::Map::new(), Vec::new());
+        for (key, value) in fields {
+            let one = serde_json::Value::Object([(key.clone(), value.clone())].into_iter().collect());
+            match serde_json::from_value::<Saved>(one) {
+                Ok(_) => {
+                    kept.insert(key, value);
+                }
+                Err(_) => dropped.push(key),
+            }
+        }
+        if !dropped.is_empty() {
+            log::warn!(
+                "settings: ignored {}; read the rest of the file",
+                dropped.join(", ")
+            );
+            // ponytail: the log reaches a file under --debug and nowhere else, and the next save
+            // writes the default over what was dropped. Held here so the dashboard can say it once,
+            // on screen, which is the only place the person who edited the file will look.
+            DROPPED.lock().unwrap_or_else(|e| e.into_inner()).extend(dropped);
+        }
+        serde_json::from_value(serde_json::Value::Object(kept)).unwrap_or_default()
     }
 }
 
@@ -476,6 +520,41 @@ pub fn tilde(p: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// serde stops at the first value it cannot read. One field of the wrong type must not take the
+    /// rest of the file with it: what is left is written back over the file by the next save.
+    #[test]
+    fn a_wrong_typed_field_does_not_take_the_rest_of_the_file_with_it() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(
+            &p,
+            r#"{"interval":"300","model":"sonnet","depth":"high","voice":"caveman","drafts":true}"#,
+        )
+        .unwrap();
+        let s = Saved::read(&p);
+        assert_eq!(s.interval, None, "the wrong-typed one is dropped");
+        assert_eq!(s.model.as_deref(), Some("sonnet"));
+        assert_eq!(s.depth.as_deref(), Some("high"));
+        assert_eq!(s.voice, Some(vec!["caveman".into()]));
+        assert_eq!(s.drafts, Some(true));
+
+        assert_eq!(dropped_settings(), ["interval"], "and it is there to be said");
+        assert!(dropped_settings().is_empty(), "taken once");
+
+        // the shapes with their own deserializers: null is a VALUE for window, not a failure
+        std::fs::write(&p, r#"{"voice":5,"window":null,"model":"opus"}"#).unwrap();
+        let s = Saved::read(&p);
+        assert_eq!(s.voice, None, "a number is not a checklist");
+        assert_eq!(s.window, Some(None), "null is how `all` is written");
+        assert_eq!(s.model.as_deref(), Some("opus"));
+        assert_eq!(dropped_settings(), ["voice"]);
+
+        // a whole file that is not an object still reads as nothing, as it did before
+        std::fs::write(&p, "not json at all").unwrap();
+        assert_eq!(Saved::read(&p), Saved::default());
+        assert_eq!(Saved::read(&d.path().join("nope.json")), Saved::default());
+    }
 
     #[test]
     fn saved_round_trips_and_accepts_old_shapes() {

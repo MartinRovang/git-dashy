@@ -1426,6 +1426,15 @@ fn dashboard(cli: Cli) -> i32 {
     }
     team::activate();
     let state = crate::state::State::new();
+    // ponytail: on screen, once. A field a damaged settings file lost is otherwise silent outside
+    // --debug, and the next save writes the default over it without anyone having been told.
+    let gone = config::dropped_settings();
+    if !gone.is_empty() {
+        state.lock().notices.push(format!(
+            "settings: ignored {}; read the rest of the file",
+            gone.join(", ")
+        ));
+    }
     if cli.auto {
         state.set_auto(true, false);
     }
