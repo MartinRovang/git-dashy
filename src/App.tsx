@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, people, unfollow, type Followed } from './stories'
+import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -40,6 +40,29 @@ export default function App() {
   // settings unreachable without remembering a key; a narrow one still answers "which model".
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
+  /** Ask who, then follow them. The footer button and the rail's View group both call it. */
+  const followSomeone = () =>
+    void findLogin(
+      'Follow someone',
+      people((data?.sections || []).flatMap((x) => x.prs)),
+      followed.map((f) => f.login),
+    ).then((l) => l && setFollowed((f) => follow(f, l)))
+  /** Follow everyone the board shows working under one team or org. */
+  const followScope = (scope: string) => {
+    const who = underScope(data, scope)
+    if (!who.length) {
+      setFlash(`nobody on the board under ${scope}`)
+      return
+    }
+    // one computation for both, so the flash always describes the list that was written
+    const { next, added, left } = followAll(followed, who)
+    setFollowed(() => next)
+    setFlash(
+      left
+        ? `following ${added} from ${scope}; ${left} more did not fit, the limit is ${FOLLOW_MAX}`
+        : `following ${added} from ${scope}`,
+    )
+  }
   const [followed, setFollowedState] = useState<Followed[]>([])
   useEffect(() => {
     api('/api/stories')
@@ -231,6 +254,10 @@ export default function App() {
         document.documentElement.classList.remove('dragging')
         // keep the root var in step so a remounted pane or sidebar keeps the saved width
         document.documentElement.style.setProperty(`--${which}-w`, `${want}px`)
+        // ponytail: and DROP the inline width the drag was writing. It outranks every stylesheet
+        // rule, so once you had resized the rail, `.side.shut` lost to it and collapsing did
+        // nothing at all. The var is set on the line above, so the box does not move.
+        box.style.width = ''
         try {
           const w = JSON.parse(localStorage.getItem('dashy-widths') || '{}')
           w[which] = `${want}px`
@@ -430,75 +457,6 @@ export default function App() {
     picker(`request review · ${p.repo}#${p.number}`, logins, '', String, ask)
   }
 
-  /// What happens to this repo's reviews, and the one waiting if there is one.
-  async function postingScreen(p: Row) {
-    const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
-    if (!r.ok) {
-      setFlash(`✗ ${await errorText(r)}`)
-      return
-    }
-    const d = await r.json()
-    const where = (via: string) => (via === 'owner' ? ` · via ${d.owner}/*` : via === 'repo' ? '' : ' · default')
-    const set = (ran: string, now: string, owner: boolean) =>
-      void call(
-        '/api/posting',
-        { repo: p.repo, ran, post: now === 'hold' ? 'post' : 'hold', owner },
-        `${owner ? `${d.owner}/*` : d.repo}: ${ran} reviews ${now === 'hold' ? 'post' : 'wait'}`,
-      )
-    // ponytail: the row carries BOTH words. `o` flips the owner rule, and flipping it from the
-    // effective value wrote back what was already there whenever a repo row had carved the owner
-    // out — a no-op reported as a change.
-    const rows: [ran: string, label: string, value: string, via: string, owner: string][] = [
-      ['manual', 'you press r', d.manual.value, where(d.manual.via), d.manual.ownerValue],
-      ['auto', 'auto runs it', d.auto.value, where(d.auto.via), d.auto.ownerValue],
-    ]
-    let idx = 0
-    const m = open({
-      title: `posting — ${d.repo}`,
-      sub: d.held ? 'one review is waiting' : undefined,
-      body: () => (
-        <>
-          <div className="prose" style={{ marginBottom: 10 }}>
-            A held review is written to disk and posts nothing until you say so. Nothing changes for a
-            repo you never set.
-          </div>
-          {rows.map(([, label, value, via], i) => (
-            <div key={label} className={`opt${i === idx ? ' on' : ''}`} onClick={() => pick(i)}>
-              <span className="tick">{i === idx ? '▸' : ''}</span>
-              <span>when {label}</span>
-              <em style={{ color: value === 'hold' ? 'var(--violet)' : 'var(--dim2)' }}>
-                {value === 'hold' ? 'wait for a key' : 'post it'}
-                {via}
-              </em>
-            </div>
-          ))}
-        </>
-      ),
-      foot: [
-        ['⏎', 'flip this one', () => pick(idx), 'go'],
-        ['o', `the whole ${d.owner}/*`, () => flipOwner(idx)],
-        ['Esc', 'close', () => close(m)],
-      ] as Foot[],
-    })
-    const pick = (i: number) => {
-      idx = i
-      set(rows[i][0], rows[i][2], false)
-      close(m)
-    }
-    // the owner's own word, not the effective one, and it closes like pick does: the values on
-    // screen describe the file as it was read, and it has just changed
-    const flipOwner = (i: number) => {
-      set(rows[i][0], rows[i][4], true)
-      close(m)
-    }
-    m.keys = {
-      j: () => { idx = (idx + 1) % rows.length; repaint() },
-      k: () => { idx = (idx - 1 + rows.length) % rows.length; repaint() },
-      Enter: () => pick(idx),
-      Escape: () => close(m),
-    }
-  }
-
   /// Read the review that is waiting, then post it or drop it.
   async function waitingScreen(p: Row) {
     const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
@@ -512,7 +470,7 @@ export default function App() {
       return
     }
     const m = open({
-      title: `waiting to post — ${d.repo}#${p.number}`,
+      title: `waiting to post — ${p.repo}#${p.number}`,
       sub: `${d.held.model} · ${d.held.verdict}`,
       wide: true,
       body: () => (
@@ -576,7 +534,6 @@ export default function App() {
       copy: () => void copyUrl(p),
       reviewer: () => void addReviewer(p),
       bind: () => void bindScreen(p),
-      posting: () => void postingScreen(p),
       waiting: () => void waitingScreen(p),
       memory: () => void memoryEditor(ctx, p.repo),
       hide: () => toggleHide(p),
@@ -664,7 +621,6 @@ export default function App() {
     if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
     if (k === 'W') return one(() => void draftsScreen(ctx))
     if (k === 'b' && p) return one(() => void bindScreen(p))
-    if (k === 'H' && p) return one(() => void postingScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)
     if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
@@ -679,6 +635,7 @@ export default function App() {
     if (k === 'q') return one(() => void quit())
     if (k === '/') return one(() => document.getElementById('q')?.focus())
     if (k === '?') return one(() => setHelp((v) => !v))
+    if (k === 'F') return one(followSomeone)
     if (k === 'S') return one(() => setRailShut((v) => !v))
     // ponytail: brackets, not 1-5. The digits read better against the tabs, but `2` is a documented
     // binding for the code viewer and it wins whenever a PR is selected, which is nearly always.
@@ -710,7 +667,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onFollow={() => void findLogin('Follow someone', people((data?.sections || []).flatMap((x) => x.prs)), followed.map((f) => f.login)).then((l) => l && setFollowed((f) => follow(f, l)))} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -727,6 +684,34 @@ export default function App() {
           onTeams={onTeams}
           onModal={onModal}
           onAuto={onAuto}
+          onFollow={followSomeone}
+          onFollowScope={followScope}
+          followed={followed.length}
+          onFollowOwner={(repo) =>
+            // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
+            void (async () => {
+              for (const ran of ['manual', 'auto'] as const) {
+                if (!(await call('/api/posting', { repo, ran, post: 'none' }))) return
+              }
+              setFlash(`${repo} follows ${repo.split('/')[0]}/* again`)
+            })()
+          }
+          onGovern={(owner, on) =>
+            // one server operation: the rule for what "one setting for all" means lives in autorev::govern
+            void call(
+              '/api/posting',
+              { op: 'govern', owner, on },
+              on ? `${owner}: one setting for every repo` : `${owner}: each repo set on its own`,
+            )
+          }
+          onPosting={(ran, post, target) =>
+            void call(
+              '/api/posting',
+              // an `acme/*` row names the owner; the route takes one or the other, never both
+              target.endsWith('/*') ? { owner: target.slice(0, -2), ran, post } : { repo: target, ran, post },
+              `${target}: ${ran === 'auto' ? 'auto' : 'your'} reviews ${post === 'hold' ? 'wait' : 'post'}`,
+            )
+          }
           onAskAgain={onAskAgain}
           onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
@@ -818,6 +803,11 @@ export default function App() {
             <Story key={f.login} login={f.login} every={data?.interval || 0} onUnfollow={() => setFollowed((l) => unfollow(l, f.login))} />
           ))}
         </div>
+        {/* ponytail: here, beside the pills it adds. The control was in the top bar, the whole width of
+            the window away from where its result appears. */}
+        <button className="lnk foot" title="follow someone: what they are working on, in a footer pill" onClick={followSomeone}>
+          + follow
+        </button>
         <div style={{ flex: 1 }} />
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}

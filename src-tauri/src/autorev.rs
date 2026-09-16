@@ -103,6 +103,14 @@ pub enum Post {
     Hold,
 }
 
+/// The word that REMOVES a rule instead of setting one.
+///
+/// ponytail: a third word, not a missing field. The store is append-only, so "there is no rule here" has
+/// to be something you can write down -- and a line with no `post_*` field at all is how an /api/auto row
+/// is told apart from a posting one, which this must not disturb. Without it an owner rule, once set,
+/// could never be taken off: no repo under it could get its own rule back.
+pub const CLEAR: &str = "none";
+
 impl Post {
     pub fn parse(s: &str) -> Option<Post> {
         match s {
@@ -181,6 +189,9 @@ impl Rules {
 pub struct Posting {
     pub manual: Rules,
     pub auto: Rules,
+    /// Owners switched to "each repo on its own". Their rule, if any, stays in the store as the fallback for
+    /// a repo that has none of its own -- so a repo nobody has listed keeps holding what the owner held.
+    pub per_repo: std::collections::HashSet<String>,
 }
 
 impl Posting {
@@ -207,24 +218,43 @@ pub fn posting() -> Posting {
         let Ok(Value::Object(e)) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        // the owner's mode: a line of its own, which neither the post_* loop below nor scope() reads
+        if let (Some(Value::String(o)), Some(Value::Bool(b))) = (e.get("owner"), e.get(PER_REPO)) {
+            let o = owner_key(o);
+            if !o.is_empty() {
+                if *b {
+                    out.per_repo.insert(o);
+                } else {
+                    out.per_repo.remove(&o);
+                }
+            }
+        }
         for ran in [Ran::Manual, Ran::Auto] {
-            let Some(p) = e.get(ran.field()).and_then(|v| v.as_str()).and_then(Post::parse) else {
+            let Some(word) = e.get(ran.field()).and_then(|v| v.as_str()) else {
                 continue;
             };
+            // an unknown word is still ignored; CLEAR is the one that takes a rule away again
+            let set = Post::parse(word);
+            if set.is_none() && word != CLEAR {
+                continue;
+            }
             let rules = match ran {
                 Ran::Manual => &mut out.manual,
                 Ran::Auto => &mut out.auto,
             };
-            if let Some(Value::String(o)) = e.get("owner") {
-                let o = owner_key(o);
-                if !o.is_empty() {
-                    rules.owners.insert(o, p);
-                }
+            let (map, k) = if let Some(Value::String(o)) = e.get("owner") {
+                (&mut rules.owners, owner_key(o))
             } else if let Some(Value::String(r)) = e.get("repo") {
-                let r = key(r);
-                if !r.is_empty() {
-                    rules.repos.insert(r, p);
-                }
+                (&mut rules.repos, key(r))
+            } else {
+                continue;
+            };
+            if k.is_empty() {
+                continue;
+            }
+            match set {
+                Some(p) => drop(map.insert(k, p)),
+                None => drop(map.remove(&k)),
             }
         }
     }
@@ -256,9 +286,123 @@ pub fn set_post_owner(owner: &str, ran: Ran, p: Post) -> String {
 }
 
 fn append_word(fields: &[(&str, &str)], ran: Ran, p: Post) -> String {
+    append_raw(fields, ran, p.word())
+}
+
+fn append_raw(fields: &[(&str, &str)], ran: Ran, word: &str) -> String {
     let mut all: Vec<(&str, &str)> = fields.to_vec();
-    all.push((ran.field(), p.word()));
+    all.push((ran.field(), word));
     bind::append_to(store(), &all, None)
+}
+
+/// The field that switches an owner to "each repo on its own" (true) or back (false).
+pub const PER_REPO: &str = "per_repo";
+
+fn set_per_repo(owner: &str, on: bool, was: bool) -> String {
+    if was == on {
+        return String::new();
+    }
+    bind::append_to(store(), &[("owner", owner)], Some((PER_REPO, on)))
+}
+
+/// Turn owner control on or off for `owner`: one setting for every repo under it, or one per repo.
+///
+/// ponytail: one operation, not a sequence of set and clear calls from the page. The switch means "the
+/// owner's settings apply to all of its repos", which is only true if no repo rule is left beating it, and
+/// it must not change what happens to any review on the board as you flip it:
+///
+/// - ON: the owner takes one word per kind of review -- `hold` if any repo under it holds that kind, on the
+///   board or ruled in the store, else `post` -- and every repo rule under the owner is taken off, on the
+///   board or not. ponytail: "any repo in the store", not only the board.
+///   The rules taken off include repos with no PR on the board today; judging the word from the board
+///   alone cleared a repo's `hold` and its next PR posted.
+/// - OFF: each repo on the board under the owner is given the word it had from the owner as a rule of its
+///   own, and the owner is marked per repo. ponytail: the owner's rule is KEPT, as the fallback. OFF cannot
+///   pin a repo it has never seen, so taking the rule away sent every repo with no PR on the board today
+///   back to the default -- a held owner's quiet repo started posting its next review. A kind of review
+///   the owner never had a rule for is left alone: its repos already follow the default.
+pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
+    let o = owner_key(owner);
+    if o.is_empty() {
+        return format!("{owner} is not an owner");
+    }
+    let before = posting();
+    let mut under: Vec<String> = board
+        .iter()
+        .map(|r| key(r))
+        .filter(|k| k.split('/').next() == Some(o.as_str()))
+        .collect();
+    under.sort();
+    under.dedup();
+    for ran in [Ran::Manual, Ran::Auto] {
+        let rules = before.rules(ran);
+        let failed = if on {
+            let held_in_store = rules
+                .repos
+                .iter()
+                .any(|(k, v)| k.split('/').next() == Some(o.as_str()) && *v == Post::Hold);
+            // the owner's own word counts too: switched per repo, it is still the fallback that holds a repo
+            // nobody listed, and switching back on must not quietly let those post
+            let owner_holds = rules.owners.get(&o) == Some(&Post::Hold);
+            let word = if owner_holds || held_in_store || under.iter().any(|r| rules.of(r) == Post::Hold) {
+                Post::Hold
+            } else {
+                Post::Now
+            };
+            let mut e = set_post_owner(&o, ran, word);
+            let carved: Vec<String> = rules
+                .repos
+                .keys()
+                .filter(|k| k.split('/').next() == Some(o.as_str()))
+                .cloned()
+                .collect();
+            for r in carved {
+                if e.is_empty() {
+                    e = clear_post(&r, ran);
+                }
+            }
+            e
+        } else if !rules.owners.contains_key(&o) {
+            String::new()
+        } else {
+            let mut e = String::new();
+            for r in &under {
+                if e.is_empty() {
+                    e = set_post(r, ran, rules.of(r));
+                }
+            }
+            e
+        };
+        if !failed.is_empty() {
+            return failed;
+        }
+    }
+    // last: the mode flips only once every rule it relies on is written
+    set_per_repo(&o, !on, before.per_repo.contains(&o))
+}
+
+/// Take the rule off one repo, so it goes back to following its owner. A repo with no rule is a no-op.
+pub fn clear_post(repo: &str, ran: Ran) -> String {
+    let r = key(repo);
+    if r.is_empty() {
+        return format!("{repo} is not an owner/name");
+    }
+    if !posting().rules(ran).repos.contains_key(&r) {
+        return String::new();
+    }
+    append_raw(&[("repo", &r)], ran, CLEAR)
+}
+
+/// Take the rule off one owner, so every repo under it is set on its own again.
+pub fn clear_post_owner(owner: &str, ran: Ran) -> String {
+    let o = owner_key(owner);
+    if o.is_empty() {
+        return format!("{owner} is not an owner");
+    }
+    if !posting().rules(ran).owners.contains_key(&o) {
+        return String::new();
+    }
+    append_raw(&[("owner", &o)], ran, CLEAR)
 }
 
 /// One read of the store. A line with no usable key, or no `auto` boolean, is skipped.
@@ -665,6 +809,244 @@ mod tests {
         )
         .unwrap();
         assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now);
+    }
+
+    #[test]
+    fn a_rule_can_be_taken_off_again_and_the_repo_goes_back_to_following() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        set_post("acme/api", Ran::Auto, Post::Now);
+        assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now, "carved out");
+
+        // the repo stops deciding for itself and follows the owner again
+        assert_eq!(clear_post("acme/api", Ran::Auto), "");
+        let p = posting();
+        assert!(!p.auto.repos.contains_key("acme/api"), "no rule of its own");
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Hold, "the owner's word");
+
+        // and the owner rule itself comes off, which is what the panel's toggle does
+        assert_eq!(clear_post_owner("acme", Ran::Auto), "");
+        let p = posting();
+        assert!(!p.auto.owners.contains_key("acme"));
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Now, "back to the default");
+    }
+
+    #[test]
+    fn clearing_touches_one_axis_and_one_target_only() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        set_post_owner("acme", Ran::Manual, Post::Hold);
+        set_post_owner("zeta", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        let p = posting();
+        assert!(!p.auto.owners.contains_key("acme"));
+        assert_eq!(p.manual.owners.get("acme"), Some(&Post::Hold), "other axis");
+        assert_eq!(p.auto.owners.get("zeta"), Some(&Post::Hold), "other owner");
+    }
+
+    #[test]
+    fn clearing_what_has_no_rule_writes_nothing() {
+        let (_g, d) = fresh();
+        assert_eq!(clear_post("acme/api", Ran::Auto), "");
+        assert_eq!(clear_post_owner("acme", Ran::Auto), "");
+        assert!(!d.path().join("autorev").exists(), "no line appended");
+        // and a name it cannot read is refused rather than written
+        assert!(!clear_post("nope", Ran::Auto).is_empty());
+        assert!(!clear_post_owner("a/b", Ran::Auto).is_empty());
+    }
+
+    #[test]
+    fn a_cleared_rule_can_be_set_again_after() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        assert_eq!(
+            posting().auto.owners.get("acme"),
+            Some(&Post::Hold),
+            "the no-op guard must read the CLEAR line, not the hold before it"
+        );
+    }
+
+    #[test]
+    fn clearing_leaves_the_arm_flag_alone() {
+        let (_g, _d) = fresh();
+        set_owner("acme", true);
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        assert!(
+            scope().armed("acme/api"),
+            "the two readers still cannot see each other"
+        );
+    }
+
+    #[test]
+    fn owner_control_on_makes_one_setting_for_all_without_starting_to_post_a_held_review() {
+        let (_g, _d) = fresh();
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+        set_post("acme/web", Ran::Auto, Post::Hold);
+        set_post("acme/old", Ran::Manual, Post::Hold); // a repo rule for a repo not on the board
+        set_post("zeta/x", Ran::Auto, Post::Hold);
+        assert_eq!(govern("acme", true, &board), "");
+        let p = posting();
+        // web held auto, so the owner holds auto; acme/old held manual and has no PR on the board, and
+        // it counts too -- its rule is taken off below, so posting would start its next PR posting
+        assert_eq!(p.auto.owners.get("acme"), Some(&Post::Hold));
+        assert_eq!(p.manual.owners.get("acme"), Some(&Post::Hold));
+        // one setting for all means all: no repo rule under acme is left beating the owner
+        assert!(p.auto.repos.keys().all(|k| !k.starts_with("acme/")));
+        assert!(
+            p.manual.repos.keys().all(|k| !k.starts_with("acme/")),
+            "off-board too"
+        );
+        assert_eq!(p.of("acme/web", Ran::Auto), Post::Hold, "still held");
+        assert_eq!(
+            p.auto.repos.get("zeta/x"),
+            Some(&Post::Hold),
+            "another owner untouched"
+        );
+    }
+
+    #[test]
+    fn owner_control_off_gives_each_repo_the_word_it_had() {
+        let (_g, _d) = fresh();
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        set_post_owner("acme", Ran::Manual, Post::Now);
+        let was: Vec<Post> = board
+            .iter()
+            .flat_map(|r| [posting().of(r, Ran::Manual), posting().of(r, Ran::Auto)])
+            .collect();
+        assert_eq!(govern("acme", false, &board), "");
+        let p = posting();
+        assert!(p.per_repo.contains("acme"), "the owner is per repo now");
+        assert_eq!(
+            p.auto.owners.get("acme"),
+            Some(&Post::Hold),
+            "its rule stays, as the fallback"
+        );
+        // each repo now owns the word, and nothing on the board changed as the switch flipped
+        assert_eq!(p.auto.repos.get("acme/api"), Some(&Post::Hold));
+        let now: Vec<Post> = board
+            .iter()
+            .flat_map(|r| [p.of(r, Ran::Manual), p.of(r, Ran::Auto)])
+            .collect();
+        assert_eq!(was, now);
+    }
+
+    #[test]
+    fn owner_control_on_holds_for_a_repo_that_held_but_has_no_pr_on_the_board() {
+        let (_g, _d) = fresh();
+        // acme/old holds auto and has nothing on the board today; its rule is about to be taken off
+        set_post("acme/old", Ran::Auto, Post::Hold);
+        assert_eq!(govern("acme", true, &["acme/api".to_string()]), "");
+        let p = posting();
+        assert_eq!(
+            p.auto.owners.get("acme"),
+            Some(&Post::Hold),
+            "its next PR must not post"
+        );
+        assert!(!p.auto.repos.contains_key("acme/old"));
+        assert_eq!(
+            p.manual.owners.get("acme"),
+            Some(&Post::Now),
+            "nothing held manual"
+        );
+    }
+
+    #[test]
+    fn owner_control_off_leaves_a_kind_the_owner_never_ruled_alone() {
+        let (_g, d) = fresh();
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        let lines = || {
+            std::fs::read_to_string(d.path().join("autorev"))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        let before = lines();
+        assert_eq!(govern("acme", false, &board), "");
+        let p = posting();
+        assert!(
+            p.manual.repos.is_empty(),
+            "no manual rule was pinned: the owner had none"
+        );
+        assert_eq!(p.auto.repos.len(), 2, "auto was pinned on both");
+        assert_eq!(lines(), before + 3, "two repo pins and the mode, nothing else");
+    }
+
+    #[test]
+    fn owner_control_off_keeps_a_hold_for_a_repo_with_no_pr_on_the_board() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        assert_eq!(govern("acme", false, &["acme/api".to_string()]), "");
+        let p = posting();
+        assert_eq!(
+            p.of("acme/old", Ran::Auto),
+            Post::Hold,
+            "never listed, still held"
+        );
+        assert_eq!(p.auto.repos.get("acme/api"), Some(&Post::Hold), "listed, pinned");
+    }
+
+    #[test]
+    fn the_owner_mode_is_its_own_line_and_the_last_one_wins() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        govern("acme", false, &[]);
+        assert!(posting().per_repo.contains("acme"));
+        govern("acme", true, &[]);
+        let p = posting();
+        assert!(!p.per_repo.contains("acme"), "on again");
+        assert_eq!(p.auto.owners.get("acme"), Some(&Post::Hold));
+        // the auto-arm reader does not see it, and it does not see the arm flag
+        set_owner("acme", true);
+        govern("acme", false, &[]);
+        assert!(scope().armed("acme/api"));
+        assert!(posting().per_repo.contains("acme"));
+    }
+
+    #[test]
+    fn switching_back_on_holds_what_a_repo_was_set_to_post_while_the_owner_held() {
+        // on can make a repo hold that posted, never the reverse: the owner's own hold counts
+        let (_g, _d) = fresh();
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        govern("acme", false, &board);
+        for r in &board {
+            set_post(r, Ran::Auto, Post::Now);
+        }
+        govern("acme", true, &board);
+        let p = posting();
+        assert_eq!(p.auto.owners.get("acme"), Some(&Post::Hold));
+        assert!(
+            board.iter().all(|r| p.of(r, Ran::Auto) == Post::Hold),
+            "both hold again"
+        );
+    }
+
+    #[test]
+    fn switching_to_the_mode_it_is_already_in_writes_nothing() {
+        let (_g, d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        let lines = || {
+            std::fs::read_to_string(d.path().join("autorev"))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        govern("acme", false, &[]);
+        let once = lines();
+        govern("acme", false, &[]);
+        assert_eq!(lines(), once);
+    }
+
+    #[test]
+    fn owner_control_refuses_what_is_not_an_owner() {
+        let (_g, _d) = fresh();
+        assert!(!govern("acme/api", true, &[]).is_empty(), "a repo, not an owner");
+        assert!(posting().auto.owners.is_empty());
     }
 
     #[test]
