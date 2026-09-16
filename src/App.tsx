@@ -5,6 +5,7 @@ import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
+import { HeldReview } from './components/HeldReview'
 import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
@@ -500,6 +501,45 @@ export default function App() {
   }
 
   /// Read the review that is waiting, then post it or drop it.
+  /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
+  function reviewWith(p: Row) {
+    if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (isReviewed(p)) {
+      setFlash(`#${p.number} is already reviewed`)
+      return
+    }
+    const m = open({
+      title: `review #${p.number} with instructions`,
+      sub: 'kept on this machine; never posted to the PR',
+      wide: true,
+      dismiss: false,
+      focus: '#ask',
+      body: () => (
+        <textarea
+          id="ask"
+          placeholder="What should the reviewer focus on, or leave alone? e.g. focus on the migration and the rollback; ignore style."
+        />
+      ),
+      foot: [
+        [
+          '^S',
+          'review and post the verdict',
+          async () => {
+            const ask = (document.querySelector('#ask') as HTMLTextAreaElement).value.trim()
+            if (!ask) {
+              setFlash('write the instructions first, or press r for a plain review')
+              return
+            }
+            if (await call('/api/review', { url: p.url, ask }, `review started on #${p.number}, with instructions`)) close(m)
+          },
+          'go',
+        ],
+        ['Esc', 'cancel', () => close(m)],
+      ] as Foot[],
+    })
+    m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2]() }
+  }
+
   async function waitingScreen(p: Row) {
     const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
     if (!r.ok) {
@@ -512,24 +552,16 @@ export default function App() {
       return
     }
     const m = open({
-      title: `waiting to post — ${d.repo}#${p.number}`,
-      sub: `${d.held.model} · ${d.held.verdict}`,
+      title: `waiting to post — ${p.repo}#${p.number}`,
+      sub: `${d.held.model} · nothing is on the PR yet`,
       wide: true,
-      body: () => (
-        <>
-          {/* the verdict was written against a head that is no longer the one on the board, so
-              posting it now puts an old reading against new commits */}
-          {d.held.moved ? (
-            <div className="note" style={{ marginBottom: 10 }}>
-              ⚠ New commits were pushed after this review was written. It describes the older ones.
-            </div>
-          ) : null}
-          <pre>{d.held.body}</pre>
-        </>
-      ),
+      body: () => <HeldReview repo={p.repo} number={p.number} onFlash={setFlash} />,
       foot: [
-        ['p', 'post it', () => { close(m); void call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…') }, 'go'],
-        ['x', 'drop it', () => { close(m); void call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped') }, 'warn'],
+        // ponytail: closed only once the post has started. The server refuses while the agent is still
+        // answering or a revision waits, and a modal that had already shut left the reason in a flash
+        // for a screen you could no longer see.
+        ['p', 'post it', async () => { if (await call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…')) close(m) }, 'go'],
+        ['x', 'drop it', async () => { if (await call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped')) close(m) }, 'warn'],
         ['Esc', 'leave it waiting', () => close(m)],
       ] as Foot[],
     })
@@ -562,6 +594,7 @@ export default function App() {
     if (!p) return
     const fns: Record<string, () => void> = {
       review: () => void review(p),
+      ask: () => reviewWith(p),
       pre: () => void preReview(p),
       view: () => {
         // the detail belongs to the selected PR, so only offer its review for that one
@@ -673,6 +706,7 @@ export default function App() {
     if (k === 'u') return one(onUpdate)
     if (k === 'v') return one(() => doAct('view'))
     if (k === 'r' && p) return one(() => void review(p))
+    if (k === 'R' && p) return one(() => reviewWith(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
     if (k === 'Escape' && help) return one(() => setHelp(false))
     if (k === 'Escape') return one(onMenu)

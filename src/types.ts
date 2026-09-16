@@ -69,6 +69,28 @@ export type Knowledge = {
 
 export type Waiting = { kind: string; key: string; what: string }
 
+/** One message in a discussion of a held review. */
+export type Turn = { who: 'you' | 'agent' | 'error'; text: string; at: number }
+
+/** A finished review waiting for a keypress, as /api/posting returns it. */
+export type HeldReview = {
+  verdict: string
+  summary: string
+  body: string
+  model: string
+  at: number
+  moved: boolean
+  /** What the person who ran it typed for it; private, never posted. */
+  instructions: string
+  thread: Turn[]
+  /** A revision waiting for a yes or a no. What posts is `body` until it is accepted. */
+  proposed: { verdict: string; summary: string; body: string } | null
+  /** "" when it can be discussed, else why not. */
+  cannotDiscuss: string
+  /** The agent is answering, or the review is posting: nothing changes until it lands. */
+  busy: boolean
+}
+
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
 /** config::snapshot, only the keys the UI reads. */

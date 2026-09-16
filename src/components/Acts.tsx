@@ -14,8 +14,11 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
   const reviewed = !p.busy && isReviewed(p)
-  if (rr)
+  if (rr) {
     out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
+    // the same gate as `r`: a review you could not start plainly, you cannot start with instructions either
+    out.push(['R', '', 'Review with instructions…', 'private to you', p.busy || reviewed, 'ask'])
+  }
   if (mine)
     out.push([
       'p',

@@ -113,6 +113,7 @@ button somewhere on the page.
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
+| `R` | the same, with instructions for the agent first: what to focus on, what to leave alone. They stay on this machine and are never posted |
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |
 | `a` | toggle auto mode |
@@ -133,7 +134,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `H` | when this repo posts a review: `r` and auto settle separately, and `o` sets the whole owner. Held means the verdict is written to `~/.prs_held` and posts nothing until you press `Y` and say so. Posting is the default, so a repo you never set behaves as it always has |
-| `Y` | on a row waiting to post: read the held review, then post it or drop it |
+| `Y` | on a row waiting to post: read the held review, discuss it with the agent, then post it or drop it |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
@@ -207,6 +208,11 @@ them at runtime.
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
 while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
 without it.
+
+For one review rather than all of them, `R` asks for instructions before it starts. They go into the
+system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
+else and cannot override them. They are private: kept in the held review on this machine, never in
+the review body, the opening comment, or the review log a team pulls.
 
 Reviews run with `--safe-mode`, so the reviewer sees no `CLAUDE.md`, skills, hooks or MCP servers from
 your machine — only the prompt, one read-only command, and a short built-in review lens: state
@@ -433,7 +439,15 @@ Whether a finished review posts is a separate setting. Running a review is the e
 posting it is the part you cannot take back. `H` on a row settles that per repo, separately for
 reviews you start with `r` and for ones auto starts: post it, as always, or hold it. A held review
 is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
-it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
+it or drops it.
+
+`Y` is also where you discuss it. A review run through the `claude` CLI is resumed in its own session,
+so the agent still has everything it read and can use its tools again: ask why a finding is blocking,
+or show it where it was wrong. Nothing said there is posted. When the conversation has changed its
+mind, **revise the review** asks it to write the verdict again; the revision waits beside the original
+and replaces it only if you accept it, and posting is refused while one is waiting — so the verdict you
+read is still the verdict that goes up. A review that ran on `openrouter:` or `local:` cannot be
+discussed yet: there is no session to go back to.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by
 something that may never arrive.
 

@@ -113,7 +113,21 @@ const S = {
   posting: {} as Record<string, { manual: string; auto: string }>,
   // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
   postingOwners: {} as Record<string, { manual: string; auto: string }>,
-  held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
+  held: {} as Record<
+    string,
+    {
+      verdict: string
+      summary: string
+      body: string
+      model: string
+      at: number
+      moved?: boolean
+      instructions?: string
+      thread?: { who: string; text: string; at: number }[]
+      proposed?: { verdict: string; summary: string; body: string } | null
+      busyUntil?: number
+    }
+  >,
   refreshes: 0,
   ticks: 0,
   cursor: 0,
@@ -195,6 +209,9 @@ function seed() {
       model: 'opus',
       at: secs(),
       moved: true,
+      instructions: 'focus on the export job; ignore style',
+      thread: [],
+      proposed: null,
     }
   }
 }
@@ -360,6 +377,7 @@ const repoOf = (b: Body) => {
 
 function postReview(b: Body) {
   const url = str(b, 'url')
+  if (str(b, 'ask').length > 8000) return json(400, { error: 'instructions are too long' })
   const r = S.rows.find((x) => x.url === url)
   if (!r) return json(404, { error: 'no such pr' })
   if (bool(b, 'self')) {
@@ -439,7 +457,18 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         owner,
         manual: one('manual'),
         auto: one('auto'),
-        held: h ? { ...h, moved: !!h.moved } : null,
+        held: h
+          ? {
+              ...h,
+              moved: !!h.moved,
+              instructions: h.instructions || '',
+              thread: h.thread || [],
+              proposed: h.proposed || null,
+              // like the server: only a claude-CLI review with a saved session can be discussed
+              cannotDiscuss: h.model.includes(':') ? `discussion needs the claude CLI; this review ran on ${h.model}` : '',
+              busy: (h.busyUntil || 0) > Date.now(),
+            }
+          : null,
       })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
@@ -703,9 +732,46 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = str(body, 'repo')
       const op = str(body, 'op')
       const key = `${repo}#${body.number ?? ''}`
+      if (['discuss', 'revise', 'accept', 'keep'].includes(op)) {
+        const h = S.held[key]
+        if (!h) return json(404, { error: 'nothing waiting for that PR' })
+        if ((h.busyUntil || 0) > Date.now()) return json(409, { error: 'the agent is still working on this review' })
+        h.thread = h.thread || []
+        if (op === 'accept') {
+          if (!h.proposed) return json(409, { error: 'no revision is waiting' })
+          Object.assign(h, h.proposed)
+          h.proposed = null
+          return json(200, { ok: true })
+        }
+        if (op === 'keep') {
+          h.proposed = null
+          return json(200, { ok: true })
+        }
+        if (h.model.includes(':')) return json(409, { error: `discussion needs the claude CLI; this review ran on ${h.model}` })
+        // a turn takes a moment, so the polling and the disabled controls are reachable in dev
+        h.busyUntil = Date.now() + 2500
+        if (op === 'discuss') {
+          const text = str(body, 'text').trim()
+          if (!text) {
+            h.busyUntil = 0
+            return json(400, { error: 'say something' })
+          }
+          h.thread.push({ who: 'you', text, at: secs() })
+          setTimeout(() => {
+            h.thread!.push({ who: 'agent', text: `You're right to push on that. Looking again, the cursor case is handled by the caller at export.py:88, so that finding is weaker than I made it. (mock reply to: "${text}")`, at: secs() })
+          }, 2400)
+        } else {
+          setTimeout(() => {
+            h.proposed = { verdict: 'comment', summary: 'one question left, no blocker', body: '## Notes\n\n- the retry reads a value it wrote two lines earlier; worth a comment, not a blocker' }
+          }, 2400)
+        }
+        return json(200, { ok: true })
+      }
       if (op === 'discard' || op === 'release') {
         const h = S.held[key]
         if (!h) return json(404, { error: 'nothing waiting for that PR' })
+        if ((h.busyUntil || 0) > Date.now()) return json(409, { error: 'a review of this PR is already running' })
+        if (op === 'release' && h.proposed) return json(409, { error: 'accept or keep the revision first' })
         delete S.held[key]
         const r = S.rows.find((x) => x.repo === repo && x.number === body.number)
         if (r) {
