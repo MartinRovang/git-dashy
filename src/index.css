@@ -666,7 +666,13 @@
   .modal .opt kbd.hint { margin-left: 6px; }
 
 /* a held review, and the conversation about it */
-.held { display: flex; flex-direction: column; gap: 10px; }
+/* the modal body stops scrolling itself: the review and the conversation scroll, the box stays put */
+.modal .mb:has(> .held) { overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding-bottom: 0; }
+.held { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.held .talkbody { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px;
+                  padding-bottom: 12px; }
+.held .talkfoot { flex: none; border-top: 1px solid var(--line); padding: 10px 0 14px; background: var(--bg3); }
+.held .talkfoot:empty { display: none; }
 .held .note { margin: 0; }
 .held pre { margin: 0; white-space: pre-wrap; }
 .held .asked { display: flex; gap: 8px; align-items: baseline; padding: 6px 9px; border-radius: 7px;

@@ -54,7 +54,14 @@ export function ReviewTalk({ source, onFlash, onText }: { source: Source; onFlas
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, key])
-  useEffect(() => end.current?.scrollIntoView({ block: 'nearest' }), [v?.talk?.thread.length, busy])
+  // follow the conversation as it grows, but not on opening: the review is what you open it to read
+  const seen = useRef<number | null>(null)
+  const turns = v?.talk?.thread.length ?? null
+  useEffect(() => {
+    if (turns === null) return
+    if (seen.current !== null && (turns > seen.current || busy)) end.current?.scrollIntoView({ block: 'end' })
+    seen.current = turns
+  }, [turns, busy])
 
   const act = async (body: Record<string, unknown>, ok?: string) => {
     const where = held ? { repo: source.repo, number: source.number } : { url: source.url }
@@ -74,96 +81,102 @@ export function ReviewTalk({ source, onFlash, onText }: { source: Source; onFlas
   const t = v.talk
   return (
     <div className="held">
-      {v.moved ? (
-        <div className="note">
-          ⚠ New commits were pushed after this review was written. It describes the older ones.
-        </div>
-      ) : null}
-      {t?.instructions ? (
-        <div className="asked" title="private: kept on this machine, never posted">
-          <b>you asked it to</b>
-          <span>{t.instructions}</span>
-        </div>
-      ) : null}
+      <div className="talkbody scroll">
+        {v.moved ? (
+          <div className="note">
+            ⚠ New commits were pushed after this review was written. It describes the older ones.
+          </div>
+        ) : null}
+        {t?.instructions ? (
+          <div className="asked" title="private: kept on this machine, never posted">
+            <b>you asked it to</b>
+            <span>{t.instructions}</span>
+          </div>
+        ) : null}
 
-      {held ? (
-        <div className="verdict">
-          <b>{VERDICT[v.verdict] || v.verdict}</b>
-          <span>what posts</span>
-        </div>
-      ) : null}
-      <pre>{v.text}</pre>
-
-      {t?.proposed ? (
-        <div className="proposal">
+        {held ? (
           <div className="verdict">
-            <b>{VERDICT[t.proposed.verdict] || t.proposed.verdict}</b>
-            <span>{held ? 'revised — not posted unless you accept it' : 'revised — replaces the pre-review if you accept it'}</span>
+            <b>{VERDICT[v.verdict] || v.verdict}</b>
+            <span>what posts</span>
           </div>
-          <pre>{t.proposed.body}</pre>
-          <div className="row">
-            <button className="btn go" disabled={busy} onClick={() => void act({ op: 'accept' }, 'the revision replaces the review')}>
-              accept the revision
-            </button>
-            <button className="btn" disabled={busy} onClick={() => void act({ op: 'keep' }, 'kept the original')}>
-              keep the original
-            </button>
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+        <pre>{v.text}</pre>
 
-      {t ? (
-        <div className="thread">
-          {t.thread.map((turn, i) => (
-            <div key={i} className={`turn ${turn.who}`}>
-              <b>{turn.who === 'error' ? 'failed' : turn.who}</b>
-              <p>{turn.text}</p>
+        {t?.proposed ? (
+          <div className="proposal">
+            <div className="verdict">
+              <b>{VERDICT[t.proposed.verdict] || t.proposed.verdict}</b>
+              <span>{held ? 'revised — not posted unless you accept it' : 'revised — replaces the pre-review if you accept it'}</span>
             </div>
-          ))}
-          {busy ? (
-            <div className="turn agent working">
-              <b>agent</b>
-              <p className="shimtext">working…</p>
+            <pre>{t.proposed.body}</pre>
+            <div className="row">
+              <button className="btn go" disabled={busy} onClick={() => void act({ op: 'accept' }, 'the revision replaces the review')}>
+                accept the revision
+              </button>
+              <button className="btn" disabled={busy} onClick={() => void act({ op: 'keep' }, 'kept the original')}>
+                keep the original
+              </button>
             </div>
-          ) : null}
-          <div ref={end} />
-        </div>
-      ) : null}
-
-      {!t ? (
-        <div className="note">this pre-review was written before discussions were saved; run it again to discuss it</div>
-      ) : t.cannotDiscuss ? (
-        <div className="note">{t.cannotDiscuss}</div>
-      ) : (
-        <div className="ask">
-          <textarea
-            value={draft}
-            disabled={busy}
-            placeholder="Ask about this review, or tell it what it got wrong. Ctrl+Enter sends."
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-          />
-          <div className="row">
-            <button className="btn go" disabled={busy || !draft.trim()} onClick={() => void send()}>
-              send
-            </button>
-            {/* a revision is asked for separately: talking should not quietly rewrite the review */}
-            <button
-              className="btn"
-              disabled={busy || !!t.proposed || !t.thread.length}
-              onClick={() => void act({ op: 'revise' })}
-              title={t.thread.length ? 'ask the agent to write the review again, taking this conversation into account' : 'discuss it first'}
-            >
-              revise the review
-            </button>
           </div>
-        </div>
-      )}
+        ) : null}
+
+        {t ? (
+          <div className="thread">
+            {t.thread.map((turn, i) => (
+              <div key={i} className={`turn ${turn.who}`}>
+                <b>{turn.who === 'error' ? 'failed' : turn.who}</b>
+                <p>{turn.text}</p>
+              </div>
+            ))}
+            {busy ? (
+              <div className="turn agent working">
+                <b>agent</b>
+                <p className="shimtext">working…</p>
+              </div>
+            ) : null}
+            <div ref={end} />
+          </div>
+        ) : null}
+      </div>
+
+      {/* pinned under the scrolling part, so the box is in reach however long the review or the
+          conversation gets */}
+      <div className="talkfoot">
+        {!t ? (
+          <div className="note">this pre-review was written before discussions were saved; run it again to discuss it</div>
+        ) : t.cannotDiscuss ? (
+          <div className="note">{t.cannotDiscuss}</div>
+        ) : (
+          <div className="ask">
+            <textarea
+              value={draft}
+              disabled={busy}
+              placeholder="Ask about this review, or tell it what it got wrong. Ctrl+Enter sends."
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+            />
+            <div className="row">
+              <button className="btn go" disabled={busy || !draft.trim()} onClick={() => void send()}>
+                send
+              </button>
+              {/* a revision is asked for separately: talking should not quietly rewrite the review */}
+              <button
+                className="btn"
+                disabled={busy || !!t.proposed || !t.thread.length}
+                onClick={() => void act({ op: 'revise' })}
+                title={t.thread.length ? 'ask the agent to write the review again, taking this conversation into account' : 'discuss it first'}
+              >
+                revise the review
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
