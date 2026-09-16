@@ -1081,22 +1081,37 @@ pub fn comment(repo: &str, number: u64, body: &str) -> Result<(), Error> {
     .map(|_| ())
 }
 
-/// xdg-open / open / start, waited on off-thread so no zombie is left per open.
+/// The desktop's own opener, through the plugin this app already ships with.
+///
+/// ponytail: no longer a command line of our own. The Windows arm was `cmd /c start "" <url>`, and
+/// cmd re-parses what it is handed: an `&` in a URL ended the command and started another one. The
+/// plugin hands the string to ShellExecuteW instead, so on Windows there is no command line to parse
+/// at all; on Linux it still tries xdg-open first, then gio, gnome-open and kde-open.
+///
+/// ponytail: still off this thread. The macOS path waits for `open` to return, and every caller here
+/// is a row's keypress, a popup's button or the launch of the GUI — none of them may block on a
+/// browser. The plugin reaps whatever it starts, so nothing is left behind either (#124).
 pub fn open_in_browser(url: &str) {
-    let mut cmd = if cfg!(target_os = "macos") {
-        Command::new("open")
-    } else if cfg!(target_os = "windows") {
-        let mut c = Command::new("cmd");
-        c.args(["/c", "start", ""]);
-        c
-    } else {
-        Command::new("xdg-open")
-    };
-    if let Ok(mut child) = cmd.arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-    }
+    let url = url.to_string();
+    std::thread::spawn(move || {
+        if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+            log::warn!("could not open {url}: {e}");
+        }
+    });
+}
+
+/// A file this app wrote, opened with whatever the desktop uses for it.
+///
+/// ponytail: the path half of the same door. Both land in the same launcher, but this one stats the
+/// file first, so a report that has been deleted says so in one line instead of arriving at the
+/// desktop as a path to nothing.
+pub fn open_file(path: &std::path::Path) {
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        if let Err(e) = tauri_plugin_opener::open_path(&path, None::<&str>) {
+            log::warn!("could not open {}: {e}", path.display());
+        }
+    });
 }
 
 const CLIPBOARDS: &[&[&str]] = &[
