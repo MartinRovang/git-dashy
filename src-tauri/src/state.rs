@@ -278,12 +278,10 @@ pub fn refresh_mirrors() {
         // ponytail: refresh what is THERE. init creates the mirror, so a refresh never has cause to make
         // one, and makedirs would otherwise rebuild the tree of a repo you deleted and write memory
         // back into it. Asking about `into` itself needs no recorded root and holds for any --into shape.
-        // ponytail: SKIP it, do not unregister it. A path that is not there right now is an unplugged
-        // drive, a network share between mounts, or a home not decrypted yet, as often as it is a repo
-        // someone deleted — and from here the two are the same look. Unregistering appends a tombstone,
-        // which is forever: the mirror stopped refreshing for good, silently, and only `gitdashy init
-        // --into <path> --forget` could have been the thing that did that. A stale entry costs one
-        // is_dir per refresh; a lost one costs a registration nobody knows to make again.
+        // ponytail: skip it, never unregister it. A path that is not there right now is as often an
+        // unplugged drive, a share between mounts or a home not decrypted yet as a deleted repo. From
+        // here the two look the same, and the tombstone stops the refresh until someone runs init
+        // again, which nothing tells them to do. Only `gitdashy init --forget` writes one.
         if !into.is_dir() || (!root.as_os_str().is_empty() && !root.is_dir()) {
             continue;
         }
@@ -1121,8 +1119,9 @@ mod tests {
         assert_eq!(st.lock().pending_rr(&only_b), ["mine"]);
     }
 
-    /// An unplugged drive is not a deleted repo, and the two look identical from here. A refresh
-    /// skips what it cannot see; only `gitdashy init --forget` writes the tombstone, which is forever.
+    /// An unplugged drive is not a deleted repo, and the two look the same from here. A refresh skips
+    /// what it cannot see; only `gitdashy init --forget` writes a tombstone. Both halves of the check:
+    /// the mirror path missing, and the mirror there with the repo it mirrors gone.
     #[test]
     fn a_mirror_whose_path_is_missing_stays_registered() {
         let _g = crate::autorev::test_lock();
@@ -1140,10 +1139,21 @@ mod tests {
             std::path::Path::new(""),
             std::path::Path::new("")
         ));
+        // the other half: the mirror is there, the repo it was made from is not
+        let there = d.path().join("mounted").join(".agent").join("team");
+        std::fs::create_dir_all(&there).unwrap();
+        assert!(install::register(
+            &there,
+            "acme/web",
+            &d.path().join("deleted-checkout"),
+            std::path::Path::new("")
+        ));
+
         refresh_mirrors();
         let known = install::registered();
-        assert_eq!(known.len(), 1, "a path we cannot see must not be forgotten");
-        assert_eq!(known[0].0, gone);
+        assert_eq!(known.len(), 2, "a path we cannot see must not be forgotten");
+        assert!(known.iter().any(|e| e.0 == gone));
+        assert!(known.iter().any(|e| e.0 == there));
     }
 
     /// The invariant the CLI path broke: the dashboard learns about a widened scope by reading the

@@ -779,9 +779,10 @@ struct Entry<'a> {
 /// ponytail: deduplicated on READ, so register can append without a lock. The hook runs at every
 /// session start, and two starting together would otherwise interleave a read-modify-write and drop one.
 /// ponytail: root and loader may be "" (entries written before they were recorded).
-/// ponytail: append-only in both directions, so the file only grows. Self-limiting per path (a
-/// tombstoned entry leaves this list, so refresh writes one tombstone and not one per tick) but
-/// repeated init/--forget cycles never shrink it. Compact on read-then-rewrite if it ever matters.
+/// ponytail: append-only in both directions, so the file only grows. A tombstoned entry leaves this
+/// list, and only `gitdashy init --forget` appends one: a refresh skips a path it cannot see rather
+/// than unregistering it, since an unplugged drive looks no different from a deleted repo. Repeated
+/// init/--forget cycles never shrink the file. Compact on read-then-rewrite if it ever matters.
 pub fn registered() -> Vec<(PathBuf, String, PathBuf, PathBuf)> {
     let mut seen: Vec<(PathBuf, String, PathBuf, PathBuf)> = Vec::new();
     for line in read(&config::get().registry).lines() {
