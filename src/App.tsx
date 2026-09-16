@@ -681,6 +681,20 @@ export default function App() {
           onFollow={followSomeone}
           onFollowScope={followScope}
           followed={followed.length}
+          onGovern={(owner, on) => {
+            // both kinds at once: the switch says "this owner decides", and deciding for one kind only
+            // is the half-state the panel exists to stop you having to reason about. Turning it ON pins
+            // the words that are already in force, so a switch never changes what happens to a review.
+            const now = (data?.postingRules || []).find((r) => r.target === `${owner}/*`)
+            void Promise.all(
+              (['manual', 'auto'] as const).map((ran) =>
+                post('/api/posting', { owner, ran, post: on ? now?.[ran] || 'post' : 'none' }),
+              ),
+            ).then(() => {
+              setFlash(on ? `${owner}/* decides for its repos` : `${owner}/* no longer decides; set each repo`)
+              reload()
+            })
+          }}
           onPosting={(ran, post, target) =>
             void call(
               '/api/posting',

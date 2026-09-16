@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Pr, Section, StateData } from './types'
+import type { PostingRule, Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, ruleSource, selected, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -632,5 +632,50 @@ describe('posting rows', () => {
     // nothing set is its own answer, not the same as having one
     expect(ruleSource('acme/api', '')).toBe('none')
     expect(ruleSource('acme/*', '')).toBe('none')
+  })
+})
+
+describe('the posting tree', () => {
+  const rule = (target: string, m: ['post' | 'hold', '' | 'repo' | 'owner'], a: ['post' | 'hold', '' | 'repo' | 'owner']) =>
+    ({ target, manual: m[0], manualVia: m[1], auto: a[0], autoVia: a[1] }) as PostingRule
+  // the screenshot: acme/* holds what you run, three repos under it, one of them carved out on auto
+  const board = () => [
+    rule('acme/*', ['hold', 'owner'], ['post', '']),
+    rule('acme/api', ['hold', 'owner'], ['post', '']),
+    rule('acme/infra', ['hold', 'owner'], ['post', '']),
+    rule('acme/web', ['hold', 'owner'], ['post', 'repo']),
+  ]
+
+  it('puts each repo under the owner that owns it', () => {
+    const [acme] = postingTree(board())
+    expect(acme.owner.target).toBe('acme/*')
+    expect(acme.repos.map((r) => r.target)).toEqual(['acme/api', 'acme/infra', 'acme/web'])
+    expect(acme.governs).toBe(true)
+  })
+
+  it('says an owner with no rule of its own does not govern', () => {
+    // nothing set anywhere: the repos below are where a first rule gets set, so they keep their controls
+    const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['post', ''], ['post', ''])])
+    expect(acme.governs).toBe(false)
+    expect(acme.repos.map((r) => r.target)).toEqual(['acme/api'])
+  })
+
+  it('keeps owners apart and in the order they arrived', () => {
+    const tree = postingTree([...board(), rule('zeta/*', ['hold', 'owner'], ['post', '']), rule('zeta/one', ['hold', 'owner'], ['post', ''])])
+    expect(tree.map((n) => n.owner.target)).toEqual(['acme/*', 'zeta/*'])
+    expect(tree[1].repos.map((r) => r.target)).toEqual(['zeta/one'])
+    expect(tree[0].repos).toHaveLength(3)
+  })
+
+  it('gives a repo whose owner row never arrived a parent of its own', () => {
+    // no row is ever dropped: an owner nobody sent is built from the repo's name and governs nothing
+    const [n] = postingTree([rule('other/x', ['post', ''], ['post', ''])])
+    expect([n.owner.target, n.governs, n.repos.map((r) => r.target)]).toEqual(['other/*', false, ['other/x']])
+  })
+
+  it('marks the repo that overrides a governing owner, so it can still be reached', () => {
+    const [acme] = postingTree(board())
+    // acme/web has a rule of its own on auto, which beats acme/*; the other two have nothing
+    expect(acme.repos.map(hasOwnRule)).toEqual([false, false, true])
   })
 })

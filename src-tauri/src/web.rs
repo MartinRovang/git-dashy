@@ -1420,16 +1420,21 @@ fn post_posting(state: &State, body: &Body) -> Out {
         "auto" => autorev::Ran::Auto,
         _ => return Err(Fail::new(400, "ran must be manual or auto")),
     };
-    let Some(p) = autorev::Post::parse(&text(body, "post")) else {
-        return Err(Fail::new(400, "post must be post or hold"));
-    };
+    let word = text(body, "post");
+    // `none` takes the rule off rather than setting one: an owner rule that could only ever be flipped
+    // between post and hold governed every repo under it for good, with no way back to per-repo control
+    let p = autorev::Post::parse(&word);
+    if p.is_none() && word != autorev::CLEAR {
+        return Err(Fail::new(400, "post must be post, hold or none"));
+    }
     if repo.is_empty() == owner.is_empty() {
         return Err(Fail::new(400, "name a repo or an owner, not both"));
     }
-    fail_if(if repo.is_empty() {
-        autorev::set_post_owner(&owner, ran, p)
-    } else {
-        autorev::set_post(&repo, ran, p)
+    fail_if(match (p, repo.is_empty()) {
+        (Some(p), true) => autorev::set_post_owner(&owner, ran, p),
+        (Some(p), false) => autorev::set_post(&repo, ran, p),
+        (None, true) => autorev::clear_post_owner(&owner, ran),
+        (None, false) => autorev::clear_post(&repo, ran),
     })?;
     state.wake();
     Ok(json!({"ok": true}))
@@ -2614,6 +2619,32 @@ mod tests {
         assert_eq!(
             j["manual"]["value"], "post",
             "the other kind is untouched throughout"
+        );
+
+        // and the rule comes off again, which is what the panel's owner toggle does
+        post(
+            &format!("{base}/api/posting"),
+            json!({"owner": "acme", "ran": "auto", "post": "none"}),
+            &token,
+        );
+        let j = get_one();
+        assert_eq!(j["auto"]["ownerValue"], "post", "the owner rule is gone");
+        assert_eq!(j["auto"]["value"], "post", "and the repo's own still stands");
+        assert_eq!(j["auto"]["via"], "repo");
+        post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "none"}),
+            &token,
+        );
+        assert_eq!(get_one()["auto"]["via"], "", "nothing set anywhere now");
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "maybe"}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("post must be post, hold or none"))
         );
 
         // ponytail: one or the other, never both and never neither. The flag this replaced meant a body

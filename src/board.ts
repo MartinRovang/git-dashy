@@ -1,6 +1,6 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
-import type { CodeRow, Pr, Row, Section, StateData } from './types'
+import type { CodeRow, PostingRule, Pr, Row, Section, StateData } from './types'
 import { rowState, SECTION_EMPTY, tone } from './tokens'
 import { people } from './stories'
 
@@ -35,6 +35,54 @@ export function underScope(d: StateData | null, scope: string): string[] {
 export function ruleSource(target: string, via: '' | 'repo' | 'owner'): 'own' | 'owner' | 'none' {
   if (!via) return 'none'
   return via === (target.endsWith('/*') ? 'owner' : 'repo') ? 'own' : 'owner'
+}
+
+/** Whether a posting row carries a rule of its own on either axis, as opposed to following or defaulting. */
+export const hasOwnRule = (r: PostingRule) =>
+  ruleSource(r.target, r.manualVia) === 'own' || ruleSource(r.target, r.autoVia) === 'own'
+
+export type PostingNode = {
+  owner: PostingRule
+  /** Every repo under it, in the order the server listed them. */
+  repos: PostingRule[]
+  /** The owner carries a rule, so it is what decides for every repo below that has none of its own. */
+  governs: boolean
+}
+
+/** The posting panel as a tree: an owner, then what it owns.
+ *
+ *  ponytail: a tree, not a list with markers on it. Flat rows meant "acme/*" and the three repos under it
+ *  each stated the same rule with a different decoration, and which one was in charge had to be worked out
+ *  from an arrow. An owner is a parent here, and its repos are drawn inside it.
+ *
+ *  When the owner `governs`, the repos below have nothing to set: the owner decides, so they carry no
+ *  controls. The exception is a repo the store already has a rule for — that one beats the owner, so it
+ *  keeps its controls. Hiding it would leave a rule in force with nothing on screen able to reach it.
+ */
+export function postingTree(rules: PostingRule[]): PostingNode[] {
+  const nodes = new Map<string, PostingNode>()
+  const node = (name: string) => {
+    const at = nodes.get(name)
+    if (at) return at
+    // a repo whose owner row the server did not send still gets a parent, so no repo is ever dropped
+    const made: PostingNode = {
+      owner: { target: `${name}/*`, manual: 'post', auto: 'post', manualVia: '', autoVia: '' },
+      repos: [],
+      governs: false,
+    }
+    nodes.set(name, made)
+    return made
+  }
+  for (const r of rules) {
+    const name = r.target.split('/')[0]
+    if (r.target.endsWith('/*')) {
+      node(name).owner = r
+      node(name).governs = hasOwnRule(r)
+    } else {
+      node(name).repos.push(r)
+    }
+  }
+  return [...nodes.values()]
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.

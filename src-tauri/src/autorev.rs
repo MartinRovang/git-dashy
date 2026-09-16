@@ -103,6 +103,14 @@ pub enum Post {
     Hold,
 }
 
+/// The word that REMOVES a rule instead of setting one.
+///
+/// ponytail: a third word, not a missing field. The store is append-only, so "there is no rule here" has
+/// to be something you can write down -- and a line with no `post_*` field at all is how an /api/auto row
+/// is told apart from a posting one, which this must not disturb. Without it an owner rule, once set,
+/// could never be taken off: every repo under it was governed forever.
+pub const CLEAR: &str = "none";
+
 impl Post {
     pub fn parse(s: &str) -> Option<Post> {
         match s {
@@ -208,23 +216,31 @@ pub fn posting() -> Posting {
             continue;
         };
         for ran in [Ran::Manual, Ran::Auto] {
-            let Some(p) = e.get(ran.field()).and_then(|v| v.as_str()).and_then(Post::parse) else {
+            let Some(word) = e.get(ran.field()).and_then(|v| v.as_str()) else {
                 continue;
             };
+            // an unknown word is still ignored; CLEAR is the one that takes a rule away again
+            let set = Post::parse(word);
+            if set.is_none() && word != CLEAR {
+                continue;
+            }
             let rules = match ran {
                 Ran::Manual => &mut out.manual,
                 Ran::Auto => &mut out.auto,
             };
-            if let Some(Value::String(o)) = e.get("owner") {
-                let o = owner_key(o);
-                if !o.is_empty() {
-                    rules.owners.insert(o, p);
-                }
+            let (map, k) = if let Some(Value::String(o)) = e.get("owner") {
+                (&mut rules.owners, owner_key(o))
             } else if let Some(Value::String(r)) = e.get("repo") {
-                let r = key(r);
-                if !r.is_empty() {
-                    rules.repos.insert(r, p);
-                }
+                (&mut rules.repos, key(r))
+            } else {
+                continue;
+            };
+            if k.is_empty() {
+                continue;
+            }
+            match set {
+                Some(p) => drop(map.insert(k, p)),
+                None => drop(map.remove(&k)),
             }
         }
     }
@@ -256,9 +272,37 @@ pub fn set_post_owner(owner: &str, ran: Ran, p: Post) -> String {
 }
 
 fn append_word(fields: &[(&str, &str)], ran: Ran, p: Post) -> String {
+    append_raw(fields, ran, p.word())
+}
+
+fn append_raw(fields: &[(&str, &str)], ran: Ran, word: &str) -> String {
     let mut all: Vec<(&str, &str)> = fields.to_vec();
-    all.push((ran.field(), p.word()));
+    all.push((ran.field(), word));
     bind::append_to(store(), &all, None)
+}
+
+/// Take the rule off one repo, so it goes back to following its owner. A repo with no rule is a no-op.
+pub fn clear_post(repo: &str, ran: Ran) -> String {
+    let r = key(repo);
+    if r.is_empty() {
+        return format!("{repo} is not an owner/name");
+    }
+    if !posting().rules(ran).repos.contains_key(&r) {
+        return String::new();
+    }
+    append_raw(&[("repo", &r)], ran, CLEAR)
+}
+
+/// Take the rule off one owner, so every repo under it is set on its own again.
+pub fn clear_post_owner(owner: &str, ran: Ran) -> String {
+    let o = owner_key(owner);
+    if o.is_empty() {
+        return format!("{owner} is not an owner");
+    }
+    if !posting().rules(ran).owners.contains_key(&o) {
+        return String::new();
+    }
+    append_raw(&[("owner", &o)], ran, CLEAR)
 }
 
 /// One read of the store. A line with no usable key, or no `auto` boolean, is skipped.
@@ -665,6 +709,75 @@ mod tests {
         )
         .unwrap();
         assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now);
+    }
+
+    #[test]
+    fn a_rule_can_be_taken_off_again_and_the_repo_goes_back_to_following() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        set_post("acme/api", Ran::Auto, Post::Now);
+        assert_eq!(posting().of("acme/api", Ran::Auto), Post::Now, "carved out");
+
+        // the repo stops deciding for itself and follows the owner again
+        assert_eq!(clear_post("acme/api", Ran::Auto), "");
+        let p = posting();
+        assert!(!p.auto.repos.contains_key("acme/api"), "no rule of its own");
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Hold, "the owner's word");
+
+        // and the owner rule itself comes off, which is what the panel's toggle does
+        assert_eq!(clear_post_owner("acme", Ran::Auto), "");
+        let p = posting();
+        assert!(!p.auto.owners.contains_key("acme"));
+        assert_eq!(p.of("acme/api", Ran::Auto), Post::Now, "back to the default");
+    }
+
+    #[test]
+    fn clearing_touches_one_axis_and_one_target_only() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        set_post_owner("acme", Ran::Manual, Post::Hold);
+        set_post_owner("zeta", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        let p = posting();
+        assert!(!p.auto.owners.contains_key("acme"));
+        assert_eq!(p.manual.owners.get("acme"), Some(&Post::Hold), "other axis");
+        assert_eq!(p.auto.owners.get("zeta"), Some(&Post::Hold), "other owner");
+    }
+
+    #[test]
+    fn clearing_what_has_no_rule_writes_nothing() {
+        let (_g, d) = fresh();
+        assert_eq!(clear_post("acme/api", Ran::Auto), "");
+        assert_eq!(clear_post_owner("acme", Ran::Auto), "");
+        assert!(!d.path().join("autorev").exists(), "no line appended");
+        // and a name it cannot read is refused rather than written
+        assert!(!clear_post("nope", Ran::Auto).is_empty());
+        assert!(!clear_post_owner("a/b", Ran::Auto).is_empty());
+    }
+
+    #[test]
+    fn a_cleared_rule_can_be_set_again_after() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        assert_eq!(
+            posting().auto.owners.get("acme"),
+            Some(&Post::Hold),
+            "the no-op guard must read the CLEAR line, not the hold before it"
+        );
+    }
+
+    #[test]
+    fn clearing_leaves_the_arm_flag_alone() {
+        let (_g, _d) = fresh();
+        set_owner("acme", true);
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        clear_post_owner("acme", Ran::Auto);
+        assert!(
+            scope().armed("acme/api"),
+            "the two readers still cannot see each other"
+        );
     }
 
     #[test]

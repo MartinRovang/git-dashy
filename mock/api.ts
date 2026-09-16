@@ -765,8 +765,17 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       // like the route: `owner` is the owner NAME, and it is one or the other
       const owner = str(body, 'owner')
       if (!repo === !owner) return json(400, { error: 'name a repo or an owner, not both' })
-      if (owner) S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: str(body, 'post') }
-      else S.posting[repo] = { ...S.posting[repo], [ran]: str(body, 'post') }
+      const word = str(body, 'post')
+      if (word !== 'post' && word !== 'hold' && word !== 'none')
+        return json(400, { error: 'post must be post, hold or none' })
+      // like the store: `none` takes the rule off rather than writing one
+      const put = (at: Record<string, { manual?: string; auto?: string }>, k: string) => {
+        const next = { ...at[k] }
+        if (word === 'none') delete next[ran as 'manual' | 'auto']
+        else next[ran as 'manual' | 'auto'] = word
+        at[k] = next
+      }
+      put(owner ? S.postingOwners : S.posting, owner || repo)
       return json(200, { ok: true })
     }
     if (path === '/api/consent') {
