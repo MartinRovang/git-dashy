@@ -126,7 +126,9 @@ const S = {
   postingOwners: {} as Record<string, { manual?: string; auto?: string }>,
   /** Owners switched to each repo on its own; their rule stays as the fallback. */
   perRepo: {} as Record<string, boolean>,
-  held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
+  held: {} as Record<string, MockTalk & { verdict: string; summary: string; body: string; at: number; moved?: boolean }>,
+  /** Pre-reviews by PR url: their text, and the conversation beside it. */
+  pres: {} as Record<string, MockTalk & { verdict: string; text: string }>,
   refreshes: 0,
   ticks: 0,
   cursor: 0,
@@ -140,6 +142,60 @@ const memoryText: Record<string, string> = {
   'acme/web': '# acme/web\n\n- session middleware is shared with the admin app\n',
 }
 
+/** A conversation about a saved review, as the mock keeps it: the same for a held review and a pre-review. */
+type MockTalk = {
+  model: string
+  instructions?: string
+  thread?: { who: string; text: string; at: number }[]
+  proposed?: { verdict: string; summary: string; body: string } | null
+  busyUntil?: number
+}
+
+/** The `talk` object the server sends, from what the mock keeps. */
+function talkView(t: MockTalk) {
+  return {
+    instructions: t.instructions || '',
+    thread: t.thread || [],
+    proposed: t.proposed || null,
+    // like the server: only a claude-CLI review with a saved session can be discussed
+    cannotDiscuss: t.model.includes(':') ? `discussion needs the claude CLI; this review ran on ${t.model}` : '',
+    busy: (t.busyUntil || 0) > Date.now(),
+  }
+}
+
+/** discuss / revise / accept / keep, like web.rs `talk`. `accept` hands the revision to whoever stores it. */
+function talkOp(t: MockTalk, op: string, b: Body, accept: (v: { verdict: string; summary: string; body: string }) => void) {
+  if ((t.busyUntil || 0) > Date.now()) return json(409, { error: 'the agent is still working on this review' })
+  t.thread = t.thread || []
+  if (op === 'accept') {
+    if (!t.proposed) return json(409, { error: 'no revision is waiting' })
+    accept(t.proposed)
+    t.proposed = null
+    return json(200, { ok: true })
+  }
+  if (op === 'keep') {
+    t.proposed = null
+    return json(200, { ok: true })
+  }
+  if (t.model.includes(':')) return json(409, { error: `discussion needs the claude CLI; this review ran on ${t.model}` })
+  if (op === 'discuss') {
+    const text = str(b, 'text').trim()
+    if (!text) return json(400, { error: 'say something' })
+    t.thread.push({ who: 'you', text, at: secs() })
+    // a turn takes a moment, so the polling and the disabled controls are reachable in dev
+    t.busyUntil = Date.now() + 2500
+    setTimeout(() => {
+      t.thread!.push({ who: 'agent', text: `Looking again: the caller at export.py:88 already guards that, so the finding is weaker than I made it. (mock reply to: "${text}")`, at: secs() })
+    }, 2400)
+    return json(200, { ok: true })
+  }
+  t.busyUntil = Date.now() + 2500
+  setTimeout(() => {
+    t.proposed = { verdict: 'comment', summary: 'one question left, no blocker', body: '## Notes\n\n- the retry reads a value it wrote two lines earlier; worth a comment, not a blocker' }
+  }, 2400)
+  return json(200, { ok: true })
+}
+
 const SYNTH_PREFIX = ['feat: ', 'fix: ', 'chore: ', 'docs: ', '']
 const SYNTH_SECTION = ['MINE', 'REVIEW REQUESTED', 'ASSIGNED', 'REVIEWED']
 
@@ -149,6 +205,13 @@ function seed() {
   m1.reviewers = '✓bob ·carol'
   m1.checks = '✓'
   m1.pre = { at: T0 / 1000 - 3600, moved: false }
+  S.pres[m1.url] = {
+    model: 'opus',
+    verdict: 'request_changes',
+    text: `# Pre-review — ${m1.repo}#${m1.number}\n\n> **Not posted.** This is the mock reviewer.\n\n**Verdict (advisory):** ✗ changes requested — mock\n\n## Findings\n\n- \`api/handlers.py:88\` the pager reads \`total\` before the guard\n`,
+    thread: [],
+    proposed: null,
+  }
   const m2 = mkPr(98, 'WIP: migrate to pydantic v2 and drop the hand-rolled validators in the ingest and export paths', 'acme/api', 'alice', 30, 'MINE', true)
   const r1 = mkPr(212, 'Fix off-by-one in pagination', 'acme/web', 'bob', 1, 'REVIEW REQUESTED')
   r1.checks = '✗'
@@ -212,6 +275,13 @@ function seed() {
       model: 'opus',
       at: secs(),
       moved: true,
+      instructions: 'focus on the export job; ignore style',
+      // an example exchange, so the conversation is on screen before anything is typed
+      thread: [
+        { who: 'you', text: 'Is the empty-cursor case really blocking? The job never runs with an empty table.', at: secs() - 600 },
+        { who: 'agent', text: 'It can: the nightly run starts before the import on Mondays, so the table is empty for that run. I would keep it blocking, but a guard at export.py:41 would settle it.', at: secs() - 540 },
+      ],
+      proposed: null,
     }
   }
 }
@@ -378,10 +448,12 @@ const repoOf = (b: Body) => {
 
 function postReview(b: Body) {
   const url = str(b, 'url')
+  if (str(b, 'ask').length > 8000) return json(400, { error: 'instructions are too long' })
   const r = S.rows.find((x) => x.url === url)
   if (!r) return json(404, { error: 'no such pr' })
   if (bool(b, 'self')) {
     r.pre = { at: secs(), moved: false }
+    S.pres[r.url] = { model: 'opus', verdict: 'comment', text: `# Pre-review — ${r.repo}#${r.number}\n\n> **Not posted.** This is the mock reviewer.\n\n**Verdict (advisory):** comment — mock\n`, thread: [], proposed: null }
     return json(200, { ok: true })
   }
   if (r.busy) return json(409, { error: 'already running' })
@@ -491,7 +563,12 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = query.get('repo') || ''
       const key = `${repo}#${query.get('number') || ''}`
       const h = S.held[key]
-      return json(200, { ...postingOf(repo), held: h ? { ...h, moved: !!h.moved } : null })
+      return json(200, {
+        ...postingOf(repo),
+        held: h
+          ? { verdict: h.verdict, summary: h.summary, body: h.body, model: h.model, at: h.at, moved: !!h.moved, talk: talkView(h) }
+          : null,
+      })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
@@ -554,10 +631,12 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/prereview') {
       const r = S.rows.find((x) => x.url === (query.get('url') || ''))
       if (!r || !r.pre) return json(404, { error: `no pre-review of #${r?.number ?? '?'} yet — p runs one` })
+      const t = S.pres[r.url]
       return json(200, {
-        path: `~/.prs_reviews/${r.repo.replace('/', '__')}-${r.number}.md`,
-        text: `# Pre-review — ${r.repo}#${r.number}\n\n> **Not posted.** This is the mock reviewer.\n\n**Verdict (advisory):** ✗ changes requested — mock\n\n## Findings\n\n- \`api/handlers.py:88\` the pager reads \`total\` before the guard\n`,
+        path: `~/.prs_reviews/${r.repo.replace('/', '__')}__${r.number}.md`,
+        text: t ? t.text : `# Pre-review — ${r.repo}#${r.number}\n\n> **Not posted.** This is the mock reviewer.\n`,
         moved: r.pre.moved,
+        talk: t ? { ...talkView(t), verdict: t.verdict } : null,
       })
     }
     if (path === '/api/debug') {
@@ -750,10 +829,26 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       r.reviewers = `${r.reviewers} ·${login}`.trim()
       return json(200, { ok: true })
     }
+    if (path === '/api/prereview') {
+      const op = str(body, 'op')
+      if (!['discuss', 'revise', 'accept', 'keep'].includes(op)) return json(400, { error: 'op must be discuss, revise, accept or keep' })
+      const t = S.pres[str(body, 'url')]
+      if (!t) return json(409, { error: 'this pre-review was written before discussions were saved; run it again to discuss it' })
+      // an accepted revision replaces the pre-review's text, as the server rewrites the markdown
+      return talkOp(t, op, body, (v) => {
+        t.verdict = v.verdict
+        t.text = t.text.split('**Verdict (advisory):**')[0] + `**Verdict (advisory):** ${v.verdict} — ${v.summary}\n\n${v.body}\n`
+      })
+    }
     if (path === '/api/posting') {
       const repo = str(body, 'repo')
       const op = str(body, 'op')
       const key = `${repo}#${body.number ?? ''}`
+      if (['discuss', 'revise', 'accept', 'keep'].includes(op)) {
+        const h = S.held[key]
+        if (!h) return json(404, { error: 'nothing waiting for that PR' })
+        return talkOp(h, op, body, (v) => Object.assign(h, v))
+      }
       if (op === 'govern') {
         // like autorev::govern: ON holds a kind if the owner or any repo under it (board or store) holds it, and
         // clears every repo rule under it; OFF pins each repo on the board and keeps the owner's rule as the
@@ -784,6 +879,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       if (op === 'discard' || op === 'release') {
         const h = S.held[key]
         if (!h) return json(404, { error: 'nothing waiting for that PR' })
+        if ((h.busyUntil || 0) > Date.now()) return json(409, { error: 'a review of this PR is already running' })
+        if (op === 'release' && h.proposed) return json(409, { error: 'accept or keep the revision first' })
         delete S.held[key]
         const r = S.rows.find((x) => x.repo === repo && x.number === body.number)
         if (r) {

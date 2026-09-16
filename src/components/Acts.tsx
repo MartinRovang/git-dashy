@@ -14,13 +14,16 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
   const reviewed = !p.busy && isReviewed(p)
-  if (rr)
+  if (rr) {
     out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
+    // the same gate as `r`: a review you could not start plainly, you cannot start with instructions either
+    out.push(['R', '', 'Review with instructions…', 'private to you', p.busy || reviewed, 'ask'])
+  }
   if (mine)
     out.push([
       'p',
       '',
-      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Read the pre-review' : 'Pre-review',
+      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Inspect pre-review' : 'Pre-review',
       p.pre?.moved ? 'the PR moved since' : 'nothing posted',
       p.busy,
       'pre',
@@ -30,7 +33,7 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   out.push(['o', '', 'Open in browser', 'github', false, 'open'])
   out.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
   if (mine) out.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
-  if (p.waiting) out.push(['Y', 'go', 'Read the review waiting to post', 'nothing posted yet', false, 'waiting'])
+  if (p.waiting) out.push(['Y', 'go', 'Inspect held review', 'discuss it, then post or drop', false, 'waiting'])
   out.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
   out.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
   out.push(['X', '', hidden ? 'Unhide this PR' : 'Hide this PR', hidden ? '' : 'until it moves', false, 'hide'])

@@ -794,6 +794,19 @@ mod tests {
     }
 
     #[test]
+    fn the_instructions_a_review_ran_with_never_reach_the_log() {
+        // ponytail: the log is pushed to the team the repo is bound to. The instructions are private.
+        let _g = isolated();
+        let mut v = verdict("approve", "fine");
+        v.instructions = "SECRET-STEER be harsh on this author".into();
+        log_review(&pr(), "opus", &v, None).unwrap();
+        let written = std::fs::read_to_string(&config::get().log).unwrap();
+        assert!(written.contains("\"approve\""), "the entry was written");
+        assert!(!written.contains("SECRET-STEER"), "{written}");
+        assert!(!written.contains("instructions"), "{written}");
+    }
+
+    #[test]
     fn an_entry_written_without_an_offset_is_read_as_utc() {
         let _g = isolated();
         let mut naive = good();
