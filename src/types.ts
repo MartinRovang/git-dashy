@@ -85,6 +85,22 @@ export type Talk = {
   busy: boolean
 }
 
+/** What happens to a finished review: 'post' or 'hold'. */
+export type PostWord = 'post' | 'hold'
+/** Every rule on the machine, in the order web.rs builds them. */
+export type PostingRule = {
+  target: string
+  manual: PostWord
+  auto: PostWord
+  /** Where the word came from: 'repo'/'owner' when this target sets it, 'owner' on a repo row that
+   *  inherits it, '' when nothing is set and the word is the default. */
+  manualVia: '' | 'repo' | 'owner'
+  autoVia: '' | 'repo' | 'owner'
+  /** Owner rows only: switched to each repo on its own. Its rule, if any, is then only the fallback for a
+   *  repo that has none, not a setting that decides for all of them. */
+  perRepo?: boolean
+}
+
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
 /** config::snapshot, only the keys the UI reads. */
@@ -129,6 +145,7 @@ export type StateData = {
   knowledge: Knowledge
   asks: Ask[]
   notices: string[]
+  postingRules?: PostingRule[]
   /** Release notes since the last version run, "" once dismissed. */
   changelog: string
 }

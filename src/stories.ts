@@ -59,7 +59,13 @@ export function fuzzy(q: string, logins: string[]): string[] {
 }
 
 export type Pr = { repo: string; number: number; title: string; url: string; head?: string }
-export type Got = { at: number; summary: string; prs: Pr[] }
+export type Got = {
+  at: number
+  summary: string
+  prs: Pr[]
+  /** One sentence, only when the model judged this a different problem from the last story. */
+  shift?: string
+}
 
 /** PRs in `next` that were pushed to (head commit changed) or never seen before, then `seen` learns them.
  *  ponytail: `seen` only grows. Search drops PRs from a page at random and hands them back a poll later;
@@ -70,3 +76,38 @@ export function moved(seen: Map<string, string | undefined>, next: Got): Pr[] {
   for (const p of next.prs) seen.set(p.url, p.head)
   return out
 }
+
+/** How many people the server follows at most: story::clean takes 50. */
+export const FOLLOW_MAX = 50
+
+/** Follow everyone in `who`, as far as the cap allows: the new list, how many were added, how many did not fit.
+ *
+ *  ponytail: counted here, not after the fact. The server cuts the list at FOLLOW_MAX, so "following 80 from
+ *  org:acme" on a big org claimed people it never kept. */
+export function followAll(list: Followed[], who: string[], max = FOLLOW_MAX): { next: Followed[]; added: number; left: number } {
+  let next = list
+  let added = 0
+  let left = 0
+  for (const login of who) {
+    const grown = follow(next, login)
+    if (grown === next) continue // already followed
+    if (next.length >= max) left++
+    else {
+      next = grown
+      added++
+    }
+  }
+  return { next, added, left }
+}
+
+/** The shift an answer may show, given when its request began and when a shift was last dismissed.
+ *
+ *  ponytail: a poll that STARTED before the dismissal answers with the shift still on it -- the server had not
+ *  been told yet -- and raising it again would undo the dismissal the moment it was made. */
+export const shownShift = (shift: string | undefined, began: number, dismissedAt: number) => (began < dismissedAt ? '' : shift || '')
+
+/** The direction line an open pop-up shows: the one it opened with, until it is closed.
+ *
+ *  ponytail: not whatever the last poll brought. Opening the pill tells the server the mark was read, so the
+ *  next poll answers with no shift, and a line drawn from that answer vanished while it was being read. */
+export const lineOnScreen = (open: boolean, openedWith: string, fromPoll: string) => (open && openedWith ? openedWith : fromPoll)

@@ -72,11 +72,6 @@ describe('acts: what one PR offers', () => {
     expect(keys(row())).not.toContain('waiting')
   })
 
-  it('offers the posting setting on every row', () => {
-    expect(keys(row())).toContain('posting')
-    expect(keys(row({ section: 'REVIEWED' }))).toContain('posting')
-  })
-
   // the hold path writes "✗ changes requested (waiting to post)" into review, and tone() matches it,
   // so without the guard the menu said Reviewed for a verdict the author has never seen
   it('does not call a held review reviewed', () => {

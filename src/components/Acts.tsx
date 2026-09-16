@@ -34,7 +34,6 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   out.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])
   if (mine) out.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
   if (p.waiting) out.push(['Y', 'go', 'Inspect held review', 'discuss it, then post or drop', false, 'waiting'])
-  out.push(['H', '', 'When this repo posts a review', '', false, 'posting'])
   out.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
   out.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
   out.push(['X', '', hidden ? 'Unhide this PR' : 'Hide this PR', hidden ? '' : 'until it moves', false, 'hide'])

@@ -1,7 +1,8 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
-import type { CodeRow, Pr, Row, Section, StateData, Talk } from './types'
+import type { CodeRow, PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState, SECTION_EMPTY, tone } from './tokens'
+import { people } from './stories'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
 
@@ -12,6 +13,97 @@ export function settings(d: StateData | null) {
 /** A TEAM row's source is on: its owner's org chip, or the team its repo is bound to. */
 export function inScope(p: { repo: string; team: string }, scopes: string[]): boolean {
   return scopes.includes(`org:${p.repo.split('/')[0].toLowerCase()}`) || (!!p.team && scopes.includes(`team:${p.team}`))
+}
+
+/** Everyone the board shows under one `team:x` or `org:y` chip, ready to follow: authors and reviewers of
+ *  its rows, deduped by `people`, in its order. Rows the sources toggles have hidden are still in `d`, so
+ *  this is every PR the board holds under that scope, not only the visible ones. */
+export function underScope(d: StateData | null, scope: string): string[] {
+  const secs = d?.sections || []
+  const prs = secs.flatMap((s) => s.prs).filter((p): p is Pr => !!p)
+  // ponytail: not you. MINE is the search for your own PRs, so its authors are you, and following yourself
+  // under your own org put a pill of your own work in your footer.
+  const me = new Set(
+    secs
+      .filter((s) => s.name === 'MINE')
+      .flatMap((s) => s.prs)
+      .filter((p): p is Pr => !!p)
+      .map((p) => p.author.toLowerCase()),
+  )
+  return people(prs.filter((p) => inScope(p, [scope]))).filter((l) => !me.has(l.toLowerCase()))
+}
+
+/** Which rule decides one axis of one posting row, as three states rather than two appearances. `via` from
+ *  the server says where the word came from; what makes it readable is whose row it is on:
+ *
+ *  - `own` — this target's own rule. An `acme/*` row's owner rule, or an `acme/api` row's repo rule.
+ *  - `owner` — no rule here; the word comes from the owner above. Only a repo row can be this.
+ *  - `none` — nobody set anything and the word is the default.
+ *
+ *  ponytail: without the third, "no arrow" meant either "set here" or "nothing set", which are opposite
+ *  answers to the only question this panel exists to answer.
+ */
+export function ruleSource(target: string, via: '' | 'repo' | 'owner'): 'own' | 'owner' | 'none' {
+  if (!via) return 'none'
+  return via === (target.endsWith('/*') ? 'owner' : 'repo') ? 'own' : 'owner'
+}
+
+/** Whether a posting row carries a rule of its own on either axis, as opposed to following or defaulting. */
+export const hasOwnRule = (r: PostingRule) =>
+  ruleSource(r.target, r.manualVia) === 'own' || ruleSource(r.target, r.autoVia) === 'own'
+
+export type PostingNode = {
+  owner: PostingRule
+  /** Every repo under it, in the order the server listed them. */
+  repos: PostingRule[]
+  /** The owner carries a rule, so it is what decides for every repo below that has none of its own. */
+  governs: boolean
+  /** Under a governing owner, the repos that still have a rule of their own -- which beats the owner's.
+   *
+   *  ponytail: kept apart so the panel can show them. Switching the owner on takes every repo rule off,
+   *  but a store written before the switch existed (the old `H` screen, or the CLI) can hold one, and a
+   *  panel that only said "all repos: you hold" drew nothing for the repo that posts anyway. Empty when
+   *  the owner does not govern: then every repo is set on its own and none is an exception. */
+  exceptions: PostingRule[]
+}
+
+/** The posting panel as a tree: an owner, then what it owns.
+ *
+ *  ponytail: a tree, not a list with markers on it. Flat rows meant "acme/*" and the three repos under it
+ *  each stated the same rule with a different decoration, and which one was in charge had to be worked out
+ *  from an arrow. An owner is a parent here, and its repos are drawn inside it.
+ *
+ *  When the owner `governs`, the repos below have nothing to set: the owner decides, so they carry no
+ *  controls. The exception is a repo the store already has a rule for — that one beats the owner, so it
+ *  keeps its controls. Hiding it would leave a rule in force with nothing on screen able to reach it.
+ */
+export function postingTree(rules: PostingRule[]): PostingNode[] {
+  const nodes = new Map<string, PostingNode>()
+  const node = (name: string) => {
+    const at = nodes.get(name)
+    if (at) return at
+    // a repo whose owner row the server did not send still gets a parent, so no repo is ever dropped
+    const made: PostingNode = {
+      owner: { target: `${name}/*`, manual: 'post', auto: 'post', manualVia: '', autoVia: '' },
+      repos: [],
+      governs: false,
+      exceptions: [],
+    }
+    nodes.set(name, made)
+    return made
+  }
+  for (const r of rules) {
+    const name = r.target.split('/')[0]
+    if (r.target.endsWith('/*')) {
+      node(name).owner = r
+      // a per-repo owner may still carry a rule -- the fallback for repos nobody listed -- and that is not "decides"
+      node(name).governs = hasOwnRule(r) && !r.perRepo
+    } else {
+      node(name).repos.push(r)
+    }
+  }
+  for (const n of nodes.values()) n.exceptions = n.governs ? n.repos.filter(hasOwnRule) : []
+  return [...nodes.values()]
 }
 
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.

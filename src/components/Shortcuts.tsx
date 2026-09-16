@@ -30,7 +30,6 @@ const KEYS: [string, [string, string][]][] = [
       ['v', 'Read the full review'],
       ['y', 'Copy the PR URL'],
       ['+', 'Request a review'],
-      ['H', 'When this repo posts a review'],
       ['Y', 'Inspect held review: discuss it, then post or drop'],
       ['␣', 'On a reviewed row: its older runs'],
     ],
@@ -54,6 +53,7 @@ const KEYS: [string, [string, string][]][] = [
       ['i', 'Refresh interval'],
       ['D', 'Show or hide draft PRs'],
       ['O', 'Sources for the TEAM section'],
+      ['F', 'Follow someone: a footer pill of what they are working on'],
     ],
   ],
   [

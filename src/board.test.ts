@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Pr, Section, StateData, Talk } from './types'
+import type { PostingRule, Pr, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, visible, walkBucket, whoIs, talkControls } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -495,6 +495,26 @@ describe('TEAM sources', () => {
     expect(inScope({ repo: 'acme/forgotten', team: '' }, ['team:core'])).toBe(false)
   })
 
+  it('does not follow you, when your own PRs are under the chip', () => {
+    const d = state([
+      { name: 'MINE', prs: [pr({ repo: 'acme/api', author: 'Me' })] },
+      { name: 'TEAM', prs: [pr({ repo: 'acme/web', author: 'amy', reviewers: '✓me' })] },
+    ])
+    expect(underScope(d, 'org:acme')).toEqual(['amy'])
+  })
+
+  it('collects everyone under one chip, once each, and nobody from a chip with no rows', () => {
+    const d = state([
+      { name: 'REVIEW REQUESTED', prs: [pr({ repo: 'Acme/api', author: 'bob', reviewers: '✓carol ·bob' })] },
+      { name: 'TEAM', prs: [pr({ repo: 'acme/web', author: 'amy' }), pr({ repo: 'other/x', author: 'dave' })] },
+    ])
+    // bob authors one and reviews it: once. dave is under another owner: not at all.
+    expect(underScope(d, 'org:acme')).toEqual(['amy', 'bob', 'carol'])
+    expect(underScope(d, 'org:other')).toEqual(['dave'])
+    expect(underScope(d, 'team:core')).toEqual([])
+    expect(underScope(null, 'org:acme')).toEqual([])
+  })
+
   it('splits TEAM into logged verdicts and OTHER, and drops an empty OTHER', () => {
     const on = { scopes: ['org:acme'] }
     const v = secs(state([{ name: 'TEAM', prs: [pr({ repo: 'acme/a', title: 'seen', status: '✓ approved' }), pr({ repo: 'acme/b', title: 'new' }), pr({ repo: 'other/c', title: 'off' })] }], on))
@@ -636,5 +656,76 @@ describe('what the review screen lets you press', () => {
     const provider = talkControls(talk({ cannotDiscuss: 'discussion needs the claude CLI', thread: [said] }), 'x')
     expect([provider.type, provider.send, provider.revise]).toEqual([false, false, false])
     expect(talkControls(null, 'x')).toEqual({ type: false, send: false, revise: false, decide: false })
+  })
+})
+
+describe('posting rows', () => {
+  it('tells an own rule from an inherited one from nothing set at all', () => {
+    // the same `via` reads differently depending on whose row carries it
+    expect(ruleSource('acme/*', 'owner')).toBe('own')
+    expect(ruleSource('acme/api', 'owner')).toBe('owner')
+    expect(ruleSource('acme/api', 'repo')).toBe('own')
+    // nothing set is its own answer, not the same as having one
+    expect(ruleSource('acme/api', '')).toBe('none')
+    expect(ruleSource('acme/*', '')).toBe('none')
+  })
+})
+
+describe('the posting tree', () => {
+  const rule = (target: string, m: ['post' | 'hold', '' | 'repo' | 'owner'], a: ['post' | 'hold', '' | 'repo' | 'owner']) =>
+    ({ target, manual: m[0], manualVia: m[1], auto: a[0], autoVia: a[1] }) as PostingRule
+  // the screenshot: acme/* holds what you run, three repos under it, one of them carved out on auto
+  const board = () => [
+    rule('acme/*', ['hold', 'owner'], ['post', '']),
+    rule('acme/api', ['hold', 'owner'], ['post', '']),
+    rule('acme/infra', ['hold', 'owner'], ['post', '']),
+    rule('acme/web', ['hold', 'owner'], ['post', 'repo']),
+  ]
+
+  it('puts each repo under the owner that owns it', () => {
+    const [acme] = postingTree(board())
+    expect(acme.owner.target).toBe('acme/*')
+    expect(acme.repos.map((r) => r.target)).toEqual(['acme/api', 'acme/infra', 'acme/web'])
+    expect(acme.governs).toBe(true)
+  })
+
+  it('says an owner with no rule of its own does not govern', () => {
+    // nothing set anywhere: the repos below are where a first rule gets set, so they keep their controls
+    const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['post', ''], ['post', ''])])
+    expect(acme.governs).toBe(false)
+    expect(acme.repos.map((r) => r.target)).toEqual(['acme/api'])
+  })
+
+  it('keeps owners apart and in the order they arrived', () => {
+    const tree = postingTree([...board(), rule('zeta/*', ['hold', 'owner'], ['post', '']), rule('zeta/one', ['hold', 'owner'], ['post', ''])])
+    expect(tree.map((n) => n.owner.target)).toEqual(['acme/*', 'zeta/*'])
+    expect(tree[1].repos.map((r) => r.target)).toEqual(['zeta/one'])
+    expect(tree[0].repos).toHaveLength(3)
+  })
+
+  it('gives a repo whose owner row never arrived a parent of its own', () => {
+    // no row is ever dropped: an owner nobody sent is built from the repo's name and governs nothing
+    const [n] = postingTree([rule('other/x', ['post', ''], ['post', ''])])
+    expect([n.owner.target, n.governs, n.repos.map((r) => r.target)]).toEqual(['other/*', false, ['other/x']])
+  })
+
+  it('keeps the repo that overrides a governing owner apart, so the panel can show it', () => {
+    const [acme] = postingTree(board())
+    // acme/web has a rule of its own on auto, which beats acme/*; the other two have nothing
+    expect(acme.repos.map(hasOwnRule)).toEqual([false, false, true])
+    expect(acme.exceptions.map((r) => r.target)).toEqual(['acme/web'])
+  })
+
+  it('does not read a per-repo owner\'s fallback rule as deciding for its repos', () => {
+    const owner = { ...rule('acme/*', ['post', ''], ['hold', 'owner']), perRepo: true }
+    const [acme] = postingTree([owner, rule('acme/api', ['post', ''], ['post', 'repo'])])
+    expect([acme.governs, acme.exceptions]).toEqual([false, []])
+    expect(postingTree([{ ...owner, perRepo: false }])[0].governs).toBe(true)
+  })
+
+  it('has no exceptions under an owner that does not govern, where every repo is set on its own', () => {
+    const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['hold', 'repo'], ['post', ''])])
+    expect(acme.governs).toBe(false)
+    expect(acme.exceptions).toEqual([])
   })
 })
