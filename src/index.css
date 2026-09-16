@@ -677,6 +677,10 @@
   .fields .pair > i { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--dim3);
                       flex-shrink: 0; width: 52px; text-align: right;
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* who ran the review; the rows under it are the scopes that answer for it */
+  .fields .axis { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--dim3);
+                  margin: 9px 0 1px; }
+  .fields .axis:first-child { margin-top: 4px; }
   .seg { display: flex; flex-shrink: 0; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
   .seg button { font: inherit; font-size: 10.5px; padding: 2px 7px; border: 0; background: var(--bg4);
                 color: var(--dim2); cursor: pointer; white-space: nowrap; }
@@ -693,6 +697,7 @@
   .rules b { font-family: var(--mono); font-weight: 500; color: var(--ink3); flex: 1; min-width: 0;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rules span { font-family: var(--mono); font-size: 9.5px; color: var(--dim3); flex-shrink: 0; }
+  .rules u { text-decoration: none; color: var(--dim2); padding-left: 1px; cursor: help; }
   .rules.none { font-size: 10.5px; color: var(--dim3); line-height: 1.4; }
 
   /* sources: the prefix is the heading, so a chip carries only the name */

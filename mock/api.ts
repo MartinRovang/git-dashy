@@ -110,9 +110,10 @@ const S = {
   // what a "no" left held back, so the rail's consent rows and its asks count are reachable in dev
   refused: [] as { kind: string; key: string; what: string }[],
   // what happens to each repo's reviews, and the ones that finished and are waiting for a key
-  posting: {} as Record<string, { manual: string; auto: string }>,
+  // one axis at a time, like the store: a repo can set `auto` and inherit `manual` from its owner
+  posting: {} as Record<string, { manual?: string; auto?: string }>,
   // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
-  postingOwners: {} as Record<string, { manual: string; auto: string }>,
+  postingOwners: {} as Record<string, { manual?: string; auto?: string }>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
   cursor: 0,
@@ -182,8 +183,9 @@ function seed() {
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
   // one repo set to hold, and a review of it already waiting, so both screens are reachable in dev
   // an owner rule carved out by a repo rule, so `o` has the case it used to get wrong
-  S.postingOwners['acme'] = { manual: 'post', auto: 'hold' }
-  S.posting['acme/web'] = { manual: 'post', auto: 'post' }
+  S.postingOwners['acme'] = { manual: 'hold', auto: 'hold' }
+  // only the auto axis, so acme/web's manual word is inherited and the table marks it
+  S.posting['acme/web'] = { auto: 'post' }
   const rr = S.rows.find((r) => r.section === 'REVIEW REQUESTED')
   if (rr) {
     rr.waiting = true
@@ -399,8 +401,20 @@ function postingOf(repo: string) {
 /** Every rule that exists, owners first — and each half sorted, the way posting_rules_json does it. */
 function postingRules() {
   const by = (a: { target: string }, b: { target: string }) => a.target.localeCompare(b.target)
-  const owners = Object.entries(S.postingOwners).map(([o, r]) => ({ target: `${o}/*`, ...r })).sort(by)
-  const repos = Object.entries(S.posting).map(([t, r]) => ({ target: t, ...r })).sort(by)
+  const owners = Object.entries(S.postingOwners)
+    .map(([o, r]) => ({ target: `${o}/*`, ...r, manualVia: 'owner', autoVia: 'owner' }))
+    .sort(by)
+  // like the server: a repo row shows the EFFECTIVE word, marked when it comes from the owner
+  const repos = Object.entries(S.posting)
+    .map(([t, r]) => {
+      const own = S.postingOwners[t.split('/')[0]]
+      const one = (axis: 'manual' | 'auto') =>
+        r[axis] ? [r[axis], 'repo'] : own?.[axis] ? [own[axis], 'owner'] : ['post', '']
+      const [manual, manualVia] = one('manual')
+      const [auto, autoVia] = one('auto')
+      return { target: t, manual, auto, manualVia, autoVia }
+    })
+    .sort(by)
   return [...owners, ...repos]
 }
 
@@ -700,10 +714,10 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const ran = str(body, 'ran')
       if (body.owner) {
         const owner = repo.split('/')[0]
-        S.postingOwners[owner] = { ...(S.postingOwners[owner] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
+        S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: str(body, 'post') }
         return json(200, { ok: true })
       }
-      S.posting[repo] = { ...(S.posting[repo] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
+      S.posting[repo] = { ...S.posting[repo], [ran]: str(body, 'post') }
       return json(200, { ok: true })
     }
     if (path === '/api/consent') {

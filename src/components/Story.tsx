@@ -46,6 +46,9 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   const [busy, setBusy] = useState(false)
   /** A check still out: the next poll tick skips rather than stacking a second one on it. */
   const inflight = useRef(false)
+  /** When the mark was last dismissed. A poll that STARTED before that answers with the shift still on
+   *  it -- the server had not been told yet -- so its answer must not raise the mark again. */
+  const dismissed = useRef(0)
 
   /** `quiet` is the poll: no skeleton, and a failed check keeps the story already on the card. */
   const load = (fresh: boolean, quiet = false) => {
@@ -54,10 +57,12 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
       setErr('')
     }
     inflight.current = true
+    const began = Date.now()
     api(`/api/story?login=${encodeURIComponent(f.login)}${fresh ? '&fresh=1' : ''}`)
       .then(async (r) => {
         if (r.ok) {
           const next: Got = await r.json()
+          if (began < dismissed.current) next.shift = ''
           setGot(next)
           setErr('')
         } else if (!quiet) setErr(await errorText(r))
@@ -85,6 +90,7 @@ export function Story({ f, i, every, dock, onPatch, onClose }: { f: Followed; i:
   /** Reading it is what clears it -- on the server too, or the next poll brings the same mark back. */
   const read = () => {
     if (!shift) return
+    dismissed.current = Date.now()
     setGot((g) => (g ? { ...g, shift: '' } : g))
     void post('/api/story/seen', { login: f.login })
   }

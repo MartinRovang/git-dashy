@@ -73,7 +73,15 @@ export type PostWord = 'post' | 'hold'
 export type PostRule = { value: PostWord; via: '' | 'repo' | 'owner'; ownerValue: PostWord }
 export type Posting = { repo: string; owner: string; manual: PostRule; auto: PostRule }
 /** Every rule on the machine, in the order web.rs builds them. */
-export type PostingRule = { target: string; manual: PostWord; auto: PostWord }
+export type PostingRule = {
+  target: string
+  manual: PostWord
+  auto: PostWord
+  /** Where the word came from: 'repo'/'owner' when this target sets it, 'owner' on a repo row that
+   *  inherits it, '' when nothing is set and the word is the default. */
+  manualVia: '' | 'repo' | 'owner'
+  autoVia: '' | 'repo' | 'owner'
+}
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 

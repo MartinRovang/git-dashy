@@ -276,48 +276,48 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           </div>
           {posting ? (
             <>
+              {/* ponytail: the same setting at two scopes, so scope is what the rows are. It read as two
+                  unrelated settings when one row said who ran the review and the other said which repos it
+                  covered -- "you ran it" next to "all of acme/* posts what auto runs". */}
               {(['manual', 'auto'] as const).map((ran) => (
                 <Fragment key={ran}>
-                  <div className="pair">
-                    <span>{ran === 'manual' ? 'you ran it' : 'auto ran it'}</span>
-                    <div className="seg" role="group">
-                      {(['post', 'hold'] as const).map((w) => (
-                        <button
-                          key={w}
-                          aria-pressed={posting[ran].value === w}
-                          title={
-                            w === 'post'
-                              ? 'the verdict goes on the PR as soon as it is written'
-                              : 'the verdict waits on disk; Y reads it and posts or drops it'
-                          }
-                          onClick={() => onPosting(ran, w, false)}
-                        >
-                          {w === 'post' ? 'post it' : 'hold it'}
-                        </button>
-                      ))}
+                  <div className="axis">reviews {ran === 'manual' ? 'YOU' : 'AUTO'} run</div>
+                  {([false, true] as const).map((owner) => (
+                    <div className="pair" key={String(owner)}>
+                      <span>{owner ? `all of ${posting.owner}/*` : 'this repo'}</span>
+                      <div className="seg" role="group">
+                        {(['post', 'hold'] as const).map((w) => {
+                          const now = owner ? posting[ran].ownerValue : posting[ran].value
+                          return (
+                            <button
+                              key={w}
+                              aria-pressed={now === w}
+                              title={
+                                w === 'post'
+                                  ? 'the verdict goes on the PR as soon as it is written'
+                                  : 'the verdict waits on disk; Y reads it and posts or drops it'
+                              }
+                              // ponytail: a press that changes nothing writes nothing. Pressing the
+                              // already-lit word on a repo with no rule of its own used to append one,
+                              // silently carving the repo out of any later owner rule.
+                              disabled={now === w && (owner || posting[ran].via !== '')}
+                              onClick={() => onPosting(ran, w, owner)}
+                            >
+                              {w === 'post' ? 'post it' : 'hold it'}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {owner ? null : (
+                        <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
+                          {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'set here' : 'default'}
+                        </i>
+                      )}
                     </div>
-                    <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
-                      {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'this repo' : 'default'}
-                    </i>
-                  </div>
-                  {/* ponytail: one per axis, and both carry aria-pressed. A single auto-only toggle left an
-                      owner-wide manual rule listed in the table below that nothing on screen could set or
-                      clear, and without aria-pressed the switch sat in its off position whatever the rule
-                      said. */}
-                  <button
-                    className="fld"
-                    aria-pressed={posting[ran].ownerValue === 'hold'}
-                    title={`the rule for every repo under ${posting.owner}, which a rule on one repo still overrides`}
-                    onClick={() => onPosting(ran, posting[ran].ownerValue === 'hold' ? 'post' : 'hold', true)}
-                  >
-                    <span>
-                      all of {posting.owner}/* {posting[ran].ownerValue === 'hold' ? 'holds' : 'posts'}{' '}
-                      {ran === 'manual' ? 'what you run' : 'what auto runs'}
-                    </span>
-                    <span className="sw" />
-                  </button>
+                  ))}
                 </Fragment>
               ))}
+              <div className="rules none">a rule on this repo wins over the owner&apos;s</div>
             </>
           ) : null}
           {rules.length ? (
@@ -325,8 +325,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               {rules.map((r) => (
                 <div key={r.target}>
                   <b>{r.target}</b>
-                  <span>you {r.manual === 'hold' ? 'hold' : 'post'}</span>
-                  <span>auto {r.auto === 'hold' ? 'holds' : 'posts'}</span>
+                  {/* an arrow means this repo sets nothing on that axis and takes its owner's word */}
+                  <span title={r.manualVia === 'owner' ? `inherited from ${r.target.split('/')[0]}/*` : ''}>
+                    you {r.manual === 'hold' ? 'hold' : 'post'}
+                    {r.manualVia === 'owner' ? <u>↑</u> : null}
+                  </span>
+                  <span title={r.autoVia === 'owner' ? `inherited from ${r.target.split('/')[0]}/*` : ''}>
+                    auto {r.auto === 'hold' ? 'holds' : 'posts'}
+                    {r.autoVia === 'owner' ? <u>↑</u> : null}
+                  </span>
                 </div>
               ))}
             </div>

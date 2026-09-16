@@ -240,7 +240,7 @@ pub fn split(out: &str) -> (Option<String>, String) {
         .filter(|s| !s.is_empty())
         .filter(|s| {
             let low = s.to_lowercase();
-            !["none", "no", "n/a", "no shift", "none.", "nothing"].contains(&low.as_str())
+            !["none", "no", "n/a", "none.", "nothing"].contains(&low.as_str())
                 && !low.starts_with("none ")
                 && !low.starts_with("no shift")
         })

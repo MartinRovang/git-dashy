@@ -883,6 +883,12 @@ fn posting_json(repo: &str) -> Value {
 }
 
 /// Every rule that exists, so nothing about this is invisible: (target, manual, auto), owners first.
+///
+/// Each word is the EFFECTIVE one, resolved the way the controls above the table resolve it, and `via`
+/// says where it came from. ponytail: it used to print an unset axis as the default, so with `a/*` holding
+/// what you run and `a/b` carrying an auto-only rule, the `a/b` row read "you post" while a manual review
+/// on a/b would in fact hold -- the table contradicting the controls, on the one screen built to make the
+/// rules visible.
 fn posting_rules_json() -> Vec<Value> {
     let p = autorev::posting();
     let mut targets: Vec<String> = p
@@ -899,19 +905,36 @@ fn posting_rules_json() -> Vec<Value> {
     targets
         .into_iter()
         .map(|t| {
-            let bare = t.strip_suffix("/*").unwrap_or(&t);
-            let (m, a) = if t.ends_with("/*") {
-                (
-                    p.manual.owners.get(bare).copied().unwrap_or_default(),
-                    p.auto.owners.get(bare).copied().unwrap_or_default(),
-                )
-            } else {
-                (
-                    p.manual.repos.get(bare).copied().unwrap_or_default(),
-                    p.auto.repos.get(bare).copied().unwrap_or_default(),
-                )
+            let bare = t.strip_suffix("/*").unwrap_or(&t).to_string();
+            // an owner row answers for itself; a repo row inherits its owner's word when it sets none
+            let one = |rules: &autorev::Rules| {
+                if t.ends_with("/*") {
+                    let v = rules.owners.get(&bare).copied().unwrap_or_default();
+                    (
+                        v,
+                        if rules.owners.contains_key(&bare) {
+                            "owner"
+                        } else {
+                            ""
+                        },
+                    )
+                } else if let Some(v) = rules.repos.get(&bare) {
+                    (*v, "repo")
+                } else {
+                    let owner = bare.split('/').next().unwrap_or("").to_string();
+                    (
+                        rules.of(&bare),
+                        if rules.owners.contains_key(&owner) {
+                            "owner"
+                        } else {
+                            ""
+                        },
+                    )
+                }
             };
-            json!({"target": t, "manual": m.word(), "auto": a.word()})
+            let (m, mv) = one(&p.manual);
+            let (a, av) = one(&p.auto);
+            json!({"target": t, "manual": m.word(), "auto": a.word(), "manualVia": mv, "autoVia": av})
         })
         .collect()
 }
@@ -2427,10 +2450,19 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold"},
-                {"target": "a/b", "manual": "post", "auto": "post"},
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner"},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "repo"},
             ]),
             "a target set on one axis still lists the other"
+        );
+
+        // an axis this repo sets nothing on must read as what WILL happen, not as the default: the
+        // table used to print "you post" here while a manual review on a/b would have held
+        autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
+        assert_eq!(
+            rules()[1],
+            json!({"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "repo"}),
+            "the owner's word, marked as inherited"
         );
 
         // a target on BOTH axes must appear once, and an owner that sorts after a repo must still
@@ -2440,9 +2472,9 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold"},
-                {"target": "zeta/*", "manual": "hold", "auto": "post"},
-                {"target": "a/b", "manual": "hold", "auto": "post"},
+                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner"},
+                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": ""},
+                {"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "repo", "autoVia": "repo"},
             ]),
             "owners first, then repos, and a/b listed once for both axes"
         );
