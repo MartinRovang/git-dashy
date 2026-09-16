@@ -789,11 +789,6 @@ pub fn whoami() -> String {
     }
 }
 
-/// The memory dir for a fact that names no repo and has no context. None in none, or in several.
-///
-/// ponytail: None for several on purpose. A general fact is true of every repo a source covers, and with
-/// two teams that is two different claims; picking one would publish to a team that never asked. It is
-/// the LAST resort now: `about` usually says which project the observation came from.
 /// One read of the bindings and one scan of the joined teams, for a caller resolving many repos.
 ///
 /// ponytail: `mine_for_teams` asked per FILE and `in_team` per FACT, and every ask reopened the
@@ -809,10 +804,12 @@ struct Teams {
 impl Teams {
     fn read() -> Teams {
         let joined = team::joined();
-        let root = config::get().teams;
+        // ponytail: through bind::team_dir itself, once per joined team, rather than a second copy of
+        // its slug -> dir rule. Which team a fact is published to is decided here; two spellings of
+        // that rule is the disagreement this module exists to refuse, and the teams are a handful.
         let dirs = joined
             .iter()
-            .map(|s| (s.to_lowercase(), root.join(s).join("memory")))
+            .filter_map(|s| bind::team_dir(s).map(|d| (s.to_lowercase(), d)))
             .collect();
         Teams {
             of: bind::resolver(),
@@ -845,7 +842,9 @@ impl Teams {
                 }
             }
         }
-        // the last resort, unchanged: in exactly one team, a general fact has one home
+        // ponytail: the LAST resort, and None for several on purpose. A general fact is true of every
+        // repo a source covers, and with two teams that is two different claims; picking one would
+        // publish to a team that never asked. `about` usually says which project it came from.
         match self.joined.as_slice() {
             [only] => (only.clone(), self.dir_of(only)),
             _ => (String::new(), None),
@@ -2522,6 +2521,36 @@ mod tests {
         assert!(!got[0].2, "the team's own file has nothing in it yet");
         assert!(team_visible("acme/api", ""));
         assert!(!team_visible("other/thing", ""), "unbound is not the team's");
+    }
+
+    /// A general fact names no repo of its own: `about` says which project it was observed in, and
+    /// with exactly one team joined that team is the last resort. With two, neither is chosen.
+    #[test]
+    fn a_general_fact_follows_its_context_then_the_one_team() {
+        let (_g, tmp) = setup();
+        a_team(tmp.path(), "org-t");
+        assert_eq!(bind::bind("acme/api", "org-t"), "");
+        std::fs::write(config::get().memory_dir.join("general.md"), "- run make lint\n").unwrap();
+
+        assert!(team_visible("", "acme/api"), "the repo it was seen in is bound");
+        assert!(team_visible("", ""), "one team joined: the last resort");
+        let got = in_team("");
+        assert!(
+            got.iter()
+                .any(|(r, f, _)| r.is_none() && f.contains("run make lint")),
+            "{got:?}"
+        );
+
+        a_team(tmp.path(), "org-two");
+        assert!(
+            !team_visible("", ""),
+            "two teams: a general fact belongs to neither"
+        );
+        assert!(team_visible("", "acme/api"), "context still names one of them");
+        assert!(
+            in_team("").iter().all(|(r, _, _)| r.is_some()),
+            "and it is not listed"
+        );
     }
 
     #[test]

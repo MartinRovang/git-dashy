@@ -191,8 +191,15 @@ fn nearest_dir(path: &Path) -> PathBuf {
     base
 }
 
-/// The git repo `dir` is in, `Ok(None)` when it is in none. Err when git could not be asked.
-fn toplevel_in(dir: &Path) -> std::io::Result<Option<PathBuf>> {
+/// The git repo `path` sits in, asked from the nearest directory that exists. `Ok(None)` when it is in
+/// none, Err when git could not be asked.
+///
+/// ponytail: one walk and one question, and the two callers answer a failed git DIFFERENTLY on
+/// purpose: here an Err refuses (see tracked_checked — a git that cannot be asked must not let memory
+/// into someone's history), while install::toplevel reads it as "no repo" and skips an ignore rule.
+/// Written out twice, that difference was an accident nobody had chosen.
+pub(crate) fn toplevel_checked(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let dir = nearest_dir(&absolute(path));
     let out = run_git(
         &["-C", &dir.to_string_lossy(), "rev-parse", "--show-toplevel"],
         GIT_TIMEOUT,
@@ -204,16 +211,6 @@ fn toplevel_in(dir: &Path) -> std::io::Result<Option<PathBuf>> {
     Ok(Some(PathBuf::from(root)).filter(|r| !r.as_os_str().is_empty()))
 }
 
-/// The git repo `path` sits in, asked from the nearest directory that exists.
-///
-/// ponytail: one walk and one question, and the two callers answer a failed git DIFFERENTLY on
-/// purpose: here an Err refuses (see tracked_checked — a git that cannot be asked must not let memory
-/// into someone's history), while install::toplevel reads it as "no repo" and skips an ignore rule.
-/// Written out twice, that difference was an accident nobody had chosen.
-pub(crate) fn toplevel_checked(path: &Path) -> std::io::Result<Option<PathBuf>> {
-    toplevel_in(&nearest_dir(&absolute(path)))
-}
-
 /// True when git would commit a file written at `path`: inside a repo and not ignored. Err when git
 /// could not be asked (missing, or hung).
 ///
@@ -223,7 +220,7 @@ pub(crate) fn toplevel_checked(path: &Path) -> std::io::Result<Option<PathBuf>> 
 pub fn tracked_checked(path: &Path, names: &[&str]) -> std::io::Result<bool> {
     let full = absolute(path);
     let base = nearest_dir(&full);
-    if toplevel_in(&base)?.is_none() {
+    if toplevel_checked(&full)?.is_none() {
         return Ok(false); // not a git repo: nothing to leak into
     }
     let base_s = base.to_string_lossy().to_string();

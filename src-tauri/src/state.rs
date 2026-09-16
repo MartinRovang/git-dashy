@@ -503,8 +503,9 @@ impl State {
     /// running for that PR, in which case nothing was started.
     ///
     /// ponytail: one definition for the three actions that start work on a row. Written out three
-    /// times they had already drifted — the held post logged nothing at all, and the pre-review
-    /// logged its result but never its start.
+    /// times, their error handling had drifted: the held post logged nothing at all, not even what it
+    /// landed. Every one of them reports its result now. Only the review logs a START, because only it
+    /// has something to say there — which model it is about to spend.
     fn start(
         &self,
         url: &str,
@@ -1171,14 +1172,24 @@ mod tests {
     fn a_job_lands_the_row_a_status_however_it_ends() {
         let s = State::new();
         let status = |s: &State| s.lock().reviews.get("u").cloned().unwrap_or_default();
+        // claimed first, as start() claims it: otherwise "it stopped spinning" asserts nothing
+        let claim = |s: &State| assert!(s.begin("u", "working..."), "the row was free");
 
+        claim(&s);
         s.run_job("u", "job", || Ok("✓ approved".into()));
         assert_eq!(status(&s), "✓ approved");
+        claim(&s);
         s.run_job("u", "job", || Err(anyhow::anyhow!("no token")));
         assert_eq!(status(&s), "error: no token");
+        claim(&s);
         s.run_job("u", "job", || panic!("boom"));
         assert_eq!(status(&s), "error: boom");
         assert!(!s.lock().running.contains("u"), "and the row stops spinning");
+
+        // the row is one line: a long failure is clipped to fit it, not wrapped into it
+        claim(&s);
+        s.run_job("u", "job", || Err(anyhow::anyhow!("{}", "x".repeat(200))));
+        assert_eq!(status(&s).chars().count(), 88);
     }
 
     /// The line the fix turns on: whatever the read does, its key must not stay in flight. Nothing
