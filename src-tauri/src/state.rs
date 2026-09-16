@@ -420,9 +420,10 @@ impl State {
     /// False when a review of this PR is already running, and nothing was started.
     /// `ran` says whose decision this was: you pressed `r`, or auto started it. A repo can settle
     /// the two differently, so the review has to carry it all the way to the post.
-    pub fn start_review(&self, pr: &Pr, ran: autorev::Ran) -> bool {
+    /// `ask` is what the person starting it typed for this one review, "" for none.
+    pub fn start_review(&self, pr: &Pr, ran: autorev::Ran, ask: &str) -> bool {
         let model = config::get().model;
-        let (me, pr) = (self.clone(), pr.clone());
+        let (me, pr, ask) = (self.clone(), pr.clone(), ask.to_string());
         if !self.begin(&pr.url, "reviewing...") {
             return false;
         }
@@ -431,7 +432,7 @@ impl State {
             // catch would leave it spinning for the rest of the session with nothing to press. Catch here
             // too, and the row says what happened.
             info!("review {} with {}", pr.url, model);
-            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran))) {
+            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran, &ask))) {
                 Ok(Ok(status)) => status,
                 Ok(Err(e)) => {
                     error!("review {} failed: {e:#}", pr.url);
@@ -484,6 +485,85 @@ impl State {
                 }
             };
             me.finish(&url, status);
+        });
+        true
+    }
+
+    /// Set a row's review status without touching whether anything is running on it.
+    pub fn set_status(&self, url: &str, status: String) {
+        self.lock().reviews.insert(url.to_string(), status);
+    }
+
+    /// Whether anything is running on this PR's row: a review, a post, or a discussion.
+    pub fn busy(&self, url: &str) -> bool {
+        in_flight(&self.lock(), url)
+    }
+
+    /// One discussion turn on a held review, or a request for a revision when `message` is None.
+    /// False when something is already running on the row, and nothing was started.
+    ///
+    /// ponytail: the row's own claim, the one a review and a post take. A post that started while the
+    /// agent was still answering would put up a verdict the conversation was about to change, and a
+    /// second turn resumed into the same session at once would interleave in it.
+    /// ponytail: your message is on disk before the model sees it, so the conversation shows it at once;
+    /// the answer is appended to the file as it is when the answer lands, and a review dropped in the
+    /// meantime is not brought back.
+    pub fn start_talk(&self, h: held::Held, message: Option<String>) -> bool {
+        let url = h.pr.url.clone();
+        let label = if message.is_some() {
+            "discussing..."
+        } else {
+            "revising..."
+        };
+        if !self.begin(&url, label) {
+            return false;
+        }
+        let mut h = h;
+        if let Some(m) = &message {
+            h.thread.push(held::Turn {
+                who: "you".into(),
+                text: m.clone(),
+                at: now(),
+            });
+            if let Err(e) = held::put(&h) {
+                error!("discussion of {url} not saved: {e:#}");
+                self.finish(&url, review::held_status(&h.verdict));
+                return false;
+            }
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| match &message {
+                Some(m) => review::discuss(&h, m).map(|a| (Some(a), None)),
+                None => review::revise(&h).map(|v| (None, Some(v))),
+            }));
+            let (repo, n) = (h.pr.repo().to_string(), h.pr.number);
+            let Some(mut now_held) = held::get(&repo, n) else {
+                // dropped while the agent was answering: nothing to add the answer to
+                me.finish(&url, String::new());
+                me.forget_review(&url);
+                return;
+            };
+            let failed = |text: String| held::Turn {
+                who: "error".into(),
+                text,
+                at: now(),
+            };
+            match outcome {
+                Ok(Ok((Some(answer), _))) => now_held.thread.push(held::Turn {
+                    who: "agent".into(),
+                    text: answer,
+                    at: now(),
+                }),
+                Ok(Ok((None, Some(v)))) => now_held.proposed = Some(v),
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => now_held.thread.push(failed(format!("{e:#}"))),
+                Err(e) => now_held.thread.push(failed(panic_text(&*e))),
+            }
+            if let Err(e) = held::put(&now_held) {
+                error!("discussion of {url} not saved: {e:#}");
+            }
+            me.finish(&url, review::held_status(&now_held.verdict));
         });
         true
     }
@@ -796,7 +876,7 @@ impl State {
         };
         for p in &new {
             // already running is not an error here: auto only skips it
-            self.start_review(p, autorev::Ran::Auto);
+            self.start_review(p, autorev::Ran::Auto, "");
         }
         let asks: Vec<&Section> = data
             .iter()
@@ -1256,6 +1336,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         };
         held::put(&h).unwrap();
 

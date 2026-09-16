@@ -909,6 +909,14 @@ fn get_posting(state: &State, query: &Query) -> Out {
             "at": h.at,
             // neither side knowing its head is not a move; only two we can compare and that differ
             "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
+            "instructions": h.verdict.instructions,
+            "thread": h.thread,
+            "proposed": h.proposed.as_ref().map(|v| json!({
+                "verdict": v.verdict, "summary": v.summary, "body": v.body,
+            })),
+            // "" when it can be discussed; otherwise the sentence the modal shows instead of a box
+            "cannotDiscuss": review::cannot_discuss(&h),
+            "busy": state.busy(&h.pr.url),
         })),
     }))
 }
@@ -978,15 +986,23 @@ fn repo_of(body: &Body) -> Option<String> {
     Some(text(body, "repo")).filter(|r| !r.is_empty())
 }
 
+/// The longest instructions or discussion message taken, in characters. A few paragraphs is the use;
+/// anything past this is a paste gone wrong, and it would ride along in every turn of the session.
+const ASK_MAX: usize = 8000;
+
 fn post_review(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
+    let ask = text(body, "ask");
+    if ask.chars().count() > ASK_MAX {
+        return Err(Fail::new(400, "instructions are too long"));
+    }
     let started = if truthy(body, "self") {
         state.start_self_review(&pr)
     } else {
-        state.start_review(&pr, autorev::Ran::Manual)
+        state.start_review(&pr, autorev::Ran::Manual, &ask)
     };
     if !started {
         return Err(Fail::new(409, "already running"));
@@ -1273,11 +1289,72 @@ fn post_posting(state: &State, body: &Body) -> Out {
     if repo.is_empty() {
         return Err(Fail::new(400, "no row selected"));
     }
+    if ["discuss", "revise", "accept", "keep"].contains(&op.as_str()) {
+        let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
+        let Some(mut h) = held::get(&repo, n) else {
+            return Err(Fail::new(404, "nothing waiting for that PR"));
+        };
+        // nothing about a held review changes while the agent is still answering about it
+        if state.busy(&h.pr.url) {
+            return Err(Fail::new(409, "the agent is still working on this review"));
+        }
+        return match op.as_str() {
+            "discuss" | "revise" => {
+                let why = review::cannot_discuss(&h);
+                if !why.is_empty() {
+                    return Err(Fail::new(409, &why));
+                }
+                let message = if op == "discuss" {
+                    let m = text(body, "text");
+                    if m.trim().is_empty() {
+                        return Err(Fail::new(400, "say something"));
+                    }
+                    if m.chars().count() > ASK_MAX {
+                        return Err(Fail::new(400, "that message is too long"));
+                    }
+                    Some(m)
+                } else {
+                    None
+                };
+                if !state.start_talk(h, message) {
+                    return Err(Fail::new(409, "the agent is still working on this review"));
+                }
+                Ok(json!({"ok": true}))
+            }
+            // ponytail: accept is the only thing that puts a revision where the post reads from, and it
+            // needs a revision to be waiting; keep throws the revision away and leaves the verdict alone
+            "accept" => {
+                let Some(v) = h.proposed.take() else {
+                    return Err(Fail::new(409, "no revision is waiting"));
+                };
+                h.verdict = v;
+                fail_if(held::put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
+                state.set_status(&h.pr.url, review::held_status(&h.verdict));
+                Ok(json!({"ok": true}))
+            }
+            _ => {
+                h.proposed = None;
+                fail_if(held::put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
+                Ok(json!({"ok": true}))
+            }
+        };
+    }
     if op == "release" || op == "discard" {
         let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
         let Some(h) = held::get(&repo, n) else {
             return Err(Fail::new(404, "nothing waiting for that PR"));
         };
+        // ponytail: a drop waits for whatever is running on the row, as a release already does through
+        // start_post_held. Dropped mid-discussion, the file came straight back when the answer was
+        // written to it.
+        if op == "discard" && state.busy(&h.pr.url) {
+            return Err(Fail::new(409, "a review of this PR is already running"));
+        }
+        // ponytail: the verdict you read is the verdict that goes up. With a revision waiting, which one
+        // you meant to post is a question, and posting the older one silently is the wrong answer to it.
+        if op == "release" && h.proposed.is_some() {
+            return Err(Fail::new(409, "accept or keep the revision first"));
+        }
         if op == "discard" {
             fail_if(
                 held::drop(&repo, n)
@@ -2415,6 +2492,139 @@ mod tests {
         );
     }
 
+    /// A held review discussed end to end, in demo mode so no model runs: the message is on disk before the
+    /// answer, a revision waits beside the verdict, a release is refused until it is settled, and only an
+    /// accept puts it where the post reads from.
+    #[test]
+    fn a_held_review_can_be_discussed_revised_and_the_revision_accepted() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, state) = served();
+        let (repo, n) = (pr().repo().to_string(), pr().number);
+        held::put(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            session: "5e3ae8e0-544e-4128-88af-fe301d354aae".into(),
+            verdict: crate::types::Verdict {
+                verdict: "request_changes".into(),
+                instructions: "focus on auth".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+        let url = format!("{base}/api/posting");
+        let act = |b: Value| post(&url, b, &token);
+        let read = || get(&format!("{url}?repo={repo}&number={n}"), Some(&token)).1["held"].clone();
+        let settle = || {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while state.busy(&pr().url) {
+                assert!(std::time::Instant::now() < until, "the turn never finished");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+
+        let h = read();
+        assert_eq!(
+            (h["cannotDiscuss"].as_str(), h["busy"].as_bool()),
+            (Some(""), Some(false))
+        );
+        assert_eq!(h["instructions"], "focus on auth", "shown to you, locally");
+
+        let (code, body) = act(json!({"op": "discuss", "repo": repo, "number": n, "text": "  "}));
+        assert_eq!((code, body["error"].as_str()), (400, Some("say something")));
+
+        assert_eq!(
+            act(json!({"op": "discuss", "repo": repo, "number": n, "text": "why is auth blocking?"})).0,
+            200
+        );
+        settle();
+        let who: Vec<String> = read()["thread"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["who"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(who, ["you", "agent"]);
+
+        let (code, body) = act(json!({"op": "accept", "repo": repo, "number": n}));
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (409, Some("no revision is waiting"))
+        );
+
+        assert_eq!(act(json!({"op": "revise", "repo": repo, "number": n})).0, 200);
+        settle();
+        assert_eq!(read()["proposed"]["verdict"], "comment");
+        assert_eq!(
+            read()["verdict"],
+            "request_changes",
+            "not over the verdict until accepted"
+        );
+
+        let (code, body) = act(json!({"op": "release", "repo": repo, "number": n}));
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (409, Some("accept or keep the revision first"))
+        );
+
+        assert_eq!(act(json!({"op": "accept", "repo": repo, "number": n})).0, 200);
+        let h = read();
+        assert_eq!(
+            (h["verdict"].as_str(), h["proposed"].is_null()),
+            (Some("comment"), true)
+        );
+        assert_eq!(
+            held::get(&repo, n).unwrap().verdict.instructions,
+            "focus on auth",
+            "the accepted revision still says what it was asked"
+        );
+
+        // nothing changes, and nothing is dropped, while something runs on the row
+        state.lock().running.insert(pr().url.clone());
+        for op in ["discuss", "revise", "accept", "keep"] {
+            let (code, _) = act(json!({"op": op, "repo": repo, "number": n, "text": "x"}));
+            assert_eq!(code, 409, "{op}");
+        }
+        let (code, body) = act(json!({"op": "discard", "repo": repo, "number": n}));
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (409, Some("a review of this PR is already running"))
+        );
+        assert!(held::get(&repo, n).is_some());
+        state.lock().running.remove(&pr().url);
+
+        // a review that ran anywhere but the claude CLI says why instead of starting
+        let mut other = held::get(&repo, n).unwrap();
+        other.model = "openrouter:x-ai/grok-4".into();
+        held::put(&other).unwrap();
+        let (code, body) = act(json!({"op": "discuss", "repo": repo, "number": n, "text": "hi"}));
+        assert_eq!(code, 409);
+        assert!(body["error"].as_str().unwrap().contains("needs the claude CLI"));
+    }
+
+    #[test]
+    fn instructions_past_the_cap_are_refused_before_anything_starts() {
+        let _g = autorev::test_lock();
+        let (base, token, state) = served();
+        let long = "x".repeat(ASK_MAX + 1);
+        let (code, body) = post(
+            &format!("{base}/api/review"),
+            json!({"url": pr().url, "ask": long}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("instructions are too long"))
+        );
+        assert!(!state.busy(&pr().url), "no review was started");
+    }
+
     /// A release that could not start must say so. It answered ok, the flash said "posting…", and
     /// nothing went up.
     #[test]
@@ -2436,6 +2646,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         })
         .unwrap();
         // the row is marked from the store, by name
@@ -2501,6 +2712,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         })
         .unwrap();
         let j = get(&format!("{base}/api/state"), Some(&token)).1;
@@ -2544,6 +2756,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         })
         .unwrap();
 
@@ -2578,6 +2791,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         })
         .unwrap();
         // the hold path puts its verdict on the row, the way finish() does

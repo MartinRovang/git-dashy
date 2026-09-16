@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{Pr, Verdict};
 
 /// Everything the post needs, so posting never re-runs the model.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Held {
     pub pr: Pr,
     pub model: String,
@@ -31,6 +31,30 @@ pub struct Held {
     #[serde(default)]
     pub hello: String,
     /// When the review finished, seconds since the epoch.
+    #[serde(default)]
+    pub at: f64,
+    /// The claude session the review ran in, "" for any other backend or a review held before this
+    /// was saved. A discussion resumes it, so the agent still has everything it read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session: String,
+    /// The discussion so far, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thread: Vec<Turn>,
+    /// A revised verdict the agent wrote after the discussion, waiting for a yes or a no.
+    ///
+    /// ponytail: beside the verdict, never over it. `verdict` is what posts, and the verdict you read
+    /// has to be the verdict that goes up; a revision replaces it only when accepted, and a release
+    /// is refused while one is waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<Verdict>,
+}
+
+/// One message in a discussion of a held review.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Turn {
+    /// "you", "agent", or "error" when a turn failed.
+    pub who: String,
+    pub text: String,
     #[serde(default)]
     pub at: f64,
 }
@@ -117,6 +141,18 @@ pub fn drop(repo: &str, n: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_review_held_before_discussions_still_reads_and_a_quiet_one_writes_no_new_keys() {
+        let old = r#"{"pr":{"number":7,"title":"T","url":"u","updatedAt":"2020-01-01T00:00:00Z","repository":{"nameWithOwner":"a/b","name":"b"}},"model":"opus","verdict":{"verdict":"approve"},"hello":"","at":1.0}"#;
+        let h: Held = serde_json::from_str(old).expect("a file from before this change");
+        assert!(h.session.is_empty() && h.thread.is_empty() && h.proposed.is_none());
+        let back = serde_json::to_string(&h).unwrap();
+        for key in ["session", "thread", "proposed", "instructions"] {
+            assert!(!back.contains(&format!("\"{key}\"")), "{key} in {back}");
+        }
+    }
+
     use crate::types::{Login, Repository};
 
     fn fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
@@ -147,6 +183,7 @@ mod tests {
             },
             hello: "Reviewing with opus".into(),
             at,
+            ..Default::default()
         }
     }
 

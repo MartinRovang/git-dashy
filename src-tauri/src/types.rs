@@ -146,6 +146,13 @@ pub struct Verdict {
     /// Facts the review proposes for memory.
     #[serde(default)]
     pub remember: Vec<String>,
+    /// What the person running the review told it, "" when nothing.
+    ///
+    /// ponytail: on the verdict, and deliberately NOT copied into LogEntry. The review log is pushed to
+    /// the team the repo is bound to, and these are private: they are kept in the held file, which never
+    /// leaves this machine, and never reach the PR or a teammate.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instructions: String,
     /// What sort of change the PR is: one of config::KINDS, "other" when the model strays.
     #[serde(default)]
     pub kind: String,
