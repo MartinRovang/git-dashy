@@ -787,6 +787,7 @@
   /* the pane's database graph: the board graph's nodes and links, in a fixed-height box */
   .graph.dbg { flex: none; height: 300px; margin-top: 8px; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden;
                --label: 1; --k: 1; }
+  .modal .graph.dbg { height: min(70vh, 640px); }
   .graph.dbg .halos { pointer-events: none; }
   .graph.dbg line.ref { stroke: var(--dim2); stroke-dasharray: 4 3; }
   .graph.dbg .gnode.hub { cursor: grab; }

@@ -10,6 +10,8 @@ import { ReviewTalk } from './components/ReviewTalk'
 import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
+import { DbGraph } from './components/DbGraph'
+import { clean } from './dbgraph'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
@@ -597,6 +599,13 @@ export default function App() {
         if (detail?.url === p.url && detail.review)
           viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
+      db: () => {
+        // same rule as view: the detail, and so the db, belongs to the selected PR
+        if (detail?.url !== p.url || !detail.review?.db || !clean(detail.review.db).tables.length) return
+        const db = detail.review.db
+        const m = open({ title: `database of #${p.number}`, sub: p.repo, wide: true, body: () => <DbGraph db={db} number={p.number} />, foot: [['q', 'close', () => close(m)]] })
+        m.keys = { Escape: () => close(m) }
+      },
       code: () => {
         setSel(p.uid)
         openCode()
@@ -699,6 +708,7 @@ export default function App() {
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
     if (k === 'v') return one(() => doAct('view'))
+    if (k === 'B') return one(() => doAct('db'))
     if (k === 'r' && p) return one(() => void review(p))
     if (k === 'R' && p) return one(() => reviewWith(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
