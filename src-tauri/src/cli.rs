@@ -1373,6 +1373,22 @@ fn dashboard(cli: Cli) -> i32 {
         );
         return 0;
     }
+    if let Some(i) = cli.interval.filter(|i| !config::interval_ok(*i)) {
+        println!(
+            "gitdashy: --interval must be {}s to a day, not {i}",
+            config::INTERVAL_MIN
+        );
+        return 0;
+    }
+    // ponytail: the same rule the file and the settings screen hold a model to. Taking it here and
+    // dropping it on the next load is the worse answer: it works until you restart.
+    if let Some(m) = cli.model.as_deref().filter(|m| !config::model_ok(m)) {
+        println!(
+            "gitdashy: --model must be a name of 1 to 60 characters, not {}",
+            pyrepr(m)
+        );
+        return 0;
+    }
     config::update(|c| {
         if let Some(i) = cli.instructions {
             c.instructions = i;
@@ -1577,6 +1593,22 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("gitdashy").chain(args.iter().copied())).unwrap()
+    }
+
+    /// A flag outside the range is refused BEFORE anything is written, so the config still holds what
+    /// it held. The check sits above the token check, so this never reaches the server.
+    #[test]
+    fn a_bad_interval_flag_is_refused_before_anything_is_saved() {
+        let _g = crate::autorev::test_lock();
+        config::update(|c| {
+            c.settings = None; // never read this machine's real settings file
+            c.interval = 300;
+        });
+        assert_eq!(run(vec!["--interval".into(), "0".into()]), 0);
+        assert_eq!(config::get().interval, 300, "a refused flag must not be saved");
+        let model = config::get().model;
+        assert_eq!(run(vec!["--model".into(), String::new()]), 0);
+        assert_eq!(config::get().model, model);
     }
 
     /// --list is a question. It must answer before anything in this command writes, whatever else

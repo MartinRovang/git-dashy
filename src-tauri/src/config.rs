@@ -30,6 +30,11 @@ pub const KINDS: &[&str] = &[
     "deps",
 ];
 pub const INTERVALS: &[u64] = &[60, 120, 300, 600, 900];
+/// The refresh interval anything may set, whatever the picker offers: 30s to a day.
+pub const INTERVAL_MIN: u64 = 30;
+pub const INTERVAL_MAX: u64 = 86400;
+/// The page carries the palettes; this is what the picker offers.
+pub const THEMES: &[&str] = &["pencil", "dashy", "dracula", "gruvbox", "nord"];
 pub const SUBS: &[&str] = &["all", "open", "off"];
 /// Hours of REVIEWED history to show; `None` = all.
 pub const WINDOWS: &[Option<u64>] = &[Some(1), Some(3), Some(6), Some(24), Some(168), Some(720), None];
@@ -324,14 +329,20 @@ pub fn load() {
 
 /// A saved file over a Config. Pure, and `env` is passed in, so this is the same code the tests run.
 ///
+/// ponytail: a value outside what the settings screen would accept is IGNORED and the default stands,
+/// the way normalise() already drops a checkbox that no longer exists. The file is not always written
+/// by us — it is edited by hand, merged, or left behind by an older version — and `"interval": 0` cost
+/// a refresh every ten seconds against the rate limit. The default may come from an env var, so this
+/// leaves the value alone rather than writing a constant over it.
+///
 /// ponytail: this was the body of `load()`, which writes a process-global behind a lock and so was
 /// never driven by a test — every `if let Some(v)` here could be deleted and the suite stayed green.
 /// It is a function now because that is the only way the precedence below can be asserted.
 pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
-    if let (Some(v), false) = (saved.model, env("PRS_MODEL")) {
-        c.model = v;
+    if let (Some(v), false) = (saved.model.filter(|v| model_ok(v)), env("PRS_MODEL")) {
+        c.model = v.trim().to_string(); // trimmed on the way in, as post_settings does
     }
-    if let Some(v) = saved.interval {
+    if let Some(v) = saved.interval.filter(|v| interval_ok(*v)) {
         c.interval = v;
     }
     if let Some(v) = saved.subs {
@@ -361,16 +372,25 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.seen {
         c.seen = v;
     }
-    if let (Some(v), false) = (saved.depth, env("PRS_DEPTH")) {
+    if let (Some(v), false) = (
+        saved.depth.filter(|v| DEPTHS.contains(&v.as_str())),
+        env("PRS_DEPTH"),
+    ) {
         c.depth = v;
     }
-    if let (Some(v), false) = (saved.effort, env("PRS_EFFORT")) {
+    if let (Some(v), false) = (
+        saved.effort.filter(|v| EFFORTS.contains(&v.as_str())),
+        env("PRS_EFFORT"),
+    ) {
         c.effort = v;
     }
     if let (Some(v), false) = (saved.notify, env("PRS_NOTIFY")) {
         c.notify = v;
     }
-    if let (Some(v), false) = (saved.theme, env("PRS_THEME")) {
+    if let (Some(v), false) = (
+        saved.theme.filter(|v| THEMES.contains(&v.as_str())),
+        env("PRS_THEME"),
+    ) {
         c.theme = v;
     }
     if let (Some(v), false) = (saved.voice, env("PRS_VOICE")) {
@@ -380,6 +400,18 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
         c.hunter = v;
     }
     normalise(c);
+}
+
+/// What a value has to be before anything takes it, wherever it came from: the settings file in
+/// `apply`, the settings screen in `web::post_settings`. One definition, so the two cannot drift.
+pub fn interval_ok(v: u64) -> bool {
+    (INTERVAL_MIN..=INTERVAL_MAX).contains(&v)
+}
+
+/// Model names vary (openrouter's contain a slash), so only length is checked.
+pub fn model_ok(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty() && name.chars().count() <= 60
 }
 
 /// Drop checklist boxes that no longer exist; voice is never empty. The one place that rule lives.
@@ -517,6 +549,43 @@ mod tests {
         // no env var guards these, so the file still reaches them
         assert_eq!(c.sub, "open");
         assert!(!c.keyhints);
+    }
+
+    /// A file nobody validated: every value outside what the settings screen accepts is ignored and
+    /// the default stands. `"interval": 0` is the one that cost something — a refresh every ten seconds.
+    #[test]
+    fn a_bad_saved_value_leaves_the_default() {
+        let d = Config::default();
+        let json = r#"{
+            "model":"","interval":0,"depth":"nope","effort":"turbo","theme":"neon",
+            "subs":"open"
+        }"#;
+        let mut c = Config::default();
+        apply(&mut c, serde_json::from_str(json).unwrap(), &|_| false);
+        assert_eq!(c.model, d.model);
+        assert_eq!(c.interval, d.interval);
+        assert_eq!(c.depth, d.depth);
+        assert_eq!(c.effort, d.effort);
+        assert_eq!(c.theme, d.theme);
+        assert_eq!(c.sub, "open", "a good value in the same file still lands");
+
+        // the far end of each range, which is where an off-by-one would hide
+        let json = format!(
+            r#"{{"model":"{}","interval":{}}}"#,
+            "x".repeat(61),
+            INTERVAL_MAX + 1
+        );
+        let mut c = Config::default();
+        apply(&mut c, serde_json::from_str(&json).unwrap(), &|_| false);
+        assert_eq!(c.model, d.model);
+        assert_eq!(c.interval, d.interval);
+
+        // and the edges themselves are taken
+        let json = format!(r#"{{"model":"{}","interval":{}}}"#, "x".repeat(60), INTERVAL_MAX);
+        let mut c = Config::default();
+        apply(&mut c, serde_json::from_str(&json).unwrap(), &|_| false);
+        assert_eq!(c.model, "x".repeat(60));
+        assert_eq!(c.interval, INTERVAL_MAX);
     }
 
     #[test]
