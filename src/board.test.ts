@@ -495,9 +495,17 @@ describe('TEAM sources', () => {
     expect(inScope({ repo: 'acme/forgotten', team: '' }, ['team:core'])).toBe(false)
   })
 
+  it('does not follow you, when your own PRs are under the chip', () => {
+    const d = state([
+      { name: 'MINE', prs: [pr({ repo: 'acme/api', author: 'Me' })] },
+      { name: 'TEAM', prs: [pr({ repo: 'acme/web', author: 'amy', reviewers: '✓me' })] },
+    ])
+    expect(underScope(d, 'org:acme')).toEqual(['amy'])
+  })
+
   it('collects everyone under one chip, once each, and nobody from a chip with no rows', () => {
     const d = state([
-      { name: 'MINE', prs: [pr({ repo: 'Acme/api', author: 'bob', reviewers: '✓carol ·bob' })] },
+      { name: 'REVIEW REQUESTED', prs: [pr({ repo: 'Acme/api', author: 'bob', reviewers: '✓carol ·bob' })] },
       { name: 'TEAM', prs: [pr({ repo: 'acme/web', author: 'amy' }), pr({ repo: 'other/x', author: 'dave' })] },
     ])
     // bob authors one and reviews it: once. dave is under another owner: not at all.
@@ -678,6 +686,13 @@ describe('the posting tree', () => {
     // acme/web has a rule of its own on auto, which beats acme/*; the other two have nothing
     expect(acme.repos.map(hasOwnRule)).toEqual([false, false, true])
     expect(acme.exceptions.map((r) => r.target)).toEqual(['acme/web'])
+  })
+
+  it('does not read a per-repo owner\'s fallback rule as deciding for its repos', () => {
+    const owner = { ...rule('acme/*', ['post', ''], ['hold', 'owner']), perRepo: true }
+    const [acme] = postingTree([owner, rule('acme/api', ['post', ''], ['post', 'repo'])])
+    expect([acme.governs, acme.exceptions]).toEqual([false, []])
+    expect(postingTree([{ ...owner, perRepo: false }])[0].governs).toBe(true)
   })
 
   it('has no exceptions under an owner that does not govern, where every repo is set on its own', () => {

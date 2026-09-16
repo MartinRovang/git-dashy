@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { PostingRule, StateData } from '../types'
-import { counts, postingTree, ruleSource } from '../board'
+import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
@@ -417,6 +417,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                         ) : (
                           <div className="rules none">no repos under {owner} on the board</div>
                         )}
+                        {/* per repo, the owner's rule is still the fallback: say what a repo with no PR here follows */}
+                        {!node.governs && hasOwnRule(node.owner) ? (
+                          <div className="rules none">a repo not listed here follows {owner}/*: {postWords(node.owner)}</div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

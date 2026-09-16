@@ -438,10 +438,10 @@ and a switch inside each one picks one of two modes:
   they are: `all repos: you hold | auto posts`.
 - **Each repo set on its own.** Shut, the row says `per repo · 3`; open it for each repo's two settings.
 
-Flipping the switch never changes what happens to a review already on the board. Turning it on holds a
-kind of review for the whole owner if any of its repos held it, and takes off every repo rule under
-that owner, since one left behind would beat the owner. Turning it off gives each repo the words it had
-from the owner. A held review
+Turning the switch on can make a repo hold that posted, never the reverse: a kind of review is held for
+the whole owner if the owner or any repo under it held it, and every repo rule under that owner comes
+off, since one left behind would beat the owner. Turning it off changes nothing: each repo on the board
+keeps the words it had, and the owner's rule stays as the fallback for a repo with no PR on the board. A held review
 is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
 it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by
@@ -566,10 +566,10 @@ above it.
 
 A pill also marks itself when someone changes direction, and has its own mark, separate from the one for
 new pushes. Every rewritten story is compared against the one before it, in the same
-model call, and the bar is a *different problem* — even alongside the old one. Picking up an auth rewrite
+model call, and the bar is a different problem, even one taken up alongside the old work. Picking up an auth rewrite
 next to the export job is a change of direction; moving from export pagination to export retries is more of
 the same export work, and says nothing. Only the first kind marks the pill, and the pop-up opens with one
-line saying what is new. Opening it is what clears the mark, and nothing else does: a mark raised while you
+line saying what is new. Only opening the pop-up clears the mark: a mark raised while you
 were away survives later rewrites until you have seen it.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through

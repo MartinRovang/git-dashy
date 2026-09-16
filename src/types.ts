@@ -80,6 +80,9 @@ export type PostingRule = {
    *  inherits it, '' when nothing is set and the word is the default. */
   manualVia: '' | 'repo' | 'owner'
   autoVia: '' | 'repo' | 'owner'
+  /** Owner rows only: switched to each repo on its own. Its rule, if any, is then only the fallback for a
+   *  repo that has none, not a setting that decides for all of them. */
+  perRepo?: boolean
 }
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }

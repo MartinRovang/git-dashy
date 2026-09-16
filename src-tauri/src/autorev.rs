@@ -189,6 +189,9 @@ impl Rules {
 pub struct Posting {
     pub manual: Rules,
     pub auto: Rules,
+    /// Owners switched to "each repo on its own". Their rule, if any, stays in the store as the fallback for
+    /// a repo that has none of its own -- so a repo nobody has listed keeps holding what the owner held.
+    pub per_repo: std::collections::HashSet<String>,
 }
 
 impl Posting {
@@ -215,6 +218,17 @@ pub fn posting() -> Posting {
         let Ok(Value::Object(e)) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        // the owner's mode: a line of its own, which neither the post_* loop below nor scope() reads
+        if let (Some(Value::String(o)), Some(Value::Bool(b))) = (e.get("owner"), e.get(PER_REPO)) {
+            let o = owner_key(o);
+            if !o.is_empty() {
+                if *b {
+                    out.per_repo.insert(o);
+                } else {
+                    out.per_repo.remove(&o);
+                }
+            }
+        }
         for ran in [Ran::Manual, Ran::Auto] {
             let Some(word) = e.get(ran.field()).and_then(|v| v.as_str()) else {
                 continue;
@@ -281,6 +295,16 @@ fn append_raw(fields: &[(&str, &str)], ran: Ran, word: &str) -> String {
     bind::append_to(store(), &all, None)
 }
 
+/// The field that switches an owner to "each repo on its own" (true) or back (false).
+pub const PER_REPO: &str = "per_repo";
+
+fn set_per_repo(owner: &str, on: bool, before: &Posting) -> String {
+    if before.per_repo.contains(owner) == on {
+        return String::new();
+    }
+    bind::append_to(store(), &[("owner", owner)], Some((PER_REPO, on)))
+}
+
 /// Turn owner control on or off for `owner`: one setting for every repo under it, or one per repo.
 ///
 /// ponytail: one operation, not a sequence of set and clear calls from the page. The switch means "the
@@ -289,13 +313,14 @@ fn append_raw(fields: &[(&str, &str)], ran: Ran, word: &str) -> String {
 ///
 /// - ON: the owner takes one word per kind of review -- `hold` if any repo under it holds that kind, on the
 ///   board or ruled in the store, else `post` -- and every repo rule under the owner is taken off, on the
-///   board or not. One setting for all means all. ponytail: "any repo in the store", not only the board.
+///   board or not. ponytail: "any repo in the store", not only the board.
 ///   The rules taken off include repos with no PR on the board today; judging the word from the board
 ///   alone cleared a repo's `hold` and its next PR posted.
 /// - OFF: each repo on the board under the owner is given the word it had from the owner as a rule of its
-///   own, then the owner rule is taken off. Nothing on the board changes; each repo is now set on its own.
-///   A kind of review the owner never had a rule for is left alone: its repos already follow the default,
-///   and pinning that default on each of them would only add lines that change nothing.
+///   own, and the owner is marked per repo. ponytail: the owner's rule is KEPT, as the fallback. OFF cannot
+///   pin a repo it has never seen, so taking the rule away sent every repo with no PR on the board today
+///   back to the default -- a held owner's quiet repo started posting its next review. A kind of review
+///   the owner never had a rule for is left alone: its repos already follow the default.
 pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
     let o = owner_key(owner);
     if o.is_empty() {
@@ -316,7 +341,10 @@ pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
                 .repos
                 .iter()
                 .any(|(k, v)| k.split('/').next() == Some(o.as_str()) && *v == Post::Hold);
-            let word = if held_in_store || under.iter().any(|r| rules.of(r) == Post::Hold) {
+            // the owner's own word counts too: switched per repo, it is still the fallback that holds a repo
+            // nobody listed, and switching back on must not quietly let those post
+            let owner_holds = rules.owners.get(&o) == Some(&Post::Hold);
+            let word = if owner_holds || held_in_store || under.iter().any(|r| rules.of(r) == Post::Hold) {
                 Post::Hold
             } else {
                 Post::Now
@@ -343,16 +371,14 @@ pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
                     e = set_post(r, ran, rules.of(r));
                 }
             }
-            if e.is_empty() {
-                e = clear_post_owner(&o, ran);
-            }
             e
         };
         if !failed.is_empty() {
             return failed;
         }
     }
-    String::new()
+    // last: the mode flips only once every rule it relies on is written
+    set_per_repo(&o, !on, &before)
 }
 
 /// Take the rule off one repo, so it goes back to following its owner. A repo with no rule is a no-op.
@@ -893,7 +919,12 @@ mod tests {
             .collect();
         assert_eq!(govern("acme", false, &board), "");
         let p = posting();
-        assert!(!p.auto.owners.contains_key("acme") && !p.manual.owners.contains_key("acme"));
+        assert!(p.per_repo.contains("acme"), "the owner is per repo now");
+        assert_eq!(
+            p.auto.owners.get("acme"),
+            Some(&Post::Hold),
+            "its rule stays, as the fallback"
+        );
         // each repo now owns the word, and nothing on the board changed as the switch flipped
         assert_eq!(p.auto.repos.get("acme/api"), Some(&Post::Hold));
         let now: Vec<Post> = board
@@ -942,11 +973,54 @@ mod tests {
             "no manual rule was pinned: the owner had none"
         );
         assert_eq!(p.auto.repos.len(), 2, "auto was pinned on both");
+        assert_eq!(lines(), before + 3, "two repo pins and the mode, nothing else");
+    }
+
+    #[test]
+    fn owner_control_off_keeps_a_hold_for_a_repo_with_no_pr_on_the_board() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        assert_eq!(govern("acme", false, &["acme/api".to_string()]), "");
+        let p = posting();
         assert_eq!(
-            lines(),
-            before + 3,
-            "two repo pins and the owner clear, nothing else"
+            p.of("acme/old", Ran::Auto),
+            Post::Hold,
+            "never listed, still held"
         );
+        assert_eq!(p.auto.repos.get("acme/api"), Some(&Post::Hold), "listed, pinned");
+    }
+
+    #[test]
+    fn the_owner_mode_is_its_own_line_and_the_last_one_wins() {
+        let (_g, _d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        govern("acme", false, &[]);
+        assert!(posting().per_repo.contains("acme"));
+        govern("acme", true, &[]);
+        let p = posting();
+        assert!(!p.per_repo.contains("acme"), "on again");
+        assert_eq!(p.auto.owners.get("acme"), Some(&Post::Hold));
+        // the auto-arm reader does not see it, and it does not see the arm flag
+        set_owner("acme", true);
+        govern("acme", false, &[]);
+        assert!(scope().armed("acme/api"));
+        assert!(posting().per_repo.contains("acme"));
+    }
+
+    #[test]
+    fn switching_to_the_mode_it_is_already_in_writes_nothing() {
+        let (_g, d) = fresh();
+        set_post_owner("acme", Ran::Auto, Post::Hold);
+        let lines = || {
+            std::fs::read_to_string(d.path().join("autorev"))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        govern("acme", false, &[]);
+        let once = lines();
+        govern("acme", false, &[]);
+        assert_eq!(lines(), once);
     }
 
     #[test]

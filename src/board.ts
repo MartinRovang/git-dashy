@@ -19,7 +19,18 @@ export function inScope(p: { repo: string; team: string }, scopes: string[]): bo
  *  its rows, deduped by `people`, in its order. Rows the sources toggles have hidden are still in `d`, so
  *  this is every PR the board holds under that scope, not only the visible ones. */
 export function underScope(d: StateData | null, scope: string): string[] {
-  return people((d?.sections || []).flatMap((s) => s.prs).filter((p): p is Pr => !!p && inScope(p, [scope])))
+  const secs = d?.sections || []
+  const prs = secs.flatMap((s) => s.prs).filter((p): p is Pr => !!p)
+  // ponytail: not you. MINE is the search for your own PRs, so its authors are you, and following yourself
+  // under your own org put a pill of your own work in your footer.
+  const me = new Set(
+    secs
+      .filter((s) => s.name === 'MINE')
+      .flatMap((s) => s.prs)
+      .filter((p): p is Pr => !!p)
+      .map((p) => p.author.toLowerCase()),
+  )
+  return people(prs.filter((p) => inScope(p, [scope]))).filter((l) => !me.has(l.toLowerCase()))
 }
 
 /** Which rule decides one axis of one posting row, as three states rather than two appearances. `via` from
@@ -85,7 +96,8 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
     const name = r.target.split('/')[0]
     if (r.target.endsWith('/*')) {
       node(name).owner = r
-      node(name).governs = hasOwnRule(r)
+      // a per-repo owner may still carry a rule -- the fallback for repos nobody listed -- and that is not "decides"
+      node(name).governs = hasOwnRule(r) && !r.perRepo
     } else {
       node(name).repos.push(r)
     }

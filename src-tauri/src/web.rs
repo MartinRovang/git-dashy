@@ -961,7 +961,14 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
             };
             let (m, mv) = one(&p.manual);
             let (a, av) = one(&p.auto);
-            json!({"target": t, "manual": m.word(), "auto": a.word(), "manualVia": mv, "autoVia": av})
+            let mut row =
+                json!({"target": t, "manual": m.word(), "auto": a.word(), "manualVia": mv, "autoVia": av});
+            // an owner switched to per repo still has its rule, as the fallback: the page must not read that
+            // rule as "this owner decides"
+            if t.ends_with("/*") {
+                row["perRepo"] = json!(p.per_repo.contains(&bare));
+            }
+            row
         })
         .collect()
 }
@@ -2512,7 +2519,7 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
+                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "", "perRepo": false},
                 {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
             ]),
             "every repo on the board, with its owner, whether or not a rule names it"
@@ -2525,7 +2532,7 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner"},
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner", "perRepo": false},
                 {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "repo"},
             ]),
             "a target set on one axis still lists the other"
@@ -2548,8 +2555,8 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner"},
-                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": ""},
+                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
+                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "", "perRepo": false},
                 {"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "repo", "autoVia": "repo"},
             ]),
             "owners first, then repos, and a/b listed once for both axes"
@@ -2559,6 +2566,47 @@ mod tests {
     /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
     /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
     /// already there whenever a repo row had carved the owner out.
+    /// The switch through HTTP changes what the payload lists: on, the owner decides; off, each repo keeps
+    /// its word and the owner's rule stays as the fallback, marked per repo.
+    #[test]
+    fn the_owner_switch_through_the_route_changes_what_the_payload_lists() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, _state) = served();
+        let url = format!("{base}/api/posting");
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
+
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Hold);
+        assert_eq!(
+            post(&url, json!({"op": "govern", "owner": "a", "on": true}), &token).0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner"},
+            ]),
+            "on: the owner holds what a/b held, and a/b follows it"
+        );
+        assert_eq!(
+            post(&url, json!({"op": "govern", "owner": "a", "on": false}), &token).0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": true},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "repo", "autoVia": "repo"},
+            ]),
+            "off: a/b owns its words, and the owner keeps its rule for a repo nobody listed"
+        );
+    }
+
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
         let _g = autorev::test_lock();

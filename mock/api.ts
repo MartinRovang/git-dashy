@@ -124,6 +124,8 @@ const S = {
   posting: {} as Record<string, { manual?: string; auto?: string }>,
   // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
   postingOwners: {} as Record<string, { manual?: string; auto?: string }>,
+  /** Owners switched to each repo on its own; their rule stays as the fallback. */
+  perRepo: {} as Record<string, boolean>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
   ticks: 0,
@@ -433,6 +435,7 @@ function postingRules() {
         auto: r.auto || 'post',
         manualVia: r.manual ? 'owner' : '',
         autoVia: r.auto ? 'owner' : '',
+        perRepo: !!S.perRepo[o],
       }
     })
     .sort(by)
@@ -752,30 +755,30 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const op = str(body, 'op')
       const key = `${repo}#${body.number ?? ''}`
       if (op === 'govern') {
-        // like autorev::govern: ON takes `hold` if any repo on the board held that kind and clears every
-        // repo rule under the owner; OFF gives each repo on the board its word, then clears the owner
+        // like autorev::govern: ON holds a kind if the owner or any repo under it (board or store) holds it, and
+        // clears every repo rule under it; OFF pins each repo on the board and keeps the owner's rule as the
+        // fallback, marking the owner per repo
         if (typeof body.on !== 'boolean') return json(400, { error: 'govern needs on: true or on: false' })
         const owner = str(body, 'owner').replace(/\/\*$/, '').toLowerCase()
         if (!owner || owner.includes('/')) return json(400, { error: `${str(body, 'owner')} is not an owner` })
         const under = [...new Set(S.rows.map((r) => r.repo))].filter((r) => r.split('/')[0] === owner)
+        const stored = Object.keys(S.posting).filter((r) => r.split('/')[0] === owner)
         for (const ran of ['manual', 'auto'] as const) {
-          const of = (r: string) => S.posting[r]?.[ran] ?? S.postingOwners[owner]?.[ran] ?? 'post'
+          const own = S.postingOwners[owner]?.[ran]
+          const of = (r: string) => S.posting[r]?.[ran] ?? own ?? 'post'
           if (body.on) {
-            const word = under.some((r) => of(r) === 'hold') ? 'hold' : 'post'
+            const word = own === 'hold' || [...under, ...stored].some((r) => of(r) === 'hold') ? 'hold' : 'post'
             S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: word }
-            for (const r of Object.keys(S.posting)) {
-              if (r.split('/')[0] !== owner) continue
+            for (const r of stored) {
               const next = { ...S.posting[r] }
               delete next[ran]
               S.posting[r] = next
             }
-          } else {
+          } else if (own) {
             for (const r of under) S.posting[r] = { ...S.posting[r], [ran]: of(r) }
-            const next = { ...S.postingOwners[owner] }
-            delete next[ran]
-            S.postingOwners[owner] = next
           }
         }
+        S.perRepo[owner] = !body.on
         return json(200, { ok: true })
       }
       if (op === 'discard' || op === 'release') {

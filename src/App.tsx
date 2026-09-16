@@ -54,8 +54,9 @@ export default function App() {
       setFlash(`nobody on the board under ${scope}`)
       return
     }
-    const { added, left } = followAll(followed, who)
-    setFollowed((f) => followAll(f, who).next)
+    // one computation for both, so the flash always describes the list that was written
+    const { next, added, left } = followAll(followed, who)
+    setFollowed(() => next)
     setFlash(
       left
         ? `following ${added} from ${scope}; ${left} more did not fit, the limit is ${FOLLOW_MAX}`
