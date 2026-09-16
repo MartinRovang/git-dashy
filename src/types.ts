@@ -72,6 +72,19 @@ export type Waiting = { kind: string; key: string; what: string }
 /** One message in a discussion of a held review. */
 export type Turn = { who: 'you' | 'agent' | 'error'; text: string; at: number }
 
+/** The conversation about a saved review: the same shape for a held review and a pre-review. */
+export type Talk = {
+  /** What the person who ran it typed for it; private, never posted. */
+  instructions: string
+  thread: Turn[]
+  /** A revision waiting for a yes or a no. The review stays what it was until it is accepted. */
+  proposed: { verdict: string; summary: string; body: string } | null
+  /** "" when it can be discussed, else why not. */
+  cannotDiscuss: string
+  /** The agent is answering, or something else runs on the row: nothing changes until it lands. */
+  busy: boolean
+}
+
 /** A finished review waiting for a keypress, as /api/posting returns it. */
 export type HeldReview = {
   verdict: string
@@ -80,15 +93,7 @@ export type HeldReview = {
   model: string
   at: number
   moved: boolean
-  /** What the person who ran it typed for it; private, never posted. */
-  instructions: string
-  thread: Turn[]
-  /** A revision waiting for a yes or a no. What posts is `body` until it is accepted. */
-  proposed: { verdict: string; summary: string; body: string } | null
-  /** "" when it can be discussed, else why not. */
-  cannotDiscuss: string
-  /** The agent is answering, or the review is posting: nothing changes until it lands. */
-  busy: boolean
+  talk: Talk
 }
 
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }

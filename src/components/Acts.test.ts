@@ -98,7 +98,7 @@ describe('acts: what one PR offers', () => {
   it('says what the pre-review would do, so a stale one is not silently reopened', () => {
     const label = (over: Partial<Row>) => one(row({ section: 'MINE', ...over }), 'pre')?.[2]
     expect(label({})).toBe('Pre-review')
-    expect(label({ pre: { at: 1, moved: false } })).toBe('Read the pre-review')
+    expect(label({ pre: { at: 1, moved: false } })).toBe('Inspect pre-review')
     expect(label({ pre: { at: 1, moved: true } })).toBe('Re-run the pre-review')
   })
 

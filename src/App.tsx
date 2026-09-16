@@ -5,7 +5,7 @@ import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
-import { HeldReview } from './components/HeldReview'
+import { ReviewTalk } from './components/ReviewTalk'
 import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed } from './stories'
 import { Pane } from './components/Pane'
@@ -403,11 +403,20 @@ export default function App() {
         return
       }
       const got = await r.json()
-      const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
-      const copy = async () => setFlash(await copyText(got.text, 'the pre-review'))
-      m.keys!.y = copy
-      m.foot!.unshift(['y', 'copy', copy, 'go'])
-      repaint()
+      // the text copied is what is on screen now, which an accepted revision changes
+      let text: string = got.text
+      const copy = async () => setFlash(await copyText(text, 'the pre-review'))
+      const m = open({
+        title: `pre-review of #${p.number}`,
+        sub: `${got.path} · never posted`,
+        wide: true,
+        body: () => <ReviewTalk source={{ kind: 'pre', url: p.url }} onFlash={setFlash} onText={(t) => (text = t)} />,
+        foot: [
+          ['y', 'copy', copy, 'go'],
+          ['Esc', 'close', () => close(m)],
+        ] as Foot[],
+      })
+      m.keys = { Escape: () => close(m), y: copy }
       return
     }
     if (!(await confirm(p.pre ? `#${p.number} changed since its pre-review. Run again?` : `Pre-review #${p.number}? Nothing is posted.`))) return
@@ -555,7 +564,7 @@ export default function App() {
       title: `waiting to post — ${p.repo}#${p.number}`,
       sub: `${d.held.model} · nothing is on the PR yet`,
       wide: true,
-      body: () => <HeldReview repo={p.repo} number={p.number} onFlash={setFlash} />,
+      body: () => <ReviewTalk source={{ kind: 'held', repo: p.repo, number: p.number }} onFlash={setFlash} />,
       foot: [
         // ponytail: closed only once the post has started. The server refuses while the agent is still
         // answering or a revision waits, and a modal that had already shut left the reason in a flash

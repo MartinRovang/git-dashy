@@ -23,7 +23,7 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
     out.push([
       'p',
       '',
-      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Read the pre-review' : 'Pre-review',
+      p.pre?.moved ? 'Re-run the pre-review' : p.pre ? 'Inspect pre-review' : 'Pre-review',
       p.pre?.moved ? 'the PR moved since' : 'nothing posted',
       p.busy,
       'pre',

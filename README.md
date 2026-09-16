@@ -110,7 +110,7 @@ button somewhere on the page.
 | right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens, `2` `Tab` among them |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
-| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again inspects it in the app — where you can discuss it with the agent — and offers a fresh one once the PR has changed since |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
 | `R` | the same, with instructions for the agent first: what to focus on, what to leave alone. They stay on this machine and are never posted |
@@ -448,6 +448,11 @@ mind, **revise the review** asks it to write the verdict again; the revision wai
 and replaces it only if you accept it, and posting is refused while one is waiting — so the verdict you
 read is still the verdict that goes up. A review that ran on `openrouter:` or `local:` cannot be
 discussed yet: there is no session to go back to.
+
+A pre-review is discussed the same way, from `p`. The conversation is kept beside it, in a
+`.talk.json` next to its `.md` under `~/.prs_reviews`, never in the markdown itself, since that file is
+read as it is. An accepted revision rewrites the markdown but keeps the file's time, so a push made
+after the pre-review still shows as one. Running the pre-review again starts a new conversation.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by
 something that may never arrive.
 
