@@ -1007,7 +1007,7 @@ const ASK_MAX: usize = 8000;
 const TALK_OPS: [&str; 4] = ["discuss", "revise", "accept", "keep"];
 
 /// One of TALK_OPS on a held review or a pre-review. Both routes come here, so the two cannot drift.
-fn talk(state: &State, on: review::Talk, mut h: held::Held, op: &str, body: &Body) -> Out {
+fn talk(state: &State, on: review::Talk, h: held::Held, op: &str, body: &Body) -> Out {
     // nothing about a saved review changes while the agent is still answering about it
     if state.busy(&h.pr.url) {
         return Err(Fail::new(409, "the agent is still working on this review"));
@@ -1036,20 +1036,42 @@ fn talk(state: &State, on: review::Talk, mut h: held::Held, op: &str, body: &Bod
             Ok(json!({"ok": true}))
         }
         // ponytail: accept is the only thing that puts a revision where the review is read from, and it
-        // needs a revision to be waiting; keep throws the revision away and leaves the review alone
-        "accept" => {
-            let Some(v) = h.proposed.take() else {
-                return Err(Fail::new(409, "no revision is waiting"));
-            };
-            h.verdict = v;
-            fail_if(on.accept(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
-            state.set_status(&h.pr.url, on.status(&h.verdict));
-            Ok(json!({"ok": true}))
-        }
+        // needs a revision to be waiting; keep throws the revision away and leaves the review alone. Both under
+        // the row's claim, on the file as it is then: a turn landing between the read and the write would
+        // otherwise be written over by this copy.
         _ => {
-            h.proposed = None;
-            fail_if(on.put(&h).err().map(|e| e.to_string()).unwrap_or_default())?;
-            Ok(json!({"ok": true}))
+            let url = h.pr.url.clone();
+            if !state.claim(&url, "saving...") {
+                return Err(Fail::new(409, "the agent is still working on this review"));
+            }
+            let Some(mut h) = on.get(h.pr.repo(), h.pr.number) else {
+                state.release(&url, String::new());
+                state.forget_review(&url);
+                return Err(Fail::new(404, "nothing waiting for that PR"));
+            };
+            let before = on.status(&h.verdict);
+            let done = if op == "accept" {
+                match h.proposed.take() {
+                    None => Err("no revision is waiting".to_string()),
+                    Some(v) => {
+                        h.verdict = v;
+                        on.accept(&h).map_err(|e| e.to_string())
+                    }
+                }
+            } else {
+                h.proposed = None;
+                on.put(&h).map_err(|e| e.to_string())
+            };
+            match done {
+                Ok(()) => {
+                    state.release(&url, on.status(&h.verdict));
+                    Ok(json!({"ok": true}))
+                }
+                Err(e) => {
+                    state.release(&url, before);
+                    Err(Fail::new(409, &e))
+                }
+            }
         }
     }
 }
@@ -2771,6 +2793,11 @@ mod tests {
         })
         .unwrap();
         std::fs::set_permissions(&md, std::fs::Permissions::from_mode(0o444)).unwrap();
+        // root writes a read-only file anyway, so there is nothing to test there
+        if std::fs::OpenOptions::new().write(true).open(&md).is_ok() {
+            std::fs::set_permissions(&md, std::fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
 
         let (code, _) = post(
             &format!("{base}/api/prereview"),

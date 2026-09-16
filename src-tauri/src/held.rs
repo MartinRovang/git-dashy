@@ -90,10 +90,15 @@ pub fn put(h: &Held) -> Result<PathBuf> {
     std::fs::create_dir_all(dir())?;
     // ponytail: a temp file renamed over. The screen polls this file every 1.5s while a turn runs, and every
     // turn rewrites it; a read that caught a half-written file saw no held review at all.
-    let tmp = p.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(h)?)?;
-    std::fs::rename(&tmp, &p)?;
+    write_atomic(&p, serde_json::to_string_pretty(h)?.as_bytes())?;
     Ok(p)
+}
+
+/// Write `bytes` to a temp file beside `p` and rename it over, so a reader never sees half of it.
+pub fn write_atomic(p: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, p)
 }
 
 /// The held review for one PR, if there is one.

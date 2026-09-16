@@ -211,13 +211,6 @@ pub fn evict<K: Eq + std::hash::Hash, V>(cache: &mut HashMap<K, V>, drop: impl F
     cache.retain(|k, _| !drop(k));
 }
 
-/// True while a review or pre-review of this PR is running.
-///
-/// ponytail: membership, not a suffix. The status channel also carries a truncated stderr line, so
-/// sniffing for "..." meant an error whose last line happened to end in one would pin the UI at a 50ms
-/// timeout, count as a running agent, block the key from ever retrying that PR, and survive the stale
-/// sweep, permanently, on wording nobody controls. The set is written by the two functions that start
-/// work and cleared by the two that finish it; nothing has to be parsed.
 /// What a finished discussion turn leaves in the saved review: the answer or the failure appended, or the
 /// revision set beside the verdict. `now` is the review as it is on disk when the turn lands.
 ///
@@ -246,6 +239,13 @@ pub fn land(
     Some(h)
 }
 
+/// True while a review or pre-review of this PR is running.
+///
+/// ponytail: membership, not a suffix. The status channel also carries a truncated stderr line, so
+/// sniffing for "..." meant an error whose last line happened to end in one would pin the UI at a 50ms
+/// timeout, count as a running agent, block the key from ever retrying that PR, and survive the stale
+/// sweep, permanently, on wording nobody controls. The set is written by the two functions that start
+/// work and cleared by the two that finish it; nothing has to be parsed.
 pub fn in_flight(inner: &Inner, url: &str) -> bool {
     inner.running.contains(url)
 }
@@ -517,6 +517,17 @@ impl State {
         true
     }
 
+    /// Claim a row for a short write that must not interleave with a turn: accepting or keeping a revision.
+    /// False when anything is already running on it.
+    pub fn claim(&self, url: &str, label: &str) -> bool {
+        self.begin(url, label)
+    }
+
+    /// Let go of a claim, leaving `status` on the row.
+    pub fn release(&self, url: &str, status: String) {
+        self.finish(url, status)
+    }
+
     /// Set a row's review status without touching whether anything is running on it.
     pub fn set_status(&self, url: &str, status: String) {
         self.lock().reviews.insert(url.to_string(), status);
@@ -546,7 +557,14 @@ impl State {
         if !self.begin(&url, label) {
             return false;
         }
-        let mut h = h;
+        // ponytail: the file as it is NOW, under the claim. The caller read it before claiming the row, and a
+        // turn that landed in between was on disk but not in that copy -- appending to the copy wrote over the
+        // answer that had just arrived.
+        let Some(mut h) = on.get(h.pr.repo(), h.pr.number) else {
+            self.finish(&url, String::new());
+            self.forget_review(&url);
+            return false;
+        };
         if let Some(m) = &message {
             h.thread.push(held::Turn {
                 who: "you".into(),
@@ -994,6 +1012,57 @@ fn answered_by(inner: &Inner) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A message sent from a copy read before a turn landed must not write over that turn: the claim re-reads.
+    #[test]
+    fn a_message_from_a_stale_copy_keeps_the_answer_that_landed_first() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+        });
+        let state = State::default();
+        let pr = Pr {
+            number: 7,
+            url: "https://github.com/acme/api/pull/7".into(),
+            repository: crate::types::Repository {
+                name_with_owner: "acme/api".into(),
+                name: "api".into(),
+            },
+            ..Default::default()
+        };
+        let stale = held::Held {
+            pr: pr.clone(),
+            model: "opus".into(),
+            session: "5e3ae8e0-544e-4128-88af-fe301d354aae".into(),
+            ..Default::default()
+        };
+        // on disk, an answer landed after `stale` was read
+        let mut landed = stale.clone();
+        landed.thread.push(held::Turn {
+            who: "agent".into(),
+            text: "the answer that landed".into(),
+            at: 1.0,
+        });
+        held::put(&landed).unwrap();
+
+        assert!(state.start_talk(review::Talk::Held, stale, Some("and then?".into())));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy(&pr.url) {
+            assert!(std::time::Instant::now() < until, "the turn never finished");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let texts: Vec<String> = held::get("acme/api", 7)
+            .unwrap()
+            .thread
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        assert_eq!(texts[0], "the answer that landed", "{texts:?}");
+        assert_eq!(texts[1], "and then?");
+        assert_eq!(texts.len(), 3, "and the new answer after it: {texts:?}");
+    }
 
     #[test]
     fn a_turn_lands_on_the_review_as_it_is_and_never_brings_a_dropped_one_back() {

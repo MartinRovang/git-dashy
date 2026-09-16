@@ -211,8 +211,9 @@ without it.
 
 For one review rather than all of them, `R` asks for instructions before it starts. They go into the
 system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
-else and cannot override them. They are private: kept in the held review on this machine, never in
-the review body, the opening comment, or the review log a team pulls.
+else and cannot override them. They are private: kept in the held review on this machine, and never in the opening comment or the review
+log a team pulls. The reviewer is told not to quote or mention them, and a review that repeats a line of them
+word for word is held instead of posted, so you read it before its author does.
 
 Reviews run with `--safe-mode`, so the reviewer sees no `CLAUDE.md`, skills, hooks or MCP servers from
 your machine — only the prompt, one read-only command, and a short built-in review lens: state
@@ -445,9 +446,9 @@ it or drops it.
 so the agent still has everything it read and can use its tools again: ask why a finding is blocking,
 or show it where it was wrong. Nothing said there is posted. When the conversation has changed its
 mind, **revise the review** asks it to write the verdict again; the revision waits beside the original
-and replaces it only if you accept it, and posting is refused while one is waiting — so the verdict you
+and replaces it only if you accept it, and posting is refused while one is waiting, so the verdict you
 read is still the verdict that goes up. Reviewing a held PR again (`r`) replaces the held review,
-conversation included — it is a new review in a new session. A review that ran on `openrouter:` or `local:` cannot be
+conversation included. It is a new review in a new session. A review that ran on `openrouter:` or `local:` cannot be
 discussed yet: there is no session to go back to.
 
 A pre-review is discussed the same way, from `p`. The conversation is kept beside it, in a
