@@ -684,7 +684,8 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                     ("at", &at),
                     ("verdict", &p.verdict),
                     ("tag", &tag),
-                    ("body", &p.body),
+                    // what with_db_note added is ours, not the model's: left in, the model copies it and it doubles
+                    ("body", p.body.split(DB_NOTE).next().unwrap_or_default()),
                 ],
             )
         })
@@ -795,6 +796,36 @@ fn memory_lines(s: &str) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(String::from)
         .collect()
+}
+
+const DB_NOTE: &str = "\n\n### Database risks\n";
+
+/// The db section's risks, on the body: the pane draws them from `db`, but only the body reaches the PR.
+/// ponytail: risks only, the tables stay in the pane's graph. Model output, so any non-string is skipped.
+pub fn with_db_note(mut v: Verdict) -> Verdict {
+    let s = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let risks: Vec<String> =
+        v.db.as_ref()
+            .and_then(|d| d.get("risks"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|r| !s(r, "text").is_empty())
+            .map(|r| {
+                let kind = match s(r, "kind") {
+                    k if k.is_empty() => "RISK".to_string(),
+                    k => k.to_uppercase(),
+                };
+                match s(r, "loc").replace('`', "'") {
+                    l if l.is_empty() => format!("- **{kind}**: {}", s(r, "text")),
+                    l => format!("- **{kind}** `{l}`: {}", s(r, "text")),
+                }
+            })
+            .collect();
+    if !risks.is_empty() {
+        v.body += &format!("{DB_NOTE}{}", risks.join("\n"));
+    }
+    v
 }
 
 /// The adaptive rule: when the reviewer chose the depth, the body says which and why.
@@ -958,7 +989,7 @@ fn verdict(
     v.depth = c.depth.clone();
     v.effort = c.effort.clone();
     v.instructions = ask.trim().to_string();
-    Ok((with_depth_note(v, &c.depth), sc.team, sc.db))
+    Ok((with_depth_note(with_db_note(v), &c.depth), sc.team, sc.db))
 }
 
 /// A new session id for a review on `model`: every claude review gets one, so it can be discussed later;
@@ -1094,7 +1125,7 @@ fn revised(from: &Verdict, mut v: Verdict) -> Verdict {
     v.instructions = from.instructions.clone();
     v.remember = Vec::new();
     // under adaptive depth the review's body ended with the depth it chose, and so does its revision
-    with_depth_note(v, &from.depth)
+    with_depth_note(with_db_note(v), &from.depth)
 }
 
 /// (written_at, moved_since) for this PR's pre-review. (0.0, false) when there is none.
@@ -1459,11 +1490,18 @@ mod tests {
         };
         let answer = Verdict {
             body: "revised".into(),
+            db: Some(serde_json::json!({"risks": [{"kind": "lock", "text": "long lock"}]})),
             depth_used: "high".into(),
             depth_reason: "touches auth".into(),
             ..Default::default()
         };
         let v = revised(&from, answer);
+        assert_eq!(v.body.matches("### Database risks").count(), 1);
+        assert!(
+            v.body.find("### Database risks") < v.body.find("_Dashy reviewed"),
+            "{}",
+            v.body
+        );
         assert!(
             v.body
                 .ends_with("_Dashy reviewed at **high** depth: touches auth_"),
@@ -2069,6 +2107,26 @@ Hope that helps! {not json}"#;
             tagged(r#"{"verdict": "approve", "kind": " Fix"}"#),
             ("fix".into(), false)
         );
+    }
+
+    #[test]
+    fn db_risks_reach_the_body_and_junk_does_not() {
+        let v = Verdict {
+            body: "b".into(),
+            db: Some(serde_json::json!({"risks": [
+                {"kind": "mismatch", "loc": "property_check.py:57", "text": "nullable modality raises"},
+                {"kind": "other", "text": "UNION ALL may return two rows"},
+                {"kind": "index", "loc": "a`b.sql", "text": "no index"},
+                {"kind": "lock", "loc": "x.sql"},
+                7
+            ]})),
+            ..Default::default()
+        };
+        assert_eq!(
+            with_db_note(v.clone()).body,
+            "b\n\n### Database risks\n- **MISMATCH** `property_check.py:57`: nullable modality raises\n- **OTHER**: UNION ALL may return two rows\n- **INDEX** `a'b.sql`: no index"
+        );
+        assert_eq!(with_db_note(Verdict { db: None, ..v }).body, "b");
     }
 
     #[test]

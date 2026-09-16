@@ -5,7 +5,7 @@ import { drag } from 'd3-drag'
 import { forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity } from 'd3-zoom'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { build, CHANGE_TONE, type Link, type Node } from '../dbgraph'
 import type { DbImpact } from '../types'
 
@@ -15,7 +15,12 @@ const RADIUS = { pr: 12, table: 10, column: 4.5 }
 const tone = (n: Node) => (n.kind === 'pr' ? 'var(--pink)' : CHANGE_TONE[n.change] || 'var(--dim)')
 type Placed = Link & { source: Node; target: Node }
 
-export function DbGraph({ db, number }: { db: DbImpact; number: number }) {
+/** `locked`: the wheel scrolls past the graph until a click in it, and again once the pointer leaves, so
+ *  scrolling the sidebar does not get caught by the zoom halfway down. */
+export function DbGraph({ db, number, locked = false }: { db: DbImpact; number: number; locked?: boolean }) {
+  const [live, setLive] = useState(!locked)
+  const liveRef = useRef(live)
+  liveRef.current = live
   const key = useMemo(() => JSON.stringify([db, number]), [db, number])
   const svgRef = useRef<SVGSVGElement>(null)
 
@@ -146,6 +151,7 @@ export function DbGraph({ db, number }: { db: DbImpact; number: number }) {
     ro.observe(svg)
     const z = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.4, 3])
+      .filter((e) => (e.type === 'wheel' ? liveRef.current : !e.ctrlKey && !e.button))
       .on('zoom', ({ transform }) => {
         world.attr('transform', transform.toString())
         svg.style.setProperty('--k', String(transform.k))
@@ -161,7 +167,12 @@ export function DbGraph({ db, number }: { db: DbImpact; number: number }) {
   }, [key])
 
   return (
-    <div className="graph dbg">
+    <>
+    <div
+      className="graph dbg"
+      onPointerDown={() => setLive(true)}
+      onPointerLeave={() => locked && setLive(false)}
+    >
       <svg ref={svgRef} role="img" aria-label="tables this PR touches">
         <defs>
           {Object.entries(CHANGE_TONE).map(([c, t]) => (
@@ -182,5 +193,15 @@ export function DbGraph({ db, number }: { db: DbImpact; number: number }) {
         </g>
       </svg>
     </div>
+      <div className="dblegend mono">
+        {['added', 'altered', 'dropped', 'written', 'read'].map((c) => (
+          <span key={c} style={{ color: CHANGE_TONE[c] }}>
+            ● {c}
+          </span>
+        ))}
+        <span>┄ foreign key</span>
+        <span>{live ? 'drag · scroll to zoom · hover' : 'click to zoom · drag · hover'}</span>
+      </div>
+    </>
   )
 }
