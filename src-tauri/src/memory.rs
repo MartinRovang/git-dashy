@@ -207,6 +207,9 @@ pub fn append_self(repo: &str, text: &str) -> Vec<String> {
         }
     }
     history_();
+    for _ in &fresh {
+        crate::learning::record("draft", repo, "pre-review");
+    }
     rewrite_counted(&self_path(repo), &items);
     fresh
 }
@@ -1163,7 +1166,7 @@ pub fn cross_check(repo: &str, model: &str) -> Vec<String> {
         }
         let ids: HashSet<&String> = a.ids.iter().chain(&b.ids).collect();
         if rows(r).iter().any(|d| d.fact == a.fact) && ids.len() as u32 >= PROMOTE_AT {
-            promote_locked(r, &a.fact);
+            promote_locked(r, &a.fact, "teammate");
             promoted.push(a.fact.clone());
         }
     }
@@ -1996,6 +1999,12 @@ pub fn write_drafts(repo: Option<&str>, items: &[Draft]) {
 /// earlier guess as evidence and agree with itself: the count has to come from rediscovery, not recall.
 /// That is the whole difference between measuring durability and keeping a tally.
 pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
+    append_as(repo, text, about, "review")
+}
+
+/// `append`, saying where the observations came from for the learning chart: "review", or "session" for a
+/// fact an agent session filed with `gitdashy remember`.
+pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<String> {
     let _g = guard();
     let r = opt(repo);
     let proposed = proposed(text);
@@ -2027,11 +2036,17 @@ pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
                     d.ids.push(rid.clone());
                 }
             }
-            None => items.push(Draft {
-                count: 1 + bonus,
-                ids: vec![rid.clone()],
-                fact,
-            }),
+            None => {
+                // a draft that promotes at once (a pre-review bonus) is recorded as the fact it becomes
+                if 1 + bonus < PROMOTE_AT {
+                    crate::learning::record("draft", repo, source);
+                }
+                items.push(Draft {
+                    count: 1 + bonus,
+                    ids: vec![rid.clone()],
+                    fact,
+                })
+            }
         }
     }
     let promoted: Vec<String> = items
@@ -2044,6 +2059,7 @@ pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
     for t in &promoted {
         append_line(&path(r, None), t);
         pool(r, t, about);
+        crate::learning::record("fact", repo, "seen twice");
     }
     let left: Vec<Draft> = items.into_iter().filter(|d| d.count < PROMOTE_AT).collect();
     write_drafts(r, &left);
@@ -2249,14 +2265,15 @@ fn drop_locked(repo: Option<&str>, fact: &str) -> bool {
 /// repos only: pool checks team_visible.
 pub fn promote(repo: Option<&str>, fact: &str) -> Option<PathBuf> {
     let _g = guard();
-    Some(promote_locked(repo, fact))
+    Some(promote_locked(repo, fact, "hand"))
 }
 
-fn promote_locked(repo: Option<&str>, fact: &str) -> PathBuf {
+fn promote_locked(repo: Option<&str>, fact: &str, source: &str) -> PathBuf {
     drop_locked(repo, fact);
     if !already_known(repo.unwrap_or(""), fact) {
         append_line(&path(repo, None), fact);
         pool(repo, fact, "");
+        crate::learning::record("fact", repo.unwrap_or(""), source);
     }
     path(repo, None)
 }

@@ -1030,6 +1030,14 @@ fn get_posting(state: &State, query: &Query) -> Out {
     Ok(out)
 }
 
+/// Every learning event on this machine, for the Knowledge chart. The page buckets and filters them.
+///
+/// ponytail: the events, not the counts. The chart's filters (kind, team, repo, person, day or week) all apply
+/// to the same few hundred rows, so the page recomputes on each change instead of asking again.
+fn get_learning(_state: &State, _q: &Query) -> Out {
+    Ok(json!({"events": crate::learning::events()}))
+}
+
 fn get_dream(_state: &State, _q: &Query) -> Out {
     let mut j = job("dream");
     if let Some(result) = j["result"].as_object_mut() {
@@ -1987,6 +1995,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
         "/api/posting" => get_posting,
+        "/api/learning" => get_learning,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
@@ -2380,6 +2389,29 @@ mod tests {
             );
         }
         assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
+    }
+
+    #[test]
+    fn the_learning_route_needs_the_token_and_sends_events_without_their_text() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.learning = d.path().join("learning.jsonl");
+            c.memory_dir = d.path().join("not-a-repo");
+            c.teams = d.path().join("no-teams");
+        });
+        crate::learning::record("draft", "acme/api", "review");
+        let (base, token, _state) = served();
+        assert_eq!(get(&format!("{base}/api/learning"), None).0, 401);
+        let (code, j) = get(&format!("{base}/api/learning"), Some(&token));
+        assert_eq!(code, 200);
+        assert_eq!(j["events"].as_array().unwrap().len(), 1);
+        assert_eq!(j["events"][0]["repo"], "acme/api");
+        assert!(
+            j["events"][0].get("fact").is_none(),
+            "the fact's text never leaves the machine's memory"
+        );
+        config::update(|c| c.learning = std::path::PathBuf::new());
     }
 
     #[test]

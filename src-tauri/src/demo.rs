@@ -167,6 +167,7 @@ pub fn install() {
         c.self_dir = root.join("prs-demo-reviews");
         c.reports = root.join("prs-demo-reports");
         c.held_dir = root.join("prs-demo-held");
+        c.learning = root.join("prs-demo-learning.jsonl");
         c.backups = root.join("backups");
         c.registry = root.join("mirrors");
         c.bindings = root.join("bindings");

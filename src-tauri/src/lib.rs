@@ -15,6 +15,7 @@ pub mod heartbeat;
 pub mod held;
 pub mod install;
 pub mod knowledge;
+pub mod learning;
 pub mod llm;
 pub mod log;
 pub mod memory;
