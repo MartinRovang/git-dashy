@@ -1729,9 +1729,6 @@ pub fn setup(repo: &str, name: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Tests that touch the global config take this; the pure ones do not need it.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn sh(cwd: &Path, args: &[&str]) -> String {
         let r = git(cwd, args);
         assert!(r.ok(), "git {args:?} at {}: {}", cwd.display(), r.stderr);
@@ -1862,22 +1859,26 @@ mod tests {
 
     #[test]
     fn connect_reads_a_dash_leading_url_as_a_url_not_an_option() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         assert_eq!(start("Shared", "d", ""), "");
         // git has to reach the fetch, which names the URL. Read as an option, it never gets there.
         let err = connect("shared", "--mirror=push");
         assert!(err.contains("--mirror=push"), "{err}");
+        set_error(String::new()); // as above: a failure this test wanted is not the next one's
     }
 
     #[test]
     fn clone_reads_a_dash_leading_repo_as_a_repo_not_an_option() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         // the '@' passes it through untouched, so git sees it exactly as typed
         let err = clone("--upload-pack=nope@x", &t.path().join("dest"));
         assert!(err.contains("'--upload-pack=nope@x' does not exist"), "{err}");
+        // ponytail: ERROR is a second global, and this test deliberately fills it. Left behind, it is
+        // what the next test asserting a clean error() reads — the failure was in that test, not here.
+        set_error(String::new());
     }
 
     #[test]
@@ -1909,7 +1910,7 @@ mod tests {
 
     #[test]
     fn starting_a_team_needs_no_remote_and_pins_its_branch() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         assert_eq!(start("Org Mem", "the org", ""), "");
@@ -1959,7 +1960,7 @@ mod tests {
 
     #[test]
     fn a_team_can_live_somewhere_else_and_be_linked() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         let at = t.path().join("elsewhere");
@@ -1980,7 +1981,7 @@ mod tests {
 
     #[test]
     fn write_info_round_trips_and_launders() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         assert_eq!(write_info("nope", "x", "", None), "not in nope");
@@ -2067,6 +2068,9 @@ mod tests {
 
     #[test]
     fn push_dir_commits_without_a_remote_and_says_why_not() {
+        // ponytail: ERROR is process-global like the config, and this asserts on it. Without the lock
+        // it reads whatever the last failing push or clone in another test left there (#134).
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         let d = t.path().join("d");
         std::fs::create_dir_all(&d).unwrap();
@@ -2087,6 +2091,7 @@ mod tests {
 
     #[test]
     fn a_pull_records_on_the_checkout_whether_it_landed() {
+        let _l = crate::config::test_lock(); // asserts on ERROR, and fills it: see above
         let t = tempfile::tempdir().unwrap();
         let remote_ = t.path().join("remote.git");
         sh(
@@ -2118,7 +2123,7 @@ mod tests {
 
     #[test]
     fn connect_pushes_and_setup_joins_what_was_pushed() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         let remote_ = t.path().join("remote.git");
@@ -2167,7 +2172,7 @@ mod tests {
 
     #[test]
     fn migration_refuses_what_it_cannot_prove_safe() {
-        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         assert_eq!(migrate(), ""); // nothing to migrate
@@ -2210,6 +2215,7 @@ mod tests {
 
     #[test]
     fn a_remote_call_is_bounded() {
+        let _l = crate::config::test_lock(); // fills ERROR through note(), like the two above
         let r = remote(&["sleep", "5"], None, Some(0));
         assert_eq!(r.code, 1);
         assert!(r.stderr.contains("timed out after 0s"));

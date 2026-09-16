@@ -492,21 +492,13 @@ pub fn set_owner(owner: &str, on: bool) -> String {
     append(&[("owner", &o)], on)
 }
 
-/// The one lock for tests that repoint `config.autorev`, which is process-global. Two locks would
-/// let web.rs and cli.rs point each other's reads at the wrong tempdir, intermittently.
-#[cfg(test)]
-pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::MutexGuard;
 
     fn fresh() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = test_lock();
+        let g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         (g, d)

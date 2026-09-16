@@ -2473,13 +2473,10 @@ pub fn write(new: &[(String, String)]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// A memory dir of its own for one test, every path config knows pointed under it.
     fn setup() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         config::update(|c| {

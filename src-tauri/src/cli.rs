@@ -1608,7 +1608,7 @@ mod tests {
     /// it held. The check sits above the token check, so this never reaches the server.
     #[test]
     fn a_bad_interval_flag_is_refused_before_anything_is_saved() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         config::update(|c| {
             c.settings = None; // never read this machine's real settings file
             c.interval = 300;
@@ -1624,7 +1624,7 @@ mod tests {
     /// is on the line — the bug this pins armed acme/* and returned before ever reading the store.
     #[test]
     fn auto_list_answers_without_writing_whatever_else_is_asked() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let store = d.path().join("autorev");
         config::update(|c| c.autorev = store.clone());
@@ -1655,7 +1655,7 @@ mod tests {
     /// answering it by arming whatever directory you are standing in is a write nobody asked for.
     #[test]
     fn a_bare_auto_reports_rather_than_arming_here() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let store = d.path().join("autorev");
         config::update(|c| c.autorev = store.clone());
@@ -1667,7 +1667,7 @@ mod tests {
     /// `auto not-a-slug --owner acme` armed the org and swallowed the typo.
     #[test]
     fn auto_refuses_a_repo_and_an_owner_together() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let store = d.path().join("autorev");
         config::update(|c| c.autorev = store.clone());
@@ -1690,7 +1690,7 @@ mod tests {
 
     #[test]
     fn auto_refuses_a_key_it_cannot_read() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.autorev = d.path().join("autorev"));
         assert_eq!(auto_cmd(Some("notes".into()), None, false, false), 1);
