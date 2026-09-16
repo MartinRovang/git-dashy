@@ -51,6 +51,16 @@ describe('acts: what one PR offers', () => {
     expect(keys(row({ section: 'REVIEWED' }))).not.toContain('review')
   })
 
+  it('offers a review with instructions exactly where it offers a review', () => {
+    // the braces matter: a push under an unbraced `if` put it on every row
+    for (const section of ['REVIEW REQUESTED', 'MINE', 'ASSIGNED', 'REVIEWED']) {
+      expect(keys(row({ section })).includes('ask')).toBe(keys(row({ section })).includes('review'))
+    }
+    expect(keys(row({ section: 'REVIEW REQUESTED' }))).toContain('ask')
+    const busy = row({ section: 'REVIEW REQUESTED', busy: true })
+    expect([one(busy, 'review')?.[4], one(busy, 'ask')?.[4]]).toEqual([true, true])
+  })
+
   it('only your own row offers the pre-review and a reviewer request', () => {
     expect(keys(row({ section: 'MINE' }))).toEqual(expect.arrayContaining(['pre', 'reviewer']))
     expect(keys(row({ section: 'ASSIGNED' }))).not.toContain('pre')
@@ -83,7 +93,7 @@ describe('acts: what one PR offers', () => {
   it('says what the pre-review would do, so a stale one is not silently reopened', () => {
     const label = (over: Partial<Row>) => one(row({ section: 'MINE', ...over }), 'pre')?.[2]
     expect(label({})).toBe('Pre-review')
-    expect(label({ pre: { at: 1, moved: false } })).toBe('Read the pre-review')
+    expect(label({ pre: { at: 1, moved: false } })).toBe('Inspect pre-review')
     expect(label({ pre: { at: 1, moved: true } })).toBe('Re-run the pre-review')
   })
 

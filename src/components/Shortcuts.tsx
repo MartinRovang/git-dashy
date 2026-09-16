@@ -25,11 +25,12 @@ const KEYS: [string, [string, string][]][] = [
     'Review',
     [
       ['r', 'Review with the agent'],
+      ['R', 'Review with instructions for the agent'],
       ['p', 'Pre-review your own PR'],
       ['v', 'Read the full review'],
       ['y', 'Copy the PR URL'],
       ['+', 'Request a review'],
-      ['Y', 'Read the one waiting to post'],
+      ['Y', 'Inspect held review: discuss it, then post or drop'],
       ['␣', 'On a reviewed row: its older runs'],
     ],
   ],

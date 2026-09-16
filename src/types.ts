@@ -69,6 +69,22 @@ export type Knowledge = {
 
 export type Waiting = { kind: string; key: string; what: string }
 
+/** One message in a discussion of a held review. */
+export type Turn = { who: 'you' | 'agent' | 'error'; text: string; at: number }
+
+/** The conversation about a saved review: the same shape for a held review and a pre-review. */
+export type Talk = {
+  /** What the person who ran it typed for it; private, never posted. */
+  instructions: string
+  thread: Turn[]
+  /** A revision waiting for a yes or a no. The review stays what it was until it is accepted. */
+  proposed: { verdict: string; summary: string; body: string } | null
+  /** "" when it can be discussed, else why not. */
+  cannotDiscuss: string
+  /** The agent is answering, or something else runs on the row: nothing changes until it lands. */
+  busy: boolean
+}
+
 /** What happens to a finished review: 'post' or 'hold'. */
 export type PostWord = 'post' | 'hold'
 /** Every rule on the machine, in the order web.rs builds them. */

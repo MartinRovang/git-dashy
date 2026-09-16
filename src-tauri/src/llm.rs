@@ -76,6 +76,48 @@ pub fn ask(
     )
 }
 
+/// Which claude conversation a call belongs to.
+///
+/// ponytail: a review names its session up front (`New`) instead of reading one back out of the output, so
+/// the id exists before the model runs and a review that dies halfway still has one to point at. `Resume`
+/// continues it: the agent keeps everything it already read with its tools. Checked against claude
+/// 2.1.273: a print-mode session resumes from any directory, after the one it ran in is deleted, under
+/// --safe-mode -- so the throwaway cwd every call gets is no obstacle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Session<'a> {
+    None,
+    New(&'a str),
+    Resume(&'a str),
+}
+
+/// A fresh session id: a random UUID v4, which is the only shape --session-id takes.
+pub fn new_session_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("randomness");
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+/// Whether `s` is a session id this code could have made: 36 chars of lowercase hex and dashes in the
+/// 8-4-4-4-12 shape. It goes onto an argv from a file on disk, so it is checked, not trusted.
+pub fn session_ok(s: &str) -> bool {
+    let groups: Vec<&str> = s.split('-').collect();
+    groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
+        && groups.iter().all(|g| {
+            g.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        })
+}
+
 /// `ask` at an effort of the caller's choosing rather than the picked one; "" leaves it to the model.
 pub fn ask_at(
     prompt: &str,
@@ -85,6 +127,31 @@ pub fn ask_at(
     timeout_secs: u64,
     env: &[(String, String)],
     effort: &str,
+) -> Result<(String, Option<f64>, u64)> {
+    ask_session(
+        prompt,
+        model,
+        system,
+        tools,
+        timeout_secs,
+        env,
+        effort,
+        Session::None,
+    )
+}
+
+/// `ask_at` inside a claude session. A session only exists for the claude CLI: `Resume` on any other
+/// backend is an error, since there is nothing to continue, and `New` there is ignored.
+#[allow(clippy::too_many_arguments)]
+pub fn ask_session(
+    prompt: &str,
+    model: &str,
+    system: &str,
+    tools: &str,
+    timeout_secs: u64,
+    env: &[(String, String)],
+    effort: &str,
+    session: Session,
 ) -> Result<(String, Option<f64>, u64)> {
     let cfg = config::get();
     if cfg.demo {
@@ -98,7 +165,10 @@ pub fn ask_at(
     let started = Instant::now();
     log::debug!("ask {who}:{name} tools={tools} prompt={} chars", prompt.len());
     if who == "claude" {
-        return ask_claude(prompt, &name, system, tools, timeout_secs, env, effort);
+        return ask_claude(prompt, &name, system, tools, timeout_secs, env, effort, session);
+    }
+    if let Session::Resume(_) = session {
+        bail!("{who}: a conversation needs the claude CLI");
     }
     let endpoints = config::endpoints();
     let (base, key_env) = endpoints
@@ -187,6 +257,37 @@ fn http_err(who: &str, e: ureq::Error) -> anyhow::Error {
 
 static DIRS: AtomicU64 = AtomicU64::new(0);
 
+/// The claude argv, without the prompt, which goes in on stdin.
+///
+/// ponytail: the prompt goes in on stdin. As an argument it hit Linux's 128 KB cap on one argv string
+/// (E2BIG), and the dream prompt carries every memory file, already ~90 KB (#80).
+pub fn claude_args(name: &str, system: &str, tools: &str, effort: &str, session: Session) -> Vec<String> {
+    let mut a: Vec<String> = ["-p", "--output-format", "json", "--safe-mode", "--model", name]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let mut push = |k: &str, v: &str| {
+        a.push(k.to_string());
+        a.push(v.to_string());
+    };
+    if !system.is_empty() {
+        push("--append-system-prompt", system);
+    }
+    if !tools.is_empty() {
+        push("--allowedTools", tools);
+    }
+    if !effort.is_empty() {
+        push("--effort", effort);
+    }
+    match session {
+        Session::None => {}
+        Session::New(id) => push("--session-id", id),
+        Session::Resume(id) => push("--resume", id),
+    }
+    a
+}
+
+#[allow(clippy::too_many_arguments)]
 fn ask_claude(
     prompt: &str,
     name: &str,
@@ -195,20 +296,15 @@ fn ask_claude(
     timeout_secs: u64,
     env: &[(String, String)],
     effort: &str,
+    session: Session,
 ) -> Result<(String, Option<f64>, u64)> {
+    if let Session::New(id) | Session::Resume(id) = session {
+        if !session_ok(id) {
+            bail!("claude: {id:?} is not a session id");
+        }
+    }
     let mut cmd = Command::new("claude");
-    // ponytail: the prompt goes in on stdin. As an argument it hit Linux's 128 KB cap on one argv
-    // string (E2BIG), and the dream prompt carries every memory file, already ~90 KB (#80).
-    cmd.args(["-p", "--output-format", "json", "--safe-mode", "--model", name]);
-    if !system.is_empty() {
-        cmd.args(["--append-system-prompt", system]);
-    }
-    if !tools.is_empty() {
-        cmd.args(["--allowedTools", tools]);
-    }
-    if !effort.is_empty() {
-        cmd.args(["--effort", effort]);
-    }
+    cmd.args(claude_args(name, system, tools, effort, session));
     // ponytail: same reason as a review, see review::review: a fresh, empty cwd.
     let here = std::env::temp_dir().join(format!(
         "gitdashy-{}-{}",
@@ -327,6 +423,45 @@ pub fn ping(model: &str) -> Vec<CheckResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_is_named_up_front_or_resumed_and_never_both() {
+        let id = "5e3ae8e0-544e-4128-88af-fe301d354aae";
+        let args = |s| claude_args("opus", "", "", "", s);
+        let has = |a: &[String], k: &str, v: &str| a.windows(2).any(|w| w[0] == k && w[1] == v);
+        let new = args(Session::New(id));
+        assert!(has(&new, "--session-id", id) && !new.contains(&"--resume".to_string()));
+        let again = args(Session::Resume(id));
+        assert!(has(&again, "--resume", id) && !again.contains(&"--session-id".to_string()));
+        let none = args(Session::None);
+        assert!(!none.iter().any(|a| a == "--resume" || a == "--session-id"));
+        // the scope a review runs under must survive a resume: same flags, whatever the session
+        let scoped = claude_args("opus", "lens", "Bash(gh api:*)", "high", Session::Resume(id));
+        assert!(has(&scoped, "--allowedTools", "Bash(gh api:*)"));
+        assert!(
+            scoped.contains(&"--safe-mode".to_string()) && has(&scoped, "--append-system-prompt", "lens")
+        );
+    }
+
+    #[test]
+    fn a_session_id_is_a_uuid_v4_and_nothing_else_passes() {
+        let id = new_session_id();
+        assert!(session_ok(&id), "{id}");
+        assert_eq!(&id[14..15], "4", "version nibble");
+        assert!("89ab".contains(&id[19..20]), "variant nibble");
+        assert_ne!(new_session_id(), new_session_id());
+        for bad in [
+            "",
+            "not-a-uuid",
+            "5E3AE8E0-544E-4128-88AF-FE301D354AAE",
+            "5e3ae8e0-544e-4128-88af-fe301d354aa",
+            "--resume",
+            "5e3ae8e0-544e-4128-88af-fe301d354aaz",
+        ] {
+            assert!(!session_ok(bad), "{bad}");
+        }
+    }
+
     use std::sync::{Mutex, MutexGuard};
 
     /// Env and config are process-wide: one HTTP test at a time.

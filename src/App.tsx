@@ -5,6 +5,7 @@ import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
+import { ReviewTalk } from './components/ReviewTalk'
 import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
@@ -12,7 +13,7 @@ import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
-import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, repaint, viewer } from './modals'
+import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, draftsScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
@@ -429,11 +430,28 @@ export default function App() {
         return
       }
       const got = await r.json()
-      const m = viewer(`pre-review of #${p.number}`, got.text, got.path)
-      const copy = async () => setFlash(await copyText(got.text, 'the pre-review'))
-      m.keys!.y = copy
-      m.foot!.unshift(['y', 'copy', copy, 'go'])
-      repaint()
+      // the text copied is what is on screen now, which an accepted revision changes
+      let text: string = got.text
+      const copy = async () => setFlash(await copyText(text, 'the pre-review'))
+      const m = open({
+        title: `pre-review of #${p.number}`,
+        sub: `${got.path} · never posted`,
+        wide: true,
+        dismiss: false,
+        body: () => (
+          <ReviewTalk
+            source={{ kind: 'pre', url: p.url }}
+            onFlash={setFlash}
+            onText={(t) => (text = t)}
+            actions={
+              <button className="btn" onClick={() => void copy()}>
+                <kbd>y</kbd>copy
+              </button>
+            }
+          />
+        ),
+      })
+      m.keys = { Escape: () => close(m), y: copy }
       return
     }
     if (!(await confirm(p.pre ? `#${p.number} changed since its pre-review. Run again?` : `Pre-review #${p.number}? Nothing is posted.`))) return
@@ -457,7 +475,45 @@ export default function App() {
     picker(`request review · ${p.repo}#${p.number}`, logins, '', String, ask)
   }
 
-  /// Read the review that is waiting, then post it or drop it.
+  /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
+  function reviewWith(p: Row) {
+    if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (isReviewed(p)) {
+      setFlash(`#${p.number} is already reviewed`)
+      return
+    }
+    const m = open({
+      title: `review #${p.number} with instructions`,
+      sub: 'kept on this machine; never posted to the PR',
+      wide: true,
+      dismiss: false,
+      focus: '#ask',
+      body: () => (
+        <textarea
+          id="ask"
+          placeholder="What should the reviewer focus on, or leave alone? e.g. focus on the migration and the rollback; ignore style."
+        />
+      ),
+      foot: [
+        [
+          '^S',
+          'start the review',
+          async () => {
+            const ask = (document.querySelector('#ask') as HTMLTextAreaElement).value.trim()
+            if (!ask) {
+              setFlash('write the instructions first, or press r for a plain review')
+              return
+            }
+            if (await call('/api/review', { url: p.url, ask }, `review started on #${p.number}, with instructions`)) close(m)
+          },
+          'go',
+        ],
+      ] as Foot[],
+    })
+    m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2]() }
+  }
+
+  /** Inspect a review that is waiting: discuss it with the agent, then post it or drop it. */
   async function waitingScreen(p: Row) {
     const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
     if (!r.ok) {
@@ -469,29 +525,39 @@ export default function App() {
       setFlash('nothing waiting on this PR')
       return
     }
+    const post = async () => {
+      if (await call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…')) close(m)
+    }
+    const drop = async () => {
+      if (await call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped')) close(m)
+    }
     const m = open({
       title: `waiting to post — ${p.repo}#${p.number}`,
-      sub: `${d.held.model} · ${d.held.verdict}`,
+      sub: `${d.held.model} · nothing is on the PR yet`,
       wide: true,
+      // a click beside the screen must not throw away a message half typed; Esc still closes it
+      dismiss: false,
       body: () => (
-        <>
-          {/* the verdict was written against a head that is no longer the one on the board, so
-              posting it now puts an old reading against new commits */}
-          {d.held.moved ? (
-            <div className="note" style={{ marginBottom: 10 }}>
-              ⚠ New commits were pushed after this review was written. It describes the older ones.
-            </div>
-          ) : null}
-          <pre>{d.held.body}</pre>
-        </>
+        <ReviewTalk
+          source={{ kind: 'held', repo: p.repo, number: p.number }}
+          onFlash={setFlash}
+          // ponytail: closed only once the post or drop has started. The server refuses while the agent is
+          // still answering or a revision waits, and a screen that had already shut left the reason in a
+          // flash for a screen you could no longer see.
+          actions={
+            <>
+              <button className="btn warn" onClick={() => void drop()}>
+                <kbd>x</kbd>drop it
+              </button>
+              <button className="btn go" onClick={() => void post()}>
+                <kbd>p</kbd>post it
+              </button>
+            </>
+          }
+        />
       ),
-      foot: [
-        ['p', 'post it', () => { close(m); void call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…') }, 'go'],
-        ['x', 'drop it', () => { close(m); void call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped') }, 'warn'],
-        ['Esc', 'leave it waiting', () => close(m)],
-      ] as Foot[],
     })
-    m.keys = { Escape: () => close(m) }
+    m.keys = { Escape: () => close(m), p: () => void post(), x: () => void drop() }
   }
 
   async function bindScreen(p: Row) {
@@ -520,6 +586,7 @@ export default function App() {
     if (!p) return
     const fns: Record<string, () => void> = {
       review: () => void review(p),
+      ask: () => reviewWith(p),
       pre: () => void preReview(p),
       view: () => {
         // the detail belongs to the selected PR, so only offer its review for that one
@@ -629,6 +696,7 @@ export default function App() {
     if (k === 'u') return one(onUpdate)
     if (k === 'v') return one(() => doAct('view'))
     if (k === 'r' && p) return one(() => void review(p))
+    if (k === 'R' && p) return one(() => reviewWith(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
     if (k === 'Escape' && help) return one(() => setHelp(false))
     if (k === 'Escape') return one(onMenu)
