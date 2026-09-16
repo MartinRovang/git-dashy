@@ -673,9 +673,16 @@ describe('the posting tree', () => {
     expect([n.owner.target, n.governs, n.repos.map((r) => r.target)]).toEqual(['other/*', false, ['other/x']])
   })
 
-  it('marks the repo that overrides a governing owner, so it can still be reached', () => {
+  it('keeps the repo that overrides a governing owner apart, so the panel can show it', () => {
     const [acme] = postingTree(board())
     // acme/web has a rule of its own on auto, which beats acme/*; the other two have nothing
     expect(acme.repos.map(hasOwnRule)).toEqual([false, false, true])
+    expect(acme.exceptions.map((r) => r.target)).toEqual(['acme/web'])
+  })
+
+  it('has no exceptions under an owner that does not govern, where every repo is set on its own', () => {
+    const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['hold', 'repo'], ['post', ''])])
+    expect(acme.governs).toBe(false)
+    expect(acme.exceptions).toEqual([])
   })
 })

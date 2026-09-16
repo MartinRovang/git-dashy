@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { PostingRule, StateData } from '../types'
-import { counts, postingTree } from '../board'
+import { counts, postingTree, ruleSource } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
@@ -21,6 +21,8 @@ type Props = {
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
   /** Turn one owner's rule on for both kinds of review, or take it off both. */
   onGovern: (owner: string, on: boolean) => void
+  /** Take a repo's own posting rules off, so it follows its owner's again. */
+  onFollowOwner: (repo: string) => void
   onAskAgain: (kind: string, key: string) => void
   onReport: (op: 'start' | 'open') => void
   collapsed: boolean
@@ -228,7 +230,7 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onAskAgain, onReport, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -250,7 +252,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const held = k.waiting || []
   const rules = d?.postingRules || []
   /** Every target that holds a review on either axis: what the collapsed rail shows of all this. */
-  const holds = rules.filter((r) => r.manual === 'hold' || r.auto === 'hold').map((r) => r.target)
+  // a rule set on that row, not every repo that inherits one: an owner holding for four repos is one hold
+  const holds = rules
+    .filter((r) => (['manual', 'auto'] as const).some((ran) => r[ran] === 'hold' && ruleSource(r.target, r[`${ran}Via`]) === 'own'))
+    .map((r) => r.target)
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -343,7 +348,14 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                       name={owner}
                       open={!!open[key]}
                       onFlip={() => flip(key)}
-                      summary={node.governs ? `all repos: ${postWords(node.owner)}` : `per repo · ${node.repos.length}`}
+                      // "all repos" only when it is true: a repo with a rule of its own still beats the owner
+                      summary={
+                        !node.governs
+                          ? `per repo · ${node.repos.length}`
+                          : node.exceptions.length
+                            ? `${postWords(node.owner)} · ${node.exceptions.length} with a rule of its own`
+                            : `all repos: ${postWords(node.owner)}`
+                      }
                     />
                     {open[key] ? (
                       <div className="kids">
@@ -358,11 +370,36 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                         {node.governs ? (
                           <>
                             <PostControls r={node.owner} onPosting={onPosting} />
-                            {node.repos.length ? (
+                            {node.repos.length > node.exceptions.length ? (
                               <div className="rules none">
-                                applies to {node.repos.map((r) => r.target.split('/')[1]).join(', ')}
+                                applies to{' '}
+                                {node.repos
+                                  .filter((r) => !node.exceptions.includes(r))
+                                  .map((r) => r.target.split('/')[1])
+                                  .join(', ')}
                               </div>
                             ) : null}
+                            {/* a repo whose own rule beats the owner: shown, changeable, and one press from
+                                following the owner like the rest */}
+                            {node.exceptions.map((r) => (
+                              <div key={r.target} className="except">
+                                <OpenRow
+                                  sub
+                                  name={r.target.split('/')[1]}
+                                  open={!!open[`row:${r.target}`]}
+                                  onFlip={() => flip(`row:${r.target}`)}
+                                  summary={`its own rule: ${postWords(r)}`}
+                                />
+                                {open[`row:${r.target}`] ? (
+                                  <>
+                                    <PostControls r={r} onPosting={onPosting} />
+                                    <button className="lnk follow" onClick={() => onFollowOwner(r.target)}>
+                                      follow {owner}/* instead
+                                    </button>
+                                  </>
+                                ) : null}
+                              </div>
+                            ))}
                           </>
                         ) : node.repos.length ? (
                           node.repos.map((r) => (
@@ -387,7 +424,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               })}
             </div>
           ) : (
-            <div className="rules none">no repos on the board yet — every review posts as soon as it is written</div>
+            <div className="rules none">no repos on the board yet; reviews post when written</div>
           )}
         </Group>
 

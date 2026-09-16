@@ -76,3 +76,32 @@ export function moved(seen: Map<string, string | undefined>, next: Got): Pr[] {
   for (const p of next.prs) seen.set(p.url, p.head)
   return out
 }
+
+/** How many people the server follows at most: story::clean takes 50. */
+export const FOLLOW_MAX = 50
+
+/** Follow everyone in `who`, as far as the cap allows: the new list, how many were added, how many did not fit.
+ *
+ *  ponytail: counted here, not after the fact. The server cuts the list at FOLLOW_MAX, so "following 80 from
+ *  org:acme" on a big org claimed people it never kept. */
+export function followAll(list: Followed[], who: string[], max = FOLLOW_MAX): { next: Followed[]; added: number; left: number } {
+  let next = list
+  let added = 0
+  let left = 0
+  for (const login of who) {
+    const grown = follow(next, login)
+    if (grown === next) continue // already followed
+    if (next.length >= max) left++
+    else {
+      next = grown
+      added++
+    }
+  }
+  return { next, added, left }
+}
+
+/** The shift an answer may show, given when its request began and when a shift was last dismissed.
+ *
+ *  ponytail: a poll that STARTED before the dismissal answers with the shift still on it -- the server had not
+ *  been told yet -- and raising it again would undo the dismissal the moment it was made. */
+export const shownShift = (shift: string | undefined, began: number, dismissedAt: number) => (began < dismissedAt ? '' : shift || '')

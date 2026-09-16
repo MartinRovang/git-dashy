@@ -157,7 +157,6 @@ export type Detail = {
   brief: { whose: string; empty: boolean }
   pre: Pre
   review: Review | null
-  /** What happens to this repo's reviews, resolved by the server. */
 }
 
 /** code_rows(): the diff as a flat list. */

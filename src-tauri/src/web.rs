@@ -922,12 +922,8 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
         .map(|(t, _)| t)
         .chain(on_board.iter().flat_map(|r| {
             let k = bind::key(r);
-            let owner = k.split('/').next().unwrap_or("").to_string();
-            let owner = if owner.is_empty() {
-                None
-            } else {
-                Some(format!("{owner}/*"))
-            };
+            let owner = k.split('/').next().unwrap_or("");
+            let owner = (!owner.is_empty()).then(|| format!("{owner}/*"));
             owner.into_iter().chain(Some(k).filter(|k| !k.is_empty()))
         }))
         .collect();
@@ -1040,7 +1036,9 @@ fn post_story_seen(_state: &State, body: &Body) -> Out {
     if !story::login_ok(login) {
         return Err(Fail::new(400, "login must be a GitHub username"));
     }
-    story::seen(login);
+    // the text of the shift the pill showed: only that one is cleared, see story::forget
+    let read = body.get("shift").and_then(Value::as_str).unwrap_or_default();
+    story::seen(login, read);
     Ok(json!({"ok": true}))
 }
 

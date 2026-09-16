@@ -194,6 +194,8 @@ function seed() {
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
   // both cases of the posting panel: acme is one setting for all its repos, tools is set per repo
   S.postingOwners['acme'] = { manual: 'hold', auto: 'hold' }
+  // and a rule left on acme/web from before the switch existed, which beats the owner: the panel must show it
+  S.posting['acme/web'] = { auto: 'post' }
   S.rows.push(mkPr(61, 'Add --json output to the status command', 'tools/cli', 'hana', 6, 'REVIEW REQUESTED'))
   S.rows.push(mkPr(14, 'Document the release checklist', 'tools/docs', 'ivan', 20, 'REVIEW REQUESTED'))
   S.posting['tools/cli'] = { manual: 'hold', auto: 'hold' }

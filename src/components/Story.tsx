@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, errorText, post } from '../api'
 import { useNow } from '../usePoll'
-import { moved, type Got, type Pr } from '../stories'
+import { moved, type Got, type Pr, shownShift } from '../stories'
 
 /** The model's "- " lines as a list; anything that is not a list (an older cached story) as a paragraph. */
 function Summary({ text }: { text: string }) {
@@ -54,7 +54,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
       .then(async (r) => {
         if (r.ok) {
           const next: Got = await r.json()
-          if (began < dismissed.current) next.shift = ''
+          next.shift = shownShift(next.shift, began, dismissed.current)
           // the first story only teaches what is already there
           if (!seen.current) moved((seen.current = new Map()), next)
           else {
@@ -91,7 +91,8 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
   const markRead = () => {
     if (!shift) return
     dismissed.current = Date.now()
-    void post('/api/story/seen', { login })
+    // the text too: the server clears only the shift that was read, not a newer one written meanwhile
+    void post('/api/story/seen', { login, shift })
   }
   const forgetShift = () => setGot((g) => (g ? { ...g, shift: '' } : g))
   /** Closing is what marks everything read: both the list of what moved and the direction line have to

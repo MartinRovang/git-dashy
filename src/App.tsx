@@ -6,7 +6,7 @@ import { Graph } from './components/Graph'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { Story } from './components/Story'
-import { follow, people, unfollow, type Followed } from './stories'
+import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
@@ -54,8 +54,13 @@ export default function App() {
       setFlash(`nobody on the board under ${scope}`)
       return
     }
-    setFollowed((f) => who.reduce(follow, f))
-    setFlash(`following ${who.length} from ${scope}`)
+    const { added, left } = followAll(followed, who)
+    setFollowed((f) => followAll(f, who).next)
+    setFlash(
+      left
+        ? `following ${added} from ${scope}; ${left} more did not fit, the limit is ${FOLLOW_MAX}`
+        : `following ${added} from ${scope}`,
+    )
   }
   const [followed, setFollowedState] = useState<Followed[]>([])
   useEffect(() => {
@@ -681,6 +686,15 @@ export default function App() {
           onFollow={followSomeone}
           onFollowScope={followScope}
           followed={followed.length}
+          onFollowOwner={(repo) =>
+            // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
+            void (async () => {
+              for (const ran of ['manual', 'auto'] as const) {
+                if (!(await call('/api/posting', { repo, ran, post: 'none' }))) return
+              }
+              setFlash(`${repo} follows ${repo.split('/')[0]}/* again`)
+            })()
+          }
           onGovern={(owner, on) =>
             // one server operation: the rule for what "one setting for all" means lives in autorev::govern
             void call(

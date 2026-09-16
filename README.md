@@ -431,7 +431,7 @@ the ones on screen or leave them as the baseline.
 
 Whether a finished review posts is a separate setting. Running a review is the expensive part;
 posting it is the part you cannot take back. The rail's **Agent** group lists every owner on the board,
-and for each one there are exactly two cases, set by a switch inside it:
+and a switch inside each one picks one of two modes:
 
 - **One setting for every repo under the owner.** Reviews you start and reviews auto starts each post,
   as always, or hold — and that applies to all of the owner's repos. Shut, the row says so and says what
@@ -564,13 +564,13 @@ search; the model only runs when that person's PRs changed since the last story.
 that are new or were pushed since the last one, the pill lights up and those PRs, and only those, pop up
 above it.
 
-A pill also marks itself when someone changes direction, which is a different claim from "something was
-pushed" and gets its own mark. Every rewritten story is compared against the one before it, in the same
+A pill also marks itself when someone changes direction, and has its own mark, separate from the one for
+new pushes. Every rewritten story is compared against the one before it, in the same
 model call, and the bar is a *different problem* — even alongside the old one. Picking up an auth rewrite
 next to the export job is a change of direction; moving from export pagination to export retries is more of
 the same export work, and says nothing. Only the first kind marks the pill, and the pop-up opens with one
 line saying what is new. Opening it is what clears the mark, and nothing else does: a mark raised while you
-were away survives later rewrites until you have seen it. The model answers "no change" almost every time.
+were away survives later rewrites until you have seen it.
 
 Stories run on Haiku through the `claude` CLI, whatever model reviews use, unless reviews go through
 `openrouter:` or `local:`, in which case the stories use that model too. They always run at low effort.

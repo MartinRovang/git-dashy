@@ -280,13 +280,19 @@ fn carry(fresh: Option<String>, saved: &Value) -> Option<String> {
 }
 
 /// Drop the shift on one saved story, leaving the rest of it alone.
-fn forget(v: &mut Value, key: &str) {
+///
+/// ponytail: only the shift that was READ. `seen` waits on the login's lock, and a refresh holding it may
+/// be writing a new shift the pill has never shown; clearing whatever is there when the lock lets go
+/// dropped that one unread. The page sends the text it showed, and a different text is left alone.
+fn forget(v: &mut Value, key: &str, read: &str) {
     if let Some(c) = v
         .get_mut("cache")
         .and_then(|c| c.get_mut(key))
         .and_then(Value::as_object_mut)
     {
-        c.remove("shift");
+        if c.get("shift").and_then(Value::as_str) == Some(read) {
+            c.remove("shift");
+        }
     }
 }
 
@@ -295,11 +301,11 @@ fn forget(v: &mut Value, key: &str) {
 /// ponytail: the same per-login lock `get` holds. A refresh reads the saved story, then spends up to
 /// three minutes in the model; a mark dismissed inside that window was carried straight back by
 /// `carry` from the copy the refresh was already holding, and the card re-marked itself.
-pub fn seen(login: &str) {
+pub fn seen(login: &str, read: &str) {
     let key = login.to_lowercase();
     let lock = lock_for(&key);
     let _waiting = lock.lock().unwrap_or_else(|e| e.into_inner());
-    with_file(|v| forget(v, &key))
+    with_file(|v| forget(v, &key, read))
 }
 
 /// What the story was written from: every PR in the window and its head commit. Same PRs, same heads,
@@ -550,14 +556,20 @@ mod tests {
     fn reading_the_card_forgets_the_shift_and_nothing_else() {
         let mut v =
             json!({"cache": {"bob": {"summary": "b", "shift": "an auth rewrite"}, "amy": {"shift": "x"}}});
-        forget(&mut v, "bob");
+        // a refresh wrote a newer shift while this waited for the lock: the one read is not that one
+        forget(&mut v, "bob", "a migration");
+        assert_eq!(
+            v["cache"]["bob"]["shift"], "an auth rewrite",
+            "an unread shift survives"
+        );
+        forget(&mut v, "bob", "an auth rewrite");
         assert_eq!(
             v["cache"],
             json!({"bob": {"summary": "b"}, "amy": {"shift": "x"}})
         );
-        forget(&mut v, "nobody"); // a story already pruned is not an error
+        forget(&mut v, "nobody", "x"); // a story already pruned is not an error
         let mut none = json!({});
-        forget(&mut none, "bob");
+        forget(&mut none, "bob", "");
         assert_eq!(none, json!({}));
     }
 

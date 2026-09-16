@@ -47,6 +47,13 @@ export type PostingNode = {
   repos: PostingRule[]
   /** The owner carries a rule, so it is what decides for every repo below that has none of its own. */
   governs: boolean
+  /** Under a governing owner, the repos that still have a rule of their own -- which beats the owner's.
+   *
+   *  ponytail: kept apart so the panel can show them. Switching the owner on takes every repo rule off,
+   *  but a store written before the switch existed (the old `H` screen, or the CLI) can hold one, and a
+   *  panel that only said "all repos: you hold" drew nothing for the repo that posts anyway. Empty when
+   *  the owner does not govern: then every repo is set on its own and none is an exception. */
+  exceptions: PostingRule[]
 }
 
 /** The posting panel as a tree: an owner, then what it owns.
@@ -69,6 +76,7 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
       owner: { target: `${name}/*`, manual: 'post', auto: 'post', manualVia: '', autoVia: '' },
       repos: [],
       governs: false,
+      exceptions: [],
     }
     nodes.set(name, made)
     return made
@@ -82,6 +90,7 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
       node(name).repos.push(r)
     }
   }
+  for (const n of nodes.values()) n.exceptions = n.governs ? n.repos.filter(hasOwnRule) : []
   return [...nodes.values()]
 }
 
