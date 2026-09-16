@@ -2173,38 +2173,58 @@ fn without(p: &Path, fact: &str, line_fact: impl Fn(&str) -> String) -> String {
     }
 }
 
-/// Drop one fact from your own memory, from the team's, and as evidence.
+/// Drop one fact from your own memory and your evidence for it. The team's copy is not touched here: the
+/// file that would lose it is returned, for the caller to propose that removal to the team.
 ///
-/// ponytail: the team's copy too, now that nobody chose to put it there. A withdraw that only reached
-/// your own file would leave the published copy behind, and the person removing it would have to know
-/// it had been published at all, which is exactly the knowledge automatic sharing takes away.
+/// ponytail: the team's copy by proposal, not by write. A removal from a team's file changes every
+/// teammate's reviews, so it is a pull request a person with rights on that repo approves, never a push.
+/// It used to be rewritten here, which let one `x` delete a fact for everyone.
 /// ponytail: EXACT match on the team's side, like the pool. `same` would take a neighbouring fact with
 /// it, and this is the one file where a wrong removal costs everyone.
 /// ponytail: and ONLY when nobody else is still behind it. Your evidence goes first, then the team's
-/// copy goes only if no other contributor remains, otherwise one person's `x` deletes a fact a
-/// colleague independently reached, and nothing puts it back, because pool writes at promotion and
-/// that already happened for them.
-pub fn forget(repo: Option<&str>, fact: &str, about: &str) {
+/// copy is proposed for removal only if no other contributor remains, otherwise one person's `x` would
+/// ask to delete a fact a colleague independently reached.
+pub fn forget(repo: Option<&str>, fact: &str, about: &str) -> Option<PathBuf> {
     let _g = guard();
     if let Some(p) = pool_path(&whoami(), repo.unwrap_or(""), about) {
         rewrite(&p, &without(&p, fact, plain));
     }
-    if !backers(&pools(), repo, fact).is_empty() {
-        return forget_mine(repo, fact);
-    }
-    if let Some(base) = project(repo, about) {
-        let q = path(repo, Some(&base));
-        if q.exists() {
-            rewrite(&q, &without(&q, fact, plain));
-        }
-    }
     forget_mine(repo, fact);
+    if !backers(&pools(), repo, fact).is_empty() {
+        return None;
+    }
+    let q = path(repo, Some(&project(repo, about)?));
+    facts_in(&q).iter().any(|f| is(f, fact)).then_some(q)
 }
 
 /// Take one fact out of your own memory, leaving every other copy alone.
 fn forget_mine(repo: Option<&str>, fact: &str) {
     let p = path(repo, None);
     rewrite(&p, &without(&p, fact, |l| parse(l).fact));
+}
+
+/// Remove one fact from your own memory file, and nothing else. True when a line went.
+pub fn remove_mine(repo: Option<&str>, fact: &str) -> bool {
+    let _g = guard();
+    let p = path(repo, None);
+    let before = facts_in(&p).len();
+    forget_mine(repo, fact);
+    facts_in(&p).len() < before
+}
+
+/// The facts of one memory file, in order: its "- " lines, without the marker. Headings and prose are not facts.
+pub fn facts_in(p: &Path) -> Vec<String> {
+    read_file(p)
+        .lines()
+        .filter(|l| l.trim_start().starts_with(['-', '•']))
+        .map(plain)
+        .filter(|f| !f.is_empty())
+        .collect()
+}
+
+/// A team file's text with one fact taken out, exactly matched: what a removal proposes.
+pub fn team_without(p: &Path, fact: &str) -> String {
+    without(p, fact, plain)
 }
 
 /// "a__b.md" -> Some("a/b"); "general.md" -> None. The inverse of slug().
@@ -2624,6 +2644,49 @@ mod tests {
         assert_eq!(lines(&mine.join("general.md")), ["- mine, tidied"]);
         assert_eq!(lines(&shared.join("general.md")), ["- theirs, and not"]);
         assert_eq!(lines(&shared.join("a__b.md")), ["- theirs too"]);
+    }
+
+    #[test]
+    fn forget_takes_yours_and_names_the_team_file_to_propose_but_never_writes_it() {
+        // A removal from a team's file is a pull request somebody with rights on it approves. forget()
+        // used to rewrite that file itself, so one `x` deleted a fact for every teammate.
+        let (_g, tmp) = setup();
+        let shared = a_team(tmp.path(), "org-t");
+        let mine = config::get().memory_dir;
+        std::fs::write(mine.join("general.md"), "- one fact\n- two\n").unwrap();
+        std::fs::write(shared.join("general.md"), "- one fact\n- two\n").unwrap();
+        let pool = shared.join(POOL);
+        std::fs::create_dir_all(pool.join(whoami())).unwrap();
+        std::fs::create_dir_all(pool.join("martin")).unwrap();
+        std::fs::write(pool.join(whoami()).join("general.md"), "- one fact\n- two\n").unwrap();
+        std::fs::write(pool.join("martin").join("general.md"), "- two\n").unwrap();
+
+        assert_eq!(forget(None, "one fact", ""), Some(shared.join("general.md")));
+        assert_eq!(lines(&mine.join("general.md")), ["- two"]);
+        assert_eq!(lines(&pool.join(whoami()).join("general.md")), ["- two"]);
+        assert_eq!(
+            lines(&shared.join("general.md")),
+            ["- one fact", "- two"],
+            "proposed, not written"
+        );
+        assert_eq!(team_without(&shared.join("general.md"), "one fact"), "- two\n");
+
+        // a colleague still backs it: nothing to propose, their evidence and the team copy stay
+        assert_eq!(forget(None, "two", ""), None);
+        assert_eq!(lines(&shared.join("general.md")), ["- one fact", "- two"]);
+        // and a fact the team never had names no file
+        assert_eq!(forget(None, "only ever mine", ""), None);
+    }
+
+    #[test]
+    fn remove_mine_takes_one_fact_and_says_whether_it_did() {
+        let (_g, _t) = setup();
+        let p = path(Some("a/b"), None);
+        std::fs::write(&p, "# a/b\n- keep\n- drop me\n").unwrap();
+        assert_eq!(facts_in(&p), ["keep", "drop me"]);
+        assert!(remove_mine(Some("a/b"), "drop me"));
+        assert!(!remove_mine(Some("a/b"), "drop me"));
+        assert_eq!(facts_in(&p), ["keep"]);
     }
 
     fn lines(p: &Path) -> Vec<String> {

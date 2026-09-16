@@ -14,12 +14,15 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   const rr = p.section === 'REVIEW REQUESTED'
   const mine = p.section === 'MINE'
   const reviewed = !p.busy && isReviewed(p)
-  if (rr) {
+  // a team's memory repo is approved by a person with rights on it: no review, pre-review or instructions
+  if (rr && p.humanOnly) out.push(['r', '', 'Human review only', "a team's memory repo", true, 'review'])
+  else if (rr) {
     out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
     // the same gate as `r`: a review you could not start plainly, you cannot start with instructions either
     out.push(['R', '', 'Review with instructions…', 'private to you', p.busy || reviewed, 'ask'])
   }
-  if (mine)
+  if (mine && p.humanOnly) out.push(['p', '', 'Human review only', "a team's memory repo", true, 'pre'])
+  else if (mine)
     out.push([
       'p',
       '',
@@ -35,7 +38,7 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   if (mine) out.push(['+', '', 'Request a review', 'pick a collaborator', false, 'reviewer'])
   if (p.waiting) out.push(['Y', 'go', 'Inspect held review', 'discuss it, then post or drop', false, 'waiting'])
   out.push(['b', '', 'Bind the repo to a team', d?.brief?.whose || '', false, 'bind'])
-  out.push(['n', '', "Edit this repo's memory", (p.repo || '').split('/').pop() || '', false, 'memory'])
+  out.push(['n', '', "Inspect this repo's knowledge", (p.repo || '').split('/').pop() || '', false, 'memory'])
   out.push(['X', '', hidden ? 'Unhide this PR' : 'Hide this PR', hidden ? '' : 'until it moves', false, 'hide'])
   return out
 }

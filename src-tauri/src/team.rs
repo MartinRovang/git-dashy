@@ -590,6 +590,215 @@ fn url(path: &Path) -> String {
     }
 }
 
+/// owner/name of the checkout's origin when that origin is on the GitHub this app talks to; None anywhere
+/// else (another host, a path, no origin). A pull request can only be opened where this is Some.
+pub fn forge_repo(d: &Path) -> Option<String> {
+    let url = origin_url(d);
+    let (host, api) = (host_of(&url), host_of(&github::api_root()));
+    let slug = slug_of(&url);
+    (!host.is_empty() && (host == api || format!("api.{host}") == api) && slug.contains('/')).then_some(slug)
+}
+
+/// Whether `repo` ("owner/name") is the repo a joined team keeps its memory in.
+///
+/// ponytail: by the repo, not by a branch name or a label. What lands in a team's repo is what every
+/// teammate's reviews read, so a change there is approved by a person with rights on it, never by a
+/// model: not auto, not `r`. Keying on the repo covers a pull request opened outside the app too, and a
+/// renamed branch cannot opt one back in.
+pub fn is_team_repo(repo: &str) -> bool {
+    in_repos(&team_repos(), repo)
+}
+
+/// owner/name of every joined team's repo on GitHub, to ask is_team_repo of many rows with one read.
+pub fn team_repos() -> Vec<String> {
+    dirs().iter().filter_map(|d| forge_repo(d)).collect()
+}
+
+/// is_team_repo against a list team_repos() already read.
+pub fn in_repos(repos: &[String], repo: &str) -> bool {
+    !repo.is_empty() && repos.iter().any(|r| r.eq_ignore_ascii_case(repo))
+}
+
+/// Why a review of a PR on a team's repo is refused, for every place that would start one.
+pub const HUMAN_ONLY: &str =
+    "human review only: this is a team's memory repo, approved by a person with rights on it";
+
+/// A change to one file of a team's repo, offered for approval instead of pushed.
+#[derive(Debug, Default, PartialEq)]
+pub struct Proposal {
+    /// The pull request, "" when none could be opened.
+    pub url: String,
+    pub branch: String,
+    /// Why there is no pull request, "" when there is one.
+    pub note: String,
+}
+
+/// What every proposal's pull request says, so the person approving it knows why it is not reviewed.
+pub const PROPOSAL_BODY: &str =
+    "Proposed from gitdashy.\n\nThis repository is a team's memory: what lands here \
+is read by every teammate's reviews. Changes to it are approved by a person with rights on this repository. \
+gitdashy never reviews pull requests on a team's repository, automatically or on request.";
+
+/// Offer `text` as the new content of `rel` (a path inside the checkout `d`, like "memory/project.md") on a
+/// branch of its own, and open a pull request for it when origin is on GitHub. Empty `text` removes the file.
+///
+/// ponytail: plumbing, not a checkout. The team's working tree is what every review reads and what the
+/// refresh thread pulls into; switching its branch even for a moment would put an unapproved change in
+/// front of reviews. The commit is built in a throwaway index on top of origin's branch, and only that
+/// branch is pushed.
+pub fn propose(d: &Path, rel: &str, text: &str, title: &str) -> Result<Proposal, String> {
+    if !is_repo(d) || !has_remote(d) {
+        return Err("the team has no remote to propose a change to".into());
+    }
+    let tmp = std::env::temp_dir().join(format!(
+        "gitdashy-propose-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|t| t.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let out = {
+        let _g = lock();
+        propose_locked(d, rel, text, title, &tmp)
+    };
+    let _ = std::fs::remove_dir_all(&tmp);
+    let branch = out?;
+    let Some(repo) = forge_repo(d) else {
+        return Ok(Proposal {
+            branch: branch.clone(),
+            note: format!("pushed branch {branch}; open a pull request for it on the team's git host"),
+            ..Default::default()
+        });
+    };
+    let base = base_branch(d).unwrap_or_else(|| "main".into());
+    let body = serde_json::json!({"title": title, "head": branch, "base": base, "body": PROPOSAL_BODY});
+    match github::call(
+        &format!("/repos/{repo}/pulls"),
+        "POST",
+        Some(&body),
+        "application/vnd.github+json",
+        60,
+    ) {
+        Ok(raw) => {
+            let url = serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|v| v["html_url"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            Ok(Proposal {
+                url,
+                branch,
+                note: String::new(),
+            })
+        }
+        Err(e) => Ok(Proposal {
+            note: format!("pushed branch {branch}, but the pull request could not be opened: {e}"),
+            branch,
+            ..Default::default()
+        }),
+    }
+}
+
+/// The branch on origin the checkout follows: its upstream, else origin's branch of the same name.
+fn base_branch(d: &Path) -> Option<String> {
+    let up = git(d, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+    if up.ok() {
+        if let Some(b) = up.stdout.trim().strip_prefix("origin/") {
+            return Some(b.to_string());
+        }
+    }
+    let head = git(d, &["symbolic-ref", "--short", "HEAD"]);
+    let b = head.stdout.trim();
+    (head.ok()
+        && !b.is_empty()
+        && git(
+            d,
+            &["rev-parse", "--verify", "-q", &format!("refs/remotes/origin/{b}")],
+        )
+        .ok())
+    .then(|| b.to_string())
+}
+
+/// propose()'s git, under the lock: fetch, build the commit off origin's branch, push it. The branch pushed.
+fn propose_locked(d: &Path, rel: &str, text: &str, title: &str, tmp: &Path) -> Result<String, String> {
+    let fail = |what: &str, r: &Out| format!("{what}: {}", r.last_line());
+    let r = git(d, &["fetch", "-q", "origin"]);
+    if !r.ok() {
+        return Err(fail("could not fetch the team's repo", &r));
+    }
+    let base = base_branch(d).ok_or("cannot tell which branch of the team's repo to propose against")?;
+    let base_ref = format!("refs/remotes/origin/{base}");
+    let index = tmp.join("index");
+    let mut env = github::git_auth();
+    env.insert("GIT_INDEX_FILE".into(), index.to_string_lossy().into_owned());
+    let dir = d.to_string_lossy().into_owned();
+    let run = |args: &[&str]| {
+        let mut cmd = vec!["git", "-C", &dir];
+        let id = ident(d);
+        cmd.extend(id.iter().map(String::as_str));
+        cmd.extend_from_slice(args);
+        remote(&cmd, Some(&env), Some(60))
+    };
+    let r = run(&["read-tree", &base_ref]);
+    if !r.ok() {
+        return Err(fail("could not read the team's branch", &r));
+    }
+    let r = if text.is_empty() {
+        run(&["update-index", "--force-remove", rel])
+    } else {
+        let file = tmp.join("content");
+        std::fs::write(&file, text).map_err(|e| e.to_string())?;
+        let blob = run(&["hash-object", "-w", &file.to_string_lossy()]);
+        if !blob.ok() {
+            return Err(fail("could not store the change", &blob));
+        }
+        run(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{},{rel}", blob.stdout.trim()),
+        ])
+    };
+    if !r.ok() {
+        return Err(fail("could not stage the change", &r));
+    }
+    let tree = run(&["write-tree"]);
+    let was = run(&["rev-parse", &format!("{base_ref}^{{tree}}")]);
+    if !tree.ok() {
+        return Err(fail("could not build the change", &tree));
+    }
+    if was.ok() && was.stdout.trim() == tree.stdout.trim() {
+        return Err("nothing to propose: the team's repo already reads that way".into());
+    }
+    let commit = run(&["commit-tree", tree.stdout.trim(), "-p", &base_ref, "-m", title]);
+    if !commit.ok() {
+        return Err(fail("could not commit the change", &commit));
+    }
+    let stem = Path::new(rel)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let branch = format!(
+        "gitdashy/propose-{}-{}",
+        key_of(&stem),
+        commit.stdout.trim().get(..8).unwrap_or("")
+    );
+    let r = git(
+        d,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{}:refs/heads/{branch}", commit.stdout.trim()),
+        ],
+    );
+    if !r.ok() {
+        return Err(fail("could not push the proposal", &r));
+    }
+    Ok(branch)
+}
+
 /// owner/name from the git remote at `path`.
 pub fn origin_slug(path: &Path) -> String {
     slug_of(&url(path))
@@ -2083,6 +2292,93 @@ mod tests {
         assert_eq!(error(), "");
         assert_eq!(origin_url(&d), "");
         assert_eq!(fetched_at(&d), None);
+    }
+
+    #[test]
+    fn a_proposal_is_a_branch_on_origin_and_never_touches_the_checkout() {
+        let t = tempfile::tempdir().unwrap();
+        let remote_ = t.path().join("remote.git");
+        sh(
+            t.path(),
+            &["init", "-q", "--bare", "-b", "main", &remote_.to_string_lossy()],
+        );
+        let d = t.path().join("d");
+        std::fs::create_dir_all(d.join("memory")).unwrap();
+        assert!(init_history(&d));
+        sh(&d, &["remote", "add", "origin", &remote_.to_string_lossy()]);
+        std::fs::write(d.join("memory/project.md"), "the brief\n").unwrap();
+        std::fs::write(d.join("memory/general.md"), "- one\n- two\n").unwrap();
+        assert_eq!(push_dir(&d, "first", "sync"), "");
+        let head = sh(&d, &["rev-parse", "HEAD"]);
+
+        // a path origin is no forge: the branch is pushed and the note says to open the pull request by hand
+        let p = propose(&d, "memory/project.md", "a better brief\n", "brief: sharper").unwrap();
+        assert_eq!(p.url, "");
+        assert!(p.branch.starts_with("gitdashy/propose-project-"), "{p:?}");
+        assert!(p.note.contains(&p.branch), "{p:?}");
+        assert_eq!(
+            sh(&d, &["show", &format!("origin/{}:memory/project.md", p.branch)]),
+            "a better brief\n"
+        );
+        // the proposal sits on its own branch: main, the checkout and its HEAD are what they were
+        assert_eq!(sh(&d, &["show", "origin/main:memory/project.md"]), "the brief\n");
+        assert_eq!(
+            std::fs::read_to_string(d.join("memory/project.md")).unwrap(),
+            "the brief\n"
+        );
+        assert_eq!(sh(&d, &["rev-parse", "HEAD"]), head);
+        assert_eq!(sh(&d, &["status", "--porcelain"]), "");
+
+        // a removal is a change to a facts file; an empty text proposes deleting it
+        let r = propose(&d, "memory/general.md", "- two\n", "memory: remove a fact").unwrap();
+        assert_eq!(
+            sh(&d, &["show", &format!("origin/{}:memory/general.md", r.branch)]),
+            "- two\n"
+        );
+        let gone = propose(&d, "memory/general.md", "", "memory: remove the last fact").unwrap();
+        assert!(!git(
+            &d,
+            &[
+                "cat-file",
+                "-e",
+                &format!("origin/{}:memory/general.md", gone.branch)
+            ]
+        )
+        .ok());
+
+        // what origin already says is not a proposal
+        assert_eq!(
+            propose(&d, "memory/project.md", "the brief\n", "same"),
+            Err("nothing to propose: the team's repo already reads that way".into())
+        );
+        // nor is anything without a remote
+        let lone = t.path().join("lone");
+        std::fs::create_dir_all(&lone).unwrap();
+        assert!(init_history(&lone));
+        assert!(propose(&lone, "memory/project.md", "x", "x").is_err());
+    }
+
+    #[test]
+    fn only_an_origin_on_github_is_a_forge_repo() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().join("d");
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(init_history(&d));
+        assert_eq!(forge_repo(&d), None, "no origin");
+        sh(&d, &["remote", "add", "origin", "git@github.com:acme/memory.git"]);
+        assert_eq!(forge_repo(&d), Some("acme/memory".into()));
+        sh(
+            &d,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://gitlab.com/acme/memory.git",
+            ],
+        );
+        assert_eq!(forge_repo(&d), None, "another host");
+        sh(&d, &["remote", "set-url", "origin", "/srv/git/memory.git"]);
+        assert_eq!(forge_repo(&d), None, "a path");
     }
 
     #[test]

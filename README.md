@@ -129,11 +129,11 @@ button somewhere on the page.
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
 | `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
-| `n` | edit this repo's review memory in the app |
-| `g` | edit the general review memory in the app |
+| `n` | the knowledge panel on **inspect**, open at this repo's facts |
+| `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
 | `P` | the knowledge panel on **shared**: your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | the knowledge panel on **waiting**: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
-| `K` | the knowledge panel on **learning**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are learning / waiting / shared (`K` `W` `P`, or `[` `]` to step), with an **inspect knowledge…** dropdown (your general and repo files, then each joined team's; saving a team's file asks first, then commits and pushes to the team) and `Z` dream as actions in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
+| `K` | the knowledge panel on **learning**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are learning / inspect / waiting / shared (`K` `g` `W` `P`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
@@ -143,7 +143,7 @@ button somewhere on the page.
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
+| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` propose a change to its brief (a pull request on the team's repo), `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
 | `S` | collapse the left rail to 106px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
 | `[` `]` | previous / next queue tab |
@@ -248,8 +248,8 @@ evidence and agree with itself, and the count would measure repetition instead o
 is rediscovery, so the reviewer has to arrive at it again blind.
 
 `~/.prs_memory/general.md` goes into every review regardless of repo. All of these are plain markdown
-bullet lists — `n` opens the selected PR's repo memory and `g` the general one in an editor pane, so you can add,
-prune or correct freely.
+bullet lists — `n` inspects the selected PR's repo facts and `g` opens inspect on the general ones. Nothing is
+typed in there: a fact arrives when reviews find it, and `x` removes one.
 `Z` dreams: Claude reads every memory file — yours and the team's, each labelled — merges duplicates, drops
 stale or contradictory lines and moves repo-independent facts to that source's general file. It is told never
 to move a line from yours into the team's; sharing is your call, not its. It shows a summary and per-file line
@@ -415,6 +415,16 @@ given *both* briefs concatenated — two statements of what the work is for, in 
 That split keeps two things apart: `project.md` is what the team is doing, and a corpus's `USER.md` is
 who *you* are. Nobody should have to restate the project in their own file.
 
+### Changes to a team's memory are pull requests
+
+A team's repo is what every teammate's reviews and sessions read, so nothing in the app writes to it by hand.
+Removing a fact from a team's file (`x` in inspect, or forgetting a shared fact nobody else backs) and changing
+a team's brief or `agents.md` each push a `gitdashy/propose-…` branch and open a pull request on the team's
+repo (or, when the team's repo is not on GitHub, push the branch and say so). A person with rights on that repo
+approves it. **gitdashy never reviews a pull request on a joined team's repo**: auto skips it, `r`, `R` and `p`
+are refused, and the row says "human review only". That is decided by the repo, not the branch name, so a pull
+request opened outside the app is covered too.
+
 ### Where knowledge lives
 
 The Knowledge group in the rail says where memory is actually read and written right now: `Memory` is the
@@ -574,7 +584,7 @@ dashboard has been open for days.
 
 It is a copy, not a link: Claude Code confines instruction-file imports to the project tree, so `~`,
 absolute and symlinked paths are all refused. The mirrors carry a header saying they are read-only,
-naming their source and when they were taken — edit the real memory with `n` / `g`, never the mirror,
+naming their source and when they were taken — remove a fact with `n` / `g`, never by editing the mirror,
 or the two disagree.
 
 Memory is often team-private, so `sync-memory` refuses to write anywhere git would commit it. Ignore

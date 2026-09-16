@@ -16,7 +16,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, dreamScreen, knowledgeScreen, escMenu, whatsNew, memoryEditor, setPath, teamsScreen, updateScreen } from './screens'
+import { askConsents, dreamScreen, knowledgeScreen, escMenu, whatsNew, setPath, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -410,6 +410,10 @@ export default function App() {
 
   async function review(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (p.humanOnly) {
+      setFlash(`#${p.number} is on a team's memory repo: human review only`)
+      return
+    }
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
@@ -420,6 +424,10 @@ export default function App() {
 
   async function preReview(p: Row) {
     if (!p || p.busy || p.section !== 'MINE') return
+    if (p.humanOnly) {
+      setFlash(`#${p.number} is on a team's memory repo: human review only`)
+      return
+    }
     if (p.pre && !p.pre.moved) {
       const r = await api(`/api/prereview?url=${encodeURIComponent(p.url)}`)
       if (!r.ok) {
@@ -475,6 +483,10 @@ export default function App() {
   /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
   function reviewWith(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (p.humanOnly) {
+      setFlash(`#${p.number} is on a team's memory repo: human review only`)
+      return
+    }
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
@@ -599,7 +611,7 @@ export default function App() {
       reviewer: () => void addReviewer(p),
       bind: () => void bindScreen(p),
       waiting: () => void waitingScreen(p),
-      memory: () => void memoryEditor(ctx, p.repo),
+      memory: () => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }),
       hide: () => toggleHide(p),
     }
     fns[name]?.()
@@ -679,8 +691,8 @@ export default function App() {
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))
     if (k === 'y' && p) return one(() => void copyUrl(p))
-    if (k === 'g') return one(() => void memoryEditor(ctx, ''))
-    if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))
+    if (k === 'g') return one(() => void knowledgeScreen(ctx, 'inspect'))
+    if (k === 'n' && p) return one(() => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }))
     if (k === 'Z') return one(() => void dreamScreen(ctx))
     if (k === 'K') return one(() => void knowledgeScreen(ctx, 'learning'))
     if (k === 'W') return one(() => void knowledgeScreen(ctx, 'waiting'))

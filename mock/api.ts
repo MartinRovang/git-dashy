@@ -143,6 +143,8 @@ const memoryText: Record<string, string> = {
   // a team's files, keyed "<team>:<repo>"
   'acme:general': '- verify claims against the pushed head, not the PR body\n',
   'acme:acme/api': '- the retry client owns backoff; callers never sleep\n',
+  'acme:doc:brief': '# What we are building\n\nA billing platform for small clinics. Reviews should care most about money paths.\n',
+  'acme:doc:agents': '# For agent sessions\n\nFile what you work out with `gitdashy remember`.\n',
 }
 
 /** A conversation about a saved review, as the mock keeps it: the same for a held review and a pre-review. */
@@ -594,15 +596,19 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
     if (path === '/api/diff') return json(200, code(query.get('url') || ''))
     if (path === '/api/memory/files') {
-      const files = [{ team: '', repo: '' }, ...Object.keys(memoryText).filter((k) => !k.includes(':') && k !== 'general').map((repo) => ({ team: '', repo }))]
-      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general`).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })))
+      const files: { team: string; repo?: string; doc?: string }[] = [{ team: '', repo: '' }, ...Object.keys(memoryText).filter((k) => !k.includes(':') && k !== 'general').map((repo) => ({ team: '', repo }))]
+      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general` && !k.endsWith(':doc:brief') && !k.endsWith(':doc:agents')).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })), { team: t.key, doc: 'brief' }, { team: t.key, doc: 'agents' })
       return json(200, { files })
     }
     if (path === '/api/memory') {
-      const repo = query.get('repo') || 'general'
       const team = query.get('team') || ''
+      const doc = query.get('doc') || ''
+      if (doc) return json(200, { team, doc, path: `~/.prs_teams/${team}/memory/${doc === 'brief' ? 'project' : 'agents'}.md`, text: memoryText[`${team}:doc:${doc}`] || '' })
+      const repo = query.get('repo') || 'general'
       const file = `${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`
-      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, text: memoryText[team ? `${team}:${repo}` : repo] || '' })
+      const text = memoryText[team ? `${team}:${repo}` : repo] || ''
+      const facts = text.split('\n').filter((l) => /^\s*[-•]/.test(l)).map((l) => l.replace(/^\s*[-•\s]+/, '').trim()).filter(Boolean)
+      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
     if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.repo ? teamOf(d.repo) : '' })) })
@@ -730,7 +736,17 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/memory') {
       const repo = repoOf(body) || 'general'
       const team = str(body, 'team')
-      memoryText[team ? `${team}:${repo}` : repo] = str(body, 'text')
+      const op = str(body, 'op')
+      const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
+      if (op === 'propose') return json(200, pr)
+      if (op !== 'remove') return json(400, { error: 'op must be remove or propose' })
+      if (team) return json(200, pr) // a team's file changes only when its pull request is approved
+      const fact = str(body, 'fact')
+      const lines = (memoryText[repo] || '').split('\n')
+      const at = lines.findIndex((l) => l.replace(/^\s*[-•\s]+/, '').trim() === fact)
+      if (at < 0) return json(404, { error: 'that fact is not in this file any more' })
+      lines.splice(at, 1)
+      memoryText[repo] = lines.join('\n')
       return json(200, { ok: true, error: '' })
     }
     if (path === '/api/drafts') {

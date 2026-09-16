@@ -657,8 +657,9 @@ way a second run of the same model is not.
 | review proposes facts | drafts, promotions into `mine`, and the pool | private + team repo |
 | `gitdashy remember` | the same drafts, and the pool on promotion | private + team repo |
 | `P` → `t` | the team memory file; the pool line stays | team repo |
-| `P` → `x` | removes from `mine`, from the team's file when no other backer remains, and from the pool | private + team repo |
-| `n` / `g` edit | `mine` only — team memory is not hand-editable from the dashboard | private repo |
+| `P` → `x` | removes from `mine` and from the pool; when no other backer remains, opens a pull request removing it from the team's file | private + team repo, and a PR |
+| `n` / `g` inspect → `x` | yours: removes the fact from `mine`. A team's: opens a pull request removing it; nothing is typed in | private repo, or a PR |
+| inspect → `e` on a brief or `agents.md` | a pull request on the team's repo, approved by a person; gitdashy never reviews PRs on a team's repo | a PR |
 | `Z` dream | `mine` only, after you approve — the team's are read, never written | private repo |
 | review verdict | `reviewed.jsonl` | team repo |
 | joining a team | seeds the **log** only | team repo |
@@ -804,8 +805,8 @@ for one you touch monthly. It should be revisited with real numbers.
    matcher could not see a rewording, and a dense architectural fact is stated once or not at
    all. Cross-person corroboration is the answer to the second; the number to watch now is how
    often two people's reviewers land on one fact.
-5. **Team memory has no hand-edit path** from the dashboard any more — `n`/`g` now edit
-   yours. You can still edit the team checkout directly with git.
+5. **Memory has no hand-edit path** from the dashboard. `n`/`g` inspect and remove; a removal from a
+   team's file, and any change to its brief or `agents.md`, is a pull request a person approves.
 6. **Nothing here has met a real review yet.** The whole path is test-verified
    only. Numbers from real use should settle issues 1-3.
 

@@ -35,43 +35,70 @@ function pager(len: number, go: (step: number) => void): Foot[] {
     : []
 }
 
-/** Edit one memory file: yours, or a joined team's when `team` is named. Saving a team's file asks first. */
-export async function memoryEditor(ctx: Ctx, repo: string, team = '') {
-  const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}&team=${encodeURIComponent(team)}`)
+/** What a proposal to a team's repo came back as: the pull request to approve, or why there is none. */
+function proposed(ctx: Ctx, out: Json | null) {
+  if (!out || out.error) return
+  const url = String(out.url || '')
+  if (!url) {
+    notice(String(out.note || 'proposed'), 'proposed')
+    return
+  }
+  notice(
+    <>
+      <div>A pull request is open on the team's repo. A person with rights on that repo approves it; gitdashy never reviews it.</div>
+      <div className="link mono" style={{ marginTop: 8 }} title="click to copy" onClick={async () => ctx.flash(await copyText(url, 'the pull request'))}>
+        {url}
+      </div>
+    </>,
+    'pull request opened',
+  )
+}
+
+/** Propose a change to a team's founding document, the brief or agents.md, as a pull request on its repo.
+ *
+ *  ponytail: the only text anyone types into memory, and it never lands by itself. Every teammate's reviews
+ *  and sessions read these, so the change waits for a person with rights on the team's repo. */
+export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
+  const r = await api(`/api/memory?team=${encodeURIComponent(team)}&doc=${encodeURIComponent(doc)}`)
   if (!r.ok) {
     ctx.flash(`✗ ${await errorText(r)}`)
     return
   }
   const got = await r.json()
-  const name = team ? `${team} / ${got.repo}` : got.repo
+  const name = doc === 'agents' ? 'agents.md' : 'the brief'
   editor(
-    `memory · ${name}`,
+    `propose a change · ${team} / ${name}`,
     got.text,
     async (text) => {
-      // ponytail: a team's file is every teammate's review memory, and a hand edit skips the two-sightings gate
-      // for all of them. Yours costs only you, so it saves as it always did.
-      if (team && !(await confirm(`This pushes to team ${team}: every teammate's reviews read ${got.repo === 'general' ? 'its general memory' : `its ${got.repo} memory`}. Save?`, { yes: 'save and push', no: 'keep editing' }))) return false
-      const out = await ctx.call('/api/memory', { repo: got.repo, team, text }, `${name} memory saved`)
-      if (out?.error) ctx.flash(`saved, but not pushed: ${out.error}`)
+      if (!(await confirm(`This opens a pull request on team ${team}'s repo. Nothing changes until a person with rights on that repo approves it.`, { yes: 'open pull request', no: 'keep editing' }))) return false
+      proposed(ctx, await ctx.call('/api/memory', { op: 'propose', team, doc, text }))
     },
     got.path,
   )
 }
 
-export type KnowledgeTab = 'learning' | 'waiting' | 'shared'
+export type KnowledgeTab = 'learning' | 'inspect' | 'waiting' | 'shared'
 const TABS: [KnowledgeTab, string][] = [
   ['learning', 'K'],
+  ['inspect', 'g'],
   ['waiting', 'W'],
   ['shared', 'P'],
 ]
 
-/** Everything the memory holds, in one panel: how fast it learns, what is waiting for a second sighting, what the
- *  team has of yours, and the general memory and the dream as actions over it.
+/** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
+export type KFile = { team: string; repo?: string; doc?: string }
+const fileKey = (f: KFile) => JSON.stringify([f.team, f.repo || '', f.doc || ''])
+const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : 'brief') : f.repo || 'general')
+
+/** Everything the memory holds, in one panel: how fast it learns, what it knows file by file, what is waiting
+ *  for a second sighting, what the team has of yours, and the dream as an action over it.
  *
- *  ponytail: these were five buttons in the rail, each its own screen. One panel with tabs keeps K / W / P as
- *  keys that open it on their tab, and switch tabs inside it. A tab reloads when it is shown, so a dream or an
- *  edit made over the panel is not acted on from a stale list. */
-export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
+ *  ponytail: these were five buttons in the rail, each its own screen. One panel with tabs keeps K / g / W / P
+ *  as keys that open it on their tab, and switch tabs inside it. A tab reloads when it is shown, so a dream
+ *  made over the panel is not acted on from a stale list.
+ *  ponytail: inspect reads and removes, it does not write. Facts arrive through reviews and the two-sightings
+ *  gate; a person only takes them out. Out of yours at once, out of a team's by pull request. */
+export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile = { team: '', repo: '' }) {
   const about = ctx.current?.repo || ''
   let tab = first
   let events: LEvent[] = []
@@ -81,11 +108,23 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
   let inTeam = true
   let i = 0
   const failed: Partial<Record<KnowledgeTab, string>> = {}
-  let files: { team: string; repo: string }[] = []
+  let files: KFile[] = []
+  let file = pick
+  let facts: string[] = []
+  let doc = ''
+  let where = ''
   const model = ctx.getData()?.model || 'the model'
 
   const load = async (t: KnowledgeTab) => {
-    const r = await api(t === 'learning' ? '/api/learning' : t === 'waiting' ? '/api/drafts' : `/api/share?about=${encodeURIComponent(about)}`)
+    const url =
+      t === 'learning'
+        ? '/api/learning'
+        : t === 'waiting'
+          ? '/api/drafts'
+          : t === 'shared'
+            ? `/api/share?about=${encodeURIComponent(about)}`
+            : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
+    const r = await api(url)
     if (!r.ok) {
       failed[t] = await errorText(r)
       return
@@ -96,13 +135,17 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
     else if (t === 'waiting') {
       drafts = got.items
       promoteAt = got.promoteAt
-    } else {
+    } else if (t === 'shared') {
       shared = got.items
       inTeam = got.inTeam !== false
+    } else {
+      facts = got.facts || []
+      doc = got.text || ''
+      where = got.path || ''
     }
     if (t === tab) i = pageTo(i, 0, items().length)
   }
-  const items = () => (tab === 'waiting' ? drafts : tab === 'shared' ? shared : [])
+  const items = (): unknown[] => (tab === 'waiting' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
 
   const show = async (t: KnowledgeTab) => {
     if (t !== tab) i = 0
@@ -110,13 +153,33 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
     await load(t)
     refresh()
   }
+  const open_ = async (f: KFile) => {
+    file = f
+    i = 0
+    await show('inspect')
+  }
   const go = (step: number) => {
     i = pageTo(i, step, items().length)
     refresh()
   }
   const act = async (path: string, body: Json, ok: string) => {
-    await ctx.call(path, body, ok)
+    const out = await ctx.call(path, body, ok)
+    // a forget can leave the team's copy to remove: that is a pull request, and it says so
+    if (out?.branch) proposed(ctx, out)
     await load(tab)
+    refresh()
+  }
+  const remove = async () => {
+    const fact = facts[i]
+    if (fact === undefined) return
+    const theirs = !!file.team
+    const ask = theirs
+      ? `Propose removing this fact from team ${file.team}'s ${fileName(file)} memory? It opens a pull request on the team's repo; the fact stays until a person with rights on that repo approves it.`
+      : `Remove this fact from your ${fileName(file)} memory? It is gone from your reviews at once.`
+    if (!(await confirm(`${ask}\n\n${fact}`, { yes: theirs ? 'open pull request' : 'remove', no: 'keep it' }))) return
+    const out = await ctx.call('/api/memory', { op: 'remove', team: file.team, repo: file.repo || 'general', fact }, theirs ? '' : 'removed')
+    if (theirs) proposed(ctx, out)
+    await load('inspect')
     refresh()
   }
 
@@ -133,12 +196,74 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
     </>
   )
 
+  const picker_ = () => {
+    const all = files.some((f) => fileKey(f) === fileKey(file)) ? files : [file, ...files]
+    return (
+      <select
+        value={fileKey(file)}
+        aria-label="which memory to inspect"
+        onChange={(e) => {
+          const f = all.find((x) => fileKey(x) === e.target.value)
+          if (f) void open_(f)
+        }}
+      >
+        {[...new Set(all.map((f) => f.team))].map((team) => (
+          <optgroup key={team} label={team ? `team ${team}` : 'your memory'}>
+            {all
+              .filter((f) => f.team === team)
+              .map((f) => (
+                <option key={fileKey(f)} value={fileKey(f)}>
+                  {team ? `${team} / ` : ''}
+                  {fileName(f)}
+                  {f.doc ? ' (founding document)' : ''}
+                </option>
+              ))}
+          </optgroup>
+        ))}
+      </select>
+    )
+  }
+
+  const inspect = () => (
+    <div className="inspect">
+      <div className="lbar">
+        {picker_()}
+        <span className="sp" />
+        <span className="dim mono">{where}</span>
+      </div>
+      <p className="knote">
+        {file.doc
+          ? `A founding document: what team ${file.team} wrote, read by every teammate's reviews and sessions. A change to it is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
+          : file.team
+            ? `Team ${file.team}'s facts, learned by its reviews. Removing one opens a pull request on the team's repo; it stays until a person with rights on that repo approves it.`
+            : 'Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once.'}
+      </p>
+      {failed.inspect ? (
+        <p className="empty">✗ {failed.inspect}</p>
+      ) : file.doc ? (
+        doc.trim() ? <pre className="doc">{doc}</pre> : <p className="empty">nothing written yet</p>
+      ) : facts.length ? (
+        <div className="facts">
+          {facts.map((f, k) => (
+            <div key={k} className={`opt${k === i ? ' on' : ''}`} onClick={() => { i = k; refresh() }}>
+              <span className="tick">{k === i ? '›' : ''}</span>
+              <span>{f}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="empty">nothing learned here yet</p>
+      )}
+    </div>
+  )
+
   const content = () => {
+    if (tab === 'inspect') return inspect()
     if (failed[tab]) return <p className="empty">✗ {failed[tab]}</p>
     if (tab === 'learning') {
       return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
     }
-    const it = items()[i]
+    const it = items()[i] as Json | undefined
     if (tab === 'waiting') {
       if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
       const left = promoteAt - (it.n as number)
@@ -173,42 +298,20 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
             ))}
           </div>
           <span className="sp" />
-          <select
-            value=""
-            aria-label="inspect knowledge"
-            title="open one memory file to read or edit: yours, or a team's (saving a team's asks first)"
-            onChange={(e) => {
-              const [team, repo] = JSON.parse(e.target.value) as [string, string]
-              void memoryEditor(ctx, repo, team)
-            }}
-          >
-            <option value="" disabled>
-              inspect knowledge…
-            </option>
-            {[...new Set(files.map((f) => f.team))].map((team) => (
-              <optgroup key={team} label={team ? `team ${team}` : 'your memory'}>
-                {files
-                  .filter((f) => f.team === team)
-                  .map((f) => (
-                    <option key={f.repo} value={JSON.stringify([f.team, f.repo])}>
-                      {team ? `${team} / ${f.repo || 'general'}` : f.repo || 'general'}
-                    </option>
-                  ))}
-              </optgroup>
-            ))}
-          </select>
           <div className="tags">
             <button className="tag" title="asks before it starts" onClick={() => void dreamScreen(ctx)}>
               dream: tidy memory <kbd className="hint">Z</kbd>
             </button>
           </div>
         </div>
-        <p className="knote">
-          <b>Dream</b> has {model} read every memory file, yours and your teams', and propose a tidier version of yours:
-          overlapping facts merged, duplicates removed, stale ones dropped. You see each file's before and
-          after and nothing is written until you accept. Team files are only read, so yours do not end up
-          repeating theirs; a dream never rewrites them.
-        </p>
+        {(
+          <p className="knote">
+            <b>Dream</b> has {model} read every memory file, yours and your teams', and propose a tidier version of yours:
+            overlapping facts merged, duplicates removed, stale ones dropped. You see each file's before and
+            after and nothing is written until you accept. Team files are only read, so yours do not end up
+            repeating theirs; a dream never rewrites them.
+          </p>
+        )}
         {content()}
       </div>
     ),
@@ -217,9 +320,11 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
 
   const refresh = () => {
     const list = items()
-    const it = list[i]
-    m.sub = tab === 'learning' ? (events.length ? `${events.length} events` : '') : `${list.length ? i + 1 : 0}/${list.length}`
+    const it = list[i] as Json | undefined
+    m.sub = tab === 'learning' ? (events.length ? `${events.length} events` : '') : tab === 'inspect' && file.doc ? '' : `${list.length ? i + 1 : 0}/${list.length}`
     const foot: Foot[] = [...pager(list.length, go)]
+    if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
+    if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
     if (tab === 'waiting' && it) {
       foot.push(
         ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
@@ -237,11 +342,11 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
   const step = (by: number) => void show(TABS[pageTo(TABS.findIndex(([t]) => t === tab), by, TABS.length)][0])
   m.keys = {
     K: () => void show('learning'),
+    g: () => void show('inspect'),
     W: () => void show('waiting'),
     P: () => void show('shared'),
     '[': () => step(-1),
     ']': () => step(1),
-    g: () => void memoryEditor(ctx, ''),
     Z: () => void dreamScreen(ctx),
     Escape: () => close(m),
     q: () => close(m),
@@ -437,18 +542,8 @@ export function teamScreen(ctx: Ctx, key: string, p: Row | null): Promise<void> 
         repaint()
       }
       const verbs: Record<string, () => Promise<void>> = {
-        e: async () => {
-          const got = await (await api(`/api/teams?brief=${encodeURIComponent(key)}`)).json()
-          editor(
-            `brief · ${key}`,
-            got.text,
-            async (text) => {
-              const out = await ctx.call('/api/teams', { op: 'brief', key, text }, 'brief saved')
-              if (out?.error) ctx.flash(`saved, but not pushed: ${out.error}`)
-            },
-            got.path,
-          )
-        },
+        // the brief is a founding document: a change to it is a pull request, never a push
+        e: () => proposeDoc(ctx, key, 'brief'),
         d: async () => {
           const desc = await prompt(`One line: what is ${t.name} for?  [now: ${String(t.description).slice(0, 40) || 'nothing yet'}]`)
           if (desc) {
@@ -480,7 +575,7 @@ export function teamScreen(ctx: Ctx, key: string, p: Row | null): Promise<void> 
         },
       }
       m.foot = [
-        ['e', 'brief', verbs.e],
+        ['e', 'propose a brief change', verbs.e],
         ['d', 'describe', verbs.d],
         ['c', 'remote', verbs.c],
         ['o', 'cover', verbs.o],
