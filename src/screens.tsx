@@ -82,6 +82,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
   let i = 0
   const failed: Partial<Record<KnowledgeTab, string>> = {}
   let files: { team: string; repo: string }[] = []
+  const model = ctx.getData()?.model || 'the model'
 
   const load = async (t: KnowledgeTab) => {
     const r = await api(t === 'learning' ? '/api/learning' : t === 'waiting' ? '/api/drafts' : `/api/share?about=${encodeURIComponent(about)}`)
@@ -174,15 +175,15 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
           <span className="sp" />
           <select
             value=""
-            aria-label="edit a memory file"
-            title="edit a memory file: yours, or a team's (saving a team's asks first)"
+            aria-label="inspect knowledge"
+            title="open one memory file to read or edit: yours, or a team's (saving a team's asks first)"
             onChange={(e) => {
               const [team, repo] = JSON.parse(e.target.value) as [string, string]
               void memoryEditor(ctx, repo, team)
             }}
           >
             <option value="" disabled>
-              edit memory…
+              inspect knowledge…
             </option>
             {[...new Set(files.map((f) => f.team))].map((team) => (
               <optgroup key={team} label={team ? `team ${team}` : 'your memory'}>
@@ -197,11 +198,17 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
             ))}
           </select>
           <div className="tags">
-            <button className="tag" onClick={() => void dreamScreen(ctx)}>
-              dream <kbd className="hint">Z</kbd>
+            <button className="tag" title="asks before it starts" onClick={() => void dreamScreen(ctx)}>
+              dream: tidy memory <kbd className="hint">Z</kbd>
             </button>
           </div>
         </div>
+        <p className="knote">
+          <b>Dream</b> has {model} read every memory file, yours and your teams', and propose a tidier version of yours:
+          overlapping facts merged, duplicates removed, stale ones dropped. You see each file's before and
+          after and nothing is written until you accept. Team files are only read, so yours do not end up
+          repeating theirs; a dream never rewrites them.
+        </p>
         {content()}
       </div>
     ),
