@@ -453,6 +453,7 @@ export default function App() {
             }
           />
         ),
+        foot: [['Esc', 'close', () => close(m)]],
       })
       m.keys = { Escape: () => close(m), y: copy }
       return

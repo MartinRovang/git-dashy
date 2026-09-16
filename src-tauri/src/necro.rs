@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use crate::{config, llm, memory};
 
-const FILE: &str = ".necronomicon.json";
+const FILE: &str = "necronomicon.json";
 const DAY: u64 = 86_400;
 /// A point nothing reminds loses half its score every this many seconds.
 const HALF_LIFE: f64 = 14.0 * DAY as f64;
@@ -75,8 +75,16 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// ponytail: beside the memory checkout, never in it. memory_dir is a git repo whose push runs `git add -A`:
+/// inside, every review would push this machine's ranks, and a derank left the tree dirty so `pull --rebase`
+/// refused. Named after the dir, so a switch of memory dir gets its own book.
 fn path() -> PathBuf {
-    config::get().memory_dir.join(FILE)
+    let dir = config::get().memory_dir;
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dir.with_file_name(format!("{name}.{FILE}"))
 }
 
 fn read() -> Tome {

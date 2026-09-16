@@ -1,5 +1,5 @@
-// The Necronomicon: memory's main points as a book. Learn (daily on its own, or on the button) writes
-// the points; the server ranks them by how often their facts come up in reviews and by your deranks.
+// The Necronomicon: memory's main points as a book. Learn (the button) writes the points;
+// the server ranks them by how often their facts come up in reviews and by your deranks.
 // General knowledge fills the left page, each repo is a chapter on the right. Points that fade sit in
 // lighter ink, and the ones in the depths only show when you dig.
 //
@@ -139,6 +139,7 @@ export function Necronomicon() {
             · one model call on your reviewer model, usually a minute or two
             <br />· the points replace the book's current ones, each citing the facts it came from
             <br />· a reworded point keeps its rank and your deranks
+            <br />· facts from every team you are in go to that model, not only the board's
             <br />· memory itself is only read, never changed
           </div>
           <div style={{ color: 'var(--dim)' }}>
