@@ -1430,7 +1430,7 @@ mod tests {
     /// save the new one leaves none -- never the old one pointing at the new markdown.
     #[test]
     fn a_rerun_pre_review_never_keeps_the_last_conversation() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn a_revision_keeps_what_the_review_ran_with_and_proposes_no_memory() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         config::update(|c| c.demo = true);
         let v = revise(&held("opus", "5e3ae8e0-544e-4128-88af-fe301d354aae")).unwrap();
         assert_eq!((v.depth.as_str(), v.effort.as_str()), ("high", "max"));
@@ -1565,7 +1565,7 @@ mod tests {
     /// and skips the author lookup, so this runs the real verdict() with nothing leaving the machine.
     #[test]
     fn verdict_records_the_depth_and_effort_it_built_the_prompt_with() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1587,7 +1587,7 @@ mod tests {
     /// the two GitHub calls, which is the half a test cannot drive — everything after them is here.
     #[test]
     fn posting_a_held_review_logs_it_and_forgets_it() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1645,7 +1645,7 @@ mod tests {
     /// is pressed.
     #[test]
     fn posting_a_held_review_posts_what_was_parked() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1685,7 +1685,7 @@ mod tests {
     /// that must NOT leave the file, or the next press posts the same review again.
     #[test]
     fn a_failed_log_does_not_leave_the_review_to_post_again() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1733,7 +1733,7 @@ mod tests {
     /// can go up.
     #[test]
     fn a_log_that_cannot_be_written_still_leaves_the_verdict_on_the_row() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         // a directory where the log file should be: every write to it fails
         std::fs::create_dir_all(d.path().join("reviewed.jsonl")).unwrap();

@@ -436,9 +436,6 @@ fn write(into: &Path, repo: &str, general: bool, at: &str) -> std::io::Result<St
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn git(args: &[&str]) {
         assert!(Command::new("git").args(args).status().unwrap().success());
@@ -517,7 +514,7 @@ mod tests {
 
     #[test]
     fn sync_refuses_a_path_git_would_commit_and_builds_nothing() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.memory_dir = d.path().join("mem"));
         let repo = d.path().join("repo");
@@ -535,7 +532,7 @@ mod tests {
 
     #[test]
     fn sync_reports_a_path_it_cannot_create_instead_of_panicking() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.memory_dir = d.path().join("mem"));
         let blocker = d.path().join("afile");
@@ -546,7 +543,7 @@ mod tests {
 
     #[test]
     fn sync_removes_a_mirror_whose_source_is_gone_and_reports_where_it_read() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.memory_dir = d.path().join("mem"));
         let into = d.path().join("out");

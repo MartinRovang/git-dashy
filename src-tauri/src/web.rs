@@ -2284,9 +2284,6 @@ mod tests {
     use super::*;
     use crate::types::{Hunk, Line, Login, Repository, Section};
 
-    /// Config is global and tests run in parallel: the ones that touch it take this.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn pr() -> Pr {
         Pr {
             number: 7,
@@ -2384,6 +2381,7 @@ mod tests {
 
     #[test]
     fn debug_route_needs_the_token_and_carries_the_paths() {
+        let _g = crate::config::test_lock(); // the paths it carries come from the global config
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/debug"), None).0, 401);
         let (code, d) = get(&format!("{base}/api/debug"), Some(&token));
@@ -2413,6 +2411,9 @@ mod tests {
 
     #[test]
     fn no_token_is_refused_and_a_good_one_gets_the_payload() {
+        // ponytail: served() answers out of the global config, so a test rewriting it next door is
+        // what this payload is built from otherwise. Same lock as everything else that reads it.
+        let _g = crate::config::test_lock();
         let (base, token, state) = served();
         assert_eq!(get(&format!("{base}/api/state"), None).0, 401);
         assert_eq!(get(&format!("{base}/api/state?token=wrong"), None).0, 401);
@@ -2508,6 +2509,7 @@ mod tests {
 
     #[test]
     fn busy_follows_in_flight_and_the_review_rides_along() {
+        let _g = crate::config::test_lock(); // as above: the payload is read through the config
         let (base, token, state) = served();
         state.lock().running.insert("u".into());
         state.lock().reviews.insert("u".into(), "3 findings".into());
@@ -2535,7 +2537,7 @@ mod tests {
     /// A body with no `repo` must still be the switch, or turning auto on would arm nothing.
     #[test]
     fn the_auto_route_arms_a_repo_without_touching_the_switch() {
-        let _g = autorev::test_lock(); // config.autorev is process-global; one lock for every test that moves it
+        let _g = crate::config::test_lock(); // config.autorev is process-global; one lock for every test that moves it
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.autorev = d.path().join("autorev"));
         let (base, token, state) = served();
@@ -2646,7 +2648,7 @@ mod tests {
     /// itself, and the payload lists every rule that exists.
     #[test]
     fn the_payload_lists_every_posting_target_resolved() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -2711,7 +2713,7 @@ mod tests {
     /// its word and the owner's rule stays as the fallback, marked per repo.
     #[test]
     fn the_owner_switch_through_the_route_changes_what_the_payload_lists() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -2750,7 +2752,7 @@ mod tests {
 
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -2887,7 +2889,7 @@ mod tests {
     /// accept puts it where the post reads from.
     #[test]
     fn a_held_review_can_be_discussed_revised_and_the_revision_accepted() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -2995,7 +2997,7 @@ mod tests {
     /// an accepted revision rewrites the markdown without making it look newer than it is.
     #[test]
     fn a_pre_review_can_be_discussed_and_an_accepted_revision_keeps_its_old_time() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3084,7 +3086,7 @@ mod tests {
     #[cfg(unix)]
     fn a_pre_review_accept_that_cannot_write_the_markdown_keeps_the_revision() {
         use std::os::unix::fs::PermissionsExt;
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3138,7 +3140,7 @@ mod tests {
 
     #[test]
     fn a_pre_review_with_no_saved_conversation_says_to_run_it_again() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.self_dir = d.path().join("self"));
         let (base, token, _state) = served();
@@ -3160,7 +3162,7 @@ mod tests {
 
     #[test]
     fn instructions_past_the_cap_are_refused_before_anything_starts() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let (base, token, state) = served();
         let long = "x".repeat(ASK_MAX + 1);
         let (code, body) = post(
@@ -3179,7 +3181,7 @@ mod tests {
     /// nothing went up.
     #[test]
     fn a_release_that_cannot_start_is_a_409() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3237,7 +3239,7 @@ mod tests {
     /// Every other fixture here is lowercase, so no test caught it.
     #[test]
     fn a_mixed_case_repo_still_marks_its_row_as_waiting() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3272,7 +3274,7 @@ mod tests {
     /// The warning on the waiting screen: only two heads we can both read and that differ.
     #[test]
     fn the_waiting_screen_says_when_the_head_has_moved() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3324,7 +3326,7 @@ mod tests {
     /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
     #[test]
     fn discarding_a_held_review_leaves_the_row_clean() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3400,7 +3402,7 @@ mod tests {
     /// `merge` folds to 2 and promotes is the one wrong answer here that writes to the team pool.
     #[test]
     fn the_fold_panel_counts_what_merge_would_actually_do() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         config::update(|c| c.memory_dir = dir.path().to_path_buf());
         let queue = memory::queue_path(None);
@@ -3453,7 +3455,7 @@ mod tests {
 
     #[test]
     fn settings_change_the_theme_and_persist() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         config::update(|c| {
@@ -3576,7 +3578,7 @@ mod tests {
 
     #[test]
     fn a_report_route_answers_only_start_and_open_and_open_needs_a_report() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         config::update(|c| c.reports = dir.path().to_path_buf());
         let (base, token, _state) = served();
@@ -3595,7 +3597,7 @@ mod tests {
 
     #[test]
     fn closing_the_changelog_clears_it_and_records_the_version() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         config::update(|c| c.settings = Some(file.clone()));
@@ -3716,7 +3718,7 @@ mod tests {
         // The apply used to pull and push every joined team around a write that cannot reach one.
         // push_dir runs `git add -A`, so a teammate's unrelated working-tree state was committed under
         // "memory: dream cleanup" — a commit nobody asked for, in a repo the dream never wrote to.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         crate::config::update(|c| {
@@ -3777,7 +3779,7 @@ mod tests {
     fn the_again_op_clears_the_answer_and_hands_back_the_ask() {
         // Every other test calls memory::ask_*_again directly, so a typo in this match or a missing
         // refresh of state.asks would pass. This is the route the knowledge-card row actually takes.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         crate::config::update(|c| {

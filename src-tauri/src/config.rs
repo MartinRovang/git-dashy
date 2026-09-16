@@ -508,6 +508,17 @@ pub fn save(values: &Saved) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The lock for any test that touches a process-global, whichever module the test lives in.
+///
+/// ponytail: one, because twelve module locks never excluded each other and about a dozen tests failed
+/// at random, each reporting an assertion that belonged to whatever had rewritten the config under it
+/// (#134). It lives beside what it guards.
+#[cfg(test)]
+pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// `~`-shortened path for display.
 pub fn tilde(p: &Path) -> String {
     let h = home();

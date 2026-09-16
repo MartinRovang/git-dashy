@@ -379,11 +379,9 @@ mod tests {
     use serde_json::json;
     use std::sync::MutexGuard;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     /// Point every path at a fresh temp dir; hold the guard for the test's life.
     fn isolated() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         config::update(|c| {

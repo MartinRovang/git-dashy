@@ -1039,7 +1039,7 @@ mod tests {
     /// A message sent from a copy read before a turn landed must not write over that turn: the claim re-reads.
     #[test]
     fn a_message_from_a_stale_copy_keeps_the_answer_that_landed_first() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1339,7 +1339,7 @@ mod tests {
     /// the mirror path missing, and the mirror there with the repo it mirrors gone.
     #[test]
     fn a_mirror_whose_path_is_missing_stays_registered() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.registry = d.path().join("mirrors"));
         let gone = d
@@ -1376,7 +1376,7 @@ mod tests {
     #[test]
     fn widening_the_scope_baselines_what_is_already_listed() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         // the third repo is covered by NEITHER scope: it must not join the baseline just because
         // the previous scope did not cover it either
@@ -1406,7 +1406,7 @@ mod tests {
     #[test]
     fn narrowing_the_scope_covers_nothing_new() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         let rr = vec![pr_in("mine", "a/b"), pr_in("theirs", "other/thing")];
         let everywhere = crate::autorev::scope(); // nothing armed
@@ -1420,7 +1420,7 @@ mod tests {
     #[test]
     fn the_first_scope_a_state_takes_covers_nothing_new() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         crate::autorev::set("a/b", true);
 
@@ -1447,7 +1447,7 @@ mod tests {
     #[test]
     fn absorbing_a_scope_does_nothing_while_auto_is_off() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         let st = State::new();
         st.lock().sections = vec![section(
@@ -1474,7 +1474,7 @@ mod tests {
     #[test]
     fn a_repo_stops_being_new_once_its_scope_has_been_taken_up() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         crate::autorev::set("a/b", true);
 
@@ -1522,7 +1522,7 @@ mod tests {
     #[test]
     fn what_was_just_consented_to_is_not_baselined_away() {
         let d = tempfile::tempdir().unwrap();
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         crate::autorev::set("a/b", true);
 
@@ -1576,7 +1576,7 @@ mod tests {
     /// nothing. Dropping this bool left the flash saying "posting…" while the file stayed put.
     #[test]
     fn a_release_refuses_while_a_review_of_that_pr_is_running() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| {
             c.demo = true;

@@ -462,10 +462,7 @@ mod tests {
         }
     }
 
-    use std::sync::{Mutex, MutexGuard};
-
-    /// Env and config are process-wide: one HTTP test at a time.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use std::sync::MutexGuard;
 
     /// One request the fake server saw: its path, headers and body.
     struct Seen {
@@ -499,7 +496,7 @@ mod tests {
     }
 
     fn setup(who: &str, base: &str, key: Option<&str>, effort: &str) -> MutexGuard<'static, ()> {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = crate::config::test_lock();
         let (url_env, key_env) = match who {
             "openrouter" => ("PRS_OPENROUTER_URL", "OPENROUTER_API_KEY"),
             _ => ("PRS_LOCAL_URL", "PRS_LOCAL_KEY"),
@@ -634,7 +631,7 @@ mod tests {
 
     #[test]
     fn demo_mode_answers_without_a_backend() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         config::update(|c| c.demo = true);
         let got = ask("p", "opus", "", "", 1, &[]);
         config::update(|c| c.demo = false);

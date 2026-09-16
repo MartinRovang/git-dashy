@@ -169,7 +169,7 @@ mod tests {
     use crate::types::{Login, Repository};
 
     fn fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = crate::autorev::test_lock();
+        let g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.held_dir = d.path().join("held"));
         (g, d)

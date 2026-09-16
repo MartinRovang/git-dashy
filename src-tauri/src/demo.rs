@@ -447,6 +447,10 @@ mod tests {
 
     #[test]
     fn install_seeds_the_log_in_a_temp_dir() {
+        // ponytail: take the lock first: this one swaps the whole global config and puts it back, so
+        // without it every other test reading the config could be running in demo mode for as long as
+        // this takes — which is most of what #134 was.
+        let _g = crate::config::test_lock();
         let before = config::get();
         install();
         let c = config::get();

@@ -528,9 +528,6 @@ pub fn leave(slug: &str) -> String {
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn git(args: &[&str]) {
         assert!(
@@ -567,7 +564,7 @@ mod tests {
 
     #[test]
     fn store_moved_only_off_the_default() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let before = config::get().teams;
         config::update(|c| c.teams = default_store());
@@ -676,7 +673,7 @@ mod tests {
 
     #[test]
     fn set_store_refuses_nothing_when_no_team_is_joined_and_set_local_repoints() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let before = config::get();
         let old = d.path().join("old");
@@ -746,7 +743,7 @@ mod tests {
 
     #[test]
     fn leave_says_which_team_when_none_is_joined() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let before = config::get().teams;
         config::update(|c| c.teams = d.path().join("teams"));
