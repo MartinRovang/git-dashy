@@ -3045,6 +3045,28 @@ mod tests {
         assert_eq!(post_consent(&state, &bad).unwrap_err().0, 400);
     }
 
+    /// `f` is the only thing that clears a read that failed: without this call a detail the network
+    /// dropped sat in the cache as "still loading" until the PR itself moved.
+    #[test]
+    fn a_refresh_clears_the_reads_that_failed() {
+        let state = State::new();
+        {
+            let mut inner = state.lock();
+            inner.details.insert(("failed".into(), "1".into()), None);
+            inner.details.insert(
+                ("landed".into(), "1".into()),
+                Some(crate::types::Detail::default()),
+            );
+        }
+        let body: Body = serde_json::from_value(json!({})).unwrap();
+        post_refresh(&state, &body).unwrap();
+        let inner = state.lock();
+        assert_eq!(inner.details.len(), 1, "the failed read is gone");
+        assert!(inner
+            .details
+            .contains_key(&("landed".to_string(), "1".to_string())));
+    }
+
     #[test]
     fn dream_result_promises_only_what_the_apply_will_do() {
         // The rows, the deletion count and the full diff all came off the raw answer, so the page
