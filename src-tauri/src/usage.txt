@@ -85,7 +85,9 @@ db says which repo holds a repo's database schema and migrations. A review of a 
   Nothing connects to a database. `db acme/* acme/schema` covers a whole org; a repo of its own overrides
   it, and `db acme/docs --off` leaves one out. TARGET is owner/name or owner/*. --forget takes a rule away,
   so the repo follows its owner again. The Database group in the dashboard's rail sets the same rules.
-  A bare `gitdashy db` reports.
+  A bare `gitdashy db` reports. A review may name tables and columns from the DB repo in what it posts
+  on the PR, so a private DB repo's schema names can reach a public repo's PR: hold those reviews
+  (the rail's "when a review finishes") if that matters.
 
 drafts shows what a review proposed and no second review has confirmed — the store nothing else can
   show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,

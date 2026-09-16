@@ -71,8 +71,13 @@ fn parse(text: &str) -> Rules {
         // `clear` takes a rule away, where an empty db is a rule that says "none"
         let clear = e.get("clear").and_then(Value::as_bool) == Some(true);
         let db = match e.get("db").and_then(Value::as_str) {
-            // a db repo that no longer folds is dropped, not stored raw: scoped() compares against the key
-            Some(db) => key(db),
+            // a db repo that does not fold skips the line: storing its "" would read as a deliberate none and
+            // carve the repo out of its owner's rule
+            Some(db) if db.trim().is_empty() => String::new(),
+            Some(db) => match key(db) {
+                k if k.is_empty() => continue,
+                k => k,
+            },
             None if clear => String::new(),
             None => continue,
         };
@@ -146,12 +151,18 @@ mod tests {
 {"repo": "acme/docs", "db": ""}
 {"owner": "beta", "db": "beta/one"}
 {"owner": "beta", "db": "beta/two"}
+{"repo": "acme/web", "db": "not a repo"}
 not json"#,
         );
         assert_eq!(r.of("acme/api"), "acme/schema");
         assert_eq!(r.of("Acme/Billing"), "acme/billing-db");
         assert_eq!(r.of("acme/docs"), "");
         assert_eq!(r.of("beta/x"), "beta/two", "last line wins");
+        assert_eq!(
+            r.of("acme/web"),
+            "acme/schema",
+            "a db that does not fold is no rule, not a none"
+        );
         assert_eq!(r.of("other/x"), "");
         assert_eq!(r.of("nonsense"), "");
     }

@@ -2692,6 +2692,57 @@ mod tests {
         );
     }
 
+    /// The rail's Database group through HTTP: set, clear, and a bad op or target refused, each read back off the payload.
+    #[test]
+    fn db_repo_rules_through_the_route() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.dbrepo = d.path().join("dbrepo"));
+        let (base, token, _state) = served();
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["dbRules"].clone();
+        let url = format!("{base}/api/dbrepo");
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/*", "db": "acme/schema"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/docs", "db": ""}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([{"target": "acme/*", "db": "acme/schema"}, {"target": "acme/docs", "db": ""}])
+        );
+        assert_eq!(
+            post(&url, json!({"op": "clear", "target": "acme/docs"}), &token).0,
+            200
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
+        assert_eq!(
+            post(&url, json!({"op": "drop", "target": "acme/*"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "a/b/c", "db": "x/y"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "acme/*"}), "wrong").0,
+            401
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
+    }
+
     /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
     /// itself, and the payload lists every rule that exists.
     #[test]

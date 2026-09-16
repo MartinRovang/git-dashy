@@ -1669,6 +1669,34 @@ mod tests {
     /// --list is a question. It must answer before anything in this command writes, whatever else
     /// is on the line — the bug this pins armed acme/* and returned before ever reading the store.
     #[test]
+    fn db_takes_one_thing_to_do_with_its_target() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("dbrepo");
+        config::update(|c| c.dbrepo = store.clone());
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            db_cmd(s("acme/api"), None, false, false),
+            1,
+            "a target with nothing to do"
+        );
+        assert_eq!(
+            db_cmd(s("acme/api"), s("acme/x"), true, false),
+            1,
+            "a db repo and --off"
+        );
+        assert_eq!(db_cmd(s("acme/api"), None, true, true), 1, "--off and --forget");
+        assert_eq!(db_cmd(None, None, true, false), 1, "--off with no target");
+        assert!(!store.exists(), "a refused command wrote to the store");
+        assert_eq!(db_cmd(None, None, false, false), 0, "a bare db reports");
+        assert_eq!(db_cmd(s("acme/*"), s("acme/schema"), false, false), 0);
+        assert_eq!(db_cmd(s("acme/docs"), None, true, false), 0);
+        assert_eq!(crate::dbrepo::of("acme/docs"), "");
+        assert_eq!(db_cmd(s("acme/docs"), None, false, true), 0);
+        assert_eq!(crate::dbrepo::of("acme/docs"), "acme/schema");
+    }
+
+    #[test]
     fn auto_list_answers_without_writing_whatever_else_is_asked() {
         let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();

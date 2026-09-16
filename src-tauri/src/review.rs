@@ -1972,6 +1972,12 @@ mod tests {
     }
 
     #[test]
+    fn a_revision_asks_for_the_db_field_only_when_the_review_had_a_db_repo() {
+        assert!(contract("", "acme/schema").contains("\"db\": null | {"));
+        assert!(!contract("", "").contains("\"db\""));
+    }
+
+    #[test]
     fn a_trusted_author_widens_the_read_and_a_pasted_pr_replaces_the_tools() {
         let mut i = inputs(None);
         i.team = "acme/platform".into();
