@@ -671,7 +671,7 @@
 .held { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .held .talkbody { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px;
                   padding-bottom: 12px; }
-.held .talkfoot { flex: none; border-top: 1px solid var(--line); padding: 10px 0 14px; background: var(--bg3); }
+.held .talkfoot { flex: none; border-top: 1px solid var(--line); padding: 12px 0 16px; background: var(--bg3); }
 .held .talkfoot:empty { display: none; }
 .held .note { margin: 0; }
 .held pre { margin: 0; white-space: pre-wrap; }
@@ -689,7 +689,7 @@
                   background: color-mix(in srgb, var(--violet) 8%, transparent); }
 .held .proposal .verdict span { color: var(--violet); }
 .held .row { display: flex; gap: 8px; flex-wrap: wrap; }
-.held .row .btn:disabled { opacity: .45; cursor: default; }
+.held .btn:disabled, .held .lnk:disabled { opacity: .4; cursor: default; }
 .held .thread { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line2); padding-top: 10px; }
 .held .thread:not(:has(.turn)) { display: none; }
 .held .turn { display: flex; flex-direction: column; gap: 2px; max-width: 92%; }
@@ -700,5 +700,14 @@
 .held .turn.you b { text-align: right; }
 .held .turn.you p { background: color-mix(in srgb, var(--pink) 12%, var(--bg4)); }
 .held .turn.error p { color: var(--red); }
-.held .ask { display: flex; flex-direction: column; gap: 8px; }
-.held .ask textarea { min-height: 70px; resize: vertical; }
+/* the box, then one bar: talking on the left, what happens to the review on the right */
+.held .talkfoot { display: flex; flex-direction: column; gap: 8px; }
+.held .talkin { min-height: 64px; max-height: 30vh; resize: vertical; }
+.held .talkbar { display: flex; align-items: center; gap: 8px; }
+.held .talkbar .sp { flex: 1; }
+.held .talkbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.held .talkbar .btn kbd { font-size: 10px; padding: 0 4px; opacity: .8; }
+.held .talkbar .lnk { font: inherit; font-size: 12px; border: 0; background: none; padding: 0; cursor: pointer;
+                      color: var(--dim2); text-decoration: underline; text-decoration-color: var(--line);
+                      text-underline-offset: 3px; }
+.held .talkbar .lnk:not(:disabled):hover { color: var(--ink); text-decoration-color: currentColor; }

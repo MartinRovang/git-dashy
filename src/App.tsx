@@ -410,11 +410,18 @@ export default function App() {
         title: `pre-review of #${p.number}`,
         sub: `${got.path} · never posted`,
         wide: true,
-        body: () => <ReviewTalk source={{ kind: 'pre', url: p.url }} onFlash={setFlash} onText={(t) => (text = t)} />,
-        foot: [
-          ['y', 'copy', copy, 'go'],
-          ['Esc', 'close', () => close(m)],
-        ] as Foot[],
+        body: () => (
+          <ReviewTalk
+            source={{ kind: 'pre', url: p.url }}
+            onFlash={setFlash}
+            onText={(t) => (text = t)}
+            actions={
+              <button className="btn" onClick={() => void copy()}>
+                <kbd>y</kbd>copy
+              </button>
+            }
+          />
+        ),
       })
       m.keys = { Escape: () => close(m), y: copy }
       return
@@ -543,7 +550,6 @@ export default function App() {
           },
           'go',
         ],
-        ['Esc', 'cancel', () => close(m)],
       ] as Foot[],
     })
     m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2]() }
@@ -560,21 +566,37 @@ export default function App() {
       setFlash('nothing waiting on this PR')
       return
     }
+    const post = async () => {
+      if (await call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…')) close(m)
+    }
+    const drop = async () => {
+      if (await call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped')) close(m)
+    }
     const m = open({
       title: `waiting to post — ${p.repo}#${p.number}`,
       sub: `${d.held.model} · nothing is on the PR yet`,
       wide: true,
-      body: () => <ReviewTalk source={{ kind: 'held', repo: p.repo, number: p.number }} onFlash={setFlash} />,
-      foot: [
-        // ponytail: closed only once the post has started. The server refuses while the agent is still
-        // answering or a revision waits, and a modal that had already shut left the reason in a flash
-        // for a screen you could no longer see.
-        ['p', 'post it', async () => { if (await call('/api/posting', { op: 'release', repo: p.repo, number: p.number }, 'posting…')) close(m) }, 'go'],
-        ['x', 'drop it', async () => { if (await call('/api/posting', { op: 'discard', repo: p.repo, number: p.number }, 'dropped')) close(m) }, 'warn'],
-        ['Esc', 'leave it waiting', () => close(m)],
-      ] as Foot[],
+      body: () => (
+        <ReviewTalk
+          source={{ kind: 'held', repo: p.repo, number: p.number }}
+          onFlash={setFlash}
+          // ponytail: closed only once the post or drop has started. The server refuses while the agent is
+          // still answering or a revision waits, and a screen that had already shut left the reason in a
+          // flash for a screen you could no longer see.
+          actions={
+            <>
+              <button className="btn warn" onClick={() => void drop()}>
+                <kbd>x</kbd>drop it
+              </button>
+              <button className="btn go" onClick={() => void post()}>
+                <kbd>p</kbd>post it
+              </button>
+            </>
+          }
+        />
+      ),
     })
-    m.keys = { Escape: () => close(m) }
+    m.keys = { Escape: () => close(m), p: () => void post(), x: () => void drop() }
   }
 
   async function bindScreen(p: Row) {

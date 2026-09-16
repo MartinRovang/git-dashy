@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, errorText, post } from '../api'
 import type { Talk } from '../types'
 
@@ -31,7 +31,18 @@ async function fetchView(src: Source): Promise<View | string> {
  *  the same shape; what differs is where they are read from and that only a held review is ever posted.
  *  ponytail: its own polling, not the board's. The agent answers in minutes and the board refreshes on a
  *  much longer interval; while `busy` this asks every 1.5s and stops the moment the turn lands. */
-export function ReviewTalk({ source, onFlash, onText }: { source: Source; onFlash: (s: string) => void; onText?: (t: string) => void }) {
+export function ReviewTalk({
+  source,
+  onFlash,
+  onText,
+  actions,
+}: {
+  source: Source
+  onFlash: (s: string) => void
+  onText?: (t: string) => void
+  /** What the review itself can be done with — post and drop, or copy — at the right of the one bar. */
+  actions?: ReactNode
+}) {
   const [v, setV] = useState<View | null>(null)
   const [failed, setFailed] = useState('')
   const [draft, setDraft] = useState('')
@@ -147,35 +158,51 @@ export function ReviewTalk({ source, onFlash, onText }: { source: Source; onFlas
         ) : t.cannotDiscuss ? (
           <div className="note">{t.cannotDiscuss}</div>
         ) : (
-          <div className="ask">
-            <textarea
-              value={draft}
-              disabled={busy}
-              placeholder="Ask about this review, or tell it what it got wrong. Ctrl+Enter sends."
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault()
-                  void send()
-                }
-              }}
-            />
-            <div className="row">
-              <button className="btn go" disabled={busy || !draft.trim()} onClick={() => void send()}>
-                send
-              </button>
+          <textarea
+            className="talkin"
+            value={draft}
+            disabled={busy}
+            placeholder="Ask about this review, or tell it what it got wrong."
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
+        )}
+        {/* ponytail: ONE bar. The conversation's two buttons sat in a row of their own over the modal's
+            footer, so the screen had five buttons in two rows and a third for Esc, which closes every modal
+            anyway. Talking is on the left, what happens to the review on the right, and only the
+            irreversible one is filled in. */}
+        <div className="talkbar">
+          {t && !t.cannotDiscuss ? (
+            <>
               {/* a revision is asked for separately: talking should not quietly rewrite the review */}
               <button
-                className="btn"
+                className="lnk"
                 disabled={busy || !!t.proposed || !t.thread.length}
                 onClick={() => void act({ op: 'revise' })}
                 title={t.thread.length ? 'ask the agent to write the review again, taking this conversation into account' : 'discuss it first'}
               >
                 revise the review
               </button>
-            </div>
-          </div>
-        )}
+              <span className="sp" />
+              <button className="btn" disabled={busy || !draft.trim()} onClick={() => void send()} title="Ctrl+Enter">
+                <kbd>⌃⏎</kbd>send
+              </button>
+            </>
+          ) : (
+            <span className="sp" />
+          )}
+          {actions ? (
+            <>
+              <span className="sep" />
+              {actions}
+            </>
+          ) : null}
+        </div>
       </div>
     </div>
   )
