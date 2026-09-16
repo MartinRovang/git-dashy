@@ -166,6 +166,8 @@ pub enum Command {
         db: Option<String>,
         #[arg(long)]
         off: bool,
+        #[arg(long)]
+        forget: bool,
     },
     Friction {
         #[arg(long)]
@@ -727,13 +729,20 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
 }
 
 /// Point a repo, or every repo under an owner, at the repo its database is defined in.
-fn db_cmd(target: Option<String>, db: Option<String>, off: bool) -> i32 {
+/// `--off` sets "none", which beats an owner rule; `--forget` takes the rule away, so the owner's applies again.
+fn db_cmd(target: Option<String>, db: Option<String>, off: bool, forget: bool) -> i32 {
     let (target, db) = (nonempty(target), nonempty(db));
-    if !target.is_empty() && db.is_empty() == !off {
-        return fail("gitdashy: db TARGET DB_REPO, or db TARGET --off");
+    // exactly one of a DB repo, --off and --forget, and only with a target
+    let asks = [!db.is_empty(), off, forget].iter().filter(|b| **b).count();
+    if target.is_empty() != (asks == 0) || asks > 1 {
+        return fail("gitdashy: db TARGET DB_REPO, db TARGET --off, or db TARGET --forget");
     }
     if !target.is_empty() {
-        let err = dbrepo::set(&target, &db);
+        let err = if forget {
+            dbrepo::clear(&target)
+        } else {
+            dbrepo::set(&target, &db)
+        };
         if !err.is_empty() {
             return fail(format!("gitdashy: {err}"));
         }
@@ -1587,7 +1596,12 @@ pub fn run(args: Vec<String>) -> i32 {
             off,
             list,
         }) => auto_cmd(repo, owner, off, list),
-        Some(Command::Db { target, db, off }) => db_cmd(target, db, off),
+        Some(Command::Db {
+            target,
+            db,
+            off,
+            forget,
+        }) => db_cmd(target, db, off, forget),
         Some(Command::Friction {
             claude_hook,
             repo,

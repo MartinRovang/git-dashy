@@ -163,7 +163,9 @@ pub const DB: &str = "
 
 The database this repo runs against is defined in {db}, its schema and migrations. Read it the same way:
 `{cmd} api /repos/{db}` for its default branch, then `git/trees/<branch>?recursive=1` and `contents/<file>`.
-Nothing here connects to a database, so {db} is the whole picture of it.
+Nothing here connects to a database, so {db} is the whole picture of it. {db} may be private while this review
+is posted where anyone who can see the PR reads it: name the tables and columns that matter, but never quote
+schema or migration files from {db}.
 
 When this PR touches the database (queries, models, ORM calls, migrations, table or column names), check each
 against {db}: which tables and columns it reads, writes, adds, alters or drops, and what could go wrong. Look
@@ -2030,6 +2032,16 @@ Hope that helps! {not json}"#;
         assert_eq!(v.findings.len(), 1);
         assert_eq!(v.depth_used, "high");
         assert!(parse_verdict(r#"{"summary": "no verdict here"}"#).is_err());
+        // a db section is kept only as an object: the pane draws tables from it
+        for (db, kept) in [
+            ("null", false),
+            ("[]", false),
+            ("\"x\"", false),
+            (r#"{"tables": []}"#, true),
+        ] {
+            let v = parse_verdict(&format!(r#"{{"verdict": "comment", "db": {db}}}"#)).unwrap();
+            assert_eq!(v.db.is_some(), kept, "{db}");
+        }
         let tagged = |raw: &str| {
             let v = parse_verdict(raw).unwrap();
             (v.kind, v.breaking)

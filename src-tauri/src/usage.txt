@@ -11,7 +11,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy auto [owner/name] [--off] | --owner OWNER [--off] | --list
-       gitdashy db [owner/name | owner/* DB_REPO | --off]
+       gitdashy db [TARGET DB_REPO | TARGET --off | TARGET --forget]
        gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
@@ -83,7 +83,9 @@ auto says which repos `a` auto-reviews. The board spans whatever the token can s
 db says which repo holds a repo's database schema and migrations. A review of a PR there may also read
   that repo, and the pane shows the tables the change reads, writes or alters and what could break.
   Nothing connects to a database. `db acme/* acme/schema` covers a whole org; a repo of its own overrides
-  it, and `db acme/docs --off` leaves one out. A bare `gitdashy db` reports.
+  it, and `db acme/docs --off` leaves one out. TARGET is owner/name or owner/*. --forget takes a rule away,
+  so the repo follows its owner again. The Database group in the dashboard's rail sets the same rules.
+  A bare `gitdashy db` reports.
 
 drafts shows what a review proposed and no second review has confirmed — the store nothing else can
   show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,

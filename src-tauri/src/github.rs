@@ -195,11 +195,14 @@ pub fn scoped(path: &str, repo: &str, team: &str, db: &str) -> Result<String, St
             "a review may only search code, in {repo}: {head} is not /search/code"
         ));
     }
-    let bound = if team.is_empty() {
+    let mut bound = if team.is_empty() {
         String::new()
     } else {
         format!(" and the repos bound to {team}")
     };
+    if !db.is_empty() {
+        bound += &format!(" and its DB repo {db}");
+    }
     Err(format!(
         "a review may only read {repo}{bound}, and {head} is outside it"
     ))
@@ -1350,6 +1353,11 @@ mod tests {
         )
         .is_ok());
         assert!(scoped("/repos/Acme/Schema/git/trees/main", "acme/api", "", "acme/schema").is_ok());
+        // the bare repo, which the prompt tells the model to start with
+        assert!(scoped("/repos/acme/schema", "acme/api", "", "acme/schema").is_ok());
+        assert!(scoped("/repos/acme/other", "acme/api", "", "acme/schema")
+            .unwrap_err()
+            .contains("its DB repo acme/schema"));
         for path in [
             "/repos/acme/schema-secrets/contents/x",
             "/repos/acme/schema.git/contents/x",

@@ -1,14 +1,13 @@
 import type { DbImpact, Detail, Row } from '../types'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
-import { CHANGE_TONE } from '../dbgraph'
+import { CHANGE_TONE, clean } from '../dbgraph'
 import { DbGraph } from './DbGraph'
 
 /** The review's database section: each table the PR touches with its columns, then what could break. */
 function Db({ db, number }: { db: DbImpact; number: number }) {
-  const list = <T,>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : [])
-  const tables = list(db.tables)
-  const risks = list(db.risks)
+  const { tables, risks } = clean(db)
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? '' : 's'}`
   if (!tables.length && !risks.length) return null
   return (
     <>
@@ -16,7 +15,7 @@ function Db({ db, number }: { db: DbImpact; number: number }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className="lab">DATABASE</span>
         <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
-          {tables.length} tables · {risks.length} risks
+          {n(tables.length, 'table')} · {n(risks.length, 'risk')}
         </span>
       </div>
       <DbGraph db={db} number={number} />
