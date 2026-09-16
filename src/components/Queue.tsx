@@ -114,6 +114,11 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, on
           {child ? '└ ' : ''}
           {p.isDraft ? <span style={{ color: 'var(--amber)' }}>draft</span> : null}
           {p.isDraft ? ' ' : ''}
+          {p.db ? (
+            <span style={{ color: 'var(--amber)' }} title="changes the database: see DATABASE in the pane" aria-label="changes the database">
+              ⚠{' '}
+            </span>
+          ) : null}
           {p.title}
         </b>
       </div>

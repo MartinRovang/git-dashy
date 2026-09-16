@@ -29,6 +29,8 @@ export type Pr = {
   /** the newest review's tag: feature, fix, security...; "" when no review tagged it. */
   kind: string
   breaking: boolean
+  /** Its newest review found schema changes or database risks. */
+  db?: boolean
   pre: Pre
   /** A finished review nobody has posted yet. */
   waiting?: boolean

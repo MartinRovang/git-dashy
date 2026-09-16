@@ -168,6 +168,7 @@ pub fn payload(state: &State) -> Value {
                 "reviewAt": review_at,
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
+                "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.
@@ -231,6 +232,18 @@ fn pre_json((at, moved): (f64, bool)) -> Value {
     } else {
         Value::Null
     }
+}
+
+/// The review found the PR changes the database: a table added, altered or dropped, or a risk. A PR that only
+/// reads and writes rows is ordinary code and gets no mark.
+fn changes_db(r: &LogEntry) -> bool {
+    let Some(db) = &r.db else { return false };
+    let changed = db["tables"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|t| matches!(t["change"].as_str(), Some("added" | "altered" | "dropped")));
+    changed || db["risks"].as_array().is_some_and(|a| !a.is_empty())
 }
 
 /// The newest review of this PR: the row's own on a REVIEWED row, else the log's.
@@ -2274,6 +2287,25 @@ pub fn new_token() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_row_is_marked_for_schema_changes_and_risks_not_for_reads() {
+        let with = |db: serde_json::Value| crate::types::LogEntry {
+            db: Some(db),
+            ..Default::default()
+        };
+        let table = |change: &str| serde_json::json!({"tables": [{"name": "t", "change": change}]});
+        for change in ["added", "altered", "dropped"] {
+            assert!(super::changes_db(&with(table(change))), "{change}");
+        }
+        assert!(!super::changes_db(&with(table("read"))));
+        assert!(!super::changes_db(&with(table("written"))));
+        assert!(super::changes_db(&with(
+            serde_json::json!({"risks": [{"text": "x"}]})
+        )));
+        assert!(!super::changes_db(&with(serde_json::json!("junk"))));
+        assert!(!super::changes_db(&Default::default()));
+    }
+
     #[test]
     fn csp_lets_the_player_frame_load() {
         // the embed in src/components/FloatingVideo.tsx; vite dev sends no CSP, so only this catches a block
