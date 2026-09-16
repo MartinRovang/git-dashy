@@ -278,8 +278,13 @@ pub fn refresh_mirrors() {
         // ponytail: refresh what is THERE. init creates the mirror, so a refresh never has cause to make
         // one, and makedirs would otherwise rebuild the tree of a repo you deleted and write memory
         // back into it. Asking about `into` itself needs no recorded root and holds for any --into shape.
+        // ponytail: SKIP it, do not unregister it. A path that is not there right now is an unplugged
+        // drive, a network share between mounts, or a home not decrypted yet, as often as it is a repo
+        // someone deleted — and from here the two are the same look. Unregistering appends a tombstone,
+        // which is forever: the mirror stopped refreshing for good, silently, and only `gitdashy init
+        // --into <path> --forget` could have been the thing that did that. A stale entry costs one
+        // is_dir per refresh; a lost one costs a registration nobody knows to make again.
         if !into.is_dir() || (!root.as_os_str().is_empty() && !root.is_dir()) {
-            install::unregister(&into);
             continue;
         }
         // already pulled above; and this must not touch the network
@@ -1114,6 +1119,31 @@ mod tests {
         let only_b = |repo: &str| repo == "a/b";
         assert_eq!(st.lock().pending_rr(&every), ["mine", "theirs"]);
         assert_eq!(st.lock().pending_rr(&only_b), ["mine"]);
+    }
+
+    /// An unplugged drive is not a deleted repo, and the two look identical from here. A refresh
+    /// skips what it cannot see; only `gitdashy init --forget` writes the tombstone, which is forever.
+    #[test]
+    fn a_mirror_whose_path_is_missing_stays_registered() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        crate::config::update(|c| c.registry = d.path().join("mirrors"));
+        let gone = d
+            .path()
+            .join("unplugged")
+            .join("repo")
+            .join(".agent")
+            .join("team");
+        assert!(install::register(
+            &gone,
+            "acme/api",
+            std::path::Path::new(""),
+            std::path::Path::new("")
+        ));
+        refresh_mirrors();
+        let known = install::registered();
+        assert_eq!(known.len(), 1, "a path we cannot see must not be forgotten");
+        assert_eq!(known[0].0, gone);
     }
 
     /// The invariant the CLI path broke: the dashboard learns about a widened scope by reading the
