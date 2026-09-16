@@ -130,6 +130,8 @@ export type Settings = {
 
 export type StateData = {
   version: string
+  /** Your GitHub login, "" until the first fetch. */
+  me?: string
   sections: Section[]
   fetchedAt: number | null
   interval: number

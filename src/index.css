@@ -145,6 +145,9 @@
   .pr.child .txt b { font-weight: 400; color: var(--ink3); }
   .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
   .who span { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* your own PRs: the name and avatar recede, so a teammate's name is the one that catches the eye */
+  .who.mine span { color: var(--dim3); }
+  .who.mine .av { opacity: .45; }
   .av { width: 20px; height: 20px; border-radius: 50%; color: var(--bg); font-size: 10px; font-weight: 700;
         display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .revs { display: flex; gap: 4px; width: 92px; flex-shrink: 0; overflow: hidden; }

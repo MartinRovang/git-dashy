@@ -402,6 +402,11 @@ pub fn gql(query: &str, timeout_secs: u64) -> Result<serde_json::Value, Error> {
 
 static ME: Mutex<String> = Mutex::new(String::new());
 
+/// Your login if a fetch has already asked for it, "" before. Never goes to the network.
+pub fn me_cached() -> String {
+    ME.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// Your login, cached for the process.
 /// ponytail: `@me` is gh/UI sugar the API does not resolve, so the search needs the name.
 pub fn me() -> Result<String, Error> {

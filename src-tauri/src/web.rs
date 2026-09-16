@@ -181,6 +181,8 @@ pub fn payload(state: &State) -> Value {
     let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
+        // your login, so the board can set your own PRs apart; "" until the first fetch has asked
+        "me": if cfg.demo { "alice".to_string() } else { github::me_cached() },
         "sections": out,
         "fetchedAt": fetched_at,
         "interval": cfg.interval,
