@@ -14,6 +14,16 @@ import type { Plugin } from 'vite'
 const TARGET = 'http://127.0.0.1:7777'
 
 const THEMES = ['pencil', 'dashy', 'dracula', 'gruvbox', 'nord']
+// several of each kind, so the sources rows are worth grouping in dev too
+const SCOPES = [
+  'team:teamdashy',
+  'team:acme-guild',
+  'team:platform',
+  'org:acme',
+  'org:a',
+  'org:other',
+  'org:infra',
+]
 const MODELS = ['opus', 'sonnet', 'fable']
 const DEPTHS = ['adaptive', 'low', 'medium', 'high']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -110,9 +120,12 @@ const S = {
   // what a "no" left held back, so the rail's consent rows and its asks count are reachable in dev
   refused: [] as { kind: string; key: string; what: string }[],
   // what happens to each repo's reviews, and the ones that finished and are waiting for a key
-  posting: {} as Record<string, { manual: string; auto: string }>,
+  // one axis at a time, like the store: a repo can set `auto` and inherit `manual` from its owner
+  posting: {} as Record<string, { manual?: string; auto?: string }>,
   // owner rules live apart from repo rules, so `o` has something to flip that a repo row can carve
-  postingOwners: {} as Record<string, { manual: string; auto: string }>,
+  postingOwners: {} as Record<string, { manual?: string; auto?: string }>,
+  /** Owners switched to each repo on its own; their rule stays as the fallback. */
+  perRepo: {} as Record<string, boolean>,
   held: {} as Record<string, { verdict: string; summary: string; body: string; model: string; at: number; moved?: boolean }>,
   refreshes: 0,
   ticks: 0,
@@ -181,10 +194,14 @@ function seed() {
     { repo: null, fact: 'prefer small PRs', sent: false, backers: [] },
   ]
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
-  // one repo set to hold, and a review of it already waiting, so both screens are reachable in dev
-  // an owner rule carved out by a repo rule, so `o` has the case it used to get wrong
-  S.postingOwners['acme'] = { manual: 'post', auto: 'hold' }
-  S.posting['acme/web'] = { manual: 'post', auto: 'post' }
+  // both cases of the posting panel: acme is one setting for all its repos, tools is set per repo
+  S.postingOwners['acme'] = { manual: 'hold', auto: 'hold' }
+  // and a rule left on acme/web from before the switch existed, which beats the owner: the panel must show it
+  S.posting['acme/web'] = { auto: 'post' }
+  S.rows.push(mkPr(61, 'Add --json output to the status command', 'tools/cli', 'hana', 6, 'REVIEW REQUESTED'))
+  S.rows.push(mkPr(14, 'Document the release checklist', 'tools/docs', 'ivan', 20, 'REVIEW REQUESTED'))
+  S.posting['tools/cli'] = { manual: 'hold', auto: 'hold' }
+  S.posting['tools/docs'] = { manual: 'post', auto: 'hold' }
   const rr = S.rows.find((r) => r.section === 'REVIEW REQUESTED')
   if (rr) {
     rr.waiting = true
@@ -250,7 +267,7 @@ function buildPayload() {
     running: S.rows.filter((r) => r.busy).length,
     update: '',
     settings: { ...S.settings },
-    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: ['team:teamdashy', 'org:acme'] },
+    options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: SCOPES },
     knowledge: {
       // the Friday report takes 4s here, so the row's writing state is visible in dev
       report: {
@@ -268,6 +285,7 @@ function buildPayload() {
     },
     asks: S.asks,
     notices: S.notices,
+    postingRules: postingRules(),
     changelog: S.changelog,
   }
 }
@@ -388,6 +406,54 @@ function postReview(b: Body) {
   return json(200, { ok: true })
 }
 
+/** repo beats owner beats the default, the same chain the store resolves. One place, so the detail
+ *  and the /api/posting route cannot disagree. */
+function postingOf(repo: string) {
+  const owner = repo.split('/')[0]
+  const mine = S.posting[repo]
+  const theirs = S.postingOwners[owner]
+  const one = (ran: 'manual' | 'auto') => ({
+    value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
+    via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
+    ownerValue: theirs?.[ran] ?? 'post',
+  })
+  return { repo, owner, manual: one('manual'), auto: one('auto') }
+}
+
+/** Every target the panel lists — every repo on the board and every ruled owner — owners first and each
+ *  half sorted, the way posting_rules_json does it. */
+function postingRules() {
+  const by = (a: { target: string }, b: { target: string }) => a.target.localeCompare(b.target)
+  const onBoard = [...new Set(S.rows.map((r) => r.repo))]
+  const ownerNames = [...new Set([...Object.keys(S.postingOwners), ...onBoard.map((r) => r.split('/')[0])])]
+  const owners = ownerNames
+    .map((o) => {
+      const r = S.postingOwners[o] || {}
+      return {
+        target: `${o}/*`,
+        manual: r.manual || 'post',
+        auto: r.auto || 'post',
+        manualVia: r.manual ? 'owner' : '',
+        autoVia: r.auto ? 'owner' : '',
+        perRepo: !!S.perRepo[o],
+      }
+    })
+    .sort(by)
+  // like the server: a repo row shows the EFFECTIVE word, marked when it comes from the owner
+  const repos = [...new Set([...Object.keys(S.posting), ...onBoard])]
+    .map((t) => {
+      const r = S.posting[t] || {}
+      const own = S.postingOwners[t.split('/')[0]]
+      const one = (axis: 'manual' | 'auto') =>
+        r[axis] ? [r[axis], 'repo'] : own?.[axis] ? [own[axis], 'owner'] : ['post', '']
+      const [manual, manualVia] = one('manual')
+      const [auto, autoVia] = one('auto')
+      return { target: t, manual, auto, manualVia, autoVia }
+    })
+    .sort(by)
+  return [...owners, ...repos]
+}
+
 function postSettings(b: Body) {
   const s = S.settings
   for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
@@ -423,24 +489,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/story') return json(200, story(query.get('login') || ''))
     if (path === '/api/posting') {
       const repo = query.get('repo') || ''
-      const owner = repo.split('/')[0]
-      const mine = S.posting[repo]
-      const theirs = S.postingOwners[owner]
       const key = `${repo}#${query.get('number') || ''}`
-      // repo beats owner beats the default, the same chain the store resolves
-      const one = (ran: 'manual' | 'auto') => ({
-        value: mine?.[ran] ?? theirs?.[ran] ?? 'post',
-        via: mine?.[ran] ? 'repo' : theirs?.[ran] ? 'owner' : '',
-        ownerValue: theirs?.[ran] ?? 'post',
-      })
       const h = S.held[key]
-      return json(200, {
-        repo,
-        owner,
-        manual: one('manual'),
-        auto: one('auto'),
-        held: h ? { ...h, moved: !!h.moved } : null,
-      })
+      return json(200, { ...postingOf(repo), held: h ? { ...h, moved: !!h.moved } : null })
     }
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
@@ -703,6 +754,33 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = str(body, 'repo')
       const op = str(body, 'op')
       const key = `${repo}#${body.number ?? ''}`
+      if (op === 'govern') {
+        // like autorev::govern: ON holds a kind if the owner or any repo under it (board or store) holds it, and
+        // clears every repo rule under it; OFF pins each repo on the board and keeps the owner's rule as the
+        // fallback, marking the owner per repo
+        if (typeof body.on !== 'boolean') return json(400, { error: 'govern needs on: true or on: false' })
+        const owner = str(body, 'owner').replace(/\/\*$/, '').toLowerCase()
+        if (!owner || owner.includes('/')) return json(400, { error: `${str(body, 'owner')} is not an owner` })
+        const under = [...new Set(S.rows.map((r) => r.repo))].filter((r) => r.split('/')[0] === owner)
+        const stored = Object.keys(S.posting).filter((r) => r.split('/')[0] === owner)
+        for (const ran of ['manual', 'auto'] as const) {
+          const own = S.postingOwners[owner]?.[ran]
+          const of = (r: string) => S.posting[r]?.[ran] ?? own ?? 'post'
+          if (body.on) {
+            const word = own === 'hold' || [...under, ...stored].some((r) => of(r) === 'hold') ? 'hold' : 'post'
+            S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: word }
+            for (const r of stored) {
+              const next = { ...S.posting[r] }
+              delete next[ran]
+              S.posting[r] = next
+            }
+          } else if (own) {
+            for (const r of under) S.posting[r] = { ...S.posting[r], [ran]: of(r) }
+          }
+        }
+        S.perRepo[owner] = !body.on
+        return json(200, { ok: true })
+      }
       if (op === 'discard' || op === 'release') {
         const h = S.held[key]
         if (!h) return json(404, { error: 'nothing waiting for that PR' })
@@ -716,12 +794,21 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         return json(200, { ok: true })
       }
       const ran = str(body, 'ran')
-      if (body.owner) {
-        const owner = repo.split('/')[0]
-        S.postingOwners[owner] = { ...(S.postingOwners[owner] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
-        return json(200, { ok: true })
+      // like the route: `owner` is the owner NAME, and it is one or the other
+      const owner = str(body, 'owner')
+      if (!repo && !owner) return json(400, { error: 'name a repo or an owner' })
+      if (repo && owner) return json(400, { error: 'name a repo or an owner, not both' })
+      const word = str(body, 'post')
+      if (word !== 'post' && word !== 'hold' && word !== 'none')
+        return json(400, { error: 'post must be post, hold or none' })
+      // like the store: `none` takes the rule off rather than writing one
+      const put = (at: Record<string, { manual?: string; auto?: string }>, k: string) => {
+        const next = { ...at[k] }
+        if (word === 'none') delete next[ran as 'manual' | 'auto']
+        else next[ran as 'manual' | 'auto'] = word
+        at[k] = next
       }
-      S.posting[repo] = { ...(S.posting[repo] || { manual: 'post', auto: 'post' }), [ran]: str(body, 'post') }
+      put(owner ? S.postingOwners : S.posting, owner || repo)
       return json(200, { ok: true })
     }
     if (path === '/api/consent') {

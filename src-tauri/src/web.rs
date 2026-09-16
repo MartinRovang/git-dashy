@@ -192,6 +192,9 @@ pub fn payload(state: &State) -> Value {
         // the rows gets it backwards. The rule lives in autorev.rs and says so here.
         "autoEverywhere": auto_scope.everywhere(),
         "autoScope": auto_scope.listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
+        // every posting rule on this machine, so the rail can show the whole picture rather than
+        // one repo's answer with no way to see what else is set
+        "postingRules": posting_rules_json(&board_repos(&sections)),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -853,6 +856,123 @@ fn get_bind(_state: &State, query: &Query) -> Out {
     Ok(json!({"repo": repo, "kind": kind, "to": to, "owner": owner_of(repo), "teams": teams}))
 }
 
+/// What happens to one repo's reviews: the word in force, whose rule it is, and the owner's own
+/// word, which is what a "set the whole owner" control writes.
+///
+/// ponytail: the owner's OWN word too, not only the effective one. `o` flips the owner rule, and
+/// flipping it from the effective value wrote back what was already there whenever a repo row had
+/// carved the owner out -- a no-op the flash reported as a change.
+///
+/// ponytail: the one resolver. Both routes that answer "what happens to this repo" come through here;
+/// the copy `get_posting` used to keep had already drifted, returning the raw repo where this returns
+/// the folded key.
+fn posting_json(repo: &str) -> Value {
+    let p = autorev::posting();
+    let owner = owner_of(repo);
+    let key = bind::key(repo);
+    let one = |rules: &autorev::Rules| {
+        let via = if rules.repos.contains_key(&key) {
+            "repo"
+        } else if rules.owners.contains_key(&owner) {
+            "owner"
+        } else {
+            ""
+        };
+        json!({
+            "value": rules.of(repo).word(),
+            "via": via,
+            "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
+        })
+    };
+    json!({"repo": key, "owner": owner, "manual": one(&p.manual), "auto": one(&p.auto)})
+}
+
+/// Every repo the board is holding, folded and deduped: what the posting panel lists.
+fn board_repos(sections: &[crate::types::Section]) -> Vec<String> {
+    let mut v: Vec<String> = sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .map(|p| bind::key(p.repo()))
+        .filter(|k| !k.is_empty())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Every rule that exists, so nothing about this is invisible: (target, manual, auto), owners first.
+///
+/// Each word is the EFFECTIVE one, resolved the way the controls above the table resolve it, and `via`
+/// says where it came from. ponytail: it used to print an unset axis as the default, so with `a/*` holding
+/// what you run and `a/b` carrying an auto-only rule, the `a/b` row read "you post" while a manual review
+/// on a/b would in fact hold -- the table contradicting the controls, on the one screen built to make the
+/// rules visible.
+fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
+    let p = autorev::posting();
+    // ponytail: every repo the program is handling, not only the ones a rule names. The panel is a list
+    // you walk, so a repo with no rule of its own has to be in it -- that is the one you came to set.
+    // Each repo's owner comes with it, since the owner row is what a repo with no rule falls back to.
+    let mut targets: Vec<String> = p
+        .manual
+        .listed()
+        .into_iter()
+        .chain(p.auto.listed())
+        .map(|(t, _)| t)
+        .chain(on_board.iter().flat_map(|r| {
+            let k = bind::key(r);
+            let owner = k.split('/').next().unwrap_or("");
+            let owner = (!owner.is_empty()).then(|| format!("{owner}/*"));
+            owner.into_iter().chain(Some(k).filter(|k| !k.is_empty()))
+        }))
+        .collect();
+    targets.sort();
+    targets.dedup();
+    // owners first, the way Rules::listed orders one set
+    targets.sort_by_key(|t| !t.ends_with("/*"));
+    targets
+        .into_iter()
+        .map(|t| {
+            let bare = t.strip_suffix("/*").unwrap_or(&t).to_string();
+            // an owner row answers for itself; a repo row inherits its owner's word when it sets none
+            let one = |rules: &autorev::Rules| {
+                if t.ends_with("/*") {
+                    let v = rules.owners.get(&bare).copied().unwrap_or_default();
+                    (
+                        v,
+                        if rules.owners.contains_key(&bare) {
+                            "owner"
+                        } else {
+                            ""
+                        },
+                    )
+                } else if let Some(v) = rules.repos.get(&bare) {
+                    (*v, "repo")
+                } else {
+                    let owner = bare.split('/').next().unwrap_or("").to_string();
+                    (
+                        rules.of(&bare),
+                        if rules.owners.contains_key(&owner) {
+                            "owner"
+                        } else {
+                            ""
+                        },
+                    )
+                }
+            };
+            let (m, mv) = one(&p.manual);
+            let (a, av) = one(&p.auto);
+            let mut row =
+                json!({"target": t, "manual": m.word(), "auto": a.word(), "manualVia": mv, "autoVia": av});
+            // an owner switched to per repo still has its rule, as the fallback: the page must not read that
+            // rule as "this owner decides"
+            if t.ends_with("/*") {
+                row["perRepo"] = json!(p.per_repo.contains(&bare));
+            }
+            row
+        })
+        .collect()
+}
+
 /// What happens to this repo's reviews, and where each answer came from.
 ///
 /// ponytail: `via` as well as the value. A review that stops posting with nothing on screen saying
@@ -862,26 +982,6 @@ fn get_posting(state: &State, query: &Query) -> Out {
     if repo.is_empty() {
         return Err(Fail::new(400, "no row selected"));
     }
-    let p = autorev::posting();
-    let owner = owner_of(repo);
-    let one = |rules: &autorev::Rules| {
-        let r = bind::key(repo);
-        let via = if rules.repos.contains_key(&r) {
-            "repo"
-        } else if rules.owners.contains_key(&owner) {
-            "owner"
-        } else {
-            ""
-        };
-        // ponytail: the owner's OWN word too, not only the effective one. `o` flips the owner rule,
-        // and flipping it from the effective value wrote back what was already there whenever a repo
-        // row had carved the owner out — a no-op the flash reported as a change.
-        json!({
-            "value": rules.of(repo).word(),
-            "via": via,
-            "ownerValue": rules.owners.get(&owner).copied().unwrap_or_default().word(),
-        })
-    };
     let n: u64 = q(query, "number").parse().unwrap_or(0);
     let h = held::get(repo, n);
     // ponytail: the head the verdict was written against, next to the one on the board now. Pressing
@@ -894,21 +994,17 @@ fn get_posting(state: &State, query: &Query) -> Out {
         .find(|p| p.repo() == repo && p.number == n)
         .map(|p| p.head.clone())
         .unwrap_or_default();
-    Ok(json!({
-        "repo": repo,
-        "owner": owner,
-        "manual": one(&p.manual),
-        "auto": one(&p.auto),
-        "held": h.map(|h| json!({
-            "verdict": h.verdict.verdict,
-            "summary": h.verdict.summary,
-            "body": h.verdict.body,
-            "model": h.model,
-            "at": h.at,
-            // neither side knowing its head is not a move; only two we can compare and that differ
-            "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
-        })),
-    }))
+    let mut out = posting_json(repo);
+    out["held"] = json!(h.map(|h| json!({
+        "verdict": h.verdict.verdict,
+        "summary": h.verdict.summary,
+        "body": h.verdict.body,
+        "model": h.model,
+        "at": h.at,
+        // neither side knowing its head is not a move; only two we can compare and that differ
+        "moved": !h.pr.head.is_empty() && !live.is_empty() && h.pr.head != live,
+    })));
+    Ok(out)
 }
 
 fn get_dream(_state: &State, _q: &Query) -> Out {
@@ -936,6 +1032,19 @@ fn post_stories(_state: &State, body: &Body) -> Out {
         return Err(Fail::new(400, "follow must be a list"));
     };
     Ok(json!({"follow": story::set_followed(list)}))
+}
+
+/// The card has been read: drop the shift mark on that story. Unknown logins are a no-op, not an error --
+/// the card may have been closed and the story pruned by the time this lands.
+fn post_story_seen(_state: &State, body: &Body) -> Out {
+    let login = body.get("login").and_then(Value::as_str).unwrap_or_default();
+    if !story::login_ok(login) {
+        return Err(Fail::new(400, "login must be a GitHub username"));
+    }
+    // the text of the shift the pill showed: only that one is cleared, see story::forget
+    let read = body.get("shift").and_then(Value::as_str).unwrap_or_default();
+    story::seen(login, read);
+    Ok(json!({"ok": true}))
 }
 
 fn get_story(_state: &State, query: &Query) -> Out {
@@ -1268,11 +1377,25 @@ fn post_bind(state: &State, body: &Body) -> Out {
 
 /// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
 fn post_posting(state: &State, body: &Body) -> Out {
-    let (repo, op) = (text(body, "repo"), text(body, "op"));
-    if repo.is_empty() {
-        return Err(Fail::new(400, "no row selected"));
+    // ponytail: `owner` carries the owner NAME, like /api/auto, not a flag meaning "read `repo` through
+    // owner_of". That flag is what the comment in post_auto is about: a client sending the owner in
+    // `owner` -- the obvious reading -- widened one repo's rule to the whole org by coincidence.
+    let (repo, owner, op) = (text(body, "repo"), text(body, "owner"), text(body, "op"));
+    if op == "govern" {
+        // explicit, like /api/auto's `on`: a missing field must not read as "turn it off"
+        let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
+            return Err(Fail::new(400, "govern needs on: true or on: false"));
+        };
+        // the board's repos are read first and the lock let go: govern writes the store
+        let board = board_repos(&state.lock().sections);
+        fail_if(autorev::govern(&owner, on, &board))?;
+        state.wake();
+        return Ok(json!({"ok": true}));
     }
     if op == "release" || op == "discard" {
+        if repo.is_empty() {
+            return Err(Fail::new(400, "no row selected"));
+        }
         let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
         let Some(h) = held::get(&repo, n) else {
             return Err(Fail::new(404, "nothing waiting for that PR"));
@@ -1308,13 +1431,24 @@ fn post_posting(state: &State, body: &Body) -> Out {
         "auto" => autorev::Ran::Auto,
         _ => return Err(Fail::new(400, "ran must be manual or auto")),
     };
-    let Some(p) = autorev::Post::parse(&text(body, "post")) else {
-        return Err(Fail::new(400, "post must be post or hold"));
-    };
-    fail_if(if truthy(body, "owner") {
-        autorev::set_post_owner(&owner_of(&repo), ran, p)
-    } else {
-        autorev::set_post(&repo, ran, p)
+    let word = text(body, "post");
+    // `none` takes the rule off rather than setting one: an owner rule that could only ever be flipped
+    // between post and hold governed every repo under it for good, with no way back to per-repo control
+    let p = autorev::Post::parse(&word);
+    if p.is_none() && word != autorev::CLEAR {
+        return Err(Fail::new(400, "post must be post, hold or none"));
+    }
+    if repo.is_empty() && owner.is_empty() {
+        return Err(Fail::new(400, "name a repo or an owner"));
+    }
+    if !repo.is_empty() && !owner.is_empty() {
+        return Err(Fail::new(400, "name a repo or an owner, not both"));
+    }
+    fail_if(match (p, repo.is_empty()) {
+        (Some(p), true) => autorev::set_post_owner(&owner, ran, p),
+        (Some(p), false) => autorev::set_post(&repo, ran, p),
+        (None, true) => autorev::clear_post_owner(&owner, ran),
+        (None, false) => autorev::clear_post(&repo, ran),
     })?;
     state.wake();
     Ok(json!({"ok": true}))
@@ -1755,6 +1889,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/notices" => post_notices,
         "/api/changelog" => post_changelog,
         "/api/stories" => post_stories,
+        "/api/story/seen" => post_story_seen,
         _ => return None,
     })
 }
@@ -2097,6 +2232,17 @@ mod tests {
             (code, body["error"].as_str()),
             (400, Some("follow must be a list"))
         );
+        // ponytail: clearing a mark still goes through login_ok -- it names a key in the story store, and a
+        // body with no login at all must not reach it either
+        for bad in [json!({}), json!({"login": "../../etc"})] {
+            let (code, body) = post(&format!("{base}/api/story/seen"), bad.clone(), &token);
+            assert_eq!(
+                (code, body["error"].as_str()),
+                (400, Some("login must be a GitHub username")),
+                "{bad}"
+            );
+        }
+        assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
     }
 
     #[test]
@@ -2359,9 +2505,112 @@ mod tests {
         );
     }
 
+    /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
+    /// itself, and the payload lists every rule that exists.
+    #[test]
+    fn the_payload_lists_every_posting_target_resolved() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, _state) = served();
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
+
+        // the board's own repo is listed before anything is set: the panel is a list you walk, and the
+        // repo with no rule is the one you came to give one
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
+            ]),
+            "every repo on the board, with its owner, whether or not a rule names it"
+        );
+
+        autorev::set_post_owner("a", autorev::Ran::Auto, autorev::Post::Hold);
+
+        // the carve-out: the repo posts, the owner still holds, and both are listed
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Now);
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "repo"},
+            ]),
+            "a target set on one axis still lists the other"
+        );
+
+        // an axis this repo sets nothing on must read as what WILL happen, not as the default: the
+        // table used to print "you post" here while a manual review on a/b would have held
+        autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
+        assert_eq!(
+            rules()[1],
+            json!({"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "repo"}),
+            "the owner's word, marked as inherited"
+        );
+
+        // a target on BOTH axes must appear once, an owner that sorts after a repo must still come
+        // first (with `a/*` and `a/b` alone, alphabetical order happens to agree), and a ruled owner
+        // with nothing on the board still shows up
+        autorev::set_post("a/b", autorev::Ran::Manual, autorev::Post::Hold);
+        autorev::set_post_owner("zeta", autorev::Ran::Manual, autorev::Post::Hold);
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
+                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "repo", "autoVia": "repo"},
+            ]),
+            "owners first, then repos, and a/b listed once for both axes"
+        );
+    }
+
     /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
-    /// `o` flips that one, and flipping it from the effective value wrote back what was already
-    /// there whenever a repo row had carved the owner out.
+    /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
+    /// already there whenever a repo row had carved the owner out.
+    /// The switch through HTTP changes what the payload lists: on, the owner decides; off, each repo keeps
+    /// its word and the owner's rule stays as the fallback, marked per repo.
+    #[test]
+    fn the_owner_switch_through_the_route_changes_what_the_payload_lists() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+        });
+        let (base, token, _state) = served();
+        let url = format!("{base}/api/posting");
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
+
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Hold);
+        assert_eq!(
+            post(&url, json!({"op": "govern", "owner": "a", "on": true}), &token).0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner"},
+            ]),
+            "on: the owner holds what a/b held, and a/b follows it"
+        );
+        assert_eq!(
+            post(&url, json!({"op": "govern", "owner": "a", "on": false}), &token).0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": true},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "repo", "autoVia": "repo"},
+            ]),
+            "off: a/b owns its words, and the owner keeps its rule for a repo nobody listed"
+        );
+    }
+
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
         let _g = autorev::test_lock();
@@ -2387,7 +2636,7 @@ mod tests {
 
         post(
             &format!("{base}/api/posting"),
-            json!({"repo": "acme/api", "ran": "auto", "post": "hold", "owner": true}),
+            json!({"owner": "acme", "ran": "auto", "post": "hold"}),
             &token,
         );
         let j = get_one();
@@ -2412,6 +2661,79 @@ mod tests {
             j["manual"]["value"], "post",
             "the other kind is untouched throughout"
         );
+
+        // owner control through the route: `on` is required, and a missing one is not a quiet "off"
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "govern", "owner": "acme"}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("govern needs on: true or on: false"))
+        );
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "govern", "owner": "acme/api", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("acme/api is not an owner"))
+        );
+
+        // and the rule comes off again, which is what the panel's owner toggle does
+        post(
+            &format!("{base}/api/posting"),
+            json!({"owner": "acme", "ran": "auto", "post": "none"}),
+            &token,
+        );
+        let j = get_one();
+        assert_eq!(j["auto"]["ownerValue"], "post", "the owner rule is gone");
+        assert_eq!(j["auto"]["value"], "post", "and the repo's own still stands");
+        assert_eq!(j["auto"]["via"], "repo");
+        post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "none"}),
+            &token,
+        );
+        assert_eq!(get_one()["auto"]["via"], "", "nothing set anywhere now");
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"repo": "acme/api", "ran": "auto", "post": "maybe"}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("post must be post, hold or none"))
+        );
+
+        // ponytail: one or the other, never both and never neither. The flag this replaced meant a body
+        // naming the owner in `owner` -- the obvious reading -- set a rule on `repo`'s whole org instead.
+        for (bad, said) in [
+            (
+                json!({"repo": "acme/api", "owner": "acme", "ran": "auto", "post": "hold"}),
+                "name a repo or an owner, not both",
+            ),
+            (json!({"ran": "auto", "post": "hold"}), "name a repo or an owner"),
+        ] {
+            let (code, body) = post(&format!("{base}/api/posting"), bad.clone(), &token);
+            assert_eq!((code, body["error"].as_str()), (400, Some(said)), "{bad}");
+        }
+
+        // the route folds the repo it is asked about: `A/B` and `a/b` are one repo, one rule
+        autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
+        autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Hold);
+        let lower = get(&format!("{base}/api/posting?repo=a/b&number=7"), Some(&token)).1;
+        let mixed = get(&format!("{base}/api/posting?repo=A/B&number=7"), Some(&token)).1;
+        assert_eq!(mixed["repo"], "a/b", "the folded key, not what was typed");
+        assert_eq!(
+            (&mixed["manual"], &mixed["auto"]),
+            (&lower["manual"], &lower["auto"]),
+            "and the same rule it resolves for a/b"
+        );
+        assert_eq!(mixed["auto"]["via"], "repo");
+        assert_eq!(mixed["manual"]["via"], "owner");
     }
 
     /// A release that could not start must say so. It answered ok, the flash said "posting…", and
