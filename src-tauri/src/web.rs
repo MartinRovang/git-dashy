@@ -1599,7 +1599,7 @@ fn post_report(_state: &State, body: &Body) -> Out {
         }
         "open" => {
             let path = report::latest().ok_or_else(|| Fail::new(404, "no report yet"))?;
-            github::open_in_browser(&path.to_string_lossy());
+            github::open_file(&path);
             Ok(json!({"ok": true}))
         }
         _ => Err(Fail::new(400, "op must be start or open")),
