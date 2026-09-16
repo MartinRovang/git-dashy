@@ -144,7 +144,8 @@ export function viewer(title: string, text: string, sub = '', head?: ReactNode) 
 }
 
 /** A textarea and a save. */
-export function editor(title: string, text: string, onSave: (v: string) => void | Promise<void>, sub = '') {
+/** A text editor. `onSave` returning false keeps it open: the save was refused, and the text is still wanted. */
+export function editor(title: string, text: string, onSave: (v: string) => void | boolean | Promise<void | boolean>, sub = '') {
   const m = open({
     title,
     sub,
@@ -153,7 +154,7 @@ export function editor(title: string, text: string, onSave: (v: string) => void 
     focus: '#me',
     body: () => <textarea id="me" defaultValue={text} />,
     foot: [
-      ['^S', 'save', async () => { await onSave((document.querySelector('#me') as HTMLTextAreaElement).value); close(m) }, 'go'],
+      ['^S', 'save', async () => { if ((await onSave((document.querySelector('#me') as HTMLTextAreaElement).value)) !== false) close(m) }, 'go'],
       ['Esc', 'discard', () => close(m)],
     ],
   })

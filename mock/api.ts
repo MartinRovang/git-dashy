@@ -140,6 +140,9 @@ const memoryText: Record<string, string> = {
   general: '# general\n\n- prefer small PRs\n- always rebase, never merge main\n- run make lint before flagging style\n',
   'acme/api': '# acme/api\n\n- run make lint before flagging style\n- uses tabs\n- old CI on jenkins, ignore\n',
   'acme/web': '# acme/web\n\n- session middleware is shared with the admin app\n',
+  // a team's files, keyed "<team>:<repo>"
+  'acme:general': '- verify claims against the pushed head, not the PR body\n',
+  'acme:acme/api': '- the retry client owns backoff; callers never sleep\n',
 }
 
 /** A conversation about a saved review, as the mock keeps it: the same for a held review and a pre-review. */
@@ -590,9 +593,16 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
     if (path === '/api/diff') return json(200, code(query.get('url') || ''))
+    if (path === '/api/memory/files') {
+      const files = [{ team: '', repo: '' }, ...Object.keys(memoryText).filter((k) => !k.includes(':') && k !== 'general').map((repo) => ({ team: '', repo }))]
+      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general`).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })))
+      return json(200, { files })
+    }
     if (path === '/api/memory') {
       const repo = query.get('repo') || 'general'
-      return json(200, { repo, path: `~/.prs_memory/${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`, text: memoryText[repo] || '' })
+      const team = query.get('team') || ''
+      const file = `${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`
+      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, text: memoryText[team ? `${team}:${repo}` : repo] || '' })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
     if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.repo ? teamOf(d.repo) : '' })) })
@@ -719,7 +729,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/copy') return json(200, { ok: true, tool: 'xclip' })
     if (path === '/api/memory') {
       const repo = repoOf(body) || 'general'
-      memoryText[repo] = str(body, 'text')
+      const team = str(body, 'team')
+      memoryText[team ? `${team}:${repo}` : repo] = str(body, 'text')
       return json(200, { ok: true, error: '' })
     }
     if (path === '/api/drafts') {

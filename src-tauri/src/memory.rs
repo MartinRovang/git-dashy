@@ -521,6 +521,24 @@ pub fn every_source() -> Vec<(String, PathBuf)> {
     out
 }
 
+/// Every learned-memory file that exists, for the editor's picker: (team key, "" for yours; repo, None for
+/// general). Yours first, each source's general before its repos. What people wrote, the brief and agents.md,
+/// is left out: it has its own editor.
+pub fn editable() -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    for (label, base) in every_source() {
+        let team = label.strip_prefix("team ").unwrap_or("").to_string();
+        let mut here: Vec<Option<String>> = sorted_names(&base)
+            .into_iter()
+            .filter(|n| n.ends_with(".md") && n != PROJECT && n != AGENTS && base.join(n).is_file())
+            .map(|n| repo_of(&n))
+            .collect();
+        here.sort_by_key(|r| r.is_some());
+        out.extend(here.into_iter().map(|r| (team.clone(), r)));
+    }
+    out
+}
+
 /// One file's text, stripped. Only a missing file reads as empty.
 ///
 /// ponytail: only a missing file reads as empty. A permission error or a dangling symlink must be loud:

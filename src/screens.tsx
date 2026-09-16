@@ -35,18 +35,23 @@ function pager(len: number, go: (step: number) => void): Foot[] {
     : []
 }
 
-export async function memoryEditor(ctx: Ctx, repo: string) {
-  const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}`)
+/** Edit one memory file: yours, or a joined team's when `team` is named. Saving a team's file asks first. */
+export async function memoryEditor(ctx: Ctx, repo: string, team = '') {
+  const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}&team=${encodeURIComponent(team)}`)
   if (!r.ok) {
     ctx.flash(`✗ ${await errorText(r)}`)
     return
   }
   const got = await r.json()
+  const name = team ? `${team} / ${got.repo}` : got.repo
   editor(
-    `memory · ${got.repo}`,
+    `memory · ${name}`,
     got.text,
     async (text) => {
-      const out = await ctx.call('/api/memory', { repo: got.repo, text }, `${got.repo} memory saved`)
+      // ponytail: a team's file is every teammate's review memory, and a hand edit skips the two-sightings gate
+      // for all of them. Yours costs only you, so it saves as it always did.
+      if (team && !(await confirm(`This pushes to team ${team}: every teammate's reviews read ${got.repo === 'general' ? 'its general memory' : `its ${got.repo} memory`}. Save?`, { yes: 'save and push', no: 'keep editing' }))) return false
+      const out = await ctx.call('/api/memory', { repo: got.repo, team, text }, `${name} memory saved`)
       if (out?.error) ctx.flash(`saved, but not pushed: ${out.error}`)
     },
     got.path,
@@ -76,6 +81,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
   let inTeam = true
   let i = 0
   const failed: Partial<Record<KnowledgeTab, string>> = {}
+  let files: { team: string; repo: string }[] = []
 
   const load = async (t: KnowledgeTab) => {
     const r = await api(t === 'learning' ? '/api/learning' : t === 'waiting' ? '/api/drafts' : `/api/share?about=${encodeURIComponent(about)}`)
@@ -145,7 +151,12 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
   }
 
   // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading
-  await Promise.all(TABS.map(([t]) => load(t)))
+  await Promise.all([
+    ...TABS.map(([t]) => load(t)),
+    api('/api/memory/files')
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then((j) => (files = j.files)),
+  ])
   const m = open({
     title: 'knowledge',
     wide: true,
@@ -161,10 +172,31 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
             ))}
           </div>
           <span className="sp" />
+          <select
+            value=""
+            aria-label="edit a memory file"
+            title="edit a memory file: yours, or a team's (saving a team's asks first)"
+            onChange={(e) => {
+              const [team, repo] = JSON.parse(e.target.value) as [string, string]
+              void memoryEditor(ctx, repo, team)
+            }}
+          >
+            <option value="" disabled>
+              edit memory…
+            </option>
+            {[...new Set(files.map((f) => f.team))].map((team) => (
+              <optgroup key={team} label={team ? `team ${team}` : 'your memory'}>
+                {files
+                  .filter((f) => f.team === team)
+                  .map((f) => (
+                    <option key={f.repo} value={JSON.stringify([f.team, f.repo])}>
+                      {team ? `${team} / ${f.repo || 'general'}` : f.repo || 'general'}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
           <div className="tags">
-            <button className="tag" onClick={() => void memoryEditor(ctx, '')}>
-              general memory <kbd className="hint">g</kbd>
-            </button>
             <button className="tag" onClick={() => void dreamScreen(ctx)}>
               dream <kbd className="hint">Z</kbd>
             </button>

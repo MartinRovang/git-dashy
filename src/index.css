@@ -805,11 +805,11 @@
 .learning { display: flex; flex-direction: column; gap: 10px; }
 .learning .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .learning .lbar .sp, .learning .legend .sp { flex: 1; }
-.learning .lbar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
-                         border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; max-width: 180px;
+.learning .lbar select, .kpanel > .lbar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
+                         border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; max-width: 240px;
                          color-scheme: dark; cursor: pointer; }
-.learning .lbar select:hover { border-color: var(--dim3); }
-.learning .lbar select option { color: var(--ink); background: var(--bg4); }
+.learning .lbar select:hover, .kpanel > .lbar select:hover { border-color: var(--dim3); }
+.learning .lbar select option, .kpanel > .lbar select option, .kpanel > .lbar select optgroup { color: var(--ink); background: var(--bg4); }
 .learning .seg button { font-size: 11.5px; padding: 3px 9px; }
 .learning .lchart { width: 100%; height: auto; display: block; }
 .learning .lchart .grid { stroke: var(--line); stroke-width: 1; }

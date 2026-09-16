@@ -686,12 +686,36 @@ fn post_prereview(state: &State, body: &Body) -> Out {
     talk(state, review::Talk::Pre, h, &op, body)
 }
 
+/// Where a memory edit reads and writes: your memory dir, or a joined team's memory/ when `team` is named.
+/// (the directory memory::path joins onto, the checkout to pull and push, the push label). 404 for a team
+/// this machine is not in, so a typed key never becomes a new directory.
+fn memory_home(team: &str) -> Result<(Option<std::path::PathBuf>, std::path::PathBuf, &'static str), Fail> {
+    if team.is_empty() {
+        return Ok((None, config::get().memory_dir, "mine"));
+    }
+    let d = team::dir_of(team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
+    Ok((Some(d.join("memory")), d, "sync"))
+}
+
+/// Every memory file there is, yours and each team's, for the picker the editor opens from.
+fn get_memory_files(_state: &State, _query: &Query) -> Out {
+    let files: Vec<Value> = memory::editable()
+        .into_iter()
+        .map(|(team, repo)| json!({"team": team, "repo": repo.unwrap_or_default()}))
+        .collect();
+    Ok(json!({ "files": files }))
+}
+
 fn get_memory(_state: &State, query: &Query) -> Out {
     let repo = Some(q(query, "repo")).filter(|r| !r.is_empty());
-    let path = memory::path(repo, None);
-    team::pull_dir(&config::get().memory_dir, "mine");
+    let team = q(query, "team");
+    let (base, dir, label) = memory_home(team)?;
+    let path = memory::path(repo, base.as_deref());
+    team::pull_dir(&dir, label);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
-    Ok(json!({"repo": repo.unwrap_or("general"), "path": knowledge::tilde(&path), "text": text}))
+    Ok(
+        json!({"repo": repo.unwrap_or("general"), "team": team, "path": knowledge::tilde(&path), "text": text}),
+    )
 }
 
 fn get_drafts(_state: &State, _q: &Query) -> Out {
@@ -1283,18 +1307,23 @@ fn post_copy(state: &State, body: &Body) -> Out {
 
 fn post_memory(_state: &State, body: &Body) -> Out {
     let repo = repo_of(body).filter(|r| r != "general");
-    let path = memory::path(repo.as_deref(), None);
+    let team = text(body, "team");
+    let (base, dir, label) = memory_home(&team)?;
+    let path = memory::path(repo.as_deref(), base.as_deref());
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let dir = config::get().memory_dir;
-    team::pull_dir(&dir, "mine");
-    memory::history(); // the state before the edit is the version you want back if you regret it
+    team::pull_dir(&dir, label);
+    if base.is_none() {
+        // the state before the edit is the version you want back if you regret it; a team's checkout is
+        // already a git repo, or it would not be joined
+        memory::history();
+    }
     std::fs::write(&path, text(body, "text"))?;
     let err = team::push_dir(
         &dir,
         &format!("memory: {} edited", repo.as_deref().unwrap_or("general")),
-        "mine",
+        label,
     );
     Ok(json!({"ok": true, "error": err}))
 }
@@ -1989,6 +2018,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/diff" => get_diff,
         "/api/prereview" => get_prereview,
         "/api/memory" => get_memory,
+        "/api/memory/files" => get_memory_files,
         "/api/drafts" => get_drafts,
         "/api/overlaps" => get_overlaps,
         "/api/share" => get_share,
@@ -2389,6 +2419,80 @@ mod tests {
             );
         }
         assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
+    }
+
+    #[test]
+    fn memory_is_edited_in_yours_or_a_joined_teams_and_listed_from_both() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&t)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(t.join("memory/general.md"), "- theirs\n").unwrap();
+        std::fs::write(t.join("memory/acme__api.md"), "- api\n").unwrap();
+        std::fs::write(t.join("memory/project.md"), "the brief\n").unwrap();
+        std::fs::write(mine.join("acme__web.md"), "- web\n").unwrap();
+        std::fs::write(mine.join("general.md"), "- mine\n").unwrap();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+        });
+        let (base, token, _state) = served();
+
+        // yours first, general before repos in each; the brief is not a learned file
+        let (code, j) = get(&format!("{base}/api/memory/files"), Some(&token));
+        assert_eq!(code, 200);
+        let files: Vec<(String, String)> = j["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["team"].as_str().unwrap().into(),
+                    f["repo"].as_str().unwrap().into(),
+                )
+            })
+            .collect();
+        let want = [("", ""), ("", "acme/web"), ("crew", ""), ("crew", "acme/api")];
+        assert_eq!(files, want.map(|(a, b)| (a.to_string(), b.to_string())));
+
+        let (code, j) = get(
+            &format!("{base}/api/memory?team=crew&repo=acme/api"),
+            Some(&token),
+        );
+        assert_eq!((code, j["text"].as_str()), (200, Some("- api\n")));
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"team": "crew", "repo": "general", "text": "- edited\n"}),
+            &token,
+        );
+        assert_eq!(code, 200);
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- edited\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(mine.join("general.md")).unwrap(),
+            "- mine\n",
+            "yours untouched"
+        );
+
+        // a team this machine is not in is refused, not created
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"team": "strangers", "repo": "general", "text": "x"}),
+            &token,
+        );
+        assert_eq!(code, 404);
+        assert!(!teams.join("strangers").exists());
     }
 
     #[test]
