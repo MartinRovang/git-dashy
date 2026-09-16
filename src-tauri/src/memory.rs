@@ -794,9 +794,73 @@ pub fn whoami() -> String {
 /// ponytail: None for several on purpose. A general fact is true of every repo a source covers, and with
 /// two teams that is two different claims; picking one would publish to a team that never asked. It is
 /// the LAST resort now: `about` usually says which project the observation came from.
-fn the_one_team() -> Option<PathBuf> {
-    let got = team::dirs();
-    (got.len() == 1).then(|| got[0].join("memory"))
+/// One read of the bindings and one scan of the joined teams, for a caller resolving many repos.
+///
+/// ponytail: `mine_for_teams` asked per FILE and `in_team` per FACT, and every ask reopened the
+/// bindings store and walked TEAMS twice over — bind::resolver() exists for exactly this and was not
+/// used here. Built once it is also one answer: the list cannot change its mind halfway down.
+struct Teams {
+    of: Box<dyn Fn(&str) -> String + Send + Sync>,
+    /// lowercased slug -> that team's memory dir, as bind::team_dir resolves it
+    dirs: HashMap<String, PathBuf>,
+    joined: Vec<String>,
+}
+
+impl Teams {
+    fn read() -> Teams {
+        let joined = team::joined();
+        let root = config::get().teams;
+        let dirs = joined
+            .iter()
+            .map(|s| (s.to_lowercase(), root.join(s).join("memory")))
+            .collect();
+        Teams {
+            of: bind::resolver(),
+            dirs,
+            joined,
+        }
+    }
+
+    /// bind::team_dir against this read: the team's memory dir, if this machine has joined it.
+    fn dir_of(&self, slug: &str) -> Option<PathBuf> {
+        if slug.is_empty() {
+            return None;
+        }
+        self.dirs.get(&slug.to_lowercase()).cloned()
+    }
+
+    fn project_key(&self, repo: Option<&str>, about: &str) -> (String, Option<PathBuf>) {
+        if let Some(r) = repo {
+            let k = (self.of)(r);
+            return match self.dir_of(&k) {
+                Some(d) => (k, Some(d)),
+                None => (String::new(), None),
+            };
+        }
+        if !about.is_empty() {
+            let k = (self.of)(about);
+            if !k.is_empty() {
+                if let Some(d) = self.dir_of(&k) {
+                    return (k, Some(d));
+                }
+            }
+        }
+        // the last resort, unchanged: in exactly one team, a general fact has one home
+        match self.joined.as_slice() {
+            [only] => (only.clone(), self.dir_of(only)),
+            _ => (String::new(), None),
+        }
+    }
+
+    fn visible(&self, repo: &str, about: &str) -> bool {
+        if self.joined.is_empty() {
+            return false;
+        }
+        let Some(repo) = opt(repo) else {
+            return self.project_key(None, about).1.is_some(); // a general fact belongs to the project it was observed in
+        };
+        self.dir_of(&(self.of)(repo)).is_some()
+    }
 }
 
 /// The memory dir a fact at `repo` scope belongs to. None when nothing selects one.
@@ -822,27 +886,7 @@ fn project(repo: Option<&str>, about: &str) -> Option<PathBuf> {
 
 /// (team key, memory dir) for a fact at `repo` scope. ("", None) when nothing selects one.
 fn project_key(repo: Option<&str>, about: &str) -> (String, Option<PathBuf>) {
-    if let Some(r) = repo {
-        let k = bind::of(r);
-        return match bind::team_dir(&k) {
-            Some(d) => (k, Some(d)),
-            None => (String::new(), None),
-        };
-    }
-    if !about.is_empty() {
-        let k = bind::of(about);
-        if !k.is_empty() {
-            if let Some(d) = bind::team_dir(&k) {
-                return (k, Some(d));
-            }
-        }
-    }
-    let got = team::joined();
-    if got.len() == 1 {
-        (got[0].clone(), the_one_team())
-    } else {
-        (String::new(), None)
-    }
+    Teams::read().project_key(repo, about)
 }
 
 /// Your evidence for `repo`, inside the team it is BOUND to. None when nothing selects one.
@@ -883,20 +927,14 @@ pub fn logged_repos(wh: Option<&Path>) -> HashSet<String> {
 /// disclosure: whether a fact about your private work is published to other people. That is the last
 /// place an irreversible side effect belongs. Joining still seeds bindings from the log, so nothing
 /// stops working; it just becomes something you can see and take back.
+/// ponytail: through the team's dir, exactly as every READ resolves it. bind.of(repo) being non-empty
+/// was true for a binding to ANY team, including one this machine is not in, so a repo bound to
+/// org/other had its name and facts written into org/mem's pool and offered for sharing, while
+/// sources() and brief() both said it was not ours. One binding meaning "ours" for disclosure and "not
+/// ours" for reading is the two-mechanisms-disagree failure this module argues against, in the
+/// direction that publishes.
 pub fn team_visible(repo: &str, about: &str) -> bool {
-    if team::joined().is_empty() {
-        return false;
-    }
-    let Some(repo) = opt(repo) else {
-        return project(None, about).is_some(); // a general fact belongs to the project it was observed in
-    };
-    // ponytail: through team_dir, exactly as every READ resolves it. bind.of(repo) being non-empty was
-    // true for a binding to ANY team, including one this machine is not in, so a repo bound to org/other
-    // had its name and facts written into org/mem's pool and offered for sharing, while sources() and
-    // brief() both said it was not ours. One binding meaning "ours" for disclosure and "not ours" for
-    // reading is the two-mechanisms-disagree failure this module argues against, in the direction that
-    // publishes.
-    bind::team_dir(&bind::of(repo)).is_some()
+    Teams::read().visible(repo, about)
 }
 
 /// Where `user`'s unconfirmed observations about `repo` live, inside the team it is bound to.
@@ -2063,10 +2101,14 @@ pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
 pub fn in_team(about: &str) -> Vec<(Option<String>, String, bool)> {
     // ponytail: NOT sorted here. share_screen sorts by the same key plus corroboration, and two sorts
     // over one list is the pair where the second silently decides and the first is decoration.
-    mine_for_teams(about)
+    // ponytail: one read for the whole list, and the same one the files were chosen with
+    let teams = Teams::read();
+    mine_for_teams(&teams, about)
         .into_iter()
         .map(|(repo, fact)| {
-            let shared = project(repo.as_deref(), about)
+            let shared = teams
+                .project_key(repo.as_deref(), about)
+                .1
                 .map(|base| {
                     facts(&path(repo.as_deref(), Some(&base)))
                         .iter()
@@ -2079,7 +2121,7 @@ pub fn in_team(about: &str) -> Vec<(Option<String>, String, bool)> {
 }
 
 /// [(repo, fact)] every fact of yours about a repo the team can see.
-fn mine_for_teams(about: &str) -> Vec<(Option<String>, String)> {
+fn mine_for_teams(teams: &Teams, about: &str) -> Vec<(Option<String>, String)> {
     let mut out = Vec::new();
     for name in sorted_names(&config::get().memory_dir) {
         if !name.ends_with(".md") || name == PROJECT {
@@ -2087,7 +2129,7 @@ fn mine_for_teams(about: &str) -> Vec<(Option<String>, String)> {
         }
         let repo = repo_of(&name);
         let r = repo.as_deref().unwrap_or("");
-        if team_visible(r, about) && project(repo.as_deref(), about).is_some() {
+        if teams.visible(r, about) && teams.project_key(repo.as_deref(), about).1.is_some() {
             out.extend(
                 facts(&path(repo.as_deref(), None))
                     .into_iter()
@@ -2460,6 +2502,26 @@ mod tests {
         std::fs::create_dir_all(d.join(".git")).unwrap();
         std::fs::create_dir_all(d.join("memory")).unwrap();
         d.join("memory")
+    }
+
+    /// What the team screen lists, and what team_visible answers, off ONE read of the bindings and one
+    /// scan of the joined teams: a repo bound to a team this machine is in, and nothing else.
+    #[test]
+    fn in_team_lists_a_bound_repos_facts_and_nothing_elses() {
+        let (_g, tmp) = setup();
+        a_team(tmp.path(), "org-t");
+        assert_eq!(bind::bind("acme/api", "org-t"), "");
+        let mine = config::get().memory_dir;
+        std::fs::write(mine.join("acme__api.md"), "- uses tabs\n").unwrap();
+        std::fs::write(mine.join("other__thing.md"), "- not ours\n").unwrap();
+
+        let got = in_team("");
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0.as_deref(), Some("acme/api"));
+        assert!(got[0].1.contains("uses tabs"), "{:?}", got[0].1);
+        assert!(!got[0].2, "the team's own file has nothing in it yet");
+        assert!(team_visible("acme/api", ""));
+        assert!(!team_visible("other/thing", ""), "unbound is not the team's");
     }
 
     #[test]
