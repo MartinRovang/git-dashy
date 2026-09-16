@@ -205,6 +205,8 @@ export default function App() {
   // the top of the new queue, and marking that read is a claim you looked at it.
   useEffect(() => {
     if (current && chosen) markRead([current])
+    // markRead is a new function every render: listing it would run this after every render, not on a pick
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, chosen])
 
   useEffect(() => {
