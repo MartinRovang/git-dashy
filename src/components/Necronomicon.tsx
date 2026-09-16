@@ -66,6 +66,7 @@ function LearnButton({ at, running, elapsedSecs, onClick }: { at: number; runnin
 }
 
 type Point = { scope: string; text: string; hits: number; down: number; score: number; tier: 'open' | 'faded' | 'depths' }
+const LINES_A_PAGE = 12
 type Whisper = { repo: string | null; n: number; fact: string; kind: string }
 type Tome = {
   learnedAt: number
@@ -83,6 +84,12 @@ export function Necronomicon() {
   const [deep, setDeep] = useState(false)
   // the chapter open on the right page; one repo a page, turned with the corner arrows or ← →
   const [ch, setCh] = useState(0)
+  // the leaf within that chapter: long chapters and the whispers split into leaves of LINES_A_PAGE
+  const [leaf, setLeaf] = useState(0)
+  const turnTo = (i: number) => {
+    setCh(i)
+    setLeaf(0)
+  }
   // ponytail: the keys press the page-turn buttons, which already know when there is no page to turn to
   const turn = useRef<HTMLDivElement>(null)
 
@@ -168,6 +175,9 @@ export function Necronomicon() {
   const at = Math.max(0, Math.min(ch, books.length))
   const onWhispers = at === books.length
   const whispers = tome.learning.filter((w) => hit(w.repo || '', w.fact)).sort((a, b) => b.n - a.n)
+  const leaves = Math.max(1, Math.ceil((onWhispers ? whispers.length : books[at][1].length) / LINES_A_PAGE))
+  const lf = Math.min(leaf, leaves - 1)
+  const cut = <T,>(xs: T[]) => xs.slice(lf * LINES_A_PAGE, (lf + 1) * LINES_A_PAGE)
 
   const line = (p: Point) => (
     <li key={p.scope + p.text} className={`npoint ${p.tier}`}>
@@ -200,7 +210,7 @@ export function Necronomicon() {
           </span>
           <input placeholder="search the pages" value={query} onChange={(e) => {
               setQuery(e.target.value)
-              setCh(0)
+              turnTo(0)
             }} />
           <LearnButton at={tome.nextAt} running={running} elapsedSecs={tome.job.elapsed || 0} onClick={askLearn} />
         </div>
@@ -214,13 +224,13 @@ export function Necronomicon() {
             <ol className="nindex">
               {books.map(([scope, points], i) => (
                 <li key={scope} className={i === at ? 'on' : ''}>
-                  <button onClick={() => setCh(i)}>{scope}</button>
+                  <button onClick={() => turnTo(i)}>{scope}</button>
                   <span className="nleader" />
                   <span>{points.length}</span>
                 </li>
               ))}
               <li className={`nindex-whispers${onWhispers ? ' on' : ''}`}>
-                <button onClick={() => setCh(books.length)}>Whispers</button>
+                <button onClick={() => turnTo(books.length)}>Whispers</button>
                 <span className="nleader" />
                 <span>{whispers.length}</span>
               </li>
@@ -229,12 +239,12 @@ export function Necronomicon() {
 
           <div className="npage right">
             {onWhispers ? (
-              <section>
+              <section key={lf}>
                 <h2>Whispers</h2>
                 <p className="nnote">not yet facts: each needs {tome.promoteAt} reviews to see it</p>
                 {whispers.length ? (
                   <ul className="nwhispers">
-                    {whispers.map((w, i) => (
+                    {cut(whispers).map((w, i) => (
                       <li key={i}>
                         <span className="nwho">
                           {w.kind === 'self' ? 'self' : `${w.n}/${tome.promoteAt}`} · {w.repo || 'general'}
@@ -248,11 +258,24 @@ export function Necronomicon() {
                 )}
               </section>
             ) : (
-              <section>
+              <section key={`${at}:${lf}`}>
                 <h2>{books[at][0]}</h2>
-                <ol>{books[at][1].map(line)}</ol>
+                <ol>{cut(books[at][1]).map(line)}</ol>
               </section>
             )}
+            {leaves > 1 ? (
+              <div className="nturn npager">
+                <button aria-label="previous leaf" disabled={lf === 0} onClick={() => setLeaf(lf - 1)}>
+                  ‹
+                </button>
+                <span>
+                  leaf {lf + 1} of {leaves}
+                </span>
+                <button aria-label="next leaf" disabled={lf === leaves - 1} onClick={() => setLeaf(lf + 1)}>
+                  ›
+                </button>
+              </div>
+            ) : null}
             {!onWhispers && (buried || deep) ? (
               <button className="ndig" onClick={() => setDeep((v) => !v)}>
                 {deep ? '✧ close the depths' : `✧ dig into the depths (${buried})`}
@@ -260,11 +283,11 @@ export function Necronomicon() {
             ) : null}
             {books.length ? (
               <div className="nturn" ref={turn}>
-                <button aria-label="previous page" disabled={at === 0} onClick={() => setCh(at - 1)}>
+                <button aria-label="previous page" disabled={at === 0} onClick={() => turnTo(at - 1)}>
                   ◂
                 </button>
                 <span>{onWhispers ? 'whispers' : `chapter ${at + 1} of ${books.length}`}</span>
-                <button aria-label="next page" disabled={onWhispers} onClick={() => setCh(at + 1)}>
+                <button aria-label="next page" disabled={onWhispers} onClick={() => turnTo(at + 1)}>
                   ▸
                 </button>
               </div>

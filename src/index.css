@@ -397,6 +397,16 @@
   .nturn { margin-top: auto; padding-top: 22px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-style: italic; color: var(--dim); }
   .nturn button { font-size: 18px; line-height: 1; color: var(--blood); background: none; border: 1px solid var(--rule); border-radius: 50%; width: 30px; height: 30px; cursor: pointer; }
   .nturn button:disabled { opacity: .25; cursor: default; }
+  .npager { margin-top: 0; padding-top: 12px; }
+  /* the book fills the view and each page scrolls inside it, so turning a page never resizes the book */
+  @media (min-width: 901px) {
+    .necro { display: flex; flex-direction: column; }
+    .ncover { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+    .nspread { flex: 1; min-height: 0; }
+    .npage { min-height: 0; overflow: auto; }
+    .npage.right { overflow: hidden; }
+    .npage.right section { flex: 1; min-height: 0; overflow: auto; }
+  }
   .ndig { display: block; margin: 26px auto 0; font-family: var(--serif); font-size: 14px; font-style: italic; color: var(--blood); cursor: pointer;
           background: none; border: 1px dashed var(--rule); border-radius: 4px; padding: 5px 14px; }
   .graph { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
