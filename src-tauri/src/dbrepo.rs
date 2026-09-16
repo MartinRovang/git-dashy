@@ -68,11 +68,14 @@ fn parse(text: &str) -> Rules {
         let Ok(Value::Object(e)) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        let Some(db) = e.get("db").and_then(Value::as_str) else {
-            continue;
+        // `clear` takes a rule away, where an empty db is a rule that says "none"
+        let clear = e.get("clear").and_then(Value::as_bool) == Some(true);
+        let db = match e.get("db").and_then(Value::as_str) {
+            // a db repo that no longer folds is dropped, not stored raw: scoped() compares against the key
+            Some(db) => key(db),
+            None if clear => String::new(),
+            None => continue,
         };
-        // a db repo that no longer folds is dropped, not stored raw: scoped() compares against the key
-        let db = key(db);
         let (map, k) = if let Some(o) = e.get("owner").and_then(Value::as_str) {
             (&mut out.owners, owner_key(o))
         } else if let Some(r) = e.get("repo").and_then(Value::as_str) {
@@ -80,7 +83,12 @@ fn parse(text: &str) -> Rules {
         } else {
             continue;
         };
-        if !k.is_empty() {
+        if k.is_empty() {
+            continue;
+        }
+        if clear {
+            map.remove(&k);
+        } else {
             map.insert(k, db);
         }
     }
@@ -98,16 +106,32 @@ pub fn set(target: &str, db: &str) -> String {
     if !db.trim().is_empty() && d.is_empty() {
         return format!("{db} is not an owner/name");
     }
+    match field(target) {
+        Ok((f, k)) => bind::append_to(store(), &[(f, &k), ("db", &d)], None),
+        Err(e) => e,
+    }
+}
+
+/// Take `target`'s rule away, so it follows its owner again (or has no DB repo). Returns "" or why not.
+pub fn clear(target: &str) -> String {
+    match field(target) {
+        Ok((f, k)) => bind::append_to(store(), &[(f, &k)], Some(("clear", true))),
+        Err(e) => e,
+    }
+}
+
+/// ("owner", key) for `acme/*` or `acme`, ("repo", key) for `acme/api`.
+fn field(target: &str) -> Result<(&'static str, String), String> {
     let t = target.trim();
-    let field = if t.ends_with("/*") || !t.contains('/') {
+    let (f, k) = if t.ends_with("/*") || !t.contains('/') {
         ("owner", owner_key(t))
     } else {
         ("repo", key(t))
     };
-    if field.1.is_empty() {
-        return format!("{target} is not owner/name or owner/*");
+    if k.is_empty() {
+        return Err(format!("{target} is not owner/name or owner/*"));
     }
-    bind::append_to(store(), &[(field.0, &field.1), ("db", &d)], None)
+    Ok((f, k))
 }
 
 #[cfg(test)]
@@ -143,5 +167,11 @@ not json"#,
         assert!(!set("a/b/c", "acme/schema").is_empty());
         assert_eq!(of("acme/api"), "acme/schema");
         assert_eq!(of("acme/docs"), "");
+        // cleared, the carve-out is gone and the repo follows its owner again
+        assert_eq!(clear("acme/docs"), "");
+        assert_eq!(of("acme/docs"), "acme/schema");
+        assert_eq!(clear("acme/*"), "");
+        assert_eq!(of("acme/api"), "");
+        assert!(rules().listed().is_empty());
     }
 }

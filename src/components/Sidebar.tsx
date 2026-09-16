@@ -25,6 +25,8 @@ type Props = {
   onFollowOwner: (repo: string) => void
   onAskAgain: (kind: string, key: string) => void
   onReport: (op: 'start' | 'open') => void
+  /** Point a repo or `acme/*` at its DB repo ("" for none), or take the rule away. */
+  onDb: (op: 'set' | 'clear', target: string, db?: string) => void
   collapsed: boolean
   onCollapse: () => void
 }
@@ -179,6 +181,42 @@ function Group({
   )
 }
 
+/** A new DB repo rule: which repo or owner, and the repo its schema lives in. */
+function DbForm({ repos, onDb }: { repos: string[]; onDb: Props['onDb'] }) {
+  const [target, setTarget] = useState('')
+  const [db, setDb] = useState('')
+  const owners = [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+  return (
+    <form
+      className="dbform"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!target.trim()) return
+        onDb('set', target.trim(), db.trim())
+        setTarget('')
+        setDb('')
+      }}
+    >
+      <input
+        aria-label="repo or org"
+        placeholder="acme/* or acme/api"
+        list="db-targets"
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+      />
+      <datalist id="db-targets">
+        {[...owners, ...repos].map((v) => (
+          <option key={v} value={v} />
+        ))}
+      </datalist>
+      <input aria-label="DB repo" placeholder="DB repo, empty for none" value={db} onChange={(e) => setDb(e.target.value)} />
+      <button className="ib" type="submit" disabled={!target.trim()}>
+        set
+      </button>
+    </form>
+  )
+}
+
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
 /** "you hold | auto posts": what one target does with each kind of review. */
 const postWords = (r: PostingRule) =>
@@ -230,7 +268,7 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -256,6 +294,8 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const holds = rules
     .filter((r) => (['manual', 'auto'] as const).some((ran) => r[ran] === 'hold' && ruleSource(r.target, r[`${ran}Via`]) === 'own'))
     .map((r) => r.target)
+  const dbRules = d?.dbRules || []
+  const boardRepos = [...new Set((d?.sections || []).flatMap((x) => x.prs.map((p) => p.repo)))].filter(Boolean).sort()
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -430,6 +470,36 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           ) : (
             <div className="rules none">no repos on the board yet; reviews post when written</div>
           )}
+        </Group>
+
+        <Group
+          k="database"
+          label="Database"
+          summary={dbRules.length ? `${dbRules.length} DB repo rule${dbRules.length === 1 ? '' : 's'}` : 'no DB repos'}
+          digest={<Pills label="db" values={dbRules.map((r) => `${r.target} → ${r.db || 'none'}`)} />}
+          open={!!open.database}
+          onToggle={() => flip('database')}
+          collapsed={collapsed}
+        >
+          {/* the repo a repo's schema and migrations live in: its reviews read it and say what a PR does to the
+              database. A repo's own rule beats its owner's; "none" leaves one repo out of an owner rule. */}
+          <div className="sub">where each repo's database is defined</div>
+          {dbRules.length ? (
+            <div className="targets">
+              {dbRules.map((r) => (
+                <div className="dbrule" key={r.target}>
+                  <b>{r.target}</b>
+                  <span>→ {r.db || 'none'}</span>
+                  <button className="ib" title={`remove the rule for ${r.target}`} onClick={() => onDb('clear', r.target)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">reviews read no database schema</div>
+          )}
+          <DbForm repos={boardRepos} onDb={onDb} />
         </Group>
 
         <Group

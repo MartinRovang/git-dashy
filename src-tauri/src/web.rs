@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, report, review,
-    story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
+    review, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -196,6 +196,7 @@ pub fn payload(state: &State) -> Value {
         // every posting rule on this machine, so the rail can show the whole picture rather than
         // one repo's answer with no way to see what else is set
         "postingRules": posting_rules_json(&board_repos(&sections)),
+        "dbRules": dbrepo::rules().listed().into_iter().map(|(t, db)| json!({"target": t, "db": db})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -1507,6 +1508,17 @@ fn post_bind(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Point a repo or an owner (`acme/*`) at its DB repo, or take that rule away. See dbrepo.rs.
+fn post_dbrepo(_state: &State, body: &Body) -> Out {
+    let target = text(body, "target");
+    fail_if(match text(body, "op").as_str() {
+        "set" => dbrepo::set(&target, &text(body, "db")),
+        "clear" => dbrepo::clear(&target),
+        _ => return Err(Fail::new(400, "op must be set or clear")),
+    })?;
+    Ok(json!({"ok": true}))
+}
+
 /// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
 fn post_posting(state: &State, body: &Body) -> Out {
     // ponytail: `owner` carries the owner NAME, like /api/auto, not a flag meaning "read `repo` through
@@ -2030,6 +2042,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
+        "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,

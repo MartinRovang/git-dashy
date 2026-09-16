@@ -148,6 +148,8 @@ export type StateData = {
   asks: Ask[]
   notices: string[]
   postingRules?: PostingRule[]
+  /** Which repo holds each repo's database, owners (`acme/*`) first. `db` "" is a deliberate none. */
+  dbRules?: { target: string; db: string }[]
   /** Release notes since the last version run, "" once dismissed. */
   changelog: string
 }
