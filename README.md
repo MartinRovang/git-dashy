@@ -133,7 +133,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `Y` | on a row waiting to post: read the held review, then post it or drop it |
-| `F` | follow someone: a floating card of what they have been working on, from the PRs they opened or updated (see Following people) |
+| `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |
@@ -430,10 +430,18 @@ Auto mode (`a` or `--auto`) does the same thing unattended for every review requ
 the ones on screen or leave them as the baseline.
 
 Whether a finished review posts is a separate setting. Running a review is the expensive part;
-posting it is the part you cannot take back. The rail's **Agent** group settles it for the
-selected PR's repo, separately for reviews you start and ones auto starts: post it, as always, or
-hold it. Both answers are buttons, so neither is hidden behind a toggle, and beside them is every
-rule set on this machine — a repo, or `owner/*` for all of them at once. A held review
+posting it is the part you cannot take back. The rail's **Agent** group lists every owner on the board,
+and for each one there are exactly two cases, set by a switch inside it:
+
+- **One setting for every repo under the owner.** Reviews you start and reviews auto starts each post,
+  as always, or hold — and that applies to all of the owner's repos. Shut, the row says so and says what
+  they are: `all repos: you hold | auto posts`.
+- **Each repo set on its own.** Shut, the row says `per repo · 3`; open it for each repo's two settings.
+
+Flipping the switch never changes what happens to a review already on the board. Turning it on holds a
+kind of review for the whole owner if any of its repos held it, and takes off every repo rule under
+that owner, since one left behind would beat the owner. Turning it off gives each repo the words it had
+from the owner. A held review
 is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
 it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by

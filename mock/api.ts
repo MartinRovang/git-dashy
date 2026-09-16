@@ -305,7 +305,6 @@ function detail(url: string) {
       { name: 'preview deploy', state: 'ok' },
     ],
     brief: { whose: teamOf(r.repo), empty: false },
-    posting: postingOf(r.repo),
     pre: r.pre,
     review: info
       ? {

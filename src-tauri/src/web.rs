@@ -280,10 +280,6 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
         "files": d.as_ref().and_then(|d| d.files),
         "checks": d.as_ref().map(|d| d.checks.clone()).unwrap_or_default(),
         "brief": {"whose": whose, "empty": text.is_empty()},
-        // ponytail: resolved HERE, not in the page. Which rule wins is autorev's rule, and the rail
-        // shows the answer for the selected repo — so the page must not be the third place that
-        // implements repo-beats-owner-beats-default.
-        "posting": posting_json(pr.repo()),
         "pre": pre_json(pre),
         "review": rev.as_ref().map(|rev| json!({
             "verdict": config::status(&rev.verdict).unwrap_or(""),
@@ -2505,7 +2501,7 @@ mod tests {
     /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
     /// itself, and the payload lists every rule that exists.
     #[test]
-    fn the_detail_carries_the_posting_answer_and_the_payload_every_rule() {
+    fn the_payload_lists_every_posting_target_resolved() {
         let _g = autorev::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
@@ -2513,11 +2509,8 @@ mod tests {
             c.held_dir = d.path().join("held");
         });
         let (base, token, _state) = served();
-        let ask = || get(&format!("{base}/api/pr?url={}", pr().url), Some(&token)).1["posting"].clone();
         let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
 
-        assert_eq!(ask()["manual"]["value"], "post");
-        assert_eq!(ask()["auto"]["value"], "post");
         // the board's own repo is listed before anything is set: the panel is a list you walk, and the
         // repo with no rule is the one you came to give one
         assert_eq!(
@@ -2530,20 +2523,9 @@ mod tests {
         );
 
         autorev::set_post_owner("a", autorev::Ran::Auto, autorev::Post::Hold);
-        let p = ask();
-        assert_eq!(
-            p["auto"],
-            json!({"value": "hold", "via": "owner", "ownerValue": "hold"})
-        );
-        assert_eq!(p["manual"]["value"], "post", "the other kind is untouched");
 
         // the carve-out: the repo posts, the owner still holds, and both are listed
         autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Now);
-        let p = ask();
-        assert_eq!(
-            p["auto"],
-            json!({"value": "post", "via": "repo", "ownerValue": "hold"})
-        );
         assert_eq!(
             rules(),
             json!([
@@ -2692,28 +2674,19 @@ mod tests {
             );
         }
 
-        // ponytail: one resolver, asserted. This route and the detail each used to carry their own
-        // copy of repo-beats-owner-beats-default, and the copies had already drifted on `repo`.
+        // the route folds the repo it is asked about: `A/B` and `a/b` are one repo, one rule
         autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
         autorev::set_post("a/b", autorev::Ran::Auto, autorev::Post::Hold);
-        let mut route = get(
-            &format!("{base}/api/posting?repo={}&number=7", pr().repo()),
-            Some(&token),
-        )
-        .1;
-        let detail = get(&format!("{base}/api/pr?url={}", pr().url), Some(&token)).1["posting"].clone();
-        assert_eq!(route["held"], json!(null));
-        route.as_object_mut().unwrap().remove("held");
-        assert_eq!(route, detail, "the same repo, the same answer, every field");
-
-        // the drift the copies actually had: the detail folded the repo through bind::key and the route
-        // did not, so the two disagreed on any repo that is not already lowercase
+        let lower = get(&format!("{base}/api/posting?repo=a/b&number=7"), Some(&token)).1;
         let mixed = get(&format!("{base}/api/posting?repo=A/B&number=7"), Some(&token)).1;
         assert_eq!(mixed["repo"], "a/b", "the folded key, not what was typed");
         assert_eq!(
-            mixed["auto"], detail["auto"],
+            (&mixed["manual"], &mixed["auto"]),
+            (&lower["manual"], &lower["auto"]),
             "and the same rule it resolves for a/b"
         );
+        assert_eq!(mixed["auto"]["via"], "repo");
+        assert_eq!(mixed["manual"]["via"], "owner");
     }
 
     /// A release that could not start must say so. It answered ok, the flash said "posting…", and
