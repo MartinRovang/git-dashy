@@ -236,7 +236,7 @@ export type Filters = { query: string; failing: boolean; drafts: boolean; hidden
  * which `selected()` then answers with rows[0]. It lives here because `show()` has no harness and
  * this is the third field that has been forgotten in it.
  */
-export function forView(v: 'board' | 'graph', cur: Filters): Filters {
+export function forView(v: 'board' | 'graph' | 'necronomicon', cur: Filters): Filters {
   return v === 'graph' ? { query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] } : cur
 }
 

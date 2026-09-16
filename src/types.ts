@@ -58,6 +58,8 @@ export type Options = {
 }
 
 export type Knowledge = {
+  /** The Necronomicon's reminder: when it next wants learning (unix secs, 0 if never learned), and whether one runs now. */
+  learn?: { next: number; running: boolean }
   /** The Friday report's background job, and the newest report on disk by date ("2026-09-15"). */
   report?: { job: { running: boolean; elapsed?: number; error?: string }; latest: string | null }
   memory: string

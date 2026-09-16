@@ -3,6 +3,7 @@ import { api, copyText, errorText, post } from './api'
 import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
+import { Necronomicon, NextLearn } from './components/Necronomicon'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { ReviewTalk } from './components/ReviewTalk'
@@ -105,11 +106,11 @@ export default function App() {
   const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
   // f was pressed: the ticks count that answers it (Infinity until the POST says), and the ⟳ spins till then
   const [pressed, setPressed] = useState<number | null>(null)
-  const [view, setView] = useState<'board' | 'graph'>('board')
+  const [view, setView] = useState<'board' | 'graph' | 'necronomicon'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
   // update as the switch so the graph lays out once and not twice.
-  const show = (v: 'board' | 'graph') => {
+  const show = (v: 'board' | 'graph' | 'necronomicon') => {
     setView(v)
     const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
@@ -454,6 +455,7 @@ export default function App() {
             }
           />
         ),
+        foot: [['Esc', 'close', () => close(m)]],
       })
       m.keys = { Escape: () => close(m), y: copy }
       return
@@ -701,7 +703,7 @@ export default function App() {
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)
-    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
+    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : view === 'graph' ? 'necronomicon' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
@@ -807,7 +809,9 @@ export default function App() {
         <div className="main">
           <div className="body">
             <div className="queue">
-              {view === 'graph' ? (
+              {view === 'necronomicon' ? (
+                <Necronomicon />
+              ) : view === 'graph' ? (
                 <Graph
                   // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
                   // filter with nothing on screen to see or clear it — the reason show() wipes the rest
@@ -896,6 +900,7 @@ export default function App() {
           + follow
         </button>
         <div style={{ flex: 1 }} />
+        {data?.knowledge.learn ? <NextLearn at={data.knowledge.learn.next} running={data.knowledge.learn.running} onOpen={() => show('necronomicon')} /> : null}
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>

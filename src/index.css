@@ -313,6 +313,92 @@
   .vtabs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--edge); border-radius: 6px; }
   .vtabs button { font: inherit; font-size: 11px; padding: 2px 10px; border: 0; border-radius: 4px; background: none; color: var(--dim); cursor: pointer; }
   .vtabs button.on { background: var(--bg4); color: var(--ink); }
+  /* the Necronomicon: a leather cover tiled with stars, two pages with a sigil watermark. Every colour is a theme
+     token, and the two drawings are masks filled with one, so the book changes with the theme like the rest. */
+  .necro { flex: 1; min-height: 0; overflow: auto; padding: 18px; background: var(--bg);
+           --page: color-mix(in srgb, var(--bg4) 88%, var(--amber)); --page2: color-mix(in srgb, var(--bg3) 94%, var(--amber));
+           --leather: color-mix(in srgb, var(--bg4) 70%, var(--pink)); --gold: var(--amber); --blood: var(--pink);
+           --rule: color-mix(in srgb, var(--pink) 35%, transparent);
+           --serif: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif; }
+  .ncover-msg { padding: 20px; color: var(--dim); }
+  .ncover { position: relative; max-width: 1280px; margin: 0 auto; padding: 18px 22px 24px; border-radius: 10px 16px 16px 10px;
+            background: radial-gradient(ellipse at 30% 20%, var(--leather), var(--bg2) 80%);
+            box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 6px var(--bg3), inset 0 0 0 7px color-mix(in srgb, var(--gold) 45%, transparent), 0 10px 30px rgba(0,0,0,.45); }
+  .ncover::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: var(--gold); opacity: .16;
+                    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cg fill='none' stroke='%23000' stroke-width='.8'%3E%3Cpath d='M32 22l3 7 7 3-7 3-3 7-3-7-7-3 7-3z'/%3E%3Ccircle cx='0' cy='0' r='6'/%3E%3Ccircle cx='64' cy='0' r='6'/%3E%3Ccircle cx='0' cy='64' r='6'/%3E%3Ccircle cx='64' cy='64' r='6'/%3E%3C/g%3E%3C/svg%3E"); mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cg fill='none' stroke='%23000' stroke-width='.8'%3E%3Cpath d='M32 22l3 7 7 3-7 3-3 7-3-7-7-3 7-3z'/%3E%3Ccircle cx='0' cy='0' r='6'/%3E%3Ccircle cx='64' cy='0' r='6'/%3E%3Ccircle cx='0' cy='64' r='6'/%3E%3Ccircle cx='64' cy='64' r='6'/%3E%3C/g%3E%3C/svg%3E"); }
+  .nhead, .nspread { position: relative; }
+  .nhead { display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; margin: 0 4px 14px; }
+  .ntitle { flex-shrink: 0; font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: .12em; font-variant: small-caps;
+            color: var(--gold); text-shadow: 0 1px 0 #000, 0 0 12px color-mix(in srgb, var(--gold) 35%, transparent); }
+  .nsub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--ink2); opacity: .8; }
+  .nnext { margin-right: 14px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font: inherit; font-family: var(--mono); color: var(--violet);
+           background: none; border: 0; padding: 0; cursor: pointer; }
+  .nnext.due { font-weight: 700; }
+  .nnext svg { width: 11px; height: 11px; fill: currentColor; }
+  .nhead input { margin-left: auto; font-family: var(--serif); font-size: 13px; color: var(--ink); background: color-mix(in srgb, var(--bg) 70%, transparent);
+                 border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); border-radius: 4px; padding: 5px 10px; width: 200px; min-width: 110px; flex-shrink: 1; }
+  .nhead input::placeholder { color: var(--dim); }
+  .nlearn-btn { flex-shrink: 0; white-space: nowrap; font-family: var(--serif); font-size: 14px; font-weight: 700; letter-spacing: .06em; color: var(--bg); cursor: pointer;
+                background: linear-gradient(color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); border: 1px solid color-mix(in srgb, var(--gold) 60%, #000); border-radius: 4px; padding: 5px 14px; }
+  /* due: it glows, a light sweeps across it, and it hops a little, glad to be pressed */
+  .nlearn-btn.due { position: relative; overflow: hidden; animation: nglow 1.8s ease-in-out infinite, nhop 1.8s ease-in-out infinite; }
+  .nlearn-btn.due::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.7) 50%, transparent 70%);
+                           transform: translateX(-120%); animation: nsweep 2.4s ease-in-out infinite; }
+  @keyframes nglow { 0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--gold) 50%, transparent); }
+                     50% { box-shadow: 0 0 14px 3px var(--gold), 0 0 28px 6px color-mix(in srgb, var(--violet) 55%, transparent); } }
+  @keyframes nhop { 0%, 60%, 100% { transform: translateY(0) scale(1); } 70% { transform: translateY(-3px) scale(1.05); } 80% { transform: translateY(0) scale(1); } }
+  @keyframes nsweep { 0%, 40% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+  @media (prefers-reduced-motion: reduce) { .nlearn-btn.due, .nlearn-btn.due::after { animation: none; } .nlearn-btn.due { box-shadow: 0 0 12px 2px var(--gold); } }
+  .nlearn-btn { display: inline-flex; align-items: center; gap: 6px; }
+  .nlearn-btn .spinner { width: 13px; height: 13px; border-color: color-mix(in srgb, var(--bg) 25%, transparent); border-top-color: var(--bg); }
+  .nskull { width: 15px; height: 15px; fill: currentColor; }
+  .nlearn-btn.wait { color: var(--ink2); background: var(--bg4); border-color: var(--edge); transition: color .2s, background .2s, border-color .2s; }
+  .nlearn-btn.wait:hover { color: var(--bg); background: linear-gradient(color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); border-color: color-mix(in srgb, var(--gold) 60%, #000); }
+  .nlearn-btn:disabled { cursor: default; opacity: .7; }
+  .nspread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-radius: 4px; overflow: hidden;
+             box-shadow: 0 0 0 1px var(--bg), 0 4px 12px rgba(0,0,0,.5); }
+  .npage { position: relative; min-height: 60vh; padding: 26px 34px 30px; color: var(--ink); font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
+           background: radial-gradient(ellipse at center, var(--page) 55%, var(--page2)); }
+  .npage::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--ink); opacity: .07;
+                   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.2'%3E%3Ccircle cx='100' cy='100' r='94'/%3E%3Ccircle cx='100' cy='100' r='82'/%3E%3Ccircle cx='100' cy='100' r='30'/%3E%3Cpath d='M100 18L148 166L22 75H178L52 166Z'/%3E%3Cpath d='M100 6v12M100 182v12M6 100h12M182 100h12M33 33l9 9M158 158l9 9M167 33l-9 9M42 158l-9 9'/%3E%3Cpath d='M94 88l6-10 6 10M88 112h24M100 112v10'/%3E%3C/g%3E%3C/svg%3E") center 45% / min(70%, 420px) no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.2'%3E%3Ccircle cx='100' cy='100' r='94'/%3E%3Ccircle cx='100' cy='100' r='82'/%3E%3Ccircle cx='100' cy='100' r='30'/%3E%3Cpath d='M100 18L148 166L22 75H178L52 166Z'/%3E%3Cpath d='M100 6v12M100 182v12M6 100h12M182 100h12M33 33l9 9M158 158l9 9M167 33l-9 9M42 158l-9 9'/%3E%3Cpath d='M94 88l6-10 6 10M88 112h24M100 112v10'/%3E%3C/g%3E%3C/svg%3E") center 45% / min(70%, 420px) no-repeat; }
+  .npage > * { position: relative; }
+  .npage.left { box-shadow: inset -28px 0 30px -22px rgba(0,0,0,.55); }
+  .npage.right { box-shadow: inset 28px 0 30px -22px rgba(0,0,0,.55); }
+  @media (max-width: 700px) { .nhead { flex-wrap: wrap; } }
+  @media (max-width: 900px) { .nspread { grid-template-columns: minmax(0, 1fr); } .npage.left, .npage.right { box-shadow: none; } }
+  .npage h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; font-variant: small-caps; letter-spacing: .06em; color: var(--blood);
+              border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+  .npage section + section { margin-top: 20px; }
+  .npage h3 { margin: 26px 0 2px; font-size: 16px; font-variant: small-caps; letter-spacing: .06em; color: var(--gold); }
+  .npage ol { margin: 0; padding-left: 24px; }
+  .npage ol li::marker { color: var(--blood); font-weight: 700; }
+  .npoint { margin: 0 0 8px; }
+  .npoint .ntext { margin-right: 6px; }
+  .npoint.faded { color: var(--dim); font-style: italic; }
+  .npoint.depths { color: var(--dim2); font-style: italic; text-decoration: line-through color-mix(in srgb, var(--dim2) 60%, transparent); }
+  .nmeta { display: inline-flex; gap: 4px; align-items: baseline; font-size: 12px; color: var(--dim); white-space: nowrap; }
+  .nmeta button { font: inherit; font-size: 12px; line-height: 1; color: var(--dim); background: none; border: 1px solid transparent; border-radius: 3px;
+                  padding: 1px 4px; cursor: pointer; opacity: .45; }
+  .npoint:hover .nmeta button { opacity: 1; border-color: var(--edge); }
+  .nmeta button:hover { color: var(--blood); }
+  .nnote { margin: 0 0 8px; font-size: 12px; font-style: italic; color: var(--dim); }
+  .nblank { font-style: italic; color: var(--dim); }
+  .nwhispers { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+  .nwhispers li { margin: 0 0 7px; padding-left: 10px; border-left: 2px solid var(--rule); color: var(--ink2); }
+  .nwho { display: block; font-size: 11px; font-variant: small-caps; letter-spacing: .05em; color: var(--blood); }
+  .nindex { margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .nindex li { display: flex; align-items: baseline; gap: 6px; margin: 0 0 3px; }
+  .nindex button { font: inherit; color: var(--ink2); background: none; border: 0; padding: 0; cursor: pointer; }
+  .nindex button:hover, .nindex li.on button { color: var(--blood); }
+  .nindex li.on button { font-weight: 700; }
+  .nindex li.nindex-whispers { margin-top: 8px; font-style: italic; }
+  .nleader { flex: 1; border-bottom: 1px dotted var(--dim2); transform: translateY(-4px); }
+  .npage.right { display: flex; flex-direction: column; }
+  .nturn { margin-top: auto; padding-top: 22px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-style: italic; color: var(--dim); }
+  .nturn button { font-size: 18px; line-height: 1; color: var(--blood); background: none; border: 1px solid var(--rule); border-radius: 50%; width: 30px; height: 30px; cursor: pointer; }
+  .nturn button:disabled { opacity: .25; cursor: default; }
+  .ndig { display: block; margin: 26px auto 0; font-family: var(--serif); font-size: 14px; font-style: italic; color: var(--blood); cursor: pointer;
+          background: none; border: 1px dashed var(--rule); border-radius: 4px; padding: 5px 14px; }
   .graph { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
   .graph svg { flex: 1; min-height: 0; width: 100%; cursor: grab; }
   .graph svg:active { cursor: grabbing; }
