@@ -700,39 +700,27 @@
                       flex-shrink: 0; width: 52px; text-align: right;
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* the posting panel: an owner, then what it owns */
-  .targets { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .targets { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
   .onode { border-radius: 6px; }
-  .onode:has(> .kids) { background: var(--bg4); padding-bottom: 4px; }
-  .kids { margin: 2px 0 0 9px; padding-left: 7px; border-left: 1px solid var(--line2); }
-  .kidcap { font-family: var(--mono); font-size: 9px; color: var(--dim3); letter-spacing: .04em;
-            padding: 6px 2px 2px; }
-  .kids .fld { margin-top: 4px; }
-  .kidrow { font-family: var(--mono); font-size: 10px; color: var(--dim3); padding: 2px 2px 2px 16px; }
-  .kids .rules.none { padding: 2px; margin: 0; }
-
-  .trow { font: inherit; display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 4px 4px;
+  .onode:has(> .kids) { background: var(--bg4); padding-bottom: 6px; }
+  .kids { margin: 0 6px 0 12px; padding-left: 8px; border-left: 1px solid var(--line2); }
+  .kids .fld { margin: 2px 0 4px; }
+  .kids .rules.none { margin: 4px 0 0; }
+  .trow { font: inherit; display: flex; align-items: baseline; gap: 7px; width: 100%; padding: 5px 6px;
           border: 0; background: none; text-align: left; cursor: pointer; border-radius: 5px; }
   .trow:hover { background: var(--bg3); }
   .trow .car { flex: none; width: 9px; font-size: 8px; color: var(--dim2); }
-  .trow b { font-family: var(--mono); font-weight: 500; font-size: 10.5px; color: var(--ink3);
-            flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .trow.own b { color: var(--ink2); }
+  .trow b { flex: none; font-family: var(--mono); font-weight: 500; font-size: 11px; color: var(--ink2); }
+  .trow.sub b { font-size: 10.5px; color: var(--ink3); }
   .trow[aria-expanded='true'] b { color: var(--ink); }
-  .trow i { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--dim3); flex: none; }
-  /* a rule set on this row reads as a decision; one it inherits or defaults to stays quiet */
-  .trow i.own { color: var(--ink); }
-  .trow .folds { font-family: var(--mono); font-size: 9px; color: var(--dim2); padding: 1px 4px;
-                 border-radius: 4px; background: var(--bg); flex: none; }
-  .targets .pair.sub2 { padding-left: 19px; }
+  /* one line, right-aligned, never spread across the row */
+  .trow .tsum { flex: 1; min-width: 0; text-align: right; font-family: var(--mono); font-size: 9.5px;
+                color: var(--dim2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .targets .pair.sub2 { padding-left: 4px; }
   .targets .pair.sub2 > span { font-size: 11px; }
-  .targets .pair.sub2 > span em { font-style: normal; font-family: var(--mono); font-size: 9px;
-                                  margin-left: 6px; padding: 1px 4px; border-radius: 4px;
-                                  color: var(--dim3); background: var(--bg4); }
-  .targets .pair.sub2 > span em.own { color: var(--ink2); background: var(--bg); }
-  .targets .rules.none { margin-top: 7px; }
+  .trow.sub + .pair.sub2, .trow.sub ~ .pair.sub2 { padding-left: 16px; }
   .rules.none b, .rules.none u { display: inline; font-family: var(--mono); font-weight: 500;
                                  color: var(--dim2); flex: none; }
-  .rules u, .trow u { text-decoration: none; color: var(--dim2); padding-left: 1px; cursor: help; }
 
   /* who ran the review; the rows under it are the scopes that answer for it */
   .fields .axis { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--dim3);

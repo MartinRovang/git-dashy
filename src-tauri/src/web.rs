@@ -1381,6 +1381,17 @@ fn post_posting(state: &State, body: &Body) -> Out {
     // owner_of". That flag is what the comment in post_auto is about: a client sending the owner in
     // `owner` -- the obvious reading -- widened one repo's rule to the whole org by coincidence.
     let (repo, owner, op) = (text(body, "repo"), text(body, "owner"), text(body, "op"));
+    if op == "govern" {
+        // explicit, like /api/auto's `on`: a missing field must not read as "turn it off"
+        let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
+            return Err(Fail::new(400, "govern needs on: true or on: false"));
+        };
+        // the board's repos are read first and the lock let go: govern writes the store
+        let board = board_repos(&state.lock().sections);
+        fail_if(autorev::govern(&owner, on, &board))?;
+        state.wake();
+        return Ok(json!({"ok": true}));
+    }
     if op == "release" || op == "discard" {
         if repo.is_empty() {
             return Err(Fail::new(400, "no row selected"));
@@ -2619,6 +2630,26 @@ mod tests {
         assert_eq!(
             j["manual"]["value"], "post",
             "the other kind is untouched throughout"
+        );
+
+        // owner control through the route: `on` is required, and a missing one is not a quiet "off"
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "govern", "owner": "acme"}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("govern needs on: true or on: false"))
+        );
+        let (code, body) = post(
+            &format!("{base}/api/posting"),
+            json!({"op": "govern", "owner": "acme/api", "on": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("acme/api is not an owner"))
         );
 
         // and the rule comes off again, which is what the panel's owner toggle does

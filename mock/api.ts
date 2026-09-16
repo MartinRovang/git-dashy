@@ -192,11 +192,12 @@ function seed() {
     { repo: null, fact: 'prefer small PRs', sent: false, backers: [] },
   ]
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
-  // one repo set to hold, and a review of it already waiting, so both screens are reachable in dev
-  // an owner rule carved out by a repo rule, so `o` has the case it used to get wrong
+  // both cases of the posting panel: acme is one setting for all its repos, tools is set per repo
   S.postingOwners['acme'] = { manual: 'hold', auto: 'hold' }
-  // only the auto axis, so acme/web's manual word is inherited and the table marks it
-  S.posting['acme/web'] = { auto: 'post' }
+  S.rows.push(mkPr(61, 'Add --json output to the status command', 'tools/cli', 'hana', 6, 'REVIEW REQUESTED'))
+  S.rows.push(mkPr(14, 'Document the release checklist', 'tools/docs', 'ivan', 20, 'REVIEW REQUESTED'))
+  S.posting['tools/cli'] = { manual: 'hold', auto: 'hold' }
+  S.posting['tools/docs'] = { manual: 'post', auto: 'hold' }
   const rr = S.rows.find((r) => r.section === 'REVIEW REQUESTED')
   if (rr) {
     rr.waiting = true
@@ -749,6 +750,33 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = str(body, 'repo')
       const op = str(body, 'op')
       const key = `${repo}#${body.number ?? ''}`
+      if (op === 'govern') {
+        // like autorev::govern: ON takes `hold` if any repo on the board held that kind and clears every
+        // repo rule under the owner; OFF gives each repo on the board its word, then clears the owner
+        if (typeof body.on !== 'boolean') return json(400, { error: 'govern needs on: true or on: false' })
+        const owner = str(body, 'owner').replace(/\/\*$/, '').toLowerCase()
+        if (!owner || owner.includes('/')) return json(400, { error: `${str(body, 'owner')} is not an owner` })
+        const under = [...new Set(S.rows.map((r) => r.repo))].filter((r) => r.split('/')[0] === owner)
+        for (const ran of ['manual', 'auto'] as const) {
+          const of = (r: string) => S.posting[r]?.[ran] ?? S.postingOwners[owner]?.[ran] ?? 'post'
+          if (body.on) {
+            const word = under.some((r) => of(r) === 'hold') ? 'hold' : 'post'
+            S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: word }
+            for (const r of Object.keys(S.posting)) {
+              if (r.split('/')[0] !== owner) continue
+              const next = { ...S.posting[r] }
+              delete next[ran]
+              S.posting[r] = next
+            }
+          } else {
+            for (const r of under) S.posting[r] = { ...S.posting[r], [ran]: of(r) }
+            const next = { ...S.postingOwners[owner] }
+            delete next[ran]
+            S.postingOwners[owner] = next
+          }
+        }
+        return json(200, { ok: true })
+      }
       if (op === 'discard' || op === 'release') {
         const h = S.held[key]
         if (!h) return json(404, { error: 'nothing waiting for that PR' })

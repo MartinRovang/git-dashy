@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { PostingRule, StateData } from '../types'
-import { counts, hasOwnRule, postingTree, ruleSource } from '../board'
+import { counts, postingTree } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
@@ -178,72 +178,52 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-/** One posting row: the words in force, and its two controls when it is open. Owners and repos draw the
- *  same row -- what differs is what sits under it, which is the tree's business, not the row's. */
-function Target({
+/** "you hold | auto posts": what one target does with each kind of review. */
+const postWords = (r: PostingRule) =>
+  `you ${r.manual === 'hold' ? 'hold' : 'post'} | auto ${r.auto === 'hold' ? 'holds' : 'posts'}`
+
+/** A row that opens and shuts: a chevron, a name, and a one-line summary on the right. */
+function OpenRow({ name, summary, open, onFlip, sub }: { name: string; summary: string; open: boolean; onFlip: () => void; sub?: boolean }) {
+  return (
+    <button className={`trow${sub ? ' sub' : ''}`} aria-expanded={open} onClick={onFlip}>
+      <span className="car">{open ? '▾' : '▸'}</span>
+      <b>{name}</b>
+      <span className="tsum">{summary}</span>
+    </button>
+  )
+}
+
+/** The two settings for one target: what happens to a review you ran, and to one auto ran. */
+function PostControls({
   r,
-  open,
-  onFlip,
   onPosting,
-  count,
-  note,
 }: {
   r: PostingRule
-  open: boolean
-  onFlip: () => void
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
-  /** Only on an owner: how many repos it holds, so the row says what opening it will show. */
-  count?: number
-  note?: string
 }) {
-  const owner = r.target.endsWith('/*')
-  const said = (ran: 'manual' | 'auto') =>
-    ran === 'manual' ? `you ${r.manual === 'hold' ? 'hold' : 'post'}` : `auto ${r.auto === 'hold' ? 'holds' : 'posts'}`
   return (
     <>
-      <button className={`trow${owner ? ' own' : ''}`} aria-expanded={open} onClick={onFlip} title={note || ''}>
-        <span className="car">{open ? '▾' : '▸'}</span>
-        <b>{owner ? r.target : r.target.split('/')[1]}</b>
-        {count ? <span className="folds">{count}</span> : null}
-        {(['manual', 'auto'] as const).map((ran) => (
-          <i key={ran} className={ruleSource(r.target, r[`${ran}Via`])}>
-            {said(ran)}
-          </i>
-        ))}
-      </button>
-      {open
-        ? (['manual', 'auto'] as const).map((ran) => {
-            const from = ruleSource(r.target, r[`${ran}Via`])
-            return (
-              <div className="pair sub2" key={ran}>
-                <span>
-                  reviews {ran === 'manual' ? 'you' : 'auto'} run{ran === 'manual' ? '' : 's'}
-                  <em className={from}>
-                    {{ own: 'set here', owner: 'from the owner', none: 'not set' }[from]}
-                  </em>
-                </span>
-                <div className="seg" role="group">
-                  {(['post', 'hold'] as const).map((w) => (
-                    <button
-                      key={w}
-                      aria-pressed={r[ran] === w}
-                      title={
-                        w === 'post'
-                          ? 'the verdict goes on the PR as soon as it is written'
-                          : 'the verdict waits on disk; Y reads it and posts or drops it'
-                      }
-                      // a press that would write a rule this target already has writes nothing
-                      disabled={r[ran] === w && from === 'own'}
-                      onClick={() => onPosting(ran, w, r.target)}
-                    >
-                      {w === 'post' ? 'post it' : 'hold it'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )
-          })
-        : null}
+      {(['manual', 'auto'] as const).map((ran) => (
+        <div className="pair sub2" key={ran}>
+          <span>{ran === 'manual' ? 'reviews you run' : 'reviews auto runs'}</span>
+          <div className="seg" role="group">
+            {(['post', 'hold'] as const).map((w) => (
+              <button
+                key={w}
+                aria-pressed={r[ran] === w}
+                title={
+                  w === 'post'
+                    ? 'the verdict goes on the PR as soon as it is written'
+                    : 'the verdict waits on disk; Y reads it and posts or drops it'
+                }
+                onClick={() => r[ran] !== w && onPosting(ran, w, r.target)}
+              >
+                {w === 'post' ? 'post it' : 'hold it'}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </>
   )
 }
@@ -353,69 +333,52 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           {rules.length ? (
             <div className="targets">
               {postingTree(rules).map((node) => {
-                const name = node.owner.target
-                const openOwner = !!open[`row:${name}`]
+                const owner = node.owner.target.slice(0, -2)
+                const key = `row:${node.owner.target}`
                 return (
-                  <div className={`onode${node.governs ? ' governs' : ''}`} key={name}>
-                    <Target
-                      r={node.owner}
-                      open={openOwner}
-                      onFlip={() => flip(`row:${name}`)}
-                      onPosting={onPosting}
-                      count={node.repos.length}
+                  <div className="onode" key={owner}>
+                    {/* collapsed, the row already answers the question: one setting and what it is, or
+                        one per repo -- whose settings are only drawn once it is opened */}
+                    <OpenRow
+                      name={owner}
+                      open={!!open[key]}
+                      onFlip={() => flip(key)}
+                      summary={node.governs ? `all repos: ${postWords(node.owner)}` : `per repo · ${node.repos.length}`}
                     />
-                    {openOwner ? (
+                    {open[key] ? (
                       <div className="kids">
-                        {/* the override itself, on or off. Without it an owner rule, once written, decided
-                            for every repo below it forever: the store could flip the word but never take
-                            the rule away. */}
                         <button
                           className="fld"
                           aria-pressed={node.governs}
-                          title={
-                            node.governs
-                              ? `turn off to set each repo under ${name} on its own`
-                              : `turn on to decide for every repo under ${name} at once`
-                          }
-                          onClick={() => onGovern(name, !node.governs)}
+                          onClick={() => onGovern(owner, !node.governs)}
                         >
-                          <span>{name} decides for its repos</span>
+                          <span>one setting for every repo under {owner}</span>
                           <span className="sw" />
                         </button>
-                        {node.repos.length === 0 ? (
-                          <div className="rules none">no repos under this owner on the board</div>
-                        ) : node.governs ? (
+                        {node.governs ? (
                           <>
-                            {/* ponytail: names only. The owner decides for these, so a control here would
-                                be a second place to set one thing -- the exact confusion this panel had. */}
-                            <div className="kidcap">following it</div>
-                            {node.repos.map((r) =>
-                              hasOwnRule(r) ? (
-                                <Target
-                                  key={r.target}
-                                  r={r}
-                                  open={!!open[`row:${r.target}`]}
-                                  onFlip={() => flip(`row:${r.target}`)}
-                                  onPosting={onPosting}
-                                  note={`a rule on this repo, which beats ${name}`}
-                                />
-                              ) : (
-                                <div className="kidrow" key={r.target}>
-                                  {r.target.split('/')[1]}
-                                </div>
-                              ),
-                            )}
+                            <PostControls r={node.owner} onPosting={onPosting} />
+                            {node.repos.length ? (
+                              <div className="rules none">
+                                applies to {node.repos.map((r) => r.target.split('/')[1]).join(', ')}
+                              </div>
+                            ) : null}
                           </>
-                        ) : (
+                        ) : node.repos.length ? (
                           node.repos.map((r) => (
-                            <Target
-                              key={r.target}
-                              r={r}
-                              open={!!open[`row:${r.target}`]}
-                              onFlip={() => flip(`row:${r.target}`)}
-                              onPosting={onPosting}
-                            />
+                            <div key={r.target}>
+                              <OpenRow
+                                sub
+                                name={r.target.split('/')[1]}
+                                open={!!open[`row:${r.target}`]}
+                                onFlip={() => flip(`row:${r.target}`)}
+                                summary={postWords(r)}
+                              />
+                              {open[`row:${r.target}`] ? <PostControls r={r} onPosting={onPosting} /> : null}
+                            </div>
                           ))
+                        ) : (
+                          <div className="rules none">no repos under {owner} on the board</div>
                         )}
                       </div>
                     ) : null}

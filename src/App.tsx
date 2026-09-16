@@ -681,20 +681,14 @@ export default function App() {
           onFollow={followSomeone}
           onFollowScope={followScope}
           followed={followed.length}
-          onGovern={(owner, on) => {
-            // both kinds at once: the switch says "this owner decides", and deciding for one kind only
-            // is the half-state the panel exists to stop you having to reason about. Turning it ON pins
-            // the words that are already in force, so a switch never changes what happens to a review.
-            const now = (data?.postingRules || []).find((r) => r.target === `${owner}/*`)
-            void Promise.all(
-              (['manual', 'auto'] as const).map((ran) =>
-                post('/api/posting', { owner, ran, post: on ? now?.[ran] || 'post' : 'none' }),
-              ),
-            ).then(() => {
-              setFlash(on ? `${owner}/* decides for its repos` : `${owner}/* no longer decides; set each repo`)
-              reload()
-            })
-          }}
+          onGovern={(owner, on) =>
+            // one server operation: the rule for what "one setting for all" means lives in autorev::govern
+            void call(
+              '/api/posting',
+              { op: 'govern', owner, on },
+              on ? `${owner}: one setting for every repo` : `${owner}: each repo set on its own`,
+            )
+          }
           onPosting={(ran, post, target) =>
             void call(
               '/api/posting',
