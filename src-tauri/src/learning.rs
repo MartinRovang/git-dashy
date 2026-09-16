@@ -515,7 +515,10 @@ mod tests {
         let _g = crate::autorev::test_lock();
         let d = tempfile::tempdir().unwrap();
         // a test build names no log: nothing is written anywhere
-        config::update(|c| c.learning = PathBuf::new());
+        config::update(|c| {
+            c.demo = false; // the talk tests leave demo on under this lock, and demo records nothing
+            c.learning = PathBuf::new();
+        });
         record("draft", "acme/api", "review");
         config::update(|c| c.learning = d.path().join("learning.jsonl"));
         record("draft", "acme/api", "review");

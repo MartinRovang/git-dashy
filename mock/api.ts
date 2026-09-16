@@ -478,6 +478,23 @@ function postReview(b: Body) {
   return json(200, { ok: true })
 }
 
+/** Six weeks of made-up learning, steady with a stall in the middle, so every view and filter has something to draw. */
+function learningEvents() {
+  const out: { at: number; kind: string; repo: string; team?: string; who?: string; source?: string }[] = []
+  const now = secs()
+  const repos = ['acme/api', 'acme/web', '']
+  let seed = 7
+  const rnd = (n: number) => ((seed = (seed * 9301 + 49297) % 233280), Math.floor((seed / 233280) * n))
+  for (let d = 42; d >= 0; d--) {
+    if (d > 20 && d < 26) continue // a quiet week
+    const at = now - d * 86400
+    for (let i = rnd(6); i > 0; i--) out.push({ at: at + i * 60, kind: 'draft', repo: repos[rnd(3)], who: 'alice', source: ['review', 'review', 'pre-review', 'session'][rnd(4)] })
+    for (let i = rnd(3); i > 0; i--) out.push({ at: at + i * 90, kind: 'fact', repo: repos[rnd(3)], who: 'alice', source: d > 30 ? '' : ['seen twice', 'seen twice', 'hand', 'teammate'][rnd(4)] })
+    for (let i = rnd(4); i > 0; i--) out.push({ at: at + i * 120, kind: 'arrival', repo: repos[rnd(2)], team: 'acme', who: ['bob', 'carol', 'alice'][rnd(3)], source: rnd(5) ? 'draft' : 'fact' })
+  }
+  return out
+}
+
 /** repo beats owner beats the default, the same chain the store resolves. One place, so the detail
  *  and the /api/posting route cannot disagree. */
 function postingOf(repo: string) {
@@ -577,6 +594,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = query.get('repo') || 'general'
       return json(200, { repo, path: `~/.prs_memory/${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`, text: memoryText[repo] || '' })
     }
+    if (path === '/api/learning') return json(200, { events: learningEvents() })
     if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.repo ? teamOf(d.repo) : '' })) })
     if (path === '/api/share') {
       const items = S.shares.map((s) => ({ ...s, team: s.repo ? teamOf(s.repo) : teamOf(query.get('about') || '') }))

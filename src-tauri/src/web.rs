@@ -2396,19 +2396,27 @@ mod tests {
         let _g = autorev::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
+            // the talk tests leave demo on under this lock, and demo records and reads nothing
+            c.demo = false;
             c.learning = d.path().join("learning.jsonl");
             c.memory_dir = d.path().join("not-a-repo");
             c.teams = d.path().join("no-teams");
         });
-        crate::learning::record("draft", "acme/api", "review");
+        // a repo no other test names: memory.rs tests record events too, and theirs can land in this log
+        crate::learning::record("draft", "learning-route/probe", "review");
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/learning"), None).0, 401);
         let (code, j) = get(&format!("{base}/api/learning"), Some(&token));
         assert_eq!(code, 200);
-        assert_eq!(j["events"].as_array().unwrap().len(), 1);
-        assert_eq!(j["events"][0]["repo"], "acme/api");
+        let events = j["events"].as_array().unwrap();
         assert!(
-            j["events"][0].get("fact").is_none(),
+            events
+                .iter()
+                .any(|e| e["repo"] == "learning-route/probe" && e["source"] == "review"),
+            "{j}"
+        );
+        assert!(
+            events.iter().all(|e| e.get("fact").is_none()),
             "the fact's text never leaves the machine's memory"
         );
         config::update(|c| c.learning = std::path::PathBuf::new());

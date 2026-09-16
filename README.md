@@ -133,6 +133,7 @@ button somewhere on the page.
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `K` | learning: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
@@ -416,9 +417,16 @@ who *you* are. Nobody should have to restate the project in their own file.
 
 ### Where knowledge lives
 
-`K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
+The Knowledge group in the rail says where memory is actually read and written right now: `Memory` is the
 solo directory when you are on your own and the team's when you are in a team, `Team` is the repo or `off`, and
 `Store` appears only once the checkout sits somewhere other than its default.
+
+`learning` in the same group (or `K`) charts how fast that memory grows. Nothing in a fact records when it was
+learned, so the chart reads it from git: each joined team's history, and your memory's history up to the day
+`~/.prs_learning.jsonl` began. From then on that file carries your side, one line per draft or fact gained,
+holding its time, repo and how it came — never its text. A fact from the history shows as **earlier**, because git says when
+a line appeared but not why. Team facts are credited to their git author and arrivals to the pool they landed in,
+so one person can appear under two names.
 
 `L` also takes a **git repo** — `owner/name`, a path, or a `git@`/`https://` URL. gitdashy clones it and
 makes it your memory directory, moving the facts already there into it (and refusing, rather than choosing,

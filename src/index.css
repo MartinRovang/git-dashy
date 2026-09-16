@@ -800,3 +800,24 @@
                       color: var(--dim2); text-decoration: underline; text-decoration-color: var(--line);
                       text-underline-offset: 3px; }
 .held .talkbar .lnk:not(:disabled):hover { color: var(--ink); text-decoration-color: currentColor; }
+
+/* the learning chart: one measure, its breakdown stacked, and the filters that narrow it */
+.learning { display: flex; flex-direction: column; gap: 10px; }
+.learning .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.learning .lbar .sp, .learning .legend .sp { flex: 1; }
+.learning .lbar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
+                         border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; max-width: 180px;
+                         color-scheme: dark; cursor: pointer; }
+.learning .lbar select:hover { border-color: var(--dim3); }
+.learning .lbar select option { color: var(--ink); background: var(--bg4); }
+.learning .seg button { font-size: 11.5px; padding: 3px 9px; }
+.learning .lchart { width: 100%; height: auto; display: block; }
+.learning .lchart .grid { stroke: var(--line); stroke-width: 1; }
+.learning .lchart .tick { font-family: var(--mono); font-size: 10px; fill: var(--dim3); }
+.learning .lchart rect { shape-rendering: crispEdges; }
+.learning .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 11.5px; color: var(--ink2); }
+.learning .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.learning .legend b { font-family: var(--mono); font-weight: 500; color: var(--dim2); margin-left: 3px; }
+.learning .legend .dim { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); }
+.learning .empty { margin: 30px 0; text-align: center; color: var(--dim3); }
+.learning .note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--dim3); }

@@ -60,6 +60,7 @@ const KEYS: [string, [string, string][]][] = [
     'Knowledge',
     [
       ['W', 'Waiting drafts'],
+      ['K', 'Learning: how fast the memory learns, as a chart'],
       ['P', 'What the team knows'],
       ['Z', 'Dream'],
       ['g', 'General memory'],

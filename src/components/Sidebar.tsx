@@ -576,7 +576,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             screens <em>keys</em>
           </div>
           <div className="tags">
-            {([['drafts', 'waiting', 'W'], ['share', 'shared', 'P'], ['dream', 'dream', 'Z'], ['general', 'general', 'g']] as const).map(
+            {([['drafts', 'waiting', 'W'], ['share', 'shared', 'P'], ['dream', 'dream', 'Z'], ['general', 'general', 'g'], ['learning', 'learning', 'K']] as const).map(
               ([name, label, key]) => (
                 <button className="tag" key={name} onClick={() => onModal(name)}>
                   {label} <kbd className="hint">{key}</kbd>

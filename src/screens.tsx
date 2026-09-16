@@ -4,6 +4,8 @@ import { api, copyText, errorText, post } from './api'
 import type { Foot } from './modals'
 import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Ask, Row, StateData } from './types'
+import type { LEvent } from './learning'
+import { LearningChart } from './components/LearningChart'
 
 export type Ctx = {
   getData: () => StateData | null
@@ -33,6 +35,27 @@ export async function memoryEditor(ctx: Ctx, repo: string) {
     },
     got.path,
   )
+}
+
+/** How fast the memory learns, as a chart. The events are read once; every filter redraws from them. */
+export async function learningScreen(ctx: Ctx) {
+  const r = await api('/api/learning')
+  if (!r.ok) {
+    ctx.flash(`✗ ${await errorText(r)}`)
+    return
+  }
+  const events: LEvent[] = (await r.json()).events
+  if (!events.length) {
+    notice('nothing learned yet: the chart fills in as reviews propose and confirm facts')
+    return
+  }
+  const m = open({
+    title: 'learning',
+    sub: `${events.length} events`,
+    wide: true,
+    body: () => <LearningChart events={events} />,
+  })
+  m.keys = { Escape: () => close(m), q: () => close(m) }
 }
 
 export async function draftsScreen(ctx: Ctx) {
