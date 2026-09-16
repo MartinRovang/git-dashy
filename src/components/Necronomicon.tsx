@@ -90,14 +90,15 @@ export function Necronomicon() {
     setCh(i)
     setLeaf(0)
   }
-  // ponytail: the keys press the page-turn buttons, which already know when there is no page to turn to
+  // ponytail: the keys press the page-turn buttons, which already know when there is no page to turn to; shift turns leaves
   const turn = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (modalCount() > 0 || /input|textarea|select/i.test((e.target as HTMLElement).tagName)) return
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-      const button = turn.current?.querySelectorAll('button')[e.key === 'ArrowRight' ? 1 : 0]
+      const buttons = e.shiftKey ? turn.current?.parentElement?.querySelector('.npager') : turn.current
+      const button = buttons?.querySelectorAll('button')[e.key === 'ArrowRight' ? 1 : 0]
       if (!button) return
       e.preventDefault()
       button.click()
