@@ -416,15 +416,28 @@ function postingOf(repo: string) {
   return { repo, owner, manual: one('manual'), auto: one('auto') }
 }
 
-/** Every rule that exists, owners first — and each half sorted, the way posting_rules_json does it. */
+/** Every target the panel lists — every repo on the board and every ruled owner — owners first and each
+ *  half sorted, the way posting_rules_json does it. */
 function postingRules() {
   const by = (a: { target: string }, b: { target: string }) => a.target.localeCompare(b.target)
-  const owners = Object.entries(S.postingOwners)
-    .map(([o, r]) => ({ target: `${o}/*`, ...r, manualVia: 'owner', autoVia: 'owner' }))
+  const onBoard = [...new Set(S.rows.map((r) => r.repo))]
+  const ownerNames = [...new Set([...Object.keys(S.postingOwners), ...onBoard.map((r) => r.split('/')[0])])]
+  const owners = ownerNames
+    .map((o) => {
+      const r = S.postingOwners[o] || {}
+      return {
+        target: `${o}/*`,
+        manual: r.manual || 'post',
+        auto: r.auto || 'post',
+        manualVia: r.manual ? 'owner' : '',
+        autoVia: r.auto ? 'owner' : '',
+      }
+    })
     .sort(by)
   // like the server: a repo row shows the EFFECTIVE word, marked when it comes from the owner
-  const repos = Object.entries(S.posting)
-    .map(([t, r]) => {
+  const repos = [...new Set([...Object.keys(S.posting), ...onBoard])]
+    .map((t) => {
+      const r = S.posting[t] || {}
       const own = S.postingOwners[t.split('/')[0]]
       const one = (axis: 'manual' | 'auto') =>
         r[axis] ? [r[axis], 'repo'] : own?.[axis] ? [own[axis], 'owner'] : ['post', '']
@@ -749,12 +762,11 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         return json(200, { ok: true })
       }
       const ran = str(body, 'ran')
-      if (body.owner) {
-        const owner = repo.split('/')[0]
-        S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: str(body, 'post') }
-        return json(200, { ok: true })
-      }
-      S.posting[repo] = { ...S.posting[repo], [ran]: str(body, 'post') }
+      // like the route: `owner` is the owner NAME, and it is one or the other
+      const owner = str(body, 'owner')
+      if (!repo === !owner) return json(400, { error: 'name a repo or an owner, not both' })
+      if (owner) S.postingOwners[owner] = { ...S.postingOwners[owner], [ran]: str(body, 'post') }
+      else S.posting[repo] = { ...S.posting[repo], [ran]: str(body, 'post') }
       return json(200, { ok: true })
     }
     if (path === '/api/consent') {

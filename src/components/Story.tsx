@@ -94,26 +94,30 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
     void post('/api/story/seen', { login })
   }
   const forgetShift = () => setGot((g) => (g ? { ...g, shift: '' } : g))
-  // news that came in while the story was open is already on screen: closing drops it
-  const close = () => {
+  /** Closing is what marks everything read: both the list of what moved and the direction line have to
+   *  survive the render that opens the pop-up, or opening it is the one gesture that guarantees you miss
+   *  them. ponytail: `toggle` used to clear on the way in, so neither ever appeared. */
+  const done = () => {
     setNews([])
-    // the pop-up can also be raised by news alone, so closing is the only sure place to tell the server
-    markRead()
     forgetShift()
+  }
+  const close = () => {
+    // the server is told here, since this is the only path every dismissal goes through
+    markRead()
+    done()
     setOpen(false)
   }
   const toggle = () => {
-    setNews([])
     markRead()
-    if (open) forgetShift()
+    if (open) done()
     setOpen((o) => !o)
   }
 
-  // the pop-up is fixed (a dock that scrolls sideways would clip it), so it is put over its pill by hand,
-  // again whenever the window, the dock's scroll, or the dock's own width (a pill beside it grows a dot or goes) moves it
-  const shown = open || news.length > 0
+  // ponytail: `open` alone. A poll used to raise the pop-up by itself the moment any PR moved, so a row
+  // of pills threw a paragraph of text over the board on its own schedule. The pill wears a badge saying
+  // what changed and waits to be opened.
   useLayoutEffect(() => {
-    if (!shown) return
+    if (!open) return
     const place = () => {
       const r = el.current?.getBoundingClientRect()
       if (r && pop.current) pop.current.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 368))}px`
@@ -129,7 +133,7 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
       window.removeEventListener('resize', place)
       dock?.removeEventListener('scroll', place)
     }
-  }, [shown])
+  }, [open])
   // a click anywhere else, or Esc, puts the pop-up away.
   // ponytail: Esc captures and stops, like ActsMenu, since the board reads Escape as "open the menu"
   useEffect(() => {
@@ -151,9 +155,21 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
 
   return (
     <div ref={el} className={`chip${news.length ? ' news' : ''}${shift ? ' shift' : ''}${open ? ' on' : ''}`}>
-      <button onClick={toggle} title={shift ? `${login} changed direction: ${shift}` : `what ${login} is working on`}>
-        {news.length || shift ? <i /> : null}
+      <button
+        onClick={toggle}
+        title={[
+          `what ${login} is working on`,
+          news.length ? `${news.length} pull request${news.length === 1 ? '' : 's'} new or pushed since you looked` : '',
+          shift ? `changed direction: ${shift}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      >
         {login}
+        {/* what changed, small enough to sit in a footer: a count of the PRs that moved, and an arrow
+            when the model called it a change of direction. The words are behind the click. */}
+        {news.length ? <em className="badge">+{news.length}</em> : null}
+        {shift ? <em className="badge dir">↗</em> : null}
       </button>
       <button className="x" onClick={onUnfollow} title={`unfollow ${login}`} aria-label={`unfollow ${login}`}>
         ×
@@ -170,6 +186,18 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
               ✕
             </button>
           </div>
+          {news.length ? (
+            <div className="moved">
+              <b>new or pushed</b>
+              <ul>
+                {news.map((p) => (
+                  <li key={p.url}>
+                    {p.repo}#{p.number} {p.title}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {/* the mark, above the story it changed into. It survives this render: `read` has already told
               the server, and taking the line away the instant the pop-up opens is the one way to miss it. */}
           {shift ? (
@@ -207,24 +235,6 @@ export function Story({ login, every, onUnfollow }: { login: string; every: numb
               ))}
             </details>
           ) : null}
-        </div>
-      ) : news.length ? (
-        <div ref={pop} className="pop" role="status">
-          <div className="poph">
-            <b>{login}</b>
-            <span>new work</span>
-            <div style={{ flex: 1 }} />
-            <button className="iconbtn" onClick={() => setNews([])} title="dismiss">
-              ✕
-            </button>
-          </div>
-          <ul className="go" onClick={toggle}>
-            {news.map((p) => (
-              <li key={p.url}>
-                {p.repo}#{p.number} {p.title}
-              </li>
-            ))}
-          </ul>
         </div>
       ) : null}
     </div>

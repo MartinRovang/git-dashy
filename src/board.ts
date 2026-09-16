@@ -22,6 +22,21 @@ export function underScope(d: StateData | null, scope: string): string[] {
   return people((d?.sections || []).flatMap((s) => s.prs).filter((p): p is Pr => !!p && inScope(p, [scope])))
 }
 
+/** Which rule decides one axis of one posting row, as three states rather than two appearances. `via` from
+ *  the server says where the word came from; what makes it readable is whose row it is on:
+ *
+ *  - `own` — this target's own rule. An `acme/*` row's owner rule, or an `acme/api` row's repo rule.
+ *  - `owner` — no rule here; the word comes from the owner above. Only a repo row can be this.
+ *  - `none` — nobody set anything and the word is the default.
+ *
+ *  ponytail: without the third, "no arrow" meant either "set here" or "nothing set", which are opposite
+ *  answers to the only question this panel exists to answer.
+ */
+export function ruleSource(target: string, via: '' | 'repo' | 'owner'): 'own' | 'owner' | 'none' {
+  if (!via) return 'none'
+  return via === (target.endsWith('/*') ? 'owner' : 'repo') ? 'own' : 'owner'
+}
+
 /** Every PR the filters leave, in list order: the drafts rule, the REVIEWED window, the filter box.
  *  TEAM and MERGED are filtered by the sources toggles here, not by a refetch. TEAM splits in two: rows
  *  the logs know a review of stay TEAM, the rest are OTHER. MERGED goes last. Hidden PRs are left out,

@@ -196,7 +196,7 @@ pub fn payload(state: &State) -> Value {
         "autoScope": auto_scope.listed().into_iter().map(|(t, on)| json!({"target": t, "on": on})).collect::<Vec<_>>(),
         // every posting rule on this machine, so the rail can show the whole picture rather than
         // one repo's answer with no way to see what else is set
-        "postingRules": posting_rules_json(),
+        "postingRules": posting_rules_json(&board_repos(&sections)),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -893,6 +893,19 @@ fn posting_json(repo: &str) -> Value {
     json!({"repo": key, "owner": owner, "manual": one(&p.manual), "auto": one(&p.auto)})
 }
 
+/// Every repo the board is holding, folded and deduped: what the posting panel lists.
+fn board_repos(sections: &[crate::types::Section]) -> Vec<String> {
+    let mut v: Vec<String> = sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .map(|p| bind::key(p.repo()))
+        .filter(|k| !k.is_empty())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// Every rule that exists, so nothing about this is invisible: (target, manual, auto), owners first.
 ///
 /// Each word is the EFFECTIVE one, resolved the way the controls above the table resolve it, and `via`
@@ -900,14 +913,27 @@ fn posting_json(repo: &str) -> Value {
 /// what you run and `a/b` carrying an auto-only rule, the `a/b` row read "you post" while a manual review
 /// on a/b would in fact hold -- the table contradicting the controls, on the one screen built to make the
 /// rules visible.
-fn posting_rules_json() -> Vec<Value> {
+fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
     let p = autorev::posting();
+    // ponytail: every repo the program is handling, not only the ones a rule names. The panel is a list
+    // you walk, so a repo with no rule of its own has to be in it -- that is the one you came to set.
+    // Each repo's owner comes with it, since the owner row is what a repo with no rule falls back to.
     let mut targets: Vec<String> = p
         .manual
         .listed()
         .into_iter()
         .chain(p.auto.listed())
         .map(|(t, _)| t)
+        .chain(on_board.iter().flat_map(|r| {
+            let k = bind::key(r);
+            let owner = k.split('/').next().unwrap_or("").to_string();
+            let owner = if owner.is_empty() {
+                None
+            } else {
+                Some(format!("{owner}/*"))
+            };
+            owner.into_iter().chain(Some(k).filter(|k| !k.is_empty()))
+        }))
         .collect();
     targets.sort();
     targets.dedup();
@@ -1351,11 +1377,14 @@ fn post_bind(state: &State, body: &Body) -> Out {
 
 /// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
 fn post_posting(state: &State, body: &Body) -> Out {
-    let (repo, op) = (text(body, "repo"), text(body, "op"));
-    if repo.is_empty() {
-        return Err(Fail::new(400, "no row selected"));
-    }
+    // ponytail: `owner` carries the owner NAME, like /api/auto, not a flag meaning "read `repo` through
+    // owner_of". That flag is what the comment in post_auto is about: a client sending the owner in
+    // `owner` -- the obvious reading -- widened one repo's rule to the whole org by coincidence.
+    let (repo, owner, op) = (text(body, "repo"), text(body, "owner"), text(body, "op"));
     if op == "release" || op == "discard" {
+        if repo.is_empty() {
+            return Err(Fail::new(400, "no row selected"));
+        }
         let n = body.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
         let Some(h) = held::get(&repo, n) else {
             return Err(Fail::new(404, "nothing waiting for that PR"));
@@ -1394,8 +1423,11 @@ fn post_posting(state: &State, body: &Body) -> Out {
     let Some(p) = autorev::Post::parse(&text(body, "post")) else {
         return Err(Fail::new(400, "post must be post or hold"));
     };
-    fail_if(if truthy(body, "owner") {
-        autorev::set_post_owner(&owner_of(&repo), ran, p)
+    if repo.is_empty() == owner.is_empty() {
+        return Err(Fail::new(400, "name a repo or an owner, not both"));
+    }
+    fail_if(if repo.is_empty() {
+        autorev::set_post_owner(&owner, ran, p)
     } else {
         autorev::set_post(&repo, ran, p)
     })?;
@@ -2470,10 +2502,15 @@ mod tests {
 
         assert_eq!(ask()["manual"]["value"], "post");
         assert_eq!(ask()["auto"]["value"], "post");
+        // the board's own repo is listed before anything is set: the panel is a list you walk, and the
+        // repo with no rule is the one you came to give one
         assert_eq!(
             rules(),
-            json!([]),
-            "nothing set is an empty table, not a missing one"
+            json!([
+                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
+            ]),
+            "every repo on the board, with its owner, whether or not a rule names it"
         );
 
         autorev::set_post_owner("a", autorev::Ran::Auto, autorev::Post::Hold);
@@ -2509,8 +2546,9 @@ mod tests {
             "the owner's word, marked as inherited"
         );
 
-        // a target on BOTH axes must appear once, and an owner that sorts after a repo must still
-        // come first — with `a/*` and `a/b` alone, alphabetical order happens to agree
+        // a target on BOTH axes must appear once, an owner that sorts after a repo must still come
+        // first (with `a/*` and `a/b` alone, alphabetical order happens to agree), and a ruled owner
+        // with nothing on the board still shows up
         autorev::set_post("a/b", autorev::Ran::Manual, autorev::Post::Hold);
         autorev::set_post_owner("zeta", autorev::Ran::Manual, autorev::Post::Hold);
         assert_eq!(
@@ -2552,7 +2590,7 @@ mod tests {
 
         post(
             &format!("{base}/api/posting"),
-            json!({"repo": "acme/api", "ran": "auto", "post": "hold", "owner": true}),
+            json!({"owner": "acme", "ran": "auto", "post": "hold"}),
             &token,
         );
         let j = get_one();
@@ -2577,6 +2615,20 @@ mod tests {
             j["manual"]["value"], "post",
             "the other kind is untouched throughout"
         );
+
+        // ponytail: one or the other, never both and never neither. The flag this replaced meant a body
+        // naming the owner in `owner` -- the obvious reading -- set a rule on `repo`'s whole org instead.
+        for bad in [
+            json!({"repo": "acme/api", "owner": "acme", "ran": "auto", "post": "hold"}),
+            json!({"ran": "auto", "post": "hold"}),
+        ] {
+            let (code, body) = post(&format!("{base}/api/posting"), bad.clone(), &token);
+            assert_eq!(
+                (code, body["error"].as_str()),
+                (400, Some("name a repo or an owner, not both")),
+                "{bad}"
+            );
+        }
 
         // ponytail: one resolver, asserted. This route and the detail each used to carry their own
         // copy of repo-beats-owner-beats-default, and the copies had already drifted on `repo`.

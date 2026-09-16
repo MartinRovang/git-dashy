@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
-import type { Posting, StateData } from '../types'
-import { counts } from '../board'
+import type { StateData } from '../types'
+import { counts, ruleSource } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
 
@@ -17,9 +17,8 @@ type Props = {
   onFollowScope: (scope: string) => void
   /** How many are followed, so the rail can say so when shut. */
   followed: number
-  /** What happens to the selected repo's reviews, resolved by the server; null with no PR selected. */
-  posting: Posting | null
-  onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', owner: boolean) => void
+  /** `target` is a row's own name: `acme/api`, or `acme/*` for the whole owner. */
+  onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold', target: string) => void
   onAskAgain: (kind: string, key: string) => void
   onReport: (op: 'start' | 'open') => void
   collapsed: boolean
@@ -177,7 +176,7 @@ function Group({
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, posting, onPosting, onAskAgain, onReport, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onAskAgain, onReport, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -198,6 +197,14 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
   const rules = d?.postingRules || []
+  /** What each of the three states means, as the tooltip on the word it marks. */
+  const said = {
+    own: (t: string) => `a rule set on ${t}`,
+    owner: (t: string) => `no rule here — this follows ${t}`,
+    none: () => 'nobody has set this; the default posts as soon as a review is written',
+  }
+  /** Every target that holds a review on either axis: what the collapsed rail shows of all this. */
+  const holds = rules.filter((r) => r.manual === 'hold' || r.auto === 'hold').map((r) => r.target)
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -222,7 +229,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           label="Agent"
           summary={[
             [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
-            posting && (posting.manual.value === 'hold' || posting.auto.value === 'hold') ? 'holds a review' : '',
+            holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : '',
           ]
             .filter(Boolean)
             .join(' · ')}
@@ -234,10 +241,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               <Pills label="voices" values={s.voice || []} />
               <Pills label="hunters" values={s.hunter || []} />
               <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
-              {/* the one setting here that changes what lands on someone else's PR, so it survives
-                  the collapse even though it is the selected repo's and not the machine's */}
-              <Ln label="you ran it" value={posting ? posting.manual.value : '—'} off={posting?.manual.value !== 'hold'} />
-              <Ln label="auto ran it" value={posting ? posting.auto.value : '—'} off={posting?.auto.value !== 'hold'} />
+              {/* the one setting here that changes what lands on someone else's PR, so it survives the
+                  collapse. Names the targets, not a count: at 106px "2 hold" is a number you have to
+                  open the rail to read. */}
+              <Pills label="holds" values={holds} />
             </>
           }
           open={!!open.agent}
@@ -272,75 +279,84 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           {/* ponytail: here, and spelled out. It was a modal behind `H` on a row showing two lines of
               "post it / wait for a key · via acme/*", so both options were never on screen at once
               and nothing said what else was set. Posting is the part you cannot take back, so the
-              setting should not be hidden behind a key. */}
-          <div className="sub">
-            when a review finishes <em>{posting ? posting.repo : 'pick a PR'}</em>
-          </div>
-          {posting ? (
-            <>
-              {/* ponytail: the same setting at two scopes, so scope is what the rows are. It read as two
-                  unrelated settings when one row said who ran the review and the other said which repos it
-                  covered -- "you ran it" next to "all of acme/* posts what auto runs". */}
-              {(['manual', 'auto'] as const).map((ran) => (
-                <Fragment key={ran}>
-                  <div className="axis">reviews {ran === 'manual' ? 'YOU' : 'AUTO'} run</div>
-                  {([false, true] as const).map((owner) => (
-                    <div className="pair" key={String(owner)}>
-                      <span>{owner ? `all of ${posting.owner}/*` : 'this repo'}</span>
-                      <div className="seg" role="group">
-                        {(['post', 'hold'] as const).map((w) => {
-                          const now = owner ? posting[ran].ownerValue : posting[ran].value
-                          return (
-                            <button
-                              key={w}
-                              aria-pressed={now === w}
-                              title={
-                                w === 'post'
-                                  ? 'the verdict goes on the PR as soon as it is written'
-                                  : 'the verdict waits on disk; Y reads it and posts or drops it'
-                              }
-                              // ponytail: a press that changes nothing writes nothing. Pressing the
-                              // already-lit word on a repo with no rule of its own used to append one,
-                              // silently carving the repo out of any later owner rule.
-                              disabled={now === w && (owner || posting[ran].via !== '')}
-                              onClick={() => onPosting(ran, w, owner)}
-                            >
-                              {w === 'post' ? 'post it' : 'hold it'}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {owner ? null : (
-                        <i title={`the rule in force comes from ${posting[ran].via || 'the default'}`}>
-                          {posting[ran].via === 'owner' ? `${posting.owner}/*` : posting[ran].via === 'repo' ? 'set here' : 'default'}
-                        </i>
-                      )}
-                    </div>
-                  ))}
-                </Fragment>
-              ))}
-              <div className="rules none">a rule on this repo wins over the owner&apos;s</div>
-            </>
-          ) : null}
+              setting should not be hidden behind a key.
+              ponytail: and every target, not the selected row's. A panel that answered for whichever PR
+              happened to be picked could not be read as a setting -- the same control said different
+              things depending on the list behind it, and half the rules it mentioned were unreachable. */}
+          <div className="sub">when a review finishes</div>
           {rules.length ? (
-            <div className="rules">
-              {rules.map((r) => (
-                <div key={r.target}>
-                  <b>{r.target}</b>
-                  {/* an arrow means this repo sets nothing on that axis and takes its owner's word */}
-                  <span title={r.manualVia === 'owner' ? `inherited from ${r.target.split('/')[0]}/*` : ''}>
-                    you {r.manual === 'hold' ? 'hold' : 'post'}
-                    {r.manualVia === 'owner' ? <u>↑</u> : null}
-                  </span>
-                  <span title={r.autoVia === 'owner' ? `inherited from ${r.target.split('/')[0]}/*` : ''}>
-                    auto {r.auto === 'hold' ? 'holds' : 'posts'}
-                    {r.autoVia === 'owner' ? <u>↑</u> : null}
-                  </span>
-                </div>
-              ))}
+            <div className="targets">
+              {rules.map((r) => {
+                const owner = !r.target.endsWith('/*')
+                  ? `${r.target.split('/')[0]}/*`
+                  : ''
+                const on = !!open[`row:${r.target}`]
+                return (
+                  <Fragment key={r.target}>
+                    <button className="trow" aria-expanded={on} onClick={() => flip(`row:${r.target}`)}>
+                      <span className="car">{on ? '▾' : '▸'}</span>
+                      <b>{r.target}</b>
+                      {(['manual', 'auto'] as const).map((ran) => {
+                        const from = ruleSource(r.target, r[`${ran}Via`])
+                        return (
+                          <i key={ran} className={from} title={said[from](from === 'owner' ? owner : r.target)}>
+                            {ran === 'manual'
+                              ? `you ${r[ran] === 'hold' ? 'hold' : 'post'}`
+                              : `auto ${r[ran] === 'hold' ? 'holds' : 'posts'}`}
+                            {from === 'owner' ? <u>↑</u> : null}
+                          </i>
+                        )
+                      })}
+                    </button>
+                    {on
+                      ? (['manual', 'auto'] as const).map((ran) => (
+                          <div className="pair sub2" key={ran}>
+                            <span>
+                              reviews {ran === 'manual' ? 'you' : 'auto'} run{ran === 'manual' ? '' : 's'}
+                              {/* the same three states as the row, spelled out where there is room */}
+                              <em className={ruleSource(r.target, r[`${ran}Via`])}>
+                                {
+                                  { own: 'set here', owner: `from ${owner}`, none: 'not set' }[
+                                    ruleSource(r.target, r[`${ran}Via`])
+                                  ]
+                                }
+                              </em>
+                            </span>
+                            <div className="seg" role="group">
+                              {(['post', 'hold'] as const).map((w) => (
+                                <button
+                                  key={w}
+                                  aria-pressed={r[ran] === w}
+                                  title={
+                                    w === 'post'
+                                      ? 'the verdict goes on the PR as soon as it is written'
+                                      : 'the verdict waits on disk; Y reads it and posts or drops it'
+                                  }
+                                  // ponytail: a press that would write a rule this target already has
+                                  // writes nothing. Pressing the lit word on a repo whose word is
+                                  // INHERITED is allowed and does something: it pins it here, so a later
+                                  // change to the owner leaves this repo alone.
+                                  disabled={r[ran] === w && r[`${ran}Via`] === (owner ? 'repo' : 'owner')}
+                                  onClick={() => onPosting(ran, w, r.target)}
+                                >
+                                  {w === 'post' ? 'post it' : 'hold it'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      : null}
+                  </Fragment>
+                )
+              })}
+              <div className="rules none">
+                A word in <b>white</b> is a rule set on that row. A dim one with <u>↑</u> is its owner&apos;s,
+                followed because the repo has none of its own; set one and it stops following. A dim one
+                without is nobody&apos;s — the default, which posts.
+              </div>
             </div>
           ) : (
-            <div className="rules none">every repo posts its reviews — nothing is set</div>
+            <div className="rules none">no repos on the board yet — every review posts as soon as it is written</div>
           )}
         </Group>
 

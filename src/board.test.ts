@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, ruleSource, selected, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -621,4 +621,16 @@ describe('repo and author picks', () => {
     expect(whoIs(state([{ name: 'MINE', prs: [pr({ repo: 'acme/web', author: '' })] }])).authors).toEqual([]))
   it('a pick whose PRs left the board stays listed so it can be unticked', () =>
     expect(pickable(whoIs(d), { repos: ['acme/gone'], authors: [] }, 'repos')).toEqual(['acme/api', 'acme/web', 'acme/gone']))
+})
+
+describe('posting rows', () => {
+  it('tells an own rule from an inherited one from nothing set at all', () => {
+    // the same `via` reads differently depending on whose row carries it
+    expect(ruleSource('acme/*', 'owner')).toBe('own')
+    expect(ruleSource('acme/api', 'owner')).toBe('owner')
+    expect(ruleSource('acme/api', 'repo')).toBe('own')
+    // nothing set is its own answer, not the same as having one
+    expect(ruleSource('acme/api', '')).toBe('none')
+    expect(ruleSource('acme/*', '')).toBe('none')
+  })
 })
