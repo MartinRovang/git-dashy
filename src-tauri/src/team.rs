@@ -1735,6 +1735,18 @@ mod tests {
         r.stdout
     }
 
+    /// Empties ERROR on the way out, held by any test that fills it on purpose.
+    ///
+    /// ponytail: a Drop, not a line at the end of the test. Written as the last statement it runs only
+    /// when every assertion above it passed — so the run where something DID go wrong is exactly the
+    /// run that leaks a stale error into the next test, and reports it there instead of here.
+    struct CleanError;
+    impl Drop for CleanError {
+        fn drop(&mut self) {
+            set_error(String::new());
+        }
+    }
+
     /// Point every path at `root`, so nothing a test writes lands in the real home.
     fn point(root: &Path) {
         config::update(|c| {
@@ -1860,25 +1872,25 @@ mod tests {
     #[test]
     fn connect_reads_a_dash_leading_url_as_a_url_not_an_option() {
         let _l = crate::config::test_lock();
+        let _e = CleanError; // a failure this test wanted is not the next test's to find
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         assert_eq!(start("Shared", "d", ""), "");
         // git has to reach the fetch, which names the URL. Read as an option, it never gets there.
         let err = connect("shared", "--mirror=push");
         assert!(err.contains("--mirror=push"), "{err}");
-        set_error(String::new()); // as above: a failure this test wanted is not the next one's
     }
 
     #[test]
     fn clone_reads_a_dash_leading_repo_as_a_repo_not_an_option() {
         let _l = crate::config::test_lock();
+        // ponytail: ERROR is a second global, and this test fills it on purpose. Left behind, it is
+        // what the next test asserting a clean error() reads — the failure lands there, not here.
+        let _e = CleanError;
         let t = tempfile::tempdir().unwrap();
         // the '@' passes it through untouched, so git sees it exactly as typed
         let err = clone("--upload-pack=nope@x", &t.path().join("dest"));
         assert!(err.contains("'--upload-pack=nope@x' does not exist"), "{err}");
-        // ponytail: ERROR is a second global, and this test deliberately fills it. Left behind, it is
-        // what the next test asserting a clean error() reads — the failure was in that test, not here.
-        set_error(String::new());
     }
 
     #[test]
@@ -2091,7 +2103,8 @@ mod tests {
 
     #[test]
     fn a_pull_records_on_the_checkout_whether_it_landed() {
-        let _l = crate::config::test_lock(); // asserts on ERROR, and fills it: see above
+        let _l = crate::config::test_lock(); // asserts on ERROR, and fills it: see CleanError
+        let _e = CleanError;
         let t = tempfile::tempdir().unwrap();
         let remote_ = t.path().join("remote.git");
         sh(

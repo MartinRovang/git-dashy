@@ -508,14 +508,11 @@ pub fn save(values: &Saved) -> std::io::Result<()> {
     Ok(())
 }
 
-/// THE lock for any test that touches this global, whichever module the test lives in.
+/// The lock for any test that touches a process-global, whichever module the test lives in.
 ///
-/// ponytail: there were twelve of these, one per module, and none of them excluded each other — a
-/// memory test and a team test each held their own while both rewrote the same process-global config,
-/// and about a dozen tests failed at random on a busy machine, reporting assertions that made no sense
-/// for the test that raised them (#134). autorev had already argued this for one field: "two locks
-/// would let web.rs and cli.rs point each other's reads at the wrong tempdir, intermittently". It is
-/// the same argument for all of them, so there is one lock now and it lives beside what it guards.
+/// ponytail: one, because twelve module locks never excluded each other and about a dozen tests failed
+/// at random, each reporting an assertion that belonged to whatever had rewritten the config under it
+/// (#134). It lives beside what it guards.
 #[cfg(test)]
 pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static TEST_LOCK: Mutex<()> = Mutex::new(());

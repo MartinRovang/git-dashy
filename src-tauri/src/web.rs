@@ -2381,6 +2381,7 @@ mod tests {
 
     #[test]
     fn debug_route_needs_the_token_and_carries_the_paths() {
+        let _g = crate::config::test_lock(); // the paths it carries come from the global config
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/debug"), None).0, 401);
         let (code, d) = get(&format!("{base}/api/debug"), Some(&token));
@@ -2410,6 +2411,9 @@ mod tests {
 
     #[test]
     fn no_token_is_refused_and_a_good_one_gets_the_payload() {
+        // ponytail: served() answers out of the global config, so a test rewriting it next door is
+        // what this payload is built from otherwise. Same lock as everything else that reads it.
+        let _g = crate::config::test_lock();
         let (base, token, state) = served();
         assert_eq!(get(&format!("{base}/api/state"), None).0, 401);
         assert_eq!(get(&format!("{base}/api/state?token=wrong"), None).0, 401);
@@ -2505,6 +2509,7 @@ mod tests {
 
     #[test]
     fn busy_follows_in_flight_and_the_review_rides_along() {
+        let _g = crate::config::test_lock(); // as above: the payload is read through the config
         let (base, token, state) = served();
         state.lock().running.insert("u".into());
         state.lock().reviews.insert("u".into(), "3 findings".into());
