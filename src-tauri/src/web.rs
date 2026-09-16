@@ -2018,6 +2018,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
+        "/api/repos" => |_, _| Ok(json!({"repos": github::my_repos()})),
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
         "/api/changelog" => |_, _| {
             update::recent()
