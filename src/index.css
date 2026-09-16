@@ -753,3 +753,50 @@
   .ft .lnk.foot { font: inherit; font-size: 11px; padding: 0 4px; border: 0; background: none;
                   color: var(--dim2); cursor: pointer; white-space: nowrap; }
   .ft .lnk.foot:hover { color: var(--pink); }
+
+/* a held review, and the conversation about it */
+/* the modal body stops scrolling itself: the review and the conversation scroll, the box stays put */
+.modal .mb:has(> .held) { overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding-bottom: 0; }
+.held { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.held .talkbody { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px;
+                  padding-bottom: 12px; }
+.held .talkfoot { flex: none; border-top: 1px solid var(--line); padding: 12px 0 16px; background: var(--bg3); }
+.held .talkfoot:empty { display: none; }
+.held .note { margin: 0; }
+.held pre { margin: 0; white-space: pre-wrap; }
+.held .asked { display: flex; gap: 8px; align-items: baseline; padding: 6px 9px; border-radius: 7px;
+               background: var(--bg4); font-size: 12px; }
+.held .asked b { flex: none; font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--dim2);
+                 text-transform: uppercase; letter-spacing: .04em; }
+.held .asked span { color: var(--ink2); }
+.held .verdict { display: flex; align-items: baseline; gap: 8px; }
+.held .verdict b { font-size: 13px; }
+.held .verdict span { font-family: var(--mono); font-size: 10px; color: var(--dim3); }
+/* what would post if accepted, kept visibly apart from what posts now */
+.held .proposal { display: flex; flex-direction: column; gap: 8px; padding: 9px 11px; border-radius: 8px;
+                  border: 1px solid color-mix(in srgb, var(--violet) 45%, transparent);
+                  background: color-mix(in srgb, var(--violet) 8%, transparent); }
+.held .proposal .verdict span { color: var(--violet); }
+.held .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.held .btn:disabled, .held .lnk:disabled { opacity: .4; cursor: default; }
+.held .thread { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line2); padding-top: 10px; }
+.held .thread:not(:has(.turn)) { display: none; }
+.held .turn { display: flex; flex-direction: column; gap: 2px; max-width: 92%; }
+.held .turn b { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--dim2); }
+.held .turn p { margin: 0; padding: 7px 10px; border-radius: 8px; background: var(--bg4); color: var(--ink);
+                font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+.held .turn.you { align-self: flex-end; }
+.held .turn.you b { text-align: right; }
+.held .turn.you p { background: color-mix(in srgb, var(--pink) 12%, var(--bg4)); }
+.held .turn.error p { color: var(--red); }
+/* the box, then one bar: talking on the left, what happens to the review on the right */
+.held .talkfoot { display: flex; flex-direction: column; gap: 8px; }
+.held .talkin { min-height: 64px; max-height: 30vh; resize: vertical; }
+.held .talkbar { display: flex; align-items: center; gap: 8px; }
+.held .talkbar .sp { flex: 1; }
+.held .talkbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.held .talkbar .btn kbd { font-size: 10px; padding: 0 4px; opacity: .8; }
+.held .talkbar .lnk { font: inherit; font-size: 12px; border: 0; background: none; padding: 0; cursor: pointer;
+                      color: var(--dim2); text-decoration: underline; text-decoration-color: var(--line);
+                      text-underline-offset: 3px; }
+.held .talkbar .lnk:not(:disabled):hover { color: var(--ink); text-decoration-color: currentColor; }

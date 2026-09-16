@@ -211,6 +211,34 @@ pub fn evict<K: Eq + std::hash::Hash, V>(cache: &mut HashMap<K, V>, drop: impl F
     cache.retain(|k, _| !drop(k));
 }
 
+/// What a finished discussion turn leaves in the saved review: the answer or the failure appended, or the
+/// revision set beside the verdict. `now` is the review as it is on disk when the turn lands.
+///
+/// ponytail: None in, None out. A review dropped while the agent was answering is gone, and writing the
+/// answer back would put the file back with it -- the drop undone by the thing that was waiting on it.
+pub fn land(
+    now: Option<held::Held>,
+    turn: std::result::Result<(Option<String>, Option<crate::types::Verdict>), String>,
+    at: f64,
+) -> Option<held::Held> {
+    let mut h = now?;
+    match turn {
+        Ok((Some(answer), _)) => h.thread.push(held::Turn {
+            who: "agent".into(),
+            text: answer,
+            at,
+        }),
+        Ok((None, Some(v))) => h.proposed = Some(v),
+        Ok(_) => {}
+        Err(text) => h.thread.push(held::Turn {
+            who: "error".into(),
+            text,
+            at,
+        }),
+    }
+    Some(h)
+}
+
 /// Fill one detail cache entry from `read`, and free its key whatever `read` does.
 ///
 /// ponytail: the write and the key are one step, here, because a panic that skipped the removal left
@@ -453,9 +481,10 @@ impl State {
     /// False when a review of this PR is already running, and nothing was started.
     /// `ran` says whose decision this was: you pressed `r`, or auto started it. A repo can settle
     /// the two differently, so the review has to carry it all the way to the post.
-    pub fn start_review(&self, pr: &Pr, ran: autorev::Ran) -> bool {
+    /// `ask` is what the person starting it typed for this one review, "" for none.
+    pub fn start_review(&self, pr: &Pr, ran: autorev::Ran, ask: &str) -> bool {
         let model = config::get().model;
-        let (me, pr) = (self.clone(), pr.clone());
+        let (me, pr, ask) = (self.clone(), pr.clone(), ask.to_string());
         if !self.begin(&pr.url, "reviewing...") {
             return false;
         }
@@ -464,7 +493,7 @@ impl State {
             // catch would leave it spinning for the rest of the session with nothing to press. Catch here
             // too, and the row says what happened.
             info!("review {} with {}", pr.url, model);
-            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran))) {
+            let status = match catch_unwind(AssertUnwindSafe(|| review::review(&pr, &model, ran, &ask))) {
                 Ok(Ok(status)) => status,
                 Ok(Err(e)) => {
                     error!("review {} failed: {e:#}", pr.url);
@@ -517,6 +546,92 @@ impl State {
                 }
             };
             me.finish(&url, status);
+        });
+        true
+    }
+
+    /// Claim a row for a short write that must not interleave with a turn: accepting or keeping a revision.
+    /// False when anything is already running on it.
+    pub fn claim(&self, url: &str, label: &str) -> bool {
+        self.begin(url, label)
+    }
+
+    /// Let go of a claim, leaving `status` on the row.
+    pub fn release(&self, url: &str, status: String) {
+        self.finish(url, status)
+    }
+
+    /// Set a row's review status without touching whether anything is running on it.
+    pub fn set_status(&self, url: &str, status: String) {
+        self.lock().reviews.insert(url.to_string(), status);
+    }
+
+    /// Whether anything is running on this PR's row: a review, a post, or a discussion.
+    pub fn busy(&self, url: &str) -> bool {
+        in_flight(&self.lock(), url)
+    }
+
+    /// One discussion turn on a held review, or a request for a revision when `message` is None.
+    /// False when something is already running on the row, and nothing was started.
+    ///
+    /// ponytail: the row's own claim, the one a review and a post take. A post that started while the
+    /// agent was still answering would put up a verdict the conversation was about to change, and a
+    /// second turn resumed into the same session at once would interleave in it.
+    /// ponytail: your message is on disk before the model sees it, so the conversation shows it at once;
+    /// the answer is appended to the file as it is when the answer lands, and a review dropped in the
+    /// meantime is not brought back.
+    pub fn start_talk(&self, on: review::Talk, h: held::Held, message: Option<String>) -> bool {
+        let url = h.pr.url.clone();
+        let label = if message.is_some() {
+            "discussing..."
+        } else {
+            "revising..."
+        };
+        if !self.begin(&url, label) {
+            return false;
+        }
+        // ponytail: the file as it is NOW, under the claim. The caller read it before claiming the row, and a
+        // turn that landed in between was on disk but not in that copy -- appending to the copy wrote over the
+        // answer that had just arrived.
+        let Some(mut h) = on.get(h.pr.repo(), h.pr.number) else {
+            self.finish(&url, String::new());
+            self.forget_review(&url);
+            return false;
+        };
+        if let Some(m) = &message {
+            h.thread.push(held::Turn {
+                who: "you".into(),
+                text: m.clone(),
+                at: now(),
+            });
+            if let Err(e) = on.put(&h) {
+                error!("discussion of {url} not saved: {e:#}");
+                self.finish(&url, on.status(&h.verdict));
+                return false;
+            }
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| match &message {
+                Some(m) => review::discuss(&h, m).map(|a| (Some(a), None)),
+                None => review::revise(&h).map(|v| (None, Some(v))),
+            }));
+            let (repo, n) = (h.pr.repo().to_string(), h.pr.number);
+            let turn = match outcome {
+                Ok(Ok(t)) => Ok(t),
+                Ok(Err(e)) => Err(format!("{e:#}")),
+                Err(e) => Err(panic_text(&*e)),
+            };
+            let Some(now_held) = land(on.get(&repo, n), turn, now()) else {
+                // dropped while the agent was answering: nothing to add the answer to
+                me.finish(&url, String::new());
+                me.forget_review(&url);
+                return;
+            };
+            if let Err(e) = on.put(&now_held) {
+                error!("discussion of {url} not saved: {e:#}");
+            }
+            me.finish(&url, on.status(&now_held.verdict));
         });
         true
     }
@@ -829,7 +944,7 @@ impl State {
         };
         for p in &new {
             // already running is not an error here: auto only skips it
-            self.start_review(p, autorev::Ran::Auto);
+            self.start_review(p, autorev::Ran::Auto, "");
         }
         let asks: Vec<&Section> = data
             .iter()
@@ -930,6 +1045,91 @@ fn answered_by(inner: &Inner) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A message sent from a copy read before a turn landed must not write over that turn: the claim re-reads.
+    #[test]
+    fn a_message_from_a_stale_copy_keeps_the_answer_that_landed_first() {
+        let _g = crate::autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.held_dir = d.path().join("held");
+        });
+        let state = State::default();
+        let pr = Pr {
+            number: 7,
+            url: "https://github.com/acme/api/pull/7".into(),
+            repository: crate::types::Repository {
+                name_with_owner: "acme/api".into(),
+                name: "api".into(),
+            },
+            ..Default::default()
+        };
+        let stale = held::Held {
+            pr: pr.clone(),
+            model: "opus".into(),
+            session: "5e3ae8e0-544e-4128-88af-fe301d354aae".into(),
+            ..Default::default()
+        };
+        // on disk, an answer landed after `stale` was read
+        let mut landed = stale.clone();
+        landed.thread.push(held::Turn {
+            who: "agent".into(),
+            text: "the answer that landed".into(),
+            at: 1.0,
+        });
+        held::put(&landed).unwrap();
+
+        assert!(state.start_talk(review::Talk::Held, stale, Some("and then?".into())));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy(&pr.url) {
+            assert!(std::time::Instant::now() < until, "the turn never finished");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let texts: Vec<String> = held::get("acme/api", 7)
+            .unwrap()
+            .thread
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        assert_eq!(texts[0], "the answer that landed", "{texts:?}");
+        assert_eq!(texts[1], "and then?");
+        assert_eq!(texts.len(), 3, "and the new answer after it: {texts:?}");
+    }
+
+    #[test]
+    fn a_turn_lands_on_the_review_as_it_is_and_never_brings_a_dropped_one_back() {
+        let h = held::Held::default();
+        assert!(
+            land(None, Ok((Some("an answer".into()), None)), 1.0).is_none(),
+            "dropped stays dropped"
+        );
+        assert!(land(None, Err("boom".into()), 1.0).is_none());
+
+        let answered = land(Some(h.clone()), Ok((Some("an answer".into()), None)), 1.0).unwrap();
+        assert_eq!(
+            (answered.thread[0].who.as_str(), answered.thread[0].text.as_str()),
+            ("agent", "an answer")
+        );
+
+        let failed = land(Some(h.clone()), Err("claude: timed out".into()), 1.0).unwrap();
+        assert_eq!(
+            failed.thread[0].who, "error",
+            "a failed turn is kept, so the conversation says so"
+        );
+
+        let v = crate::types::Verdict {
+            verdict: "comment".into(),
+            ..Default::default()
+        };
+        let revised = land(Some(h), Ok((None, Some(v.clone()))), 1.0).unwrap();
+        assert_eq!(revised.proposed, Some(v));
+        assert!(
+            revised.thread.is_empty(),
+            "a revision waits beside the verdict, not in the thread"
+        );
+    }
+
     use crate::types::{Login, Repository};
 
     fn pr(url: &str) -> Pr {
@@ -1376,6 +1576,7 @@ mod tests {
             },
             hello: String::new(),
             at: 100.0,
+            ..Default::default()
         };
         held::put(&h).unwrap();
 

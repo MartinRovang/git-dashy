@@ -110,9 +110,10 @@ button somewhere on the page.
 | right-click | everything you can do to that PR, as a menu — the same list the pane's **options** button opens, `2` `Tab` among them |
 | `y` | copy the PR URL to the clipboard |
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
-| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again reopens it in the app, and offers a fresh one once the PR has changed since |
+| `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again inspects it in the app — where you can discuss it with the agent — and offers a fresh one once the PR has changed since |
 | `Enter` | show / hide the detail pane for the selected PR |
 | `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
+| `R` | the same, with instructions for the agent first: what to focus on, what to leave alone. They stay on this machine and are never posted |
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |
 | `a` | toggle auto mode |
@@ -132,7 +133,7 @@ button somewhere on the page.
 | `g` | edit the general review memory in the app |
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
-| `Y` | on a row waiting to post: read the held review, then post it or drop it |
+| `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
@@ -207,6 +208,12 @@ them at runtime.
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
 while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
 without it.
+
+For one review rather than all of them, `R` asks for instructions before it starts. They go into the
+system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
+else and cannot override them. They are private: kept in the held review on this machine, and never in the opening comment or the review
+log a team pulls. The reviewer is told not to quote or mention them, and a review that repeats a line of them
+word for word is held instead of posted, so you read it before its author does.
 
 Reviews run with `--safe-mode`, so the reviewer sees no `CLAUDE.md`, skills, hooks or MCP servers from
 your machine — only the prompt, one read-only command, and a short built-in review lens: state
@@ -443,7 +450,21 @@ the whole owner if the owner or any repo under it held it, and every repo rule u
 off, since one left behind would beat the owner. Turning it off changes nothing: each repo on the board
 keeps the words it had, and the owner's rule stays as the fallback for a repo with no PR on the board. A held review
 is written whole to `~/.prs_held`, the row says `waiting to post`, and `Y` reads it and either posts
-it or drops it. The model is never asked again, so the verdict you read is the verdict that goes up.
+it or drops it.
+
+`Y` is also where you discuss it. A review run through the `claude` CLI is resumed in its own session,
+so the agent still has everything it read and can use its tools again: ask why a finding is blocking,
+or show it where it was wrong. Nothing said there is posted. When the conversation has changed its
+mind, **revise the review** asks it to write the verdict again; the revision waits beside the original
+and replaces it only if you accept it, and posting is refused while one is waiting, so the verdict you
+read is still the verdict that goes up. Reviewing a held PR again (`r`) replaces the held review,
+conversation included. It is a new review in a new session. A review that ran on `openrouter:` or `local:` cannot be
+discussed yet: there is no session to go back to.
+
+A pre-review is discussed the same way, from `p`. The conversation is kept beside it, in a
+`.talk.json` next to its `.md` under `~/.prs_reviews`, never in the markdown itself, since that file is
+read as it is. An accepted revision rewrites the markdown but keeps the file's time, so a push made
+after the pre-review still shows as one. Running the pre-review again starts a new conversation.
 No opening comment is posted for a held review either, so a PR never says it is being reviewed by
 something that may never arrive.
 
