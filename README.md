@@ -134,7 +134,7 @@ button somewhere on the page.
 | `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `H` | when this repo posts a review: `r` and auto settle separately, and `o` sets the whole owner. Held means the verdict is written to `~/.prs_held` and posts nothing until you press `Y` and say so. Posting is the default, so a repo you never set behaves as it always has |
-| `Y` | on a row waiting to post: read the held review, discuss it with the agent, then post it or drop it |
+| `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
 | `G` | switch between the board and the graph — the graph always draws the whole board, so the filter row and the queue tab are cleared and ignored: every PR linked to its repo and author, sized by lines changed, colored by review state. Tabs regroup it by kind (the review's tag, else the title's `feat:`/`fix:` prefix), author or state; breaking PRs get a dashed red ring |
 | `2` `Tab` | open the code viewer: a floating window with the diff and the review's comments on the lines they are about. Drag its header to move it, its corner to resize it, double-click the header to maximize |

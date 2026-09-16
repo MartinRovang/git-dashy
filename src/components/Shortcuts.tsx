@@ -31,7 +31,7 @@ const KEYS: [string, [string, string][]][] = [
       ['y', 'Copy the PR URL'],
       ['+', 'Request a review'],
       ['H', 'When this repo posts a review'],
-      ['Y', 'Read the one waiting to post, and discuss it'],
+      ['Y', 'Inspect held review: discuss it, then post or drop'],
       ['␣', 'On a reviewed row: its older runs'],
     ],
   ],
