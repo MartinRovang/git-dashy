@@ -2551,6 +2551,15 @@ mod tests {
         );
     }
 
+    /// Wait for whatever runs on a row to finish; a turn that never does fails the test instead of hanging it.
+    fn settle(state: &State, url: &str) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy(url) {
+            assert!(std::time::Instant::now() < until, "the turn never finished");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     /// A held review discussed end to end, in demo mode so no model runs: the message is on disk before the
     /// answer, a revision waits beside the verdict, a release is refused until it is settled, and only an
     /// accept puts it where the post reads from.
@@ -2581,13 +2590,6 @@ mod tests {
         let act = |b: Value| post(&url, b, &token);
         let held_of = || get(&format!("{url}?repo={repo}&number={n}"), Some(&token)).1["held"].clone();
         let read = || held_of()["talk"].clone();
-        let settle = || {
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while state.busy(&pr().url) {
-                assert!(std::time::Instant::now() < until, "the turn never finished");
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        };
 
         let h = read();
         assert_eq!(
@@ -2603,7 +2605,7 @@ mod tests {
             act(json!({"op": "discuss", "repo": repo, "number": n, "text": "why is auth blocking?"})).0,
             200
         );
-        settle();
+        settle(&state, &pr().url);
         let who: Vec<String> = read()["thread"]
             .as_array()
             .unwrap()
@@ -2619,7 +2621,7 @@ mod tests {
         );
 
         assert_eq!(act(json!({"op": "revise", "repo": repo, "number": n})).0, 200);
-        settle();
+        settle(&state, &pr().url);
         assert_eq!(read()["proposed"]["verdict"], "comment");
         assert_eq!(
             held_of()["verdict"],
@@ -2707,13 +2709,6 @@ mod tests {
         let url = format!("{base}/api/prereview");
         let act = |b: Value| post(&url, b, &token);
         let read = || get(&format!("{url}?url={}", pr().url), Some(&token)).1["talk"].clone();
-        let settle = || {
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while state.busy(&pr().url) {
-                assert!(std::time::Instant::now() < until, "the turn never finished");
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        };
 
         assert_eq!(
             (read()["cannotDiscuss"].as_str(), read()["verdict"].as_str()),
@@ -2723,7 +2718,7 @@ mod tests {
             act(json!({"url": pr().url, "op": "discuss", "text": "is this really blocking?"})).0,
             200
         );
-        settle();
+        settle(&state, &pr().url);
         let who: Vec<String> = read()["thread"]
             .as_array()
             .unwrap()
@@ -2738,7 +2733,7 @@ mod tests {
         );
 
         assert_eq!(act(json!({"url": pr().url, "op": "revise"})).0, 200);
-        settle();
+        settle(&state, &pr().url);
         assert_eq!(read()["proposed"]["verdict"], "comment");
         assert!(
             std::fs::read_to_string(&md)
