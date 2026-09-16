@@ -1373,6 +1373,13 @@ fn dashboard(cli: Cli) -> i32 {
         );
         return 0;
     }
+    if let Some(i) = cli.interval.filter(|i| !config::interval_ok(*i)) {
+        println!(
+            "gitdashy: --interval must be {}s to a day, not {i}",
+            config::INTERVAL_MIN
+        );
+        return 0;
+    }
     config::update(|c| {
         if let Some(i) = cli.instructions {
             c.instructions = i;
