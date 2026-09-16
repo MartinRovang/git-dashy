@@ -129,6 +129,9 @@ pub struct LogEntry {
     pub kind: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub breaking: bool,
+    /// What the PR does to the database, when the repo has a DB repo. Raw model output: see Verdict.db.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db: Option<serde_json::Value>,
 }
 
 /// What the reviewer answered, parsed out of the model's JSON.
@@ -158,6 +161,10 @@ pub struct Verdict {
     pub kind: String,
     #[serde(default)]
     pub breaking: bool,
+    /// Tables and risks, when the repo has a DB repo and the PR touches the database. Raw, because it is
+    /// model output: the pane reads each field defensively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db: Option<serde_json::Value>,
     #[serde(default)]
     pub cost: Option<f64>,
     #[serde(default)]

@@ -1,6 +1,54 @@
-import type { Detail, Row } from '../types'
+import type { DbImpact, Detail, Row } from '../types'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
+import { CHANGE_TONE, clean } from '../dbgraph'
+import { DbGraph } from './DbGraph'
+
+/** The review's database section: each table the PR touches with its columns, then what could break. */
+function Db({ db, number }: { db: DbImpact; number: number }) {
+  const { tables, risks } = clean(db)
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? '' : 's'}`
+  if (!tables.length && !risks.length) return null
+  return (
+    <>
+      <div className="sep" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="lab">DATABASE</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
+          {n(tables.length, 'table')} · {n(risks.length, 'risk')}
+        </span>
+      </div>
+      <DbGraph db={db} number={number} />
+      <div className="dblegend mono">
+        {['added', 'altered', 'dropped', 'written', 'read'].map((c) => (
+          <span key={c} style={{ color: CHANGE_TONE[c] }}>
+            ● {c}
+          </span>
+        ))}
+        <span>┄ foreign key</span>
+        <span>drag · scroll to zoom · hover</span>
+      </div>
+      {risks.length ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+          {risks.map((r, i) => (
+            <div className="find" key={i}>
+              <i style={{ background: 'var(--red)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="tag" style={{ color: 'var(--red)' }}>
+                    {(r.kind || 'risk').toUpperCase()}
+                  </span>
+                  <span className="loc">{(r.loc || '').split('/').pop()}</span>
+                </div>
+                <p>{r.text}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
+  )
+}
 
 /** The side pane: the selected PR's summary, checks and review. */
 export function Pane({
@@ -163,6 +211,7 @@ export function Pane({
             ) : rev.summary ? (
               <div className="prose">{rev.summary}</div>
             ) : null}
+            {rev.db ? <Db db={rev.db} number={p.number} /> : null}
           </>
         ) : null}
         {pre ? (

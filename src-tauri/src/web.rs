@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, report, review,
-    story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
+    review, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -168,6 +168,7 @@ pub fn payload(state: &State) -> Value {
                 "reviewAt": review_at,
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
+                "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.
@@ -180,6 +181,8 @@ pub fn payload(state: &State) -> Value {
     let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
+        // your login, so the board can set your own PRs apart; "" until the first fetch has asked
+        "me": if cfg.demo { "alice".to_string() } else { github::me_cached() },
         "sections": out,
         "fetchedAt": fetched_at,
         "interval": cfg.interval,
@@ -195,6 +198,7 @@ pub fn payload(state: &State) -> Value {
         // every posting rule on this machine, so the rail can show the whole picture rather than
         // one repo's answer with no way to see what else is set
         "postingRules": posting_rules_json(&board_repos(&sections)),
+        "dbRules": dbrepo::rules().listed().into_iter().map(|(t, db)| json!({"target": t, "db": db})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -231,6 +235,18 @@ fn pre_json((at, moved): (f64, bool)) -> Value {
     } else {
         Value::Null
     }
+}
+
+/// The review found the PR changes the database: a table added, altered or dropped, or a risk. A PR that only
+/// reads and writes rows is ordinary code and gets no mark.
+fn changes_db(r: &LogEntry) -> bool {
+    let Some(db) = &r.db else { return false };
+    let changed = db["tables"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|t| matches!(t["change"].as_str(), Some("added" | "altered" | "dropped")));
+    changed || db["risks"].as_array().is_some_and(|a| !a.is_empty())
 }
 
 /// The newest review of this PR: the row's own on a REVIEWED row, else the log's.
@@ -286,6 +302,7 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
             "tag": review_log::tag(rev),
             "at": rev.at,
             "findings": entry_findings(rev),
+            "db": rev.db,
             "text": if rev.pr.url.is_empty() { rev.body.clone() } else { review_log::detail(rev) },
         })),
     })
@@ -1493,6 +1510,17 @@ fn post_bind(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Point a repo or an owner (`acme/*`) at its DB repo, or take that rule away. See dbrepo.rs.
+fn post_dbrepo(_state: &State, body: &Body) -> Out {
+    let target = text(body, "target");
+    fail_if(match text(body, "op").as_str() {
+        "set" => dbrepo::set(&target, &text(body, "db")),
+        "clear" => dbrepo::clear(&target),
+        _ => return Err(Fail::new(400, "op must be set or clear")),
+    })?;
+    Ok(json!({"ok": true}))
+}
+
 /// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
 fn post_posting(state: &State, body: &Body) -> Out {
     // ponytail: `owner` carries the owner NAME, like /api/auto, not a flag meaning "read `repo` through
@@ -2016,6 +2044,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
+        "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
@@ -2273,6 +2302,25 @@ pub fn new_token() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_row_is_marked_for_schema_changes_and_risks_not_for_reads() {
+        let with = |db: serde_json::Value| crate::types::LogEntry {
+            db: Some(db),
+            ..Default::default()
+        };
+        let table = |change: &str| serde_json::json!({"tables": [{"name": "t", "change": change}]});
+        for change in ["added", "altered", "dropped"] {
+            assert!(super::changes_db(&with(table(change))), "{change}");
+        }
+        assert!(!super::changes_db(&with(table("read"))));
+        assert!(!super::changes_db(&with(table("written"))));
+        assert!(super::changes_db(&with(
+            serde_json::json!({"risks": [{"text": "x"}]})
+        )));
+        assert!(!super::changes_db(&with(serde_json::json!("junk"))));
+        assert!(!super::changes_db(&Default::default()));
+    }
+
     #[test]
     fn csp_lets_the_player_frame_load() {
         // the embed in src/components/FloatingVideo.tsx; vite dev sends no CSP, so only this catches a block
@@ -2642,6 +2690,57 @@ mod tests {
             (code, body["error"].as_str()),
             (400, Some("acme/api is not an owner"))
         );
+    }
+
+    /// The rail's Database group through HTTP: set, clear, and a bad op or target refused, each read back off the payload.
+    #[test]
+    fn db_repo_rules_through_the_route() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.dbrepo = d.path().join("dbrepo"));
+        let (base, token, _state) = served();
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["dbRules"].clone();
+        let url = format!("{base}/api/dbrepo");
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/*", "db": "acme/schema"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/docs", "db": ""}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([{"target": "acme/*", "db": "acme/schema"}, {"target": "acme/docs", "db": ""}])
+        );
+        assert_eq!(
+            post(&url, json!({"op": "clear", "target": "acme/docs"}), &token).0,
+            200
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
+        assert_eq!(
+            post(&url, json!({"op": "drop", "target": "acme/*"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "a/b/c", "db": "x/y"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "acme/*"}), "wrong").0,
+            401
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
     }
 
     /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule

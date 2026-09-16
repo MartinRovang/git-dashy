@@ -205,6 +205,8 @@ export default function App() {
   // the top of the new queue, and marking that read is a claim you looked at it.
   useEffect(() => {
     if (current && chosen) markRead([current])
+    // markRead is a new function every render: listing it would run this after every render, not on a pick
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, chosen])
 
   useEffect(() => {
@@ -781,6 +783,13 @@ export default function App() {
             )
           }
           onAskAgain={onAskAgain}
+          onDb={(op, target, db) =>
+            void call(
+              '/api/dbrepo',
+              { op, target, db },
+              op === 'clear' ? `${target}: DB repo rule removed` : `${target}: DB repo ${db || 'none'}`,
+            )
+          }
           onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}

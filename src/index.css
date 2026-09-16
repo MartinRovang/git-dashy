@@ -145,6 +145,9 @@
   .pr.child .txt b { font-weight: 400; color: var(--ink3); }
   .who { display: flex; align-items: center; gap: 7px; width: 132px; flex-shrink: 0; }
   .who span { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* your own PRs: the name and avatar recede, so a teammate's name is the one that catches the eye */
+  .who.mine span { color: var(--dim3); }
+  .who.mine .av { opacity: .45; }
   .av { width: 20px; height: 20px; border-radius: 50%; color: var(--bg); font-size: 10px; font-weight: 700;
         display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .revs { display: flex; gap: 4px; width: 92px; flex-shrink: 0; overflow: hidden; }
@@ -695,6 +698,26 @@
   .fields .pair { display: flex; align-items: center; gap: 7px; padding: 3px 0; min-height: 26px; }
   .fields .pair > span { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim);
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the pane's database graph: the board graph's nodes and links, in a fixed-height box */
+  .graph.dbg { flex: none; height: 300px; margin-top: 8px; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden;
+               --label: 1; --k: 1; }
+  .graph.dbg .halos { pointer-events: none; }
+  .graph.dbg line.ref { stroke: var(--dim2); stroke-dasharray: 4 3; }
+  .graph.dbg .gnode.hub { cursor: grab; }
+  .graph.dbg .gnode.hub circle { filter: none; }
+  .graph.dbg .gnode.hub text { font-weight: 600; }
+  .graph.dbg .gnode.dropped circle { stroke-dasharray: 3 2; }
+  .dblegend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--dim2); margin-top: 4px; }
+  /* the DB repo rules: target → repo, and the form that adds one */
+  .dbrule { display: flex; align-items: center; gap: 7px; padding: 2px 6px; font-size: 11.5px; min-width: 0; }
+  .dbrule b { font-weight: 500; color: var(--ink2); overflow-wrap: anywhere; }
+  .dbrule span { flex: 1; min-width: 0; color: var(--dim); overflow-wrap: anywhere; }
+  .dbrule .ib { height: 20px; min-width: 22px; }
+  .dbform { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+  .dbform input { font: inherit; font-size: 11.5px; background: var(--bg); color: var(--ink); border: 1px solid var(--edge);
+                  border-radius: 6px; padding: 5px 7px; outline: none; min-width: 0; }
+  .dbform input:focus { border-color: var(--pink); }
+  .dbform .ib { align-self: flex-end; }
   /* the posting panel: an owner, then what it owns */
   .targets { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
   .onode { border-radius: 6px; }

@@ -7,6 +7,7 @@ pub mod autorev;
 pub mod bind;
 pub mod cli;
 pub mod config;
+pub mod dbrepo;
 pub mod demo;
 pub mod diff;
 pub mod friction;

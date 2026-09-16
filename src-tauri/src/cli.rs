@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::config::{self, VERSION};
 use crate::types::{Pr, Repository};
 use crate::{
-    autorev, bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge,
-    memory,
+    autorev, bind as bind_mod, dbrepo, demo, friction as friction_mod, github, install as install_mod,
+    knowledge, memory,
 };
 use crate::{mirror, review as review_mod, team};
 
@@ -42,6 +42,7 @@ const COMMANDS: &[&str] = &[
     "init",
     "bind",
     "auto",
+    "db",
     "friction",
     "api",
     "drafts",
@@ -158,6 +159,15 @@ pub enum Command {
         off: bool,
         #[arg(long)]
         list: bool,
+    },
+    /// Which repo holds each repo's database. No arguments reports.
+    Db {
+        target: Option<String>,
+        db: Option<String>,
+        #[arg(long)]
+        off: bool,
+        #[arg(long)]
+        forget: bool,
     },
     Friction {
         #[arg(long)]
@@ -718,6 +728,35 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     0
 }
 
+/// Point a repo, or every repo under an owner, at the repo its database is defined in.
+/// `--off` sets "none", which beats an owner rule; `--forget` takes the rule away, so the owner's applies again.
+fn db_cmd(target: Option<String>, db: Option<String>, off: bool, forget: bool) -> i32 {
+    let (target, db) = (nonempty(target), nonempty(db));
+    // exactly one of a DB repo, --off and --forget, and only with a target
+    let asks = [!db.is_empty(), off, forget].iter().filter(|b| **b).count();
+    if target.is_empty() != (asks == 0) || asks > 1 {
+        return fail("gitdashy: db TARGET DB_REPO, db TARGET --off, or db TARGET --forget");
+    }
+    if !target.is_empty() {
+        let err = if forget {
+            dbrepo::clear(&target)
+        } else {
+            dbrepo::set(&target, &db)
+        };
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+    }
+    let listed = dbrepo::rules().listed();
+    if listed.is_empty() {
+        println!("  no DB repos: reviews read no database schema");
+    }
+    for (t, d) in listed {
+        println!("  {t:<36}  →  {}", if d.is_empty() { "none" } else { &d });
+    }
+    0
+}
+
 /// Bind a repo to a team, so reviews of it are told that team's brief and no other.
 fn bind(
     positional: Option<String>,
@@ -871,7 +910,8 @@ fn api(path: Option<String>, diff: bool) -> i32 {
     // writes out; nothing kept the READS to the PR being reviewed, and a review body is posted publicly.
     let scope = std::env::var(github::SCOPE).unwrap_or_default();
     let scope_team = std::env::var(github::SCOPE_TEAM).unwrap_or_default();
-    let path = match github::scoped(&path, &scope, &scope_team) {
+    let scope_db = std::env::var(github::SCOPE_DB).unwrap_or_default();
+    let path = match github::scoped(&path, &scope, &scope_team, &scope_db) {
         Ok(p) => p,
         Err(e) => return fail(format!("gitdashy: {e}")),
     };
@@ -1556,6 +1596,12 @@ pub fn run(args: Vec<String>) -> i32 {
             off,
             list,
         }) => auto_cmd(repo, owner, off, list),
+        Some(Command::Db {
+            target,
+            db,
+            off,
+            forget,
+        }) => db_cmd(target, db, off, forget),
         Some(Command::Friction {
             claude_hook,
             repo,
@@ -1622,6 +1668,34 @@ mod tests {
 
     /// --list is a question. It must answer before anything in this command writes, whatever else
     /// is on the line — the bug this pins armed acme/* and returned before ever reading the store.
+    #[test]
+    fn db_takes_one_thing_to_do_with_its_target() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let store = d.path().join("dbrepo");
+        config::update(|c| c.dbrepo = store.clone());
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            db_cmd(s("acme/api"), None, false, false),
+            1,
+            "a target with nothing to do"
+        );
+        assert_eq!(
+            db_cmd(s("acme/api"), s("acme/x"), true, false),
+            1,
+            "a db repo and --off"
+        );
+        assert_eq!(db_cmd(s("acme/api"), None, true, true), 1, "--off and --forget");
+        assert_eq!(db_cmd(None, None, true, false), 1, "--off with no target");
+        assert!(!store.exists(), "a refused command wrote to the store");
+        assert_eq!(db_cmd(None, None, false, false), 0, "a bare db reports");
+        assert_eq!(db_cmd(s("acme/*"), s("acme/schema"), false, false), 0);
+        assert_eq!(db_cmd(s("acme/docs"), None, true, false), 0);
+        assert_eq!(crate::dbrepo::of("acme/docs"), "");
+        assert_eq!(db_cmd(s("acme/docs"), None, false, true), 0);
+        assert_eq!(crate::dbrepo::of("acme/docs"), "acme/schema");
+    }
+
     #[test]
     fn auto_list_answers_without_writing_whatever_else_is_asked() {
         let _g = crate::config::test_lock();
