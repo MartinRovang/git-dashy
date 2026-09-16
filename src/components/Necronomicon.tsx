@@ -16,6 +16,7 @@ const ago = (secs: number) => {
   return a === 'now' ? 'just now' : `${a} ago`
 }
 
+const LINES_A_PAGE = 12
 const BOOK = 'M-.5,-.6H.5V.6H-.5ZM-.3,-.48H-.22V.22H-.3ZM-.3,.34H.38V.46H-.3Z'
 
 /** The footer's reminder: a book and the time until the Necronomicon wants learning again, then "learn".
@@ -66,7 +67,6 @@ function LearnButton({ at, running, elapsedSecs, onClick }: { at: number; runnin
 }
 
 type Point = { scope: string; text: string; hits: number; down: number; score: number; tier: 'open' | 'faded' | 'depths' }
-const LINES_A_PAGE = 12
 type Whisper = { repo: string | null; n: number; fact: string; kind: string }
 type Tome = {
   learnedAt: number
@@ -277,7 +277,10 @@ export function Necronomicon() {
               </div>
             ) : null}
             {!onWhispers && (buried || deep) ? (
-              <button className="ndig" onClick={() => setDeep((v) => !v)}>
+              <button className="ndig" onClick={() => {
+                setDeep((v) => !v)
+                setLeaf(0)
+              }}>
                 {deep ? '✧ close the depths' : `✧ dig into the depths (${buried})`}
               </button>
             ) : null}
