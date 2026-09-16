@@ -25,8 +25,6 @@ use crate::{
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
 static DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../dist");
-/// The page carries the palettes; this is what the picker offers.
-pub const THEMES: &[&str] = &["pencil", "dashy", "dracula", "gruvbox", "nord"];
 
 /// An error the page should read: (status, message).
 #[derive(Debug)]
@@ -201,7 +199,7 @@ pub fn payload(state: &State) -> Value {
         "settings": snapshot(),
         "options": {"model": cfg.models, "depth": config::DEPTHS, "effort": config::EFFORTS, "voice": config::VOICES,
                     "hunter": config::HUNTERS, "subs": config::SUBS, "window": config::WINDOWS,
-                    "interval": config::INTERVALS, "theme": THEMES,
+                    "interval": config::INTERVALS, "theme": config::THEMES,
                     "scopes": scopes},
         "knowledge": {
             "report": {
@@ -1650,15 +1648,15 @@ fn post_settings(state: &State, body: &Body) -> Out {
         let Some(n) = n else {
             return Err(Fail::new(400, "interval must be a number"));
         };
-        if !(30..=86400).contains(&n) {
+        let Some(n) = u64::try_from(n).ok().filter(|n| config::interval_ok(*n)) else {
             return Err(Fail::new(400, "interval must be 30s to a day"));
-        }
-        c.interval = n as u64;
+        };
+        c.interval = n;
         wake = true; // a shorter interval should not wait out the longer one it replaced
     }
     if let Some(v) = body.get("model") {
         let name = text(body, "model").trim().to_string();
-        if name.is_empty() || name.chars().count() > 60 || !v.is_string() {
+        if !v.is_string() || !config::model_ok(&name) {
             return Err(Fail::new(400, "bad model"));
         }
         c.model = name;
@@ -1666,7 +1664,7 @@ fn post_settings(state: &State, body: &Body) -> Out {
     for (key, options) in [
         ("depth", config::DEPTHS),
         ("effort", config::EFFORTS),
-        ("theme", THEMES),
+        ("theme", config::THEMES),
     ] {
         if let Some(v) = body.get(key) {
             let Some(got) = pick(v, options) else {
@@ -3046,7 +3044,7 @@ mod tests {
             .map(|f| String::from_utf8_lossy(f.contents()).into_owned())
             .collect();
         assert!(!css.is_empty(), "no stylesheet in the bundle");
-        for t in THEMES.iter().filter(|t| **t != "dashy") {
+        for t in config::THEMES.iter().filter(|t| **t != "dashy") {
             // the bundler drops the quotes: [data-theme=pencil], not [data-theme="pencil"]
             assert!(
                 css.contains(&format!("data-theme={t}")) || css.contains(&format!(r#"data-theme="{t}""#)),
