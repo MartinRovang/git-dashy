@@ -3,6 +3,8 @@ import type { PostingRule, StateData } from '../types'
 import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
+import { close, open } from '../modals'
+import { fuzzy } from '../stories'
 
 type Props = {
   data: StateData | null
@@ -181,40 +183,90 @@ function Group({
   )
 }
 
-/** A new DB repo rule: which repo or owner, and the repo its schema lives in. */
-function DbForm({ repos, onDb }: { repos: string[]; onDb: Props['onDb'] }) {
-  const [target, setTarget] = useState('')
-  const [db, setDb] = useState('')
-  const owners = [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+/** A text input that fuzzy-suggests `options` as you type: ↑/↓ move, Enter or Tab or a click takes one. Anything typed
+ *  still stands, so a repo not on the board can be named. The dialog reads the value back by `id`. */
+function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: string; options: string[]; value: string }) {
+  const [q, setQ] = useState(value)
+  const [idx, setIdx] = useState(-1)
+  const [focus, setFocus] = useState(false)
+  const hits = q.trim() ? fuzzy(q.trim(), options).filter((o) => o !== q.trim()).slice(0, 6) : []
+  const take = (v: string) => {
+    setQ(v)
+    setIdx(-1)
+  }
   return (
-    <form
-      className="dbform"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (!target.trim()) return
-        onDb('set', target.trim(), db.trim())
-        setTarget('')
-        setDb('')
-      }}
-    >
+    <div className="fuzzy">
       <input
-        aria-label="repo or org"
-        placeholder="acme/* or acme/api"
-        list="db-targets"
-        value={target}
-        onChange={(e) => setTarget(e.target.value)}
+        type="text"
+        id={id}
+        placeholder={placeholder}
+        autoComplete="off"
+        value={q}
+        onChange={(e) => take(e.target.value)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setFocus(false)}
+        onKeyDown={(e) => {
+          if (!hits.length) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            setIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % hits.length : (Math.max(i, 0) - 1 + hits.length) % hits.length))
+          } else if ((e.key === 'Enter' || e.key === 'Tab') && idx >= 0 && idx < hits.length) {
+            // stop the dialog's Enter from saving: this Enter picks a suggestion
+            e.preventDefault()
+            e.stopPropagation()
+            take(hits[idx])
+          }
+        }}
       />
-      <datalist id="db-targets">
-        {[...owners, ...repos].map((v) => (
-          <option key={v} value={v} />
-        ))}
-      </datalist>
-      <input aria-label="DB repo" placeholder="DB repo, empty for none" value={db} onChange={(e) => setDb(e.target.value)} />
-      <button className="ib" type="submit" disabled={!target.trim()}>
-        set
-      </button>
-    </form>
+      {focus && hits.length ? (
+        <div className="hits">
+          {hits.map((h, i) => (
+            <div key={h} className={`opt${i === idx ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); take(h) }}>
+              {h}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
+}
+
+/** The DB repo dialog: which repo or owner, and the repo its schema lives in. `target`/`db` prefill an edit. */
+function configureDb(repos: string[], onDb: Props['onDb'], target = '', db = '') {
+  const owners = [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+  const val = (id: string) => (document.querySelector(id) as HTMLInputElement).value.trim()
+  const save = () => {
+    if (!val('#dbt')) return
+    onDb('set', val('#dbt'), val('#dbr'))
+    close(m)
+  }
+  const m = open({
+    title: 'Configure database',
+    dismiss: false,
+    focus: target ? '#dbr' : '#dbt',
+    body: () => (
+      <div className="dbdlg">
+        <label htmlFor="dbt">Repo or owner</label>
+        <p>
+          The repo whose PRs get the database check. Use <code>acme/api</code> for one repo, or <code>acme/*</code> for every
+          repo under an owner. A repo's own rule beats its owner's.
+        </p>
+        <Fuzzy id="dbt" placeholder="acme/api or acme/*" options={[...owners, ...repos]} value={target} />
+        <label htmlFor="dbr">DB repo</label>
+        <p>
+          The repo where that database's schema and migrations live, like <code>acme/db</code>. Reviews read it and say what a
+          PR does to the database. Leave it empty for <b>none</b>: this repo reads no schema, even under an owner rule. A
+          private schema's names can end up in a review posted to a public PR.
+        </p>
+        <Fuzzy id="dbr" placeholder="acme/db, empty for none" options={repos} value={db} />
+      </div>
+    ),
+    foot: [
+      ['Enter', 'save', save, 'go'],
+      ['Esc', 'cancel', () => close(m)],
+    ],
+  })
+  m.keys = { Enter: save, Escape: () => close(m) }
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
@@ -488,8 +540,16 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             <div className="targets">
               {dbRules.map((r) => (
                 <div className="dbrule" key={r.target}>
-                  <b>{r.target}</b>
-                  <span>→ {r.db || 'none'}</span>
+                  <button className="dbedit" title={`edit the rule for ${r.target}`} onClick={() => configureDb(boardRepos, onDb, r.target, r.db)}>
+                    <span className="ln">
+                      <em>{r.target.endsWith('/*') ? 'owner' : 'repo'}</em>
+                      <b>{r.target}</b>
+                    </span>
+                    <span className="ln">
+                      <em>schema from</em>
+                      {r.db ? <b>{r.db}</b> : <i>none, left out</i>}
+                    </span>
+                  </button>
                   <button className="ib" title={`remove the rule for ${r.target}`} onClick={() => onDb('clear', r.target)}>
                     ×
                   </button>
@@ -499,7 +559,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           ) : (
             <div className="rules none">reviews read no database schema</div>
           )}
-          <DbForm repos={boardRepos} onDb={onDb} />
+          <button className="btn dbconf" onClick={() => configureDb(boardRepos, onDb)}>
+            configure
+          </button>
         </Group>
 
         <Group
