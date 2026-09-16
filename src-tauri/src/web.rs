@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
-    review, story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, necro,
+    report, review, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -209,6 +209,7 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": config::THEMES,
                     "scopes": scopes},
         "knowledge": {
+            "learn": {"next": necro::next(), "running": job("learn")["running"]},
             "report": {
                 "job": job("report"),
                 "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
@@ -733,6 +734,41 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
         })
         .collect();
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
+}
+
+/// The Necronomicon: its ranked points, the learn job, and what memory is still learning.
+fn get_necronomicon(_state: &State, _q: &Query) -> Out {
+    let learning: Vec<Value> = memory::waiting()
+        .into_iter()
+        .map(|(repo, n, fact, kind)| json!({"repo": repo, "n": n, "fact": fact, "kind": kind}))
+        .collect();
+    let mut out = necro::view();
+    out["job"] = job("learn");
+    out["promoteAt"] = json!(memory::PROMOTE_AT);
+    out["learning"] = json!(learning);
+    Ok(out)
+}
+
+/// `learn` starts a learn now; `up`/`down` raise or derank one point.
+fn post_necronomicon(_state: &State, body: &Body) -> Out {
+    let op = text(body, "op");
+    if op == "learn" {
+        start_learn();
+        return Ok(json!({"ok": true}));
+    }
+    if op == "up" || op == "down" {
+        if !necro::rank(&text(body, "scope"), &text(body, "text"), op == "up") {
+            return Err(Fail::new(404, "no such point; learn may have rewritten it"));
+        }
+        return Ok(json!({"ok": true}));
+    }
+    Err(Fail::new(400, "op must be learn, up or down"))
+}
+
+/// Learn in the background; a second start while one runs does nothing.
+fn start_learn() {
+    let model = config::get().model;
+    start_job("learn", move || necro::learn(&model));
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
@@ -2010,6 +2046,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/prereview" => get_prereview,
         "/api/memory" => get_memory,
         "/api/drafts" => get_drafts,
+        "/api/necronomicon" => get_necronomicon,
         "/api/overlaps" => get_overlaps,
         "/api/share" => get_share,
         "/api/teams" => get_teams,
@@ -2047,6 +2084,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/posting" => post_posting,
         "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
+        "/api/necronomicon" => post_necronomicon,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,

@@ -518,6 +518,39 @@ pub fn every_source() -> Vec<(String, PathBuf)> {
     out
 }
 
+/// (source label, file name, modified secs, facts) for every top-level .md under every source: all of
+/// memory as it stands, for the Necronomicon to read.
+///
+/// ponytail: top level only. drafts/ and pool/ are not facts yet, and the drafts reach the view through
+/// waiting(). Newest file first, as "recently learned": the memory dir's git history is off whenever it
+/// sits inside another repo, and a file's mtime is there on every machine.
+pub fn books() -> Vec<(String, String, u64, Vec<String>)> {
+    let mut out = Vec::new();
+    for (label, base) in every_source() {
+        if base.as_os_str().is_empty() {
+            continue;
+        }
+        for name in sorted_names(&base)
+            .into_iter()
+            .filter(|n| n.ends_with(".md") && n != PROJECT && n != AGENTS)
+        {
+            let p = base.join(&name);
+            let at = std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let lines: Vec<String> = facts(&p).into_iter().filter(|l| !l.starts_with('#')).collect();
+            if !lines.is_empty() {
+                out.push((label.clone(), name, at, lines));
+            }
+        }
+    }
+    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out
+}
+
 /// One file's text, stripped. Only a missing file reads as empty.
 ///
 /// ponytail: only a missing file reads as empty. A permission error or a dangling symlink must be loud:
@@ -2049,7 +2082,8 @@ pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
     }
     let (mut items, settled, rid) = (rows(r), known(repo), rid());
     for fact in fresh {
-        if settled.iter().any(|t| same(&fact, t)) {
+        if let Some(t) = settled.iter().find(|t| same(&fact, t)) {
+            crate::necro::remind(t); // nothing new for memory, but the Necronomicon ranks by how often a fact comes up
             continue; // already approved somewhere: proposing it again says nothing new
         }
         // ponytail: a pre-review of your own PR that found this counts as the other observation: two runs,
@@ -2498,6 +2532,28 @@ mod tests {
         std::fs::create_dir_all(d.join(".git")).unwrap();
         std::fs::create_dir_all(d.join("memory")).unwrap();
         d.join("memory")
+    }
+
+    /// The Necronomicon reads facts from every source, headings and drafts left out.
+    #[test]
+    fn books_reads_every_sources_facts_and_no_drafts() {
+        let (_g, tmp) = setup();
+        let team = a_team(tmp.path(), "org-t");
+        let mine = config::get().memory_dir;
+        std::fs::write(mine.join("acme__api.md"), "# acme/api\n\n- uses tabs\n").unwrap();
+        std::fs::create_dir_all(mine.join(QUEUE)).unwrap();
+        std::fs::write(mine.join(QUEUE).join("acme__api.md"), "- (1) a draft\n").unwrap();
+        std::fs::write(team.join("general.md"), "- run make lint\n").unwrap();
+
+        let mut got = books();
+        got.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("mine", "acme__api.md"));
+        assert_eq!(got[0].3, vec!["uses tabs".to_string()]);
+        assert_eq!(
+            (got[1].0.as_str(), got[1].3.as_slice()),
+            ("team org-t", &["run make lint".to_string()][..])
+        );
     }
 
     /// What the team screen lists, and what team_visible answers, off ONE read of the bindings and one
