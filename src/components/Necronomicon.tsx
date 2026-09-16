@@ -200,7 +200,7 @@ export function Necronomicon() {
   )
 
   return (
-    <div className="necro scroll">
+    <div className={`necro scroll${running ? ' learning' : ''}`}>
       <div className="ncover">
         <div className="nhead">
           <span className="ntitle">Necronomicon</span>
