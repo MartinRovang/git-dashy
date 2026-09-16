@@ -169,7 +169,7 @@ export function DbGraph({ db, number, locked = false }: { db: DbImpact; number: 
   return (
     <>
     <div
-      className={`graph dbg${live ? '' : ' locked'}`}
+      className="graph dbg"
       onPointerDown={() => setLive(true)}
       onPointerLeave={() => locked && setLive(false)}
     >

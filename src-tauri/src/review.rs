@@ -684,7 +684,8 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                     ("at", &at),
                     ("verdict", &p.verdict),
                     ("tag", &tag),
-                    ("body", &p.body),
+                    // what with_db_note added is ours, not the model's: left in, the model copies it and it doubles
+                    ("body", p.body.split(DB_NOTE).next().unwrap_or_default()),
                 ],
             )
         })
@@ -797,6 +798,8 @@ fn memory_lines(s: &str) -> Vec<String> {
         .collect()
 }
 
+const DB_NOTE: &str = "\n\n### Database risks\n";
+
 /// The db section's risks, on the body: the pane draws them from `db`, but only the body reaches the PR.
 /// ponytail: risks only, the tables stay in the pane's graph. Model output, so any non-string is skipped.
 pub fn with_db_note(mut v: Verdict) -> Verdict {
@@ -813,14 +816,14 @@ pub fn with_db_note(mut v: Verdict) -> Verdict {
                     k if k.is_empty() => "RISK".to_string(),
                     k => k.to_uppercase(),
                 };
-                match s(r, "loc") {
+                match s(r, "loc").replace('`', "'") {
                     l if l.is_empty() => format!("- **{kind}**: {}", s(r, "text")),
                     l => format!("- **{kind}** `{l}`: {}", s(r, "text")),
                 }
             })
             .collect();
     if !risks.is_empty() {
-        v.body += &format!("\n\n### Database risks\n{}", risks.join("\n"));
+        v.body += &format!("{DB_NOTE}{}", risks.join("\n"));
     }
     v
 }
@@ -1487,11 +1490,18 @@ mod tests {
         };
         let answer = Verdict {
             body: "revised".into(),
+            db: Some(serde_json::json!({"risks": [{"kind": "lock", "text": "long lock"}]})),
             depth_used: "high".into(),
             depth_reason: "touches auth".into(),
             ..Default::default()
         };
         let v = revised(&from, answer);
+        assert_eq!(v.body.matches("### Database risks").count(), 1);
+        assert!(
+            v.body.find("### Database risks") < v.body.find("_Dashy reviewed"),
+            "{}",
+            v.body
+        );
         assert!(
             v.body
                 .ends_with("_Dashy reviewed at **high** depth: touches auth_"),
@@ -2106,6 +2116,7 @@ Hope that helps! {not json}"#;
             db: Some(serde_json::json!({"risks": [
                 {"kind": "mismatch", "loc": "property_check.py:57", "text": "nullable modality raises"},
                 {"kind": "other", "text": "UNION ALL may return two rows"},
+                {"kind": "index", "loc": "a`b.sql", "text": "no index"},
                 {"kind": "lock", "loc": "x.sql"},
                 7
             ]})),
@@ -2113,7 +2124,7 @@ Hope that helps! {not json}"#;
         };
         assert_eq!(
             with_db_note(v.clone()).body,
-            "b\n\n### Database risks\n- **MISMATCH** `property_check.py:57`: nullable modality raises\n- **OTHER**: UNION ALL may return two rows"
+            "b\n\n### Database risks\n- **MISMATCH** `property_check.py:57`: nullable modality raises\n- **OTHER**: UNION ALL may return two rows\n- **INDEX** `a'b.sql`: no index"
         );
         assert_eq!(with_db_note(Verdict { db: None, ..v }).body, "b");
     }
