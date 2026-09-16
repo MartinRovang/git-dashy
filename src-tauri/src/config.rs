@@ -291,6 +291,14 @@ fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<Stri
     })
 }
 
+/// Keys `salvage` threw away, until someone says so. Drained by the dashboard into a notice.
+static DROPPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The settings keys a damaged file lost, taken once. The caller is expected to show them.
+pub fn dropped_settings() -> Vec<String> {
+    std::mem::take(&mut *DROPPED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 impl Saved {
     /// Read a settings file; `{}` for a missing one, and whatever parses of a damaged one.
     pub fn read(path: &Path) -> Saved {
@@ -325,9 +333,13 @@ impl Saved {
         }
         if !dropped.is_empty() {
             log::warn!(
-                "settings: ignored {} — the rest of the file was read",
+                "settings: ignored {}; read the rest of the file",
                 dropped.join(", ")
             );
+            // ponytail: the log reaches a file under --debug and nowhere else, and the next save
+            // writes the default over what was dropped. Held here so the dashboard can say it once,
+            // on screen, which is the only place the person who edited the file will look.
+            DROPPED.lock().unwrap_or_else(|e| e.into_inner()).extend(dropped);
         }
         serde_json::from_value(serde_json::Value::Object(kept)).unwrap_or_default()
     }
@@ -526,6 +538,17 @@ mod tests {
         assert_eq!(s.depth.as_deref(), Some("high"));
         assert_eq!(s.voice, Some(vec!["caveman".into()]));
         assert_eq!(s.drafts, Some(true));
+
+        assert_eq!(dropped_settings(), ["interval"], "and it is there to be said");
+        assert!(dropped_settings().is_empty(), "taken once");
+
+        // the shapes with their own deserializers: null is a VALUE for window, not a failure
+        std::fs::write(&p, r#"{"voice":5,"window":null,"model":"opus"}"#).unwrap();
+        let s = Saved::read(&p);
+        assert_eq!(s.voice, None, "a number is not a checklist");
+        assert_eq!(s.window, Some(None), "null is how `all` is written");
+        assert_eq!(s.model.as_deref(), Some("opus"));
+        assert_eq!(dropped_settings(), ["voice"]);
 
         // a whole file that is not an object still reads as nothing, as it did before
         std::fs::write(&p, "not json at all").unwrap();
