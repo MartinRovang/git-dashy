@@ -11,6 +11,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy auto [owner/name] [--off] | --owner OWNER [--off] | --list
+       gitdashy db [owner/name | owner/* DB_REPO | --off]
        gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
        gitdashy teams [--new NAME [--desc TEXT] [--at DIR]] [--join URL|PATH [--name NAME]]
@@ -78,6 +79,11 @@ auto says which repos `a` auto-reviews. The board spans whatever the token can s
   whole org in one line, and a repo of its own still overrides it, so the one repo under that owner you
   do not want reviewed can be left out with `auto owner/repo --off`. A lone --off is not a decision to
   arm the rest: while nothing is armed, auto still covers everything. A bare `gitdashy auto` reports.
+
+db says which repo holds a repo's database schema and migrations. A review of a PR there may also read
+  that repo, and the pane shows the tables the change reads, writes or alters and what could break.
+  Nothing connects to a database. `db acme/* acme/schema` covers a whole org; a repo of its own overrides
+  it, and `db acme/docs --off` leaves one out. A bare `gitdashy db` reports.
 
 drafts shows what a review proposed and no second review has confirmed — the store nothing else can
   show you. Counts say how close each is to becoming a fact; `pre-review` findings carry no count,

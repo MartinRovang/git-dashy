@@ -1,6 +1,77 @@
-import type { Detail, Row } from '../types'
+import type { DbImpact, Detail, Row } from '../types'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
+
+// what a table or column change does to the data, as a tone: removing is red, reshaping amber, adding green
+const CHANGE_TONE: Record<string, string> = {
+  dropped: 'var(--red)',
+  altered: 'var(--amber)',
+  added: 'var(--green)',
+  written: 'var(--violet)',
+  read: 'var(--dim)',
+}
+const SIGN: Record<string, string> = { dropped: '−', altered: '~', added: '+', written: 'w', read: 'r' }
+
+/** The review's database section: each table the PR touches with its columns, then what could break. */
+function Db({ db }: { db: DbImpact }) {
+  const list = <T,>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : [])
+  const tables = list(db.tables)
+  const risks = list(db.risks)
+  if (!tables.length && !risks.length) return null
+  return (
+    <>
+      <div className="sep" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="lab">DATABASE</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
+          {tables.length} tables · {risks.length} risks
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        {tables.map((t, i) => {
+          const tone = CHANGE_TONE[t.change || ''] || 'var(--dim)'
+          return (
+            <div
+              key={i}
+              className="mono"
+              style={{ fontSize: 11, border: `1px solid ${tone}`, borderRadius: 6, padding: '6px 8px', minWidth: 0, maxWidth: '100%' }}
+            >
+              <div style={{ display: 'flex', gap: 8, fontWeight: 600 }}>
+                <span style={{ color: 'var(--ink2)', overflowWrap: 'anywhere' }}>{t.name}</span>
+                <span style={{ color: tone, marginLeft: 'auto' }}>{t.change}</span>
+              </div>
+              {list(t.columns).map((c, j) => (
+                <div key={j} style={{ display: 'flex', gap: 6, marginTop: 3 }} title={c.change}>
+                  <span style={{ color: CHANGE_TONE[c.change || ''] || 'var(--dim)', width: 10 }}>{SIGN[c.change || ''] || '·'}</span>
+                  <span style={{ color: 'var(--ink2)' }}>{c.name}</span>
+                  {c.note ? <span style={{ color: 'var(--dim2)', overflowWrap: 'anywhere' }}>{c.note}</span> : null}
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+      {risks.length ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+          {risks.map((r, i) => (
+            <div className="find" key={i}>
+              <i style={{ background: 'var(--red)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="tag" style={{ color: 'var(--red)' }}>
+                    {(r.kind || 'risk').toUpperCase()}
+                  </span>
+                  <span className="loc">{(r.loc || '').split('/').pop()}</span>
+                </div>
+                <p>{r.text}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
+  )
+}
 
 /** The side pane: the selected PR's summary, checks and review. */
 export function Pane({
@@ -163,6 +234,7 @@ export function Pane({
             ) : rev.summary ? (
               <div className="prose">{rev.summary}</div>
             ) : null}
+            {rev.db ? <Db db={rev.db} /> : null}
           </>
         ) : null}
         {pre ? (

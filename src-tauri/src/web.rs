@@ -286,6 +286,7 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
             "tag": review_log::tag(rev),
             "at": rev.at,
             "findings": entry_findings(rev),
+            "db": rev.db,
             "text": if rev.pr.url.is_empty() { rev.body.clone() } else { review_log::detail(rev) },
         })),
     })

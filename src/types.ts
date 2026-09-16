@@ -162,6 +162,13 @@ export type Review = {
   at: string
   findings: Finding[]
   text: string
+  /** What the PR does to the database, when its repo has a DB repo. Model output: every field may be missing. */
+  db?: DbImpact | null
+}
+
+export type DbImpact = {
+  tables?: { name?: string; change?: string; columns?: { name?: string; change?: string; note?: string }[] }[]
+  risks?: { kind?: string; loc?: string; text?: string }[]
 }
 
 /** detail(): the side pane's frame for one PR. */

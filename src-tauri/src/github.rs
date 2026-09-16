@@ -71,6 +71,8 @@ pub fn fetched(scope: &str) -> bool {
         .any(|s| s == scope)
 }
 pub const SCOPE_TEAM: &str = "PRS_API_TEAM";
+/// The DB repo a review may also read, "" for none. See dbrepo.rs.
+pub const SCOPE_DB: &str = "PRS_API_DB";
 pub const SECTIONS: &[(&str, &str)] = &[
     ("MINE", "is:open author:{me}"),
     ("REVIEW REQUESTED", "is:open review-requested:{me}"),
@@ -123,7 +125,7 @@ pub fn repo_of(path: &str) -> String {
 /// prompt can say that widens it, and nothing to keep in step with the --allowedTools pattern.
 /// ponytail: "" means unscoped, which is a person at a terminal. Their own `gitdashy api /user/repos`
 /// is not the threat and refusing it would only teach them to work around this.
-pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
+pub fn scoped(path: &str, repo: &str, team: &str, db: &str) -> Result<String, String> {
     if repo.is_empty() {
         return Ok(path.to_string());
     }
@@ -168,6 +170,14 @@ pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
             && other.to_lowercase() != repo.to_lowercase()
             && crate::bind::key(&other) == other.to_lowercase()
             && crate::bind::of(&other) == team
+        {
+            return Ok(p);
+        }
+    }
+    // and the DB repo a person pointed this repo at: the same exact-key check, against one name
+    if !db.is_empty() {
+        let other = repo_of(head);
+        if !other.is_empty() && crate::bind::key(&other) == other.to_lowercase() && other.to_lowercase() == db
         {
             return Ok(p);
         }
@@ -1298,9 +1308,9 @@ mod tests {
                 "/repos/acme/api/contents/x.py?ref=feat",
             ),
         ] {
-            assert_eq!(scoped(path, "acme/api", "").unwrap(), want);
+            assert_eq!(scoped(path, "acme/api", "", "").unwrap(), want);
         }
-        assert_eq!(scoped("/user/repos", "", "").unwrap(), "/user/repos");
+        assert_eq!(scoped("/user/repos", "", "", "").unwrap(), "/user/repos");
     }
 
     #[test]
@@ -1314,19 +1324,40 @@ mod tests {
             "/search/repositories?q=acme",
             "/gists",
         ] {
-            let err = scoped(path, "acme/api", "").unwrap_err();
+            let err = scoped(path, "acme/api", "", "").unwrap_err();
             assert!(err.contains("acme/api"), "{err}");
         }
-        assert!(scoped("/search/repositories?q=acme", "acme/api", "")
+        assert!(scoped("/search/repositories?q=acme", "acme/api", "", "")
             .unwrap_err()
             .contains("not /search/code"));
         let err = scoped(
             "/repos/acme/shared-lib/contents/x.py",
             "acme/api",
             "acme/platform",
+            "",
         )
         .unwrap_err();
         assert!(err.contains("bound to acme/platform") && err.contains("outside it"));
+    }
+
+    #[test]
+    fn scoped_lets_the_db_repo_through_and_nothing_beside_it() {
+        assert!(scoped(
+            "/repos/acme/schema/contents/001.sql",
+            "acme/api",
+            "",
+            "acme/schema"
+        )
+        .is_ok());
+        assert!(scoped("/repos/Acme/Schema/git/trees/main", "acme/api", "", "acme/schema").is_ok());
+        for path in [
+            "/repos/acme/schema-secrets/contents/x",
+            "/repos/acme/schema.git/contents/x",
+            "/repos/acme/other/contents/x",
+        ] {
+            assert!(scoped(path, "acme/api", "", "acme/schema").is_err(), "{path}");
+        }
+        assert!(scoped("/repos/acme/schema/contents/x", "acme/api", "", "").is_err());
     }
 
     #[test]
@@ -1341,14 +1372,14 @@ mod tests {
             "/repos/acme/api%2f..%2fother",
             "/repos/acme/api/..%5c..%5cuser",
         ] {
-            assert!(scoped(path, "acme/api", "acme-platform")
+            assert!(scoped(path, "acme/api", "acme-platform", "")
                 .unwrap_err()
                 .contains(".."));
         }
     }
 
     fn q(path: &str) -> String {
-        let got = scoped(path, "acme/api", "").unwrap();
+        let got = scoped(path, "acme/api", "", "").unwrap();
         parse_qsl(got.split_once('?').unwrap().1)
             .into_iter()
             .find(|(k, _)| k == "q")
@@ -1370,14 +1401,16 @@ mod tests {
             "/search/code?q=x+org:victim",
             "/search/code?q=x+owner:victim",
         ] {
-            assert!(scoped(hostile, "acme/api", "").unwrap_err().contains("acme/api"));
+            assert!(scoped(hostile, "acme/api", "", "")
+                .unwrap_err()
+                .contains("acme/api"));
         }
         for empty in ["/search/code?q=", "/search/code", "/search/code?q=repo:acme/api"] {
-            assert!(scoped(empty, "acme/api", "")
+            assert!(scoped(empty, "acme/api", "", "")
                 .unwrap_err()
                 .contains("something to search for"));
         }
-        let got = scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api", "").unwrap();
+        let got = scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api", "", "").unwrap();
         assert!(got.contains("per_page=5") && got.contains("page=2") && got.contains("repo%3Aacme%2Fapi"));
         assert_eq!(
             got,

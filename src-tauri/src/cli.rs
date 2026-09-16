@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::config::{self, VERSION};
 use crate::types::{Pr, Repository};
 use crate::{
-    autorev, bind as bind_mod, demo, friction as friction_mod, github, install as install_mod, knowledge,
-    memory,
+    autorev, bind as bind_mod, dbrepo, demo, friction as friction_mod, github, install as install_mod,
+    knowledge, memory,
 };
 use crate::{mirror, review as review_mod, team};
 
@@ -42,6 +42,7 @@ const COMMANDS: &[&str] = &[
     "init",
     "bind",
     "auto",
+    "db",
     "friction",
     "api",
     "drafts",
@@ -158,6 +159,13 @@ pub enum Command {
         off: bool,
         #[arg(long)]
         list: bool,
+    },
+    /// Which repo holds each repo's database. No arguments reports.
+    Db {
+        target: Option<String>,
+        db: Option<String>,
+        #[arg(long)]
+        off: bool,
     },
     Friction {
         #[arg(long)]
@@ -718,6 +726,28 @@ fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: 
     0
 }
 
+/// Point a repo, or every repo under an owner, at the repo its database is defined in.
+fn db_cmd(target: Option<String>, db: Option<String>, off: bool) -> i32 {
+    let (target, db) = (nonempty(target), nonempty(db));
+    if !target.is_empty() && db.is_empty() == !off {
+        return fail("gitdashy: db TARGET DB_REPO, or db TARGET --off");
+    }
+    if !target.is_empty() {
+        let err = dbrepo::set(&target, &db);
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+    }
+    let listed = dbrepo::rules().listed();
+    if listed.is_empty() {
+        println!("  no DB repos: reviews read no database schema");
+    }
+    for (t, d) in listed {
+        println!("  {t:<36}  →  {}", if d.is_empty() { "none" } else { &d });
+    }
+    0
+}
+
 /// Bind a repo to a team, so reviews of it are told that team's brief and no other.
 fn bind(
     positional: Option<String>,
@@ -871,7 +901,8 @@ fn api(path: Option<String>, diff: bool) -> i32 {
     // writes out; nothing kept the READS to the PR being reviewed, and a review body is posted publicly.
     let scope = std::env::var(github::SCOPE).unwrap_or_default();
     let scope_team = std::env::var(github::SCOPE_TEAM).unwrap_or_default();
-    let path = match github::scoped(&path, &scope, &scope_team) {
+    let scope_db = std::env::var(github::SCOPE_DB).unwrap_or_default();
+    let path = match github::scoped(&path, &scope, &scope_team, &scope_db) {
         Ok(p) => p,
         Err(e) => return fail(format!("gitdashy: {e}")),
     };
@@ -1556,6 +1587,7 @@ pub fn run(args: Vec<String>) -> i32 {
             off,
             list,
         }) => auto_cmd(repo, owner, off, list),
+        Some(Command::Db { target, db, off }) => db_cmd(target, db, off),
         Some(Command::Friction {
             claude_hook,
             repo,
