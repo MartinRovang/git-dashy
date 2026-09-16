@@ -821,3 +821,8 @@
 .learning .legend .dim { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); }
 .learning .empty { margin: 30px 0; text-align: center; color: var(--dim3); }
 .learning .note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--dim3); }
+.kpanel { display: flex; flex-direction: column; gap: 14px; min-height: 320px; }
+.kpanel > .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.kpanel > .lbar .sp { flex: 1; }
+.kpanel > .lbar .seg button { font-size: 12px; padding: 4px 11px; }
+.kpanel > .empty { margin: 60px 0; text-align: center; color: var(--dim3); }

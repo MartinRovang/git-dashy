@@ -59,9 +59,10 @@ const KEYS: [string, [string, string][]][] = [
   [
     'Knowledge',
     [
-      ['W', 'Waiting drafts'],
-      ['K', 'Learning: how fast the memory learns, as a chart'],
-      ['P', 'What the team knows'],
+      ['K', 'Knowledge panel: how fast the memory learns, as a chart'],
+      ['W', 'Knowledge panel: drafts waiting for a second sighting'],
+      ['P', 'Knowledge panel: what the team has of yours'],
+      ['[ ]', 'In the knowledge panel: the tab before / after'],
       ['Z', 'Dream'],
       ['g', 'General memory'],
       ['n', 'This repo’s memory'],

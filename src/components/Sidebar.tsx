@@ -570,19 +570,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               ⚠ {w.key}: {w.what} — ask again
             </div>
           ))}
-          {/* ponytail: these OPEN things, they do not toggle. The design drew them as on/off tags
-              beside the voices, and they are the four screens W / P / Z / g reach. */}
-          <div className="sub">
-            screens <em>keys</em>
-          </div>
+          {/* ponytail: this OPENS something, it does not toggle. There were five buttons here -- waiting, shared,
+              dream, general, learning -- each its own screen; they are one panel now, with tabs and actions. */}
           <div className="tags">
-            {([['drafts', 'waiting', 'W'], ['share', 'shared', 'P'], ['dream', 'dream', 'Z'], ['general', 'general', 'g'], ['learning', 'learning', 'K']] as const).map(
-              ([name, label, key]) => (
-                <button className="tag" key={name} onClick={() => onModal(name)}>
-                  {label} <kbd className="hint">{key}</kbd>
-                </button>
-              ),
-            )}
+            <button className="tag" onClick={() => onModal('knowledge')}>
+              knowledge panel <kbd className="hint">K</kbd>
+            </button>
           </div>
         </Group>
 

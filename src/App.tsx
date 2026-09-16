@@ -16,7 +16,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, draftsScreen, learningScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
+import { askConsents, dreamScreen, knowledgeScreen, escMenu, whatsNew, memoryEditor, setPath, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -399,11 +399,7 @@ export default function App() {
       if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
     })()
   const onModal = (name: string) => {
-    if (name === 'drafts') void draftsScreen(ctx)
-    else if (name === 'share') void shareScreen(ctx, current)
-    else if (name === 'dream') void dreamScreen(ctx)
-    else if (name === 'learning') void learningScreen(ctx)
-    else if (name === 'general') void memoryEditor(ctx, '')
+    if (name === 'knowledge') void knowledgeScreen(ctx, 'learning')
   }
   const onMenu = () => escMenu(ctx)
   const onUpdate = () => void updateScreen(ctx)
@@ -686,9 +682,9 @@ export default function App() {
     if (k === 'g') return one(() => void memoryEditor(ctx, ''))
     if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))
     if (k === 'Z') return one(() => void dreamScreen(ctx))
-    if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
-    if (k === 'W') return one(() => void draftsScreen(ctx))
-    if (k === 'K') return one(() => void learningScreen(ctx))
+    if (k === 'K') return one(() => void knowledgeScreen(ctx, 'learning'))
+    if (k === 'W') return one(() => void knowledgeScreen(ctx, 'waiting'))
+    if (k === 'P') return one(() => void knowledgeScreen(ctx, 'shared'))
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)

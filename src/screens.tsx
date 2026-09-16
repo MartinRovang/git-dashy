@@ -53,80 +53,160 @@ export async function memoryEditor(ctx: Ctx, repo: string) {
   )
 }
 
-/** How fast the memory learns, as a chart. The events are read once; every filter redraws from them. */
-export async function learningScreen(ctx: Ctx) {
-  const r = await api('/api/learning')
-  if (!r.ok) {
-    ctx.flash(`✗ ${await errorText(r)}`)
-    return
-  }
-  const events: LEvent[] = (await r.json()).events
-  if (!events.length) {
-    notice('nothing learned yet: the chart fills in as reviews propose and confirm facts')
-    return
-  }
-  const m = open({
-    title: 'learning',
-    sub: `${events.length} events`,
-    wide: true,
-    body: () => <LearningChart events={events} />,
-  })
-  m.keys = { Escape: () => close(m), q: () => close(m) }
-}
+export type KnowledgeTab = 'learning' | 'waiting' | 'shared'
+const TABS: [KnowledgeTab, string][] = [
+  ['learning', 'K'],
+  ['waiting', 'W'],
+  ['shared', 'P'],
+]
 
-export async function draftsScreen(ctx: Ctx) {
-  let items: Json[] = []
-  let i = 0
+/** Everything the memory holds, in one panel: how fast it learns, what is waiting for a second sighting, what the
+ *  team has of yours, and the general memory and the dream as actions over it.
+ *
+ *  ponytail: these were five buttons in the rail, each its own screen. One panel with tabs keeps K / W / P as
+ *  keys that open it on their tab, and switch tabs inside it. A tab reloads when it is shown, so a dream or an
+ *  edit made over the panel is not acted on from a stale list. */
+export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab) {
+  const about = ctx.current?.repo || ''
+  let tab = first
+  let events: LEvent[] = []
+  let drafts: Json[] = []
   let promoteAt = 2
-  const load = async () => {
-    const got = await (await api('/api/drafts')).json()
-    items = got.items
-    promoteAt = got.promoteAt
-    i = items.length ? i % items.length : 0
+  let shared: Json[] = []
+  let inTeam = true
+  let i = 0
+  const failed: Partial<Record<KnowledgeTab, string>> = {}
+
+  const load = async (t: KnowledgeTab) => {
+    const r = await api(t === 'learning' ? '/api/learning' : t === 'waiting' ? '/api/drafts' : `/api/share?about=${encodeURIComponent(about)}`)
+    if (!r.ok) {
+      failed[t] = await errorText(r)
+      return
+    }
+    delete failed[t]
+    const got = await r.json()
+    if (t === 'learning') events = got.events
+    else if (t === 'waiting') {
+      drafts = got.items
+      promoteAt = got.promoteAt
+    } else {
+      shared = got.items
+      inTeam = got.inTeam !== false
+    }
+    if (t === tab) i = pageTo(i, 0, items().length)
   }
-  await load()
-  if (!items.length) {
-    notice('nothing waiting — every observation so far is either a fact or gone')
-    return
-  }
-  const m = open({
-    title: 'waiting',
-    body: () => {
-      const it = items[i]
-      if (!it) return <div>nothing waiting any more</div>
-      const left = promoteAt - (it.n as number)
-      const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
-      return (
-        <>
-          <div className="kv">
-            <span>
-              {String(it.repo || 'general')}
-              {it.team ? ` · team ${it.team}` : ''}
-            </span>
-            <b className="mark warn">{mark}</b>
-          </div>
-          <div className="fact">{String(it.fact)}</div>
-        </>
-      )
-    },
-    foot: [],
-  })
-  const actions: Foot[] = [
-    ['t', 'make it a fact', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'); await load(); refresh() }, 'go'],
-    ['x', 'drop', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'); await load(); refresh() }, 'warn'],
-    ['s', 'scan for repeats', () => overlapScreen(ctx, async () => { i = 0; await load(); refresh() })],
-  ]
-  const go = (step: number) => {
-    i = pageTo(i, step, items.length)
+  const items = () => (tab === 'waiting' ? drafts : tab === 'shared' ? shared : [])
+
+  const show = async (t: KnowledgeTab) => {
+    if (t !== tab) i = 0
+    tab = t
+    await load(t)
     refresh()
   }
-  // the footer follows the list: a drop can leave one item, and then there is nothing to page to
+  const go = (step: number) => {
+    i = pageTo(i, step, items().length)
+    refresh()
+  }
+  const act = async (path: string, body: Json, ok: string) => {
+    await ctx.call(path, body, ok)
+    await load(tab)
+    refresh()
+  }
+
+  const factCard = (repo: unknown, team: string, mark: string, warn: boolean, fact: unknown) => (
+    <>
+      <div className="kv">
+        <span>
+          {String(repo || 'general')}
+          {team}
+        </span>
+        <b className={`mark${warn ? ' warn' : ''}`}>{mark}</b>
+      </div>
+      <div className="fact">{String(fact)}</div>
+    </>
+  )
+
+  const content = () => {
+    if (failed[tab]) return <p className="empty">✗ {failed[tab]}</p>
+    if (tab === 'learning') {
+      return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
+    }
+    const it = items()[i]
+    if (tab === 'waiting') {
+      if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
+      const left = promoteAt - (it.n as number)
+      const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
+      return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
+    }
+    if (!it) return <p className="empty">no facts of yours belong to a team yet{inTeam ? '' : ' — you are not in a team'}</p>
+    const backers = (it.backers as string[]) || []
+    const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
+    return factCard(it.repo, it.team ? ` → ${it.team}` : '', mark, !it.sent, it.fact)
+  }
+
+  // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading
+  await Promise.all(TABS.map(([t]) => load(t)))
+  const m = open({
+    title: 'knowledge',
+    wide: true,
+    body: () => (
+      <div className="kpanel">
+        <div className="lbar">
+          <div className="seg" role="tablist" aria-label="knowledge">
+            {TABS.map(([t, key]) => (
+              <button key={t} role="tab" aria-pressed={tab === t} onClick={() => void show(t)}>
+                {t}
+                {t === 'waiting' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
+              </button>
+            ))}
+          </div>
+          <span className="sp" />
+          <div className="tags">
+            <button className="tag" onClick={() => void memoryEditor(ctx, '')}>
+              general memory <kbd className="hint">g</kbd>
+            </button>
+            <button className="tag" onClick={() => void dreamScreen(ctx)}>
+              dream <kbd className="hint">Z</kbd>
+            </button>
+          </div>
+        </div>
+        {content()}
+      </div>
+    ),
+    foot: [],
+  })
+
   const refresh = () => {
-    m.sub = `${items.length ? i + 1 : 0}/${items.length}`
-    m.foot = [...pager(items.length, go), ...actions]
+    const list = items()
+    const it = list[i]
+    m.sub = tab === 'learning' ? (events.length ? `${events.length} events` : '') : `${list.length ? i + 1 : 0}/${list.length}`
+    const foot: Foot[] = [...pager(list.length, go)]
+    if (tab === 'waiting' && it) {
+      foot.push(
+        ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
+        ['x', 'drop', () => void act('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'), 'warn'],
+      )
+    }
+    if (tab === 'waiting' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('waiting'))])
+    if (tab === 'shared' && it) {
+      if (!it.sent) foot.push(['t', 'send it', () => void act('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'), 'go'])
+      foot.push(['x', it.sent ? 'forget it everywhere' : 'forget', () => void act('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'), 'warn'])
+    }
+    m.foot = foot
     repaint()
   }
-  m.keys = { Escape: () => close(m), q: () => close(m) }
+  const step = (by: number) => void show(TABS[pageTo(TABS.findIndex(([t]) => t === tab), by, TABS.length)][0])
+  m.keys = {
+    K: () => void show('learning'),
+    W: () => void show('waiting'),
+    P: () => void show('shared'),
+    '[': () => step(-1),
+    ']': () => step(1),
+    g: () => void memoryEditor(ctx, ''),
+    Z: () => void dreamScreen(ctx),
+    Escape: () => close(m),
+    q: () => close(m),
+  }
   refresh()
 }
 
@@ -210,65 +290,6 @@ export async function overlapScreen(ctx: Ctx, onDone?: () => void) {
     repaint()
   }
   poll()
-}
-
-export async function shareScreen(ctx: Ctx, p: Row | null) {
-  const about = p?.repo || ''
-  let items: Json[] = []
-  let i = 0
-  const load = async () => {
-    const got = await (await api(`/api/share?about=${encodeURIComponent(about)}`)).json()
-    items = got.items
-    i = items.length ? i % items.length : 0
-    return got
-  }
-  const got0 = await load()
-  if (!items.length) {
-    notice(`no facts of yours belong to a team yet${got0.inTeam ? '' : ' — you are not in a team'}`)
-    return
-  }
-  const m = open({
-    title: 'the team knows',
-    body: () => {
-      const it = items[i]
-      if (!it) return <div>nothing left to show</div>
-      const backers = (it.backers as string[]) || []
-      const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
-      return (
-        <>
-          <div className="kv">
-            <span>
-              {String(it.repo || 'general')}
-              {it.team ? ` → ${it.team}` : ''}
-            </span>
-            <b className={`mark${it.sent ? '' : ' warn'}`}>{mark}</b>
-          </div>
-          <div className="fact">{String(it.fact)}</div>
-        </>
-      )
-    },
-    foot: [],
-  })
-  const go = (step: number) => {
-    i = pageTo(i, step, items.length)
-    refresh()
-  }
-  const refresh = () => {
-    const it = items[i]
-    m.sub = `${items.length ? i + 1 : 0}/${items.length}`
-    m.foot = [
-      ...pager(items.length, go),
-      ...(it && !it.sent
-        ? ([['t', 'send it', async () => { await ctx.call('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'); await load(); refresh() }, 'go']] as Foot[])
-        : []),
-      ...(it
-        ? ([['x', it.sent ? 'forget it everywhere' : 'forget', async () => { await ctx.call('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'); await load(); refresh() }, 'warn']] as Foot[])
-        : []),
-    ] as Foot[]
-    m.keys = { Escape: () => close(m), q: () => close(m) }
-    repaint()
-  }
-  refresh()
 }
 
 export async function teamsScreen(ctx: Ctx, p: Row | null) {
