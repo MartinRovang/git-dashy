@@ -446,7 +446,8 @@ so the agent still has everything it read and can use its tools again: ask why a
 or show it where it was wrong. Nothing said there is posted. When the conversation has changed its
 mind, **revise the review** asks it to write the verdict again; the revision waits beside the original
 and replaces it only if you accept it, and posting is refused while one is waiting — so the verdict you
-read is still the verdict that goes up. A review that ran on `openrouter:` or `local:` cannot be
+read is still the verdict that goes up. Reviewing a held PR again (`r`) replaces the held review,
+conversation included — it is a new review in a new session. A review that ran on `openrouter:` or `local:` cannot be
 discussed yet: there is no session to go back to.
 
 A pre-review is discussed the same way, from `p`. The conversation is kept beside it, in a

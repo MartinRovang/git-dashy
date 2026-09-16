@@ -85,17 +85,6 @@ export type Talk = {
   busy: boolean
 }
 
-/** A finished review waiting for a keypress, as /api/posting returns it. */
-export type HeldReview = {
-  verdict: string
-  summary: string
-  body: string
-  model: string
-  at: number
-  moved: boolean
-  talk: Talk
-}
-
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
 /** config::snapshot, only the keys the UI reads. */

@@ -218,6 +218,34 @@ pub fn evict<K: Eq + std::hash::Hash, V>(cache: &mut HashMap<K, V>, drop: impl F
 /// timeout, count as a running agent, block the key from ever retrying that PR, and survive the stale
 /// sweep, permanently, on wording nobody controls. The set is written by the two functions that start
 /// work and cleared by the two that finish it; nothing has to be parsed.
+/// What a finished discussion turn leaves in the saved review: the answer or the failure appended, or the
+/// revision set beside the verdict. `now` is the review as it is on disk when the turn lands.
+///
+/// ponytail: None in, None out. A review dropped while the agent was answering is gone, and writing the
+/// answer back would put the file back with it -- the drop undone by the thing that was waiting on it.
+pub fn land(
+    now: Option<held::Held>,
+    turn: std::result::Result<(Option<String>, Option<crate::types::Verdict>), String>,
+    at: f64,
+) -> Option<held::Held> {
+    let mut h = now?;
+    match turn {
+        Ok((Some(answer), _)) => h.thread.push(held::Turn {
+            who: "agent".into(),
+            text: answer,
+            at,
+        }),
+        Ok((None, Some(v))) => h.proposed = Some(v),
+        Ok(_) => {}
+        Err(text) => h.thread.push(held::Turn {
+            who: "error".into(),
+            text,
+            at,
+        }),
+    }
+    Some(h)
+}
+
 pub fn in_flight(inner: &Inner, url: &str) -> bool {
     inner.running.contains(url)
 }
@@ -538,28 +566,17 @@ impl State {
                 None => review::revise(&h).map(|v| (None, Some(v))),
             }));
             let (repo, n) = (h.pr.repo().to_string(), h.pr.number);
-            let Some(mut now_held) = on.get(&repo, n) else {
+            let turn = match outcome {
+                Ok(Ok(t)) => Ok(t),
+                Ok(Err(e)) => Err(format!("{e:#}")),
+                Err(e) => Err(panic_text(&*e)),
+            };
+            let Some(now_held) = land(on.get(&repo, n), turn, now()) else {
                 // dropped while the agent was answering: nothing to add the answer to
                 me.finish(&url, String::new());
                 me.forget_review(&url);
                 return;
             };
-            let failed = |text: String| held::Turn {
-                who: "error".into(),
-                text,
-                at: now(),
-            };
-            match outcome {
-                Ok(Ok((Some(answer), _))) => now_held.thread.push(held::Turn {
-                    who: "agent".into(),
-                    text: answer,
-                    at: now(),
-                }),
-                Ok(Ok((None, Some(v)))) => now_held.proposed = Some(v),
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => now_held.thread.push(failed(format!("{e:#}"))),
-                Err(e) => now_held.thread.push(failed(panic_text(&*e))),
-            }
             if let Err(e) = on.put(&now_held) {
                 error!("discussion of {url} not saved: {e:#}");
             }
@@ -977,6 +994,40 @@ fn answered_by(inner: &Inner) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turn_lands_on_the_review_as_it_is_and_never_brings_a_dropped_one_back() {
+        let h = held::Held::default();
+        assert!(
+            land(None, Ok((Some("an answer".into()), None)), 1.0).is_none(),
+            "dropped stays dropped"
+        );
+        assert!(land(None, Err("boom".into()), 1.0).is_none());
+
+        let answered = land(Some(h.clone()), Ok((Some("an answer".into()), None)), 1.0).unwrap();
+        assert_eq!(
+            (answered.thread[0].who.as_str(), answered.thread[0].text.as_str()),
+            ("agent", "an answer")
+        );
+
+        let failed = land(Some(h.clone()), Err("claude: timed out".into()), 1.0).unwrap();
+        assert_eq!(
+            failed.thread[0].who, "error",
+            "a failed turn is kept, so the conversation says so"
+        );
+
+        let v = crate::types::Verdict {
+            verdict: "comment".into(),
+            ..Default::default()
+        };
+        let revised = land(Some(h), Ok((None, Some(v.clone()))), 1.0).unwrap();
+        assert_eq!(revised.proposed, Some(v));
+        assert!(
+            revised.thread.is_empty(),
+            "a revision waits beside the verdict, not in the thread"
+        );
+    }
+
     use crate::types::{Login, Repository};
 
     fn pr(url: &str) -> Pr {

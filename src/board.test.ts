@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Pr, Section, StateData } from './types'
+import type { Pr, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, selected, toggleHidden, visible, walkBucket, whoIs, talkControls } from './board'
 
 let n = 0
 
@@ -609,4 +609,32 @@ describe('repo and author picks', () => {
     expect(whoIs(state([{ name: 'MINE', prs: [pr({ repo: 'acme/web', author: '' })] }])).authors).toEqual([]))
   it('a pick whose PRs left the board stays listed so it can be unticked', () =>
     expect(pickable(whoIs(d), { repos: ['acme/gone'], authors: [] }, 'repos')).toEqual(['acme/api', 'acme/web', 'acme/gone']))
+})
+
+describe('what the review screen lets you press', () => {
+  const talk = (over: Partial<Talk> = {}): Talk => ({ instructions: '', thread: [], proposed: null, cannotDiscuss: '', busy: false, ...over })
+  const said = { who: 'you' as const, text: 'why?', at: 1 }
+  const revision = { verdict: 'comment', summary: '', body: 'b' }
+
+  it('sends only something typed, and revises only after a conversation', () => {
+    expect(talkControls(talk(), '')).toEqual({ type: true, send: false, revise: false, decide: false })
+    expect(talkControls(talk(), '  ').send).toBe(false)
+    expect(talkControls(talk(), 'why?').send).toBe(true)
+    expect(talkControls(talk({ thread: [said] }), '').revise).toBe(true)
+  })
+
+  it('offers accept and keep only while a revision waits, and no second revision then', () => {
+    const waiting = talkControls(talk({ thread: [said], proposed: revision }), '')
+    expect([waiting.decide, waiting.revise]).toEqual([true, false])
+  })
+
+  it('offers nothing while the agent works', () => {
+    expect(talkControls(talk({ thread: [said], proposed: revision, busy: true }), 'x')).toEqual({ type: false, send: false, revise: false, decide: false })
+  })
+
+  it('offers no conversation where there is none to have', () => {
+    const provider = talkControls(talk({ cannotDiscuss: 'discussion needs the claude CLI', thread: [said] }), 'x')
+    expect([provider.type, provider.send, provider.revise]).toEqual([false, false, false])
+    expect(talkControls(null, 'x')).toEqual({ type: false, send: false, revise: false, decide: false })
+  })
 })

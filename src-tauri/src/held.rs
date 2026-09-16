@@ -37,6 +37,10 @@ pub struct Held {
     /// was saved. A discussion resumes it, so the agent still has everything it read.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub session: String,
+    /// The team whose repos the review was allowed to read, "" for none. A discussion resumes under this,
+    /// not under whatever the repo is bound to by then.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub team: String,
     /// The discussion so far, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thread: Vec<Turn>,
@@ -84,7 +88,11 @@ pub fn put(h: &Held) -> Result<PathBuf> {
     let p = path(h.pr.repo(), h.pr.number)
         .ok_or_else(|| anyhow::anyhow!("{} is not an owner/name", h.pr.repo()))?;
     std::fs::create_dir_all(dir())?;
-    std::fs::write(&p, serde_json::to_string_pretty(h)?)?;
+    // ponytail: a temp file renamed over. The screen polls this file every 1.5s while a turn runs, and every
+    // turn rewrites it; a read that caught a half-written file saw no held review at all.
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(h)?)?;
+    std::fs::rename(&tmp, &p)?;
     Ok(p)
 }
 

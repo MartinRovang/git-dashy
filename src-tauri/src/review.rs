@@ -376,11 +376,6 @@ fn self_review_path_in(dir: &Path, repo: &str, n: u64) -> PathBuf {
     dir.join(format!("{stem}__{n}.md"))
 }
 
-/// When the pre-review on disk was written, 0.0 when none.
-///
-/// ponytail: the FILESYSTEM is the state. It was an in-memory dict, so restarting gitdashy left every
-/// pre-review on disk unreachable: `p` would silently run a new one over a file already sitting there.
-/// A deterministic name means nothing has to be remembered across a restart.
 /// The conversation beside a pre-review: `<stem>__<n>.talk.json`, next to the `.md`.
 ///
 /// ponytail: beside the markdown, not in it. The `.md` is read as it is -- by you, and handed to other
@@ -479,12 +474,15 @@ impl Talk {
     }
     /// Put an accepted revision where it is read from. For a held review that is the verdict the post
     /// reads, already in the file; a pre-review is read from its markdown, which has to be rewritten.
+    ///
+    /// ponytail: the markdown first. Saving the conversation first cleared the waiting revision, so a
+    /// markdown write that then failed lost the revision and left the `.md` saying something the saved
+    /// verdict did not.
     pub fn accept(self, h: &held::Held) -> Result<()> {
-        self.put(h)?;
-        match self {
-            Talk::Held => Ok(()),
-            Talk::Pre => accept_self_revision(h),
+        if self == Talk::Pre {
+            accept_self_revision(h)?;
         }
+        self.put(h)
     }
 }
 
@@ -496,6 +494,11 @@ pub fn self_status(v: &Verdict) -> String {
     )
 }
 
+/// When the pre-review on disk was written, 0.0 when none.
+///
+/// ponytail: the FILESYSTEM is the state. It was an in-memory dict, so restarting gitdashy left every
+/// pre-review on disk unreachable: `p` would silently run a new one over a file already sitting there.
+/// A deterministic name means nothing has to be remembered across a restart.
 pub fn self_review_at(repo: &str, n: u64) -> f64 {
     mtime(&self_review_path(repo, n))
 }
@@ -761,10 +764,6 @@ pub fn with_depth_note(mut v: Verdict, depth: &str) -> Verdict {
     v
 }
 
-/// Build the prompt, run the reviewer, return its parsed verdict. Err on failure.
-///
-/// ponytail: one implementation, because a pre-review that reasons differently from the real one is
-/// worth nothing as a preview of it. The only differences are what the caller does with the result.
 /// What a claude review may run and read. ONE place: a discussion resumes the review under exactly this
 /// scope, and a second copy is how the two would drift apart.
 struct Scope {
@@ -778,12 +777,6 @@ struct Scope {
 fn scope(repo: &str, n: u64, model: &str) -> Scope {
     let c = config::get();
     let claude = llm::provider(model).0 == "claude";
-    let cmd = api_cmd();
-    let tools = if claude {
-        format!("Bash({cmd} api:*)")
-    } else {
-        String::new()
-    };
     // ponytail: two locks, and both have to open. The DECLARED set says which repos may ever be read
     // together: a diff cannot name one, it can only pick from what a person bound. Author standing says
     // when that is offered at all: an outsider's fork PR is the case the boundary exists for, and it
@@ -793,6 +786,24 @@ fn scope(repo: &str, n: u64, model: &str) -> Scope {
     } else {
         String::new()
     };
+    scope_with(repo, model, team)
+}
+
+/// The scope a DISCUSSION resumes under: the review's own, with the team it was given at the time.
+///
+/// ponytail: not scope() again. That reads the binding as it is today, so a repo rebound between the review
+/// and the conversation handed the resumed agent a team's repos the review itself could not read. A held
+/// review saved before the team was recorded has none, and gets the repo under review alone -- narrower,
+/// never wider.
+fn scope_with(repo: &str, model: &str, team: String) -> Scope {
+    let claude = llm::provider(model).0 == "claude";
+    let cmd = api_cmd();
+    let tools = if claude {
+        format!("Bash({cmd} api:*)")
+    } else {
+        String::new()
+    };
+    let team = if claude { team } else { String::new() };
     // ponytail: the scope rides the environment, not the prompt or the argv: see github::scoped.
     let env: Vec<(String, String)> = if claude {
         vec![
@@ -829,6 +840,10 @@ pub fn held_status(v: &Verdict) -> String {
     )
 }
 
+/// Build the prompt, run the reviewer, return its parsed verdict and the team it was allowed to read. Err on failure.
+///
+/// ponytail: one implementation, because a pre-review that reasons differently from the real one is
+/// worth nothing as a preview of it. The only differences are what the caller does with the result.
 #[allow(clippy::too_many_arguments)]
 fn verdict(
     repo: &str,
@@ -837,7 +852,7 @@ fn verdict(
     prev: Option<&LogEntry>,
     ask: &str,
     session: llm::Session,
-) -> Result<Verdict> {
+) -> Result<(Verdict, String)> {
     let c = config::get();
     // ponytail: the repo SELECTS the brief now: one, by binding, instead of yours and the team's
     // concatenated into every review of every repo. `whose` goes into the prompt rather than being
@@ -893,7 +908,26 @@ fn verdict(
     v.depth = c.depth.clone();
     v.effort = c.effort.clone();
     v.instructions = ask.trim().to_string();
-    Ok(with_depth_note(v, &c.depth))
+    Ok((with_depth_note(v, &c.depth), sc.team))
+}
+
+/// A new session id for a review on `model`: every claude review gets one, so it can be discussed later;
+/// "" for any other backend, where there is no session to go back to.
+fn session_for(model: &str) -> String {
+    if llm::provider(model).0 == "claude" {
+        llm::new_session_id()
+    } else {
+        String::new()
+    }
+}
+
+/// The `Session` a review names, from what session_for gave it.
+fn named(session: &str) -> llm::Session<'_> {
+    if session.is_empty() {
+        llm::Session::None
+    } else {
+        llm::Session::New(session)
+    }
 }
 
 /// The session a held review can be discussed in, or why it cannot.
@@ -923,7 +957,7 @@ pub fn discuss(h: &held::Held, message: &str) -> Result<String> {
     if config::get().demo {
         return Ok(format!("demo: you said {:?}; nothing changed", message.trim()));
     }
-    let sc = scope(h.pr.repo(), h.pr.number, &h.model);
+    let sc = scope_with(h.pr.repo(), &h.model, h.team.clone());
     let (answer, _, _) = llm::ask_session(
         &fill(DISCUSS, &[("message", message.trim())]),
         &h.model,
@@ -950,7 +984,7 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
             ..Default::default()
         }
     } else {
-        let sc = scope(h.pr.repo(), h.pr.number, &h.model);
+        let sc = scope_with(h.pr.repo(), &h.model, h.team.clone());
         let text = format!(
             "{REVISE}{}{}",
             tail(),
@@ -981,6 +1015,15 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
 /// something ever does: the same review filing its facts twice would be one observation counted as two,
 /// which is exactly what the memory gate exists to stop.
 fn revised(from: &Verdict, mut v: Verdict) -> Verdict {
+    // what the review cost now includes the revision: the log is read as the price of the review
+    v.cost = match (from.cost, v.cost) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    };
+    v.ms = match (from.ms, v.ms) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    };
     v.depth = from.depth.clone();
     v.effort = from.effort.clone();
     v.instructions = from.instructions.clone();
@@ -1031,17 +1074,8 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     // ponytail: no `prev`: PREV claims "you already reviewed this", and a real reviewer's verdict is
     // not ours to speak for
     // a session, so the pre-review can be discussed like a held review
-    let session = if llm::provider(model).0 == "claude" {
-        llm::new_session_id()
-    } else {
-        String::new()
-    };
-    let named = if session.is_empty() {
-        llm::Session::None
-    } else {
-        llm::Session::New(&session)
-    };
-    let v = verdict(repo, n, model, None, "", named)?;
+    let session = session_for(model);
+    let (v, team) = verdict(repo, n, model, None, "", named(&session))?;
     let c = config::get();
     std::fs::create_dir_all(&c.self_dir)?;
     let dest = self_review_path(repo, n);
@@ -1062,6 +1096,7 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
         verdict: v.clone(),
         at,
         session,
+        team,
         ..Default::default()
     };
     if let Err(e) = put_self_talk(&talk) {
@@ -1194,17 +1229,8 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     }
     // ponytail: every claude review gets a session, held or not. Only a held one can be discussed, but
     // whether it is held was decided above and the id has to exist before the model runs.
-    let session = if llm::provider(model).0 == "claude" {
-        llm::new_session_id()
-    } else {
-        String::new()
-    };
-    let named = if session.is_empty() {
-        llm::Session::None
-    } else {
-        llm::Session::New(&session)
-    };
-    let v = verdict(repo, n, model, prev.as_ref(), ask, named)?;
+    let session = session_for(model);
+    let (v, team) = verdict(repo, n, model, prev.as_ref(), ask, named(&session))?;
     if hold {
         // ponytail: the memory half still runs below. Drafts are local and gated by their own
         // consent; holding the POST is about what lands on someone else's PR, not about what this
@@ -1216,6 +1242,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
             hello,
             at: crate::state::now(),
             session: session.clone(),
+            team: team.clone(),
             thread: Vec::new(),
             proposed: None,
         })?;
@@ -1304,6 +1331,30 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_review_is_given_a_session_and_nothing_else_is() {
+        assert!(llm::session_ok(&session_for("opus")));
+        assert_eq!(session_for("openrouter:x-ai/grok-4"), "");
+        assert_eq!(named(""), llm::Session::None);
+        let id = session_for("opus");
+        assert_eq!(named(&id), llm::Session::New(&id));
+    }
+
+    #[test]
+    fn a_discussion_reads_what_the_review_could_and_no_more() {
+        // the team the review was given, whatever the repo is bound to today
+        let sc = scope_with("acme/api", "opus", "core".into());
+        assert!(sc.env.contains(&(github::SCOPE_TEAM.into(), "core".into())));
+        assert!(sc.env.contains(&(github::SCOPE.into(), "acme/api".into())));
+        // a review held before the team was recorded: the repo alone
+        let old = scope_with("acme/api", "opus", String::new());
+        assert!(old.env.contains(&(github::SCOPE_TEAM.into(), String::new())));
+        // no backend but claude runs tools, so it gets no team either
+        assert!(scope_with("acme/api", "openrouter:x", "core".into())
+            .env
+            .is_empty());
+    }
+
+    #[test]
     fn only_a_claude_review_with_a_saved_session_can_be_discussed() {
         let id = "5e3ae8e0-544e-4128-88af-fe301d354aae";
         assert_eq!(cannot_discuss(&held("opus", id)), "");
@@ -1321,8 +1372,23 @@ mod tests {
             instructions: "whatever the model echoed".into(),
             ..Default::default()
         };
-        let v = revised(&held("opus", "").verdict, answer);
+        let mut from = held("opus", "").verdict;
+        from.cost = Some(0.5);
+        from.ms = Some(1000);
+        let v = revised(
+            &from,
+            Verdict {
+                cost: Some(0.25),
+                ms: Some(500),
+                ..answer
+            },
+        );
         assert!(v.remember.is_empty(), "{:?}", v.remember);
+        assert_eq!(
+            (v.cost, v.ms),
+            (Some(0.75), Some(1500)),
+            "the revision adds to what the review cost"
+        );
         assert_eq!(
             (v.depth.as_str(), v.instructions.as_str()),
             ("high", "focus on auth")
@@ -1371,7 +1437,7 @@ mod tests {
             c.depth = "low".into();
             c.effort = "high".into();
         });
-        let v = verdict("acme/api", 7, "opus", None, "", llm::Session::None).unwrap();
+        let (v, _) = verdict("acme/api", 7, "opus", None, "", llm::Session::None).unwrap();
         assert_eq!(v.depth, "low");
         assert_eq!(v.effort, "high");
     }

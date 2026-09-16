@@ -2738,6 +2738,59 @@ mod tests {
         assert!(read()["proposed"].is_null());
     }
 
+    /// Accepting a pre-review's revision when its markdown cannot be written loses nothing: the revision
+    /// still waits, and the markdown and the saved verdict still agree.
+    #[test]
+    #[cfg(unix)]
+    fn a_pre_review_accept_that_cannot_write_the_markdown_keeps_the_revision() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+            c.self_dir = d.path().join("self");
+        });
+        let (base, token, _state) = served();
+        std::fs::create_dir_all(d.path().join("self")).unwrap();
+        let md = review::self_review_path(pr().repo(), pr().number);
+        std::fs::write(&md, "# Pre-review\n\nthe original body\n").unwrap();
+        let verdict = |v: &str, body: &str| crate::types::Verdict {
+            verdict: v.into(),
+            body: body.into(),
+            ..Default::default()
+        };
+        review::put_self_talk(&held::Held {
+            pr: pr(),
+            model: "opus".into(),
+            session: "5e3ae8e0-544e-4128-88af-fe301d354aae".into(),
+            verdict: verdict("request_changes", "the original body"),
+            proposed: Some(verdict("comment", "the revision")),
+            ..Default::default()
+        })
+        .unwrap();
+        std::fs::set_permissions(&md, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let (code, _) = post(
+            &format!("{base}/api/prereview"),
+            json!({"url": pr().url, "op": "accept"}),
+            &token,
+        );
+        std::fs::set_permissions(&md, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_ne!(code, 200, "the markdown could not be written");
+        let saved = review::self_talk(pr().repo(), pr().number).unwrap();
+        assert_eq!(
+            saved.proposed.map(|v| v.body),
+            Some("the revision".into()),
+            "the revision still waits"
+        );
+        assert_eq!(
+            saved.verdict.body, "the original body",
+            "and the saved verdict still matches the markdown"
+        );
+    }
+
     #[test]
     fn a_pre_review_with_no_saved_conversation_says_to_run_it_again() {
         let _g = autorev::test_lock();

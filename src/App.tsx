@@ -410,6 +410,7 @@ export default function App() {
         title: `pre-review of #${p.number}`,
         sub: `${got.path} · never posted`,
         wide: true,
+        dismiss: false,
         body: () => (
           <ReviewTalk
             source={{ kind: 'pre', url: p.url }}
@@ -516,7 +517,6 @@ export default function App() {
     }
   }
 
-  /// Read the review that is waiting, then post it or drop it.
   /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
   function reviewWith(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
@@ -539,7 +539,7 @@ export default function App() {
       foot: [
         [
           '^S',
-          'review and post the verdict',
+          'start the review',
           async () => {
             const ask = (document.querySelector('#ask') as HTMLTextAreaElement).value.trim()
             if (!ask) {
@@ -555,6 +555,7 @@ export default function App() {
     m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2]() }
   }
 
+  /** Inspect a review that is waiting: discuss it with the agent, then post it or drop it. */
   async function waitingScreen(p: Row) {
     const r = await api(`/api/posting?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)
     if (!r.ok) {
@@ -576,6 +577,8 @@ export default function App() {
       title: `waiting to post — ${p.repo}#${p.number}`,
       sub: `${d.held.model} · nothing is on the PR yet`,
       wide: true,
+      // a click beside the screen must not throw away a message half typed; Esc still closes it
+      dismiss: false,
       body: () => (
         <ReviewTalk
           source={{ kind: 'held', repo: p.repo, number: p.number }}

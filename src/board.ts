@@ -1,6 +1,6 @@
 // visible()/flat()/selected(), ported from gui.html. Everything here is derived from server data and
 // the URL-ish UI state, so nothing needs its own state.
-import type { CodeRow, Pr, Row, Section, StateData } from './types'
+import type { CodeRow, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState, SECTION_EMPTY, tone } from './tokens'
 
 export type VisSection = Omit<Section, 'prs'> & { prs: Row[] }
@@ -313,4 +313,20 @@ export function groups(rows: CodeRow[]): Group[] {
  */
 export function isRefetching(from: number | null, d?: Pick<StateData, 'fetching' | 'fetchedAt'> | null): boolean {
   return from != null && !!d?.fetching && d.fetchedAt === from
+}
+
+/** What the review screen lets you press, from the saved conversation and what is typed.
+ *
+ *  ponytail: here, not in the component, which has no render harness. Every rule below is one the server
+ *  also enforces -- this only keeps a button from offering what would be refused. `decide` is accept or keep:
+ *  only with a revision waiting, and never while the agent is still working. */
+export function talkControls(t: Talk | null, draft: string) {
+  const open = !!t && !t.cannotDiscuss
+  const idle = !!t && !t.busy
+  return {
+    type: open && idle,
+    send: open && idle && draft.trim() !== '',
+    revise: open && idle && !t.proposed && t.thread.length > 0,
+    decide: idle && !!t.proposed,
+  }
 }

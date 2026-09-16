@@ -1,36 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { api, errorText, post } from '../api'
-import type { Talk } from '../types'
+import { talkControls } from '../board'
+import { useReviewTalk, type Source } from '../useReviewTalk'
+
+export type { Source }
 
 const VERDICT: Record<string, string> = { approve: '✓ approve', request_changes: '✗ changes requested', comment: '~ comment' }
-
-/** Which saved review this screen is about. A held review is keyed by repo and number, the way ~/.prs_held
- *  names it; a pre-review by its PR's URL, the way /api/prereview finds it. */
-export type Source = { kind: 'held'; repo: string; number: number } | { kind: 'pre'; url: string }
-
-/** What the screen draws, whichever store it came from. */
-type View = { text: string; verdict: string; moved: boolean; talk: Talk | null }
-
-async function fetchView(src: Source): Promise<View | string> {
-  const r =
-    src.kind === 'held'
-      ? await api(`/api/posting?repo=${encodeURIComponent(src.repo)}&number=${src.number}`)
-      : await api(`/api/prereview?url=${encodeURIComponent(src.url)}`)
-  if (!r.ok) return errorText(r)
-  const d = await r.json()
-  if (src.kind === 'held') {
-    if (!d.held) return 'nothing is waiting on this PR any more'
-    return { text: d.held.body, verdict: d.held.verdict, moved: d.held.moved, talk: d.held.talk }
-  }
-  return { text: d.text, verdict: d.talk?.verdict || '', moved: d.moved, talk: d.talk }
-}
 
 /** A saved review and the conversation about it: read it, discuss it, have it revised.
  *
  *  ponytail: ONE screen for both. A held review and a pre-review are discussed the same way and stored in
  *  the same shape; what differs is where they are read from and that only a held review is ever posted.
- *  ponytail: its own polling, not the board's. The agent answers in minutes and the board refreshes on a
- *  much longer interval; while `busy` this asks every 1.5s and stops the moment the turn lands. */
+ *  The reading and the polling are useReviewTalk's; what is pressable is talkControls'. This only draws. */
 export function ReviewTalk({
   source,
   onFlash,
@@ -43,28 +23,12 @@ export function ReviewTalk({
   /** What the review itself can be done with — post and drop, or copy — at the right of the one bar. */
   actions?: ReactNode
 }) {
-  const [v, setV] = useState<View | null>(null)
-  const [failed, setFailed] = useState('')
+  const { view: v, failed, act } = useReviewTalk(source, onFlash, onText)
   const [draft, setDraft] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const held = source.kind === 'held'
-  const key = held ? `${source.repo}#${source.number}` : source.url
-
-  const load = async () => {
-    const got = await fetchView(source)
-    if (typeof got === 'string') return setFailed(got)
-    setV(got)
-    onText?.(got.text)
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => void load(), [key])
   const busy = !!v?.talk?.busy
-  useEffect(() => {
-    if (!busy) return
-    const id = setInterval(() => void load(), 1500)
-    return () => clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, key])
+  const can = talkControls(v?.talk ?? null, draft)
   // follow the conversation as it grows, but not on opening: the review is what you open it to read
   const seen = useRef<number | null>(null)
   const turns = v?.talk?.thread.length ?? null
@@ -74,17 +38,9 @@ export function ReviewTalk({
     seen.current = turns
   }, [turns, busy])
 
-  const act = async (body: Record<string, unknown>, ok?: string) => {
-    const where = held ? { repo: source.repo, number: source.number } : { url: source.url }
-    const r = await post(held ? '/api/posting' : '/api/prereview', { ...where, ...body })
-    if (!r.ok) onFlash(`✗ ${await errorText(r)}`)
-    else if (ok) onFlash(ok)
-    await load()
-    return r.ok
-  }
   const send = async () => {
     const text = draft.trim()
-    if (!text || busy) return
+    if (!can.send) return
     if (await act({ op: 'discuss', text })) setDraft('')
   }
 
@@ -121,10 +77,10 @@ export function ReviewTalk({
             </div>
             <pre>{t.proposed.body}</pre>
             <div className="row">
-              <button className="btn go" disabled={busy} onClick={() => void act({ op: 'accept' }, 'the revision replaces the review')}>
+              <button className="btn go" disabled={!can.decide} onClick={() => void act({ op: 'accept' }, 'the revision replaces the review')}>
                 accept the revision
               </button>
-              <button className="btn" disabled={busy} onClick={() => void act({ op: 'keep' }, 'kept the original')}>
+              <button className="btn" disabled={!can.decide} onClick={() => void act({ op: 'keep' }, 'kept the original')}>
                 keep the original
               </button>
             </div>
@@ -161,7 +117,7 @@ export function ReviewTalk({
           <textarea
             className="talkin"
             value={draft}
-            disabled={busy}
+            disabled={!can.type}
             placeholder="Ask about this review, or tell it what it got wrong."
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -182,14 +138,14 @@ export function ReviewTalk({
               {/* a revision is asked for separately: talking should not quietly rewrite the review */}
               <button
                 className="lnk"
-                disabled={busy || !!t.proposed || !t.thread.length}
+                disabled={!can.revise}
                 onClick={() => void act({ op: 'revise' })}
                 title={t.thread.length ? 'ask the agent to write the review again, taking this conversation into account' : 'discuss it first'}
               >
                 revise the review
               </button>
               <span className="sp" />
-              <button className="btn" disabled={busy || !draft.trim()} onClick={() => void send()} title="Ctrl+Enter">
+              <button className="btn" disabled={!can.send} onClick={() => void send()} title="Ctrl+Enter">
                 <kbd>⌃⏎</kbd>send
               </button>
             </>
