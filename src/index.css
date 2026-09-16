@@ -695,6 +695,16 @@
   .fields .pair { display: flex; align-items: center; gap: 7px; padding: 3px 0; min-height: 26px; }
   .fields .pair > span { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim);
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the pane's database graph: the board graph's nodes and links, in a fixed-height box */
+  .graph.dbg { flex: none; height: 300px; margin-top: 8px; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden;
+               --label: 1; --k: 1; }
+  .graph.dbg .halos { pointer-events: none; }
+  .graph.dbg line.ref { stroke: var(--dim2); stroke-dasharray: 4 3; }
+  .graph.dbg .gnode.hub { cursor: grab; }
+  .graph.dbg .gnode.hub circle { filter: none; }
+  .graph.dbg .gnode.hub text { font-weight: 600; }
+  .graph.dbg .gnode.dropped circle { stroke-dasharray: 3 2; }
+  .dblegend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--dim2); margin-top: 4px; }
   /* the DB repo rules: target → repo, and the form that adds one */
   .dbrule { display: flex; align-items: center; gap: 7px; padding: 2px 6px; font-size: 11.5px; min-width: 0; }
   .dbrule b { font-weight: 500; color: var(--ink2); overflow-wrap: anywhere; }

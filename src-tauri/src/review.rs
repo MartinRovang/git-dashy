@@ -175,6 +175,7 @@ index, a constraint the code will violate, and callers of anything removed. Ever
 /// The field DB asks for, in the contract. Null when the PR does not touch the database.
 pub const DB_FIELD: &str = r#",
  "db": null | {"tables": [{"name": "<table>", "change": "read" | "written" | "added" | "altered" | "dropped",
+   "refs": ["<another table in this list it has a foreign key to>"],
    "columns": [{"name": "<column>", "change": "read" | "written" | "added" | "altered" | "dropped", "note": "<type, or what changes; max 8 words>"}]}],
    "risks": [{"kind": "data-loss" | "lock" | "mismatch" | "index" | "constraint" | "other", "loc": "<file:line, or the file alone>", "text": "<one line, max 16 words>"}]}"#;
 pub const NO_TOOLS: &str = "

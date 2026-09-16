@@ -107,7 +107,7 @@ fn fixtures() -> &'static Fixtures {
                     ],
                     db: Some(serde_json::json!({
                         "tables": [
-                            {"name": "sessions", "change": "altered", "columns": [
+                            {"name": "sessions", "change": "altered", "refs": ["users"], "columns": [
                                 {"name": "policy_version", "change": "added", "note": "int NOT NULL, no default"},
                                 {"name": "token_hash", "change": "read", "note": "text"},
                             ]},
