@@ -406,3 +406,6 @@ export function groups(rows: CodeRow[]): Group[] {
 export function isRefetching(from: number | null, d?: Pick<StateData, 'fetching' | 'fetchedAt'> | null): boolean {
   return from != null && !!d?.fetching && d.fetchedAt === from
 }
+
+/** The item one `step` along from `i` in a list of `len`, wrapping at both ends; 0 for an empty list. */
+export const pageTo = (i: number, step: number, len: number) => (len ? (((i + step) % len) + len) % len : 0)

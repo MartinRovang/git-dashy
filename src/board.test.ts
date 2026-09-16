@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PostingRule, Pr, Section, StateData } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
 
 let n = 0
 
@@ -699,5 +699,14 @@ describe('the posting tree', () => {
     const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['hold', 'repo'], ['post', ''])])
     expect(acme.governs).toBe(false)
     expect(acme.exceptions).toEqual([])
+  })
+})
+
+describe('paging a screen that shows one item at a time', () => {
+  it('steps and wraps at both ends', () => {
+    expect([pageTo(0, 1, 3), pageTo(2, 1, 3), pageTo(0, -1, 3)]).toEqual([1, 0, 2])
+  })
+  it('stays put on one item and does not divide by zero on none', () => {
+    expect([pageTo(0, 1, 1), pageTo(0, -1, 0)]).toEqual([0, 0])
   })
 })
