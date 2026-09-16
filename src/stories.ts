@@ -31,6 +31,9 @@ export function people(prs: { author: string; reviewers: string }[]): string[] {
 
 /** The logins whose letters hold `q` in order, best first: a match at the start, then letters in a row,
  *  then an earlier start. Empty `q` keeps them all, in order. */
+/** The highlighted row after ↓ (`down`) or ↑ in a list of `n`, wrapping; -1 is nothing highlighted yet. */
+export const step = (idx: number, n: number, down: boolean) => (down ? (idx + 1) % n : (Math.max(idx, 0) - 1 + n) % n)
+
 export function fuzzy(q: string, logins: string[]): string[] {
   const needle = q.toLowerCase()
   if (!needle) return logins

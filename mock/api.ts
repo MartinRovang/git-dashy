@@ -622,6 +622,9 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const j = jobShape(S.dream)
       return json(200, { ...j, result: j.result ? { ...(j.result as Record<string, unknown>), new: undefined } : null })
     }
+    if (path === '/api/repos') {
+      return json(200, { repos: ['acme/api', 'acme/web', 'acme/db', 'acme/infra', 'tools/cli', 'tools/docs'] })
+    }
     if (path === '/api/collaborators') {
       const url = query.get('url') || ''
       const r = S.rows.find((x) => x.url === url)

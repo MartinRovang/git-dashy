@@ -719,6 +719,63 @@ pub fn collaborators(repo: &str) -> Vec<String> {
     logins.unwrap_or_default()
 }
 
+static MY_REPOS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// `owner/name` of every repo you own, collaborate on or reach through an org, most recently pushed first.
+/// [] when they cannot be listed (offline, no token).
+/// ponytail: cached for the process once a listing succeeds, and capped at 1000; a repo made after launch
+/// shows after a restart. Refetch on a timer if that bites.
+pub fn my_repos() -> Vec<String> {
+    if config::get().demo {
+        return [
+            "acme/api",
+            "acme/web",
+            "acme/db",
+            "acme/infra",
+            "tools/cli",
+            "tools/docs",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    }
+    let mut cache = MY_REPOS.lock().unwrap_or_else(|e| e.into_inner());
+    if !cache.is_empty() {
+        return cache.clone();
+    }
+    let mut repos = Vec::new();
+    let mut after = String::new();
+    for _ in 0..10 {
+        let cursor = if after.is_empty() {
+            String::new()
+        } else {
+            format!(", after: {}", json!(after))
+        };
+        let query = format!(
+            "{{ viewer {{ repositories(first: 100{cursor}, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], \
+             ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], orderBy: {{field: PUSHED_AT, direction: DESC}}) \
+             {{ nodes {{ nameWithOwner }} pageInfo {{ hasNextPage endCursor }} }} }} }}"
+        );
+        let Ok(data) = gql(&query, 30) else {
+            return repos;
+        };
+        let page = &data["viewer"]["repositories"];
+        repos.extend(
+            page["nodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n["nameWithOwner"].as_str().map(String::from)),
+        );
+        match page["pageInfo"]["endCursor"].as_str() {
+            Some(c) if page["pageInfo"]["hasNextPage"].as_bool() == Some(true) => after = c.to_string(),
+            _ => break,
+        }
+    }
+    *cache = repos.clone();
+    repos
+}
+
 /// Ask login to review PR number; the error text, or "" on success.
 pub fn request_review(repo: &str, number: u64, login: &str) -> String {
     if config::get().demo {

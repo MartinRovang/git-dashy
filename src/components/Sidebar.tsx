@@ -3,8 +3,9 @@ import type { PostingRule, StateData } from '../types'
 import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
-import { close, open } from '../modals'
-import { fuzzy } from '../stories'
+import { close, open, repaint } from '../modals'
+import { api } from '../api'
+import { fuzzy, step } from '../stories'
 
 type Props = {
   data: StateData | null
@@ -189,10 +190,13 @@ function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: s
   const [q, setQ] = useState(value)
   const [idx, setIdx] = useState(-1)
   const [focus, setFocus] = useState(false)
+  // Esc shuts the list and leaves the dialog open; typing opens it again
+  const [shut, setShut] = useState(false)
   const hits = q.trim() ? fuzzy(q.trim(), options).filter((o) => o !== q.trim()).slice(0, 6) : []
   const take = (v: string) => {
     setQ(v)
     setIdx(-1)
+    setShut(false)
   }
   return (
     <div className="fuzzy">
@@ -206,11 +210,14 @@ function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: s
         onFocus={() => setFocus(true)}
         onBlur={() => setFocus(false)}
         onKeyDown={(e) => {
-          if (!hits.length) return
+          if (!hits.length || shut) return
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault()
-            setIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % hits.length : (Math.max(i, 0) - 1 + hits.length) % hits.length))
-          } else if ((e.key === 'Enter' || e.key === 'Tab') && idx >= 0 && idx < hits.length) {
+            setIdx((i) => step(i, hits.length, e.key === 'ArrowDown'))
+          } else if (e.key === 'Escape') {
+            e.stopPropagation()
+            setShut(true)
+          } else if ((e.key === 'Enter' || e.key === 'Tab') && idx >= 0) {
             // stop the dialog's Enter from saving: this Enter picks a suggestion
             e.preventDefault()
             e.stopPropagation()
@@ -218,7 +225,7 @@ function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: s
           }
         }}
       />
-      {focus && hits.length ? (
+      {focus && !shut && hits.length ? (
         <div className="hits">
           {hits.map((h, i) => (
             <div key={h} className={`opt${i === idx ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); take(h) }}>
@@ -232,11 +239,22 @@ function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: s
 }
 
 /** The DB repo dialog: which repo or owner, and the repo its schema lives in. `target`/`db` prefill an edit. */
-function configureDb(repos: string[], onDb: Props['onDb'], target = '', db = '') {
-  const owners = [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+function configureDb(board: string[], onDb: Props['onDb'], target = '', db = '') {
+  // the board's repos now, every repo you can reach once /api/repos answers: a DB repo rarely has open PRs
+  let repos = board
+  const owners = () => [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+  api('/api/repos')
+    .then((r) => (r.ok ? r.json() : { repos: [] }))
+    .then((j: { repos: string[] }) => {
+      repos = [...new Set([...board, ...j.repos])]
+      repaint()
+    })
+    .catch(() => {})
   const val = (id: string) => (document.querySelector(id) as HTMLInputElement).value.trim()
   const save = () => {
     if (!val('#dbt')) return
+    // an edit that renames the target replaces the rule instead of adding a second one
+    if (target && val('#dbt') !== target) onDb('clear', target)
     onDb('set', val('#dbt'), val('#dbr'))
     close(m)
   }
@@ -251,7 +269,7 @@ function configureDb(repos: string[], onDb: Props['onDb'], target = '', db = '')
           The repo whose PRs get the database check. Use <code>acme/api</code> for one repo, or <code>acme/*</code> for every
           repo under an owner. A repo's own rule beats its owner's.
         </p>
-        <Fuzzy id="dbt" placeholder="acme/api or acme/*" options={[...owners, ...repos]} value={target} />
+        <Fuzzy id="dbt" placeholder="acme/api or acme/*" options={[...owners(), ...repos]} value={target} />
         <label htmlFor="dbr">DB repo</label>
         <p>
           The repo where that database's schema and migrations live, like <code>acme/db</code>. Reviews read it and say what a
@@ -547,7 +565,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                     </span>
                     <span className="ln">
                       <em>schema from</em>
-                      {r.db ? <b>{r.db}</b> : <i>none, left out</i>}
+                      {r.db ? <b>{r.db}</b> : <i>none</i>}
                     </span>
                   </button>
                   <button className="ib" title={`remove the rule for ${r.target}`} onClick={() => onDb('clear', r.target)}>
