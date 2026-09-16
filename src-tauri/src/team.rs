@@ -1450,6 +1450,7 @@ pub fn connect(key: &str, url_: &str) -> String {
         &[
             "remote",
             if had.is_empty() { "add" } else { "set-url" },
+            "--", // or a URL starting with `-` is read as an option, and git never sees the URL
             "origin",
             url_,
         ],
@@ -1555,7 +1556,7 @@ fn unset(d: &Path, had: &str) {
     if had.is_empty() {
         git(d, &["remote", "remove", "origin"]);
     } else {
-        git(d, &["remote", "set-url", "origin", had]);
+        git(d, &["remote", "set-url", "--", "origin", had]);
     }
 }
 
@@ -1857,6 +1858,17 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let rel = t.path().to_string_lossy().to_string();
         assert!(looks_local(&rel));
+    }
+
+    #[test]
+    fn connect_reads_a_dash_leading_url_as_a_url_not_an_option() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = tempfile::tempdir().unwrap();
+        point(t.path());
+        assert_eq!(start("Shared", "d", ""), "");
+        // git has to reach the fetch, which names the URL. Read as an option, it never gets there.
+        let err = connect("shared", "--mirror=push");
+        assert!(err.contains("--mirror=push"), "{err}");
     }
 
     #[test]
