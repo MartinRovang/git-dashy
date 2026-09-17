@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
-import { Necronomicon, NextLearn } from './components/Necronomicon'
+import { Necronomicon } from './components/Necronomicon'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { ReviewTalk } from './components/ReviewTalk'
@@ -436,6 +436,12 @@ export default function App() {
     await call('/api/review', { url: p.url }, `review started on #${p.number}`)
   }
 
+  async function cast(p: Row, spell: string) {
+    if (!p || !canCastOn(p)) return
+    if (!(await confirm(`Cast ${spell} on #${p.number}? It checks only that topic. Nothing is posted until you post it.`))) return
+    await call('/api/review', { url: p.url, spell }, `casting ${spell} on #${p.number}`)
+  }
+
   async function preReview(p: Row) {
     if (!p || p.busy || p.section !== 'MINE') return
     if (humanOnly(p)) return
@@ -602,6 +608,20 @@ export default function App() {
   function doAct(name: string, target?: Row | null) {
     const p = target || current
     if (!p) return
+    // a spell's result, offered per spell by acts(): read it, then post it if it is worth posting
+    const found = name.startsWith('spell:') && detail?.url === p.url ? detail.spells.find((s) => `spell:${s.name}` === name) : null
+    if (found) {
+      const m = viewer(`${found.name} on #${p.number}`, found.text, `cast ${new Date(found.at * 1000).toLocaleString()} · private until you post it`)
+      const postIt = async () => {
+        const warn = found.quotes ? ' It repeats lines of the spell word for word, so they would be public.' : ''
+        if (!(await confirm(`Post ${found.name} on #${p.number} as a comment?${warn}`))) return
+        close(m)
+        await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
+      }
+      m.foot = [['p', 'post as comment', () => void postIt()], ...(m.foot || [])]
+      m.keys = { ...m.keys, p: () => void postIt() }
+      return
+    }
     const fns: Record<string, () => void> = {
       review: () => void review(p),
       ask: () => reviewWith(p),
@@ -629,6 +649,7 @@ export default function App() {
       waiting: () => void waitingScreen(p),
       memory: () => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }),
       hide: () => toggleHide(p),
+      book: () => show('necronomicon'),
     }
     fns[name]?.()
   }
@@ -817,12 +838,15 @@ export default function App() {
           onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
+          selected={current || null}
+          onCast={(p, spell) => void cast(p, spell)}
+          onBook={() => show('necronomicon')}
         />
         <div className="main">
           <div className="body">
             <div className="queue">
               {view === 'necronomicon' ? (
-                <Necronomicon />
+                <Necronomicon setting={setting} />
               ) : view === 'graph' ? (
                 <Graph
                   // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
@@ -912,7 +936,6 @@ export default function App() {
           + follow
         </button>
         <div style={{ flex: 1 }} />
-        {data?.knowledge.learn ? <NextLearn at={data.knowledge.learn.next} running={data.knowledge.learn.running} onOpen={() => show('necronomicon')} /> : null}
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>
@@ -939,7 +962,9 @@ export default function App() {
           d={detail?.url === menuAt.p.url ? detail : null}
           hidden={isRead(hidden, menuAt.p)}
           at={menuAt.at}
+          spells={data?.settings.spells || []}
           onAct={doAct}
+          onCast={(p, spell) => void cast(p, spell)}
           onClose={() => setMenuAt(null)}
         />
       ) : null}

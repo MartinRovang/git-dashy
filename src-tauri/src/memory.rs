@@ -2111,8 +2111,7 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
     // facts a pre-review carried over the gate: the chart says so rather than "seen twice"
     let mut with_bonus: Vec<String> = Vec::new();
     for fact in fresh {
-        if let Some(t) = settled.iter().find(|t| same(&fact, t)) {
-            crate::necro::remind(t); // nothing new for memory, but the Necronomicon ranks by how often a fact comes up
+        if settled.iter().any(|t| same(&fact, t)) {
             continue; // already approved somewhere: proposing it again says nothing new
         }
         // ponytail: a pre-review of your own PR that found this counts as the other observation: two runs,
