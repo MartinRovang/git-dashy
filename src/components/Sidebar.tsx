@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bot, Database, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
+import { Bot, Database, Share2, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
 import type { PostingRule, Row as Pr, StateData } from '../types'
 import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { Glyph } from './Glyph'
@@ -35,6 +35,7 @@ type Props = {
   selected: Pr | null
   onCast: (p: Pr, spell: string) => void
   onBook: () => void
+  onSchema: (db: string) => void
 }
 
 /** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
@@ -311,7 +312,7 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
   const s = d?.settings || {}
   // the server already drops a spell whose file was deleted
   const equipped = s.spells || []
@@ -571,6 +572,11 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                       {r.db ? <b>{r.db}</b> : <i>none</i>}
                     </span>
                   </button>
+                  {r.db && (
+                    <button className="ib" title={`graph of ${r.db}'s tables, read from its .sql files`} onClick={() => onSchema(r.db)}>
+                      <Share2 size={13} aria-hidden />
+                    </button>
+                  )}
                   <button className="ib" title={`remove the rule for ${r.target}`} onClick={() => onDb('clear', r.target)}>
                     ×
                   </button>

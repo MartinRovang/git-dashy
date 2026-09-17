@@ -174,7 +174,7 @@ export type Review = {
 }
 
 export type DbImpact = {
-  tables?: { name?: string; change?: string; refs?: string[]; columns?: { name?: string; change?: string; note?: string }[] }[]
+  tables?: { name?: string; change?: string; refs?: string[]; columns?: { name?: string; change?: string; note?: string; key?: string; ref?: string }[] }[]
   risks?: { kind?: string; loc?: string; text?: string }[]
 }
 
