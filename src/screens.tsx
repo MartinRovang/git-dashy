@@ -77,11 +77,11 @@ export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
   )
 }
 
-export type KnowledgeTab = 'learning' | 'inspect' | 'waiting' | 'shared'
+export type KnowledgeTab = 'stats' | 'inspect' | 'drafts' | 'shared'
 const TABS: [KnowledgeTab, string][] = [
-  ['learning', 'K'],
+  ['stats', 'K'],
   ['inspect', 'g'],
-  ['waiting', 'W'],
+  ['drafts', 'W'],
   ['shared', 'P'],
 ]
 
@@ -117,9 +117,9 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
 
   const load = async (t: KnowledgeTab) => {
     const url =
-      t === 'learning'
+      t === 'stats'
         ? '/api/learning'
-        : t === 'waiting'
+        : t === 'drafts'
           ? '/api/drafts'
           : t === 'shared'
             ? `/api/share?about=${encodeURIComponent(about)}`
@@ -131,8 +131,8 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     }
     delete failed[t]
     const got = await r.json()
-    if (t === 'learning') events = got.events
-    else if (t === 'waiting') {
+    if (t === 'stats') events = got.events
+    else if (t === 'drafts') {
       drafts = got.items
       promoteAt = got.promoteAt
     } else if (t === 'shared') {
@@ -145,7 +145,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     }
     if (t === tab) i = pageTo(i, 0, items().length)
   }
-  const items = (): unknown[] => (tab === 'waiting' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
+  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
 
   const show = async (t: KnowledgeTab) => {
     if (t !== tab) i = 0
@@ -260,11 +260,11 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
   const content = () => {
     if (tab === 'inspect') return inspect()
     if (failed[tab]) return <p className="empty">✗ {failed[tab]}</p>
-    if (tab === 'learning') {
+    if (tab === 'stats') {
       return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
     }
     const it = items()[i] as Json | undefined
-    if (tab === 'waiting') {
+    if (tab === 'drafts') {
       if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
       const left = promoteAt - (it.n as number)
       const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
@@ -293,7 +293,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
             {TABS.map(([t, key]) => (
               <button key={t} role="tab" aria-pressed={tab === t} onClick={() => void show(t)}>
                 {t}
-                {t === 'waiting' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
+                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
               </button>
             ))}
           </div>
@@ -321,17 +321,17 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
   const refresh = () => {
     const list = items()
     const it = list[i] as Json | undefined
-    m.sub = tab === 'learning' ? (events.length ? `${events.length} events` : '') : tab === 'inspect' && file.doc ? '' : `${list.length ? i + 1 : 0}/${list.length}`
+    m.sub = tab === 'stats' ? (events.length ? `${events.length} events` : '') : tab === 'inspect' && file.doc ? '' : `${list.length ? i + 1 : 0}/${list.length}`
     const foot: Foot[] = [...pager(list.length, go)]
     if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
-    if (tab === 'waiting' && it) {
+    if (tab === 'drafts' && it) {
       foot.push(
         ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
         ['x', 'drop', () => void act('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'), 'warn'],
       )
     }
-    if (tab === 'waiting' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('waiting'))])
+    if (tab === 'drafts' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('drafts'))])
     if (tab === 'shared' && it) {
       if (!it.sent) foot.push(['t', 'send it', () => void act('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'), 'go'])
       foot.push(['x', it.sent ? 'forget it everywhere' : 'forget', () => void act('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'), 'warn'])
@@ -341,9 +341,9 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
   }
   const step = (by: number) => void show(TABS[pageTo(TABS.findIndex(([t]) => t === tab), by, TABS.length)][0])
   m.keys = {
-    K: () => void show('learning'),
+    K: () => void show('stats'),
     g: () => void show('inspect'),
-    W: () => void show('waiting'),
+    W: () => void show('drafts'),
     P: () => void show('shared'),
     '[': () => step(-1),
     ']': () => step(1),

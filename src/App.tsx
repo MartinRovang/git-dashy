@@ -399,7 +399,7 @@ export default function App() {
       if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
     })()
   const onModal = (name: string) => {
-    if (name === 'knowledge') void knowledgeScreen(ctx, 'learning')
+    if (name === 'knowledge') void knowledgeScreen(ctx, 'stats')
   }
   const onMenu = () => escMenu(ctx)
   const onUpdate = () => void updateScreen(ctx)
@@ -694,8 +694,8 @@ export default function App() {
     if (k === 'g') return one(() => void knowledgeScreen(ctx, 'inspect'))
     if (k === 'n' && p) return one(() => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }))
     if (k === 'Z') return one(() => void dreamScreen(ctx))
-    if (k === 'K') return one(() => void knowledgeScreen(ctx, 'learning'))
-    if (k === 'W') return one(() => void knowledgeScreen(ctx, 'waiting'))
+    if (k === 'K') return one(() => void knowledgeScreen(ctx, 'stats'))
+    if (k === 'W') return one(() => void knowledgeScreen(ctx, 'drafts'))
     if (k === 'P') return one(() => void knowledgeScreen(ctx, 'shared'))
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
