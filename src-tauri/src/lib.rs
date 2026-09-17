@@ -20,7 +20,6 @@ pub mod llm;
 pub mod log;
 pub mod memory;
 pub mod mirror;
-pub mod necro;
 pub mod report;
 pub mod review;
 pub mod shell;

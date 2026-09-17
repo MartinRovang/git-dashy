@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, necro,
-    report, review, spells, story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
+    review, spells, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -209,7 +209,6 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": config::THEMES,
                     "scopes": scopes},
         "knowledge": {
-            "learn": {"next": necro::next(), "running": job("learn")["running"]},
             "report": {
                 "job": job("report"),
                 "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
@@ -736,39 +735,63 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
 }
 
-/// The Necronomicon: its ranked points, the learn job, and what memory is still learning.
-fn get_necronomicon(_state: &State, _q: &Query) -> Out {
-    let learning: Vec<Value> = memory::waiting()
+/// The book: the spells on disk, and the built-in passives and voices with what they add to a review.
+fn get_spells(_state: &State, _q: &Query) -> Out {
+    let c = config::get();
+    let about = |n: &str| {
+        review::ABOUT
+            .iter()
+            .find(|(k, _)| *k == n)
+            .map(|(_, v)| *v)
+            .unwrap_or("")
+    };
+    let built = |table: &[(&str, &str)], names: &[&str], on: &[String]| -> Vec<Value> {
+        names
+            .iter()
+            .map(|n| {
+                let prompt = table
+                    .iter()
+                    .find(|(k, _)| k == n)
+                    .map(|(_, v)| v.trim())
+                    .unwrap_or("");
+                json!({"name": n, "about": about(n), "prompt": prompt, "on": on.iter().any(|x| x == n)})
+            })
+            .collect()
+    };
+    let spells: Vec<Value> = spells::list()
         .into_iter()
-        .map(|(repo, n, fact, kind)| json!({"repo": repo, "n": n, "fact": fact, "kind": kind}))
+        .map(|(name, text)| {
+            let on = c.spells.contains(&name);
+            json!({"name": name, "text": text, "on": on})
+        })
         .collect();
-    let mut out = necro::view();
-    out["job"] = job("learn");
-    out["promoteAt"] = json!(memory::PROMOTE_AT);
-    out["learning"] = json!(learning);
-    Ok(out)
+    Ok(json!({
+        "spells": spells,
+        "passives": built(review::HUNTER, config::HUNTERS, &c.hunter),
+        "voices": built(review::VOICE, config::VOICES, &c.voice),
+    }))
 }
 
-/// `learn` starts a learn now; `up`/`down` raise or derank one point.
-fn post_necronomicon(_state: &State, body: &Body) -> Out {
-    let op = text(body, "op");
-    if op == "learn" {
-        start_learn();
-        return Ok(json!({"ok": true}));
-    }
-    if op == "up" || op == "down" {
-        if !necro::rank(&text(body, "scope"), &text(body, "text"), op == "up") {
-            return Err(Fail::new(404, "no such point; learn may have rewritten it"));
+/// `save` writes one spell, `delete` removes it and takes it off the quick list.
+fn post_spells(_state: &State, body: &Body) -> Out {
+    let name = text(body, "name");
+    match text(body, "op").as_str() {
+        "save" => spells::save(&name, &text(body, "text")).map_err(|e| Fail(400, e.to_string()))?,
+        "delete" => {
+            spells::delete(&name).map_err(|e| Fail(404, e.to_string()))?;
+            let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
+            let mut c = config::get();
+            if c.spells.contains(&name) {
+                c.spells.retain(|n| n != &name);
+                config::normalise(&mut c);
+                let saved = config::snapshot(&c);
+                config::update(|cfg| *cfg = c);
+                config::save(&saved)?;
+            }
         }
-        return Ok(json!({"ok": true}));
+        _ => return Err(Fail::new(400, "op must be save or delete")),
     }
-    Err(Fail::new(400, "op must be learn, up or down"))
-}
-
-/// Learn in the background; a second start while one runs does nothing.
-fn start_learn() {
-    let model = config::get().model;
-    start_job("learn", move || necro::learn(&model));
+    Ok(json!({"ok": true}))
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
@@ -1163,7 +1186,7 @@ fn repo_of(body: &Body) -> Option<String> {
 
 /// The longest instructions or discussion message taken, in characters. A few paragraphs is the use;
 /// anything past this is a paste gone wrong, and it would ride along in every turn of the session.
-const ASK_MAX: usize = 8000;
+const ASK_MAX: usize = 9000;
 
 /// What can be done to a saved review from its screen: talk about it, ask for a revision, take it or not.
 const TALK_OPS: [&str; 4] = ["discuss", "revise", "accept", "keep"];
@@ -1257,7 +1280,17 @@ fn post_review(state: &State, body: &Body) -> Out {
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
-    let ask = text(body, "ask");
+    let spell = text(body, "spell");
+    let mut ask = text(body, "ask");
+    if !spell.is_empty() {
+        if !ask.is_empty() {
+            return Err(Fail::new(400, "a spell or instructions, not both"));
+        }
+        let Some(t) = spells::get(&spell) else {
+            return Err(Fail(400, format!("no spell {spell}")));
+        };
+        ask = spells::cast(&spell, &t);
+    }
     if ask.chars().count() > ASK_MAX {
         return Err(Fail::new(400, "instructions are too long"));
     }
@@ -2059,7 +2092,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/prereview" => get_prereview,
         "/api/memory" => get_memory,
         "/api/drafts" => get_drafts,
-        "/api/necronomicon" => get_necronomicon,
+        "/api/spells" => get_spells,
         "/api/overlaps" => get_overlaps,
         "/api/share" => get_share,
         "/api/teams" => get_teams,
@@ -2097,7 +2130,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/posting" => post_posting,
         "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
-        "/api/necronomicon" => post_necronomicon,
+        "/api/spells" => post_spells,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
