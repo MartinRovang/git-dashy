@@ -20,7 +20,7 @@ use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
     autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, necro,
-    report, review, story, team, textdiff, update,
+    report, review, spells, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -1933,6 +1933,19 @@ fn post_settings(state: &State, body: &Body) -> Out {
                 c.hunter = new;
             }
         }
+    }
+    if let Some(v) = body.get("spells") {
+        let Some(names) = v.as_array().and_then(|a| {
+            a.iter()
+                .map(|x| x.as_str().map(String::from))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return Err(Fail::new(400, "spells must be a list of names"));
+        };
+        if let Some(bad) = names.iter().find(|n| spells::get(n).is_none()) {
+            return Err(Fail(400, format!("no spell {bad}")));
+        }
+        c.spells = names;
     }
     if let Some(v) = body.get("subs") {
         let Some(got) = pick(v, config::SUBS) else {
