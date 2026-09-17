@@ -366,6 +366,10 @@
           box-shadow: 0 2px 8px rgba(0,0,0,.35); }
   /* equipped is the tint and the tick; no ring, and a click leaves no focus outline (the keyboard still gets one) */
   .ncard:focus:not(:focus-visible) { outline: none; }
+  /* hover lights the card from inside: a soft gold glow and a lift, no border */
+  .ncard { transition: box-shadow .15s, transform .15s, filter .15s; }
+  .ncard:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--gold) 35%, transparent), 0 4px 12px rgba(0,0,0,.4); transform: translateY(-2px); filter: brightness(1.15); }
+  @media (prefers-reduced-motion: reduce) { .ncard, .ncard:hover { transition: none; transform: none; } }
   .nbuilt li.on .ncard { background: linear-gradient(160deg, color-mix(in srgb, var(--gold) 18%, rgba(0,0,0,.6)), rgba(0,0,0,.6)); }
   .ncard b { font-size: 19px; font-variant: small-caps; letter-spacing: .06em; color: var(--blood); }
   .ncard p { margin: 0; font-size: 14px; color: var(--ink); }
