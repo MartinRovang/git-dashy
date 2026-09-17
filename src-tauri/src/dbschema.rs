@@ -7,7 +7,9 @@
 //! met, not by a migration tool's own history. Right for a schema kept as one file per table and for numbered
 //! migrations; a repo that orders them some other way (a manifest, timestamps in a table) is read out of order.
 //! Postgres-flavoured DDL only: ORM models (SQLAlchemy, Prisma) would need their own patterns. A reference
-//! to a table renamed after it was written still names the old table.
+//! to a table renamed after it was written still names the old table. DROP CONSTRAINT finds a foreign key by the
+//! name it was given or Postgres's default `<table>_<columns>_fkey`, fixed when the key is made, not a name Postgres
+//! truncated past 63 characters.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,7 +23,6 @@ use crate::{bind, github, team};
 #[derive(Default)]
 struct Table {
     columns: Vec<Col>,
-    refs: Vec<String>,
 }
 
 #[derive(Default)]
@@ -31,6 +32,8 @@ struct Col {
     pk: bool,
     /// the table this column's foreign key points at, as written
     fk: String,
+    /// that foreign key's constraint name: the one the DDL gave, or Postgres's default at the time it was made
+    fkc: String,
 }
 
 fn re(p: &str) -> Regex {
@@ -43,21 +46,30 @@ static STMT: LazyLock<Regex> = LazyLock::new(|| {
     )
 });
 // a table-level `PRIMARY KEY (a, b)` or `FOREIGN KEY (a) REFERENCES t`
-static KEYS: LazyLock<Regex> =
-    LazyLock::new(|| re(r#"(?i)\b(primary|foreign)\s+key\s*\(([^)]*)\)(?:\s*references\s+([\w."]+))?"#));
+static KEYS: LazyLock<Regex> = LazyLock::new(|| {
+    re(
+        r#"(?i)(?:\bconstraint\s+("[^"]+"|\w+)\s+)?\b(primary|foreign)\s+key\s*\(([^)]*)\)(?:\s*references\s+([\w."]+))?"#,
+    )
+});
 static PK: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)\bprimary\s+key\b"));
 static REFS: LazyLock<Regex> = LazyLock::new(|| re(r#"(?i)\breferences\s+([\w."]+)"#));
+static NAMED_REF: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"(?i)\bconstraint\s+("[^"]+"|\w+)\s+references\b"#));
 // one action of an ALTER TABLE, split at its top-level commas so `numeric(10,2)` stays whole
 static ADD: LazyLock<Regex> =
     LazyLock::new(|| re(r#"(?is)^\s*add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?("[^"]+"|\w+)\s+(.*)$"#));
 static DROP: LazyLock<Regex> =
     LazyLock::new(|| re(r#"(?i)^\s*drop\s+(?:column\s+)?(?:if\s+exists\s+)?("[^"]+"|\w+)"#));
+static RETYPE: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"(?is)^\s*alter\s+(?:column\s+)?("[^"]+"|\w+)\s+(?:set\s+data\s+)?type\s+(.*)$"#));
+static DROP_CONSTRAINT: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"(?i)^\s*drop\s+constraint\s+(?:if\s+exists\s+)?("[^"]+"|\w+)"#));
 static RENAME: LazyLock<Regex> =
     LazyLock::new(|| re(r#"(?i)^\s*rename\s+(?:(?:column\s+)?("[^"]+"|\w+)\s+)?to\s+([\w."]+)"#));
 // where a column's type ends and its constraints start
 static TAIL: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?i)\s+(?:not\b|null\b|default\b|primary\b|references\b|unique\b|check\b|constraint\b|generated\b|collate\b)",
+        r"(?i)\s+(?:not\b|null\b|default\b|primary\b|references\b|unique\b|check\b|constraint\b|generated\b|collate\b|using\b)",
     )
 });
 const NOT_COLUMN: &[&str] = &[
@@ -75,6 +87,11 @@ const NOT_COLUMN: &[&str] = &[
 fn name(s: &str) -> String {
     let n = s.replace('"', "").to_lowercase();
     n.strip_prefix("public.").map(str::to_string).unwrap_or(n)
+}
+
+/// A table name without its schema: `auth.users` is `users`.
+fn last(s: &str) -> &str {
+    s.rsplit('.').next().unwrap_or(s)
 }
 
 /// `text[at..]` up to the paren that closes the one just before `at`, and where that ends.
@@ -113,45 +130,53 @@ fn pieces(body: &str) -> Vec<&str> {
     out
 }
 
-fn column(t: &mut Table, col: &str, rest: &str) {
-    let col = name(col);
-    if col.is_empty() || NOT_COLUMN.contains(&col.as_str()) {
-        return;
-    }
-    let ty = TAIL
-        .split(rest.trim())
+/// A column's type: `rest` up to its first constraint.
+fn ty(rest: &str) -> String {
+    TAIL.split(rest.trim())
         .next()
         .unwrap_or("")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(" ")
+        .to_lowercase()
+}
+
+fn column(t: &mut Table, table: &str, col: &str, rest: &str) {
+    let col = name(col);
+    if col.is_empty() || NOT_COLUMN.contains(&col.as_str()) {
+        return;
+    }
     t.columns.retain(|c| c.name != col);
     t.columns.push(Col {
-        name: col,
-        ty: ty.to_lowercase(),
+        ty: ty(rest),
         pk: PK.is_match(rest),
         fk: REFS.captures(rest).map(|c| name(&c[1])).unwrap_or_default(),
+        fkc: NAMED_REF
+            .captures(rest)
+            .map_or_else(|| format!("{}_{col}_fkey", last(table)), |c| name(&c[1])),
+        name: col,
     });
 }
 
 /// Mark the columns table-level PRIMARY KEY and FOREIGN KEY clauses in `text` name.
-fn keys(t: &mut Table, text: &str) {
+fn keys(t: &mut Table, table: &str, text: &str) {
     for k in KEYS.captures_iter(text) {
-        let fk = k.get(3).map(|m| name(m.as_str()));
-        for c in k[2].split(',').map(name) {
-            if let Some(col) = t.columns.iter_mut().find(|x| x.name == c.trim()) {
+        let fk = k.get(4).map(|m| name(m.as_str()));
+        let cols: Vec<String> = k[3].split(',').map(|c| name(c.trim())).collect();
+        let fkc = k.get(1).map_or_else(
+            || format!("{}_{}_fkey", last(table), cols.join("_")),
+            |m| name(m.as_str()),
+        );
+        for c in cols {
+            if let Some(col) = t.columns.iter_mut().find(|x| x.name == c) {
                 match &fk {
-                    Some(f) => col.fk = f.clone(),
-                    None if k[1].eq_ignore_ascii_case("primary") => col.pk = true,
+                    Some(f) => (col.fk, col.fkc) = (f.clone(), fkc.clone()),
+                    None if k[2].eq_ignore_ascii_case("primary") => col.pk = true,
                     None => {}
                 }
             }
         }
     }
-}
-
-fn refs(t: &mut Table, text: &str) {
-    t.refs.extend(REFS.captures_iter(text).map(|c| name(&c[1])));
 }
 
 fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
@@ -164,7 +189,7 @@ fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
         if verb.starts_with("drop") {
             tables.remove(&tname);
         } else if verb.starts_with("create") {
-            let t = tables.entry(tname).or_default();
+            let t = tables.entry(tname.clone()).or_default();
             let Some(open) = sql[end..]
                 .find(|c: char| !c.is_whitespace())
                 .filter(|&i| sql[end + i..].starts_with('('))
@@ -175,12 +200,15 @@ fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
             from = close;
             for p in pieces(body) {
                 let p = p.trim();
-                // the first word ends at a space or a paren: `UNIQUE(x)` is a constraint, not a column
-                let cut = p.find(|c: char| c.is_whitespace() || c == '(').unwrap_or(p.len());
-                column(t, &p[..cut], &p[cut..]);
-                refs(t, p);
+                // the first word ends at a space or a paren: `UNIQUE(x)` is a constraint, not a column. A quoted
+                // name ends at its closing quote: `"my col" int` is `my col`.
+                let cut = match p.strip_prefix('"') {
+                    Some(q) => q.find('"').map_or(p.len(), |i| i + 2),
+                    None => p.find(|c: char| c.is_whitespace() || c == '(').unwrap_or(p.len()),
+                };
+                column(t, &tname, &p[..cut], &p[cut..]);
             }
-            keys(t, body);
+            keys(t, &tname, body);
         } else {
             // the body ends at its `;`, or where the next statement starts when a file leaves the `;` out
             let semi = sql[end..].find(';').map_or(sql.len(), |i| end + i);
@@ -192,7 +220,19 @@ fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
             let mut moved = None;
             for p in pieces(body) {
                 if let Some(c) = ADD.captures(p) {
-                    column(t, &c[1], &c[2]);
+                    column(t, &tname, &c[1], &c[2]);
+                } else if let Some(c) = RETYPE.captures(p) {
+                    let col = name(&c[1]);
+                    if let Some(x) = t.columns.iter_mut().find(|x| x.name == col) {
+                        x.ty = ty(&c[2]);
+                    }
+                } else if let Some(c) = DROP_CONSTRAINT.captures(p) {
+                    let n = name(&c[1]);
+                    for x in t.columns.iter_mut() {
+                        if x.fkc == n {
+                            (x.fk, x.fkc) = (String::new(), String::new());
+                        }
+                    }
                 } else if let Some(c) = RENAME.captures(p) {
                     match c.get(1) {
                         Some(old) => {
@@ -217,8 +257,7 @@ fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
                     }
                 }
             }
-            refs(t, body);
-            keys(t, body);
+            keys(t, &tname, body);
             if let Some(new) = moved {
                 let t = tables.remove(&tname).unwrap_or_default();
                 tables.insert(new, t);
@@ -234,7 +273,6 @@ pub fn parse(files: &[String]) -> Value {
         apply(&mut tables, f);
     }
     // a reference names `users` where the table is `auth.users`, or the other way round: match the last part
-    let last = |s: &str| s.rsplit('.').next().unwrap_or(s).to_string();
     let resolve = |r: &str| {
         if tables.contains_key(r) {
             return Some(r.to_string());
@@ -244,10 +282,12 @@ pub fn parse(files: &[String]) -> Value {
     let out: Vec<Value> = tables
         .iter()
         .map(|(n, t)| {
+            // ponytail: a table's links are its columns' foreign keys, so a dropped column or constraint takes its
+            // link with it. A FOREIGN KEY naming a column the DDL never declared draws no link.
             let mut rs: Vec<String> = t
-                .refs
+                .columns
                 .iter()
-                .filter_map(|r| resolve(r))
+                .filter_map(|c| resolve(&c.fk))
                 .filter(|r| r != n)
                 .collect();
             rs.sort();
@@ -460,6 +500,55 @@ CREATE TABLE copy AS SELECT * FROM analytics;"#
             cols,
             ["id int", "handle text", "amount numeric(10,2)", "email text"]
         );
+    }
+
+    #[test]
+    fn later_alters_retype_and_unlink() {
+        let v = parse(&["CREATE TABLE a (id int PRIMARY KEY);
+             CREATE TABLE auth.b (id int, a_id int REFERENCES a, x int CONSTRAINT bx REFERENCES a, y int, z int, p int, q int,
+                 \"my col\" int REFERENCES a, FOREIGN KEY (p, q) REFERENCES a);
+             ALTER TABLE auth.b ADD CONSTRAINT by_fk FOREIGN KEY (y) REFERENCES a (id), ADD w int CONSTRAINT bw REFERENCES a;
+             ALTER TABLE auth.b ALTER COLUMN id TYPE bigint USING id::bigint, ALTER z SET DATA TYPE numeric(10, 2);
+             ALTER TABLE auth.b RENAME COLUMN a_id TO a2;
+             ALTER TABLE auth.b DROP CONSTRAINT b_a_id_fkey, DROP CONSTRAINT IF EXISTS bx, DROP CONSTRAINT by_fk;
+             ALTER TABLE auth.b DROP CONSTRAINT b_p_q_fkey, DROP CONSTRAINT b_a2_fkey;
+             CREATE TABLE c (id int, b_id int REFERENCES auth.b);
+             ALTER TABLE c DROP COLUMN b_id;"
+            .to_string()]);
+        let cols = |t: &Value| {
+            t["columns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{} {} {}",
+                        c["name"].as_str().unwrap(),
+                        c["note"].as_str().unwrap(),
+                        c["ref"].as_str().unwrap()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let b = &v["tables"][1];
+        assert_eq!(b["name"], "auth.b");
+        // every foreign key dropped by name but the quoted column's and w's: b_a2_fkey never existed
+        assert_eq!(
+            cols(b),
+            [
+                "id bigint ",
+                "a2 int ",
+                "x int ",
+                "y int ",
+                "z numeric(10, 2) ",
+                "p int ",
+                "q int ",
+                "my col int a",
+                "w int a"
+            ]
+        );
+        assert_eq!(b["refs"], json!(["a"]));
+        assert_eq!(v["tables"][2]["refs"], json!([]));
     }
 
     #[cfg(unix)]
