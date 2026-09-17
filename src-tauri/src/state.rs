@@ -36,6 +36,9 @@ pub type DiffKey = (String, u64, String, Vec<(String, String, String)>, u64);
 /// One PR's parsed diff and the marks anchored onto it.
 pub type DiffCache = (Vec<DiffFile>, Vec<Mark>);
 
+/// The row's status while a spell runs. end_spell restores the row only while it still says this.
+const CASTING: &str = "casting spell...";
+
 /// Seconds a wake waits after the previous tick, so a burst of finished reviews refetches once.
 const WAKE_GAP: f64 = 10.0;
 
@@ -532,6 +535,61 @@ impl State {
             info!("review {} with {}", pr.url, model);
             review::review(&pr, &model, ran, &ask)
         })
+    }
+
+    /// Cast a spell. The row says "casting spell..." while it runs and then goes back to what it said before,
+    /// because a spell is not a review: a reviewed PR stays reviewed, and auto still sees an unreviewed one.
+    /// begin() is not used because the status it replaces has to be read under its lock.
+    pub fn start_spell(&self, pr: &Pr, name: &str, text: &str) -> bool {
+        // the status it had, read under the same lock that claims the row
+        let before = {
+            let mut inner = self.lock();
+            if !inner.running.insert(pr.url.clone()) {
+                return false;
+            }
+            inner.since.insert(pr.url.clone(), now());
+            inner.reviews.insert(pr.url.clone(), CASTING.to_string())
+        };
+        let model = config::get().model;
+        let (me, pr, name, text) = (self.clone(), pr.clone(), name.to_string(), text.to_string());
+        std::thread::spawn(move || {
+            let url = pr.url.clone();
+            let failed =
+                match catch_unwind(AssertUnwindSafe(|| review::cast_spell(&pr, &model, &name, &text))) {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(format!("{e:#}")),
+                    Err(e) => Some(panic_text(&*e)),
+                };
+            info!("spell {name} on {url} -> {}", failed.as_deref().unwrap_or("cast"));
+            me.end_spell(&url, before, failed);
+        });
+        true
+    }
+
+    /// The row after a spell: what it said before, or the error when the cast failed. A failure shows over a
+    /// verdict too, until the next refresh, because a row is the one place a failed cast can be seen. A status
+    /// something else wrote while the spell ran is left alone.
+    fn end_spell(&self, url: &str, before: Option<String>, failed: Option<String>) {
+        {
+            let mut inner = self.lock();
+            let untouched = inner.reviews.get(url).is_some_and(|s| s == CASTING);
+            match (failed, before) {
+                _ if !untouched => {}
+                (Some(e), _) => {
+                    let status = format!("error: {e}").chars().take(88).collect();
+                    inner.reviews.insert(url.to_string(), status);
+                }
+                (None, Some(s)) => {
+                    inner.reviews.insert(url.to_string(), s);
+                }
+                (None, None) => {
+                    inner.reviews.remove(url);
+                }
+            }
+            inner.running.remove(url);
+            inner.since.remove(url);
+        }
+        self.waker().set();
     }
 
     /// Forget a held review's status, so the row goes back to what the board says it is.
@@ -1190,6 +1248,37 @@ mod tests {
         claim(&s);
         s.run_job("u", "job", || Err(anyhow::anyhow!("{}", "x".repeat(200))));
         assert_eq!(status(&s).chars().count(), 88);
+    }
+
+    /// A spell is not a review: the row goes back to what it said, so a reviewed PR stays reviewed and
+    /// auto, which skips any PR with a status, still reviews an unreviewed one.
+    #[test]
+    fn a_spell_leaves_the_row_as_it_found_it() {
+        let s = State::new();
+        s.lock().reviews.insert("done".into(), "✓ approved".into());
+        for (url, before, failed, after) in [
+            ("done", Some("✓ approved".to_string()), None, Some("✓ approved")),
+            ("new", None, None, None),
+            ("new", None, Some("no token".to_string()), Some("error: no token")),
+        ] {
+            assert!(s.begin(url, CASTING));
+            s.end_spell(url, before, failed);
+            let inner = s.lock();
+            assert_eq!(inner.reviews.get(url).map(String::as_str), after, "{url}");
+            assert!(!inner.running.contains(url));
+        }
+    }
+
+    /// A verdict that lands while a spell runs is the row's news: the spell's restore must not undo it.
+    #[test]
+    fn a_status_written_during_a_spell_survives_its_end() {
+        let s = State::new();
+        assert!(s.begin("u", CASTING));
+        s.lock().reviews.insert("u".into(), "✓ approved".into());
+        s.end_spell("u", None, Some("no token".into()));
+        let inner = s.lock();
+        assert_eq!(inner.reviews.get("u").map(String::as_str), Some("✓ approved"));
+        assert!(!inner.running.contains("u"), "and the row stops spinning");
     }
 
     /// The line the fix turns on: whatever the read does, its key must not stay in flight. Nothing

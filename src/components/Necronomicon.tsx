@@ -13,8 +13,8 @@ type Card = { name: string; about: string; on: boolean }
 export type Book = { spells: Card[]; passives: Card[]; voices: Card[] }
 
 const CHAPTERS = [
-  ['Spells', 'spells', 'spell'],
   ['Passives', 'hunter', 'passive'],
+  ['Spells', 'spells', 'spell'],
   ['Voices', 'voice', 'voice'],
 ] as const
 
@@ -53,7 +53,7 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
 
   if (!book) return <div className="necro"><div className="ncover-msg">opening the book…</div></div>
 
-  const lists = [book.spells, book.passives, book.voices]
+  const lists = [book.passives, book.spells, book.voices]
   const [title, key, kind] = CHAPTERS[ch]
   const list = lists[ch]
   const flip = async (name: string) => {
@@ -81,9 +81,9 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
                 </li>
               ))}
             </ol>
-            {ch === 0 ? (
+            {kind === 'spell' ? (
               <p className="nblank">
-                A spell is a one-time, in-depth look at one topic, cast on one PR. Each is a markdown file in ~/.prs_spells; add one there
+                A spell is a one-time, in-depth look at one topic, cast on any PR. Its result stays private until you post it. Each is a markdown file in ~/.prs_spells; add one there
                 and it shows here. Equipped spells can be cast from the sidebar and a PR's right-click menu.
               </p>
             ) : null}
@@ -105,7 +105,7 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
                   ))}
                 </ul>
               ) : (
-                <p className="nblank">{ch === 0 ? 'No spells yet. Put a markdown file in ~/.prs_spells.' : `No ${title.toLowerCase()}.`}</p>
+                <p className="nblank">{kind === 'spell' ? 'No spells yet. Put a markdown file in ~/.prs_spells.' : `No ${title.toLowerCase()}.`}</p>
               )}
             </section>
           </div>

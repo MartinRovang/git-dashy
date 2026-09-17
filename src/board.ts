@@ -360,9 +360,9 @@ export function isReviewed(p: Pr): boolean {
   return !p.waiting && !!tone(p.review)
 }
 
-/** A spell is a review, so it starts where a review with instructions could. */
+/** A spell looks at one topic and posts nothing, so it runs on any PR nothing else is running on. */
 export function canCastOn(p: Row): boolean {
-  return p.section === 'REVIEW REQUESTED' && !p.busy && !isReviewed(p)
+  return !p.busy
 }
 
 export function selected(rows: Row[], sel: string): Row | null {

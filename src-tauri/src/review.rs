@@ -1058,7 +1058,12 @@ fn effort_of(h: &held::Held) -> String {
 /// model that quotes them anyway. Checked line by line, so one quoted sentence of a longer message counts,
 /// and only lines long enough that matching them is not an accident ("auth" appears in any review of auth).
 pub fn quotes_instructions(v: &Verdict, ask: &str) -> bool {
-    let said = format!("{}\n{}", v.summary, v.body).to_lowercase();
+    quotes(&format!("{}\n{}", v.summary, v.body), ask)
+}
+
+/// `said` repeats a 24+ char line of `ask` word for word. See quotes_instructions.
+pub fn quotes(said: &str, ask: &str) -> bool {
+    let said = said.to_lowercase();
     ask.lines()
         .map(|l| l.trim().to_lowercase())
         .filter(|l| l.chars().count() >= 24)
@@ -1247,6 +1252,81 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
         format!(" · {} waiting", kept.len())
     };
     Ok((format!("{}{waiting}", self_status(&v)), dest))
+}
+
+/// Where a spell's result is kept: `<self_dir>/spells/<repo stem>__<n>__<spell>.md`. A spell name has no `_`, so
+/// the parts never run together.
+pub fn spell_path(repo: &str, n: u64, name: &str) -> PathBuf {
+    spells_dir().join(format!("{}{name}.md", spell_prefix(repo, n)))
+}
+
+fn spells_dir() -> PathBuf {
+    config::get().self_dir.join("spells")
+}
+
+fn spell_prefix(repo: &str, n: u64) -> String {
+    let slug = memory::slug(repo);
+    format!("{}__{n}__", slug.strip_suffix(".md").unwrap_or(&slug))
+}
+
+/// (spell, result, when it was cast) for every spell cast on this PR, sorted by spell. The time is there so a
+/// result from before a push reads as old.
+pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String, f64)> {
+    let prefix = spell_prefix(repo, n);
+    let mut out: Vec<(String, String, f64)> = std::fs::read_dir(spells_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let file = e.file_name().into_string().ok()?;
+            let name = file.strip_prefix(&prefix)?.strip_suffix(".md")?.to_string();
+            if !crate::spells::name_ok(&name) {
+                return None;
+            }
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            Some((name, text, mtime(&e.path())))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Cast a spell: one topic on one PR and nothing else. No voices, passives, memory or verdict, and nothing is
+/// posted: the answer is kept on this machine until you post it.
+///
+/// ponytail: no DB repo and no session. Add them when a spell needs the schema or a conversation.
+pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
+    let (repo, n) = (pr.repo(), pr.number);
+    let number = n.to_string();
+    let sc = scope(repo, n, model);
+    let mut prompt = fill(crate::spells::CAST, &[("repo", repo), ("number", &number)]);
+    if sc.claude {
+        let also = if sc.team.is_empty() {
+            String::new()
+        } else {
+            fill(ALSO, &[("team", &sc.team)])
+        };
+        prompt += &fill(
+            EXPLORE,
+            &[
+                ("cmd", &sc.cmd),
+                ("repo", repo),
+                ("number", &number),
+                ("also", &also),
+            ],
+        );
+    } else {
+        prompt += NO_TOOLS;
+        prompt += PR_FOLLOWS;
+        prompt += &github::context(repo, n)?;
+    }
+    let (answer, _, _) = llm::ask(&prompt, model, &system_for(text), &sc.tools, TIMEOUT, &sc.env)?;
+    let dest = spell_path(repo, n, name);
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&dest, answer.trim())?;
+    Ok(())
 }
 
 /// Post a review that was held, and forget it. The row's status string.
@@ -2215,5 +2295,35 @@ Hope that helps! {not json}"#;
         );
         assert!(h.starts_with("# Pre-review — a/b#7\n\n> **Not posted.**"));
         assert!(h.contains("**Verdict (advisory):** ~ commented — s"));
+    }
+
+    #[test]
+    fn spell_results_are_found_by_pr_and_never_by_a_longer_number() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.self_dir = d.path().to_path_buf());
+        for (n, name, text) in [
+            (1, "auth-check", "a"),
+            (1, "test-gaps", "t"),
+            (12, "auth-check", "other pr"),
+        ] {
+            let p = spell_path("acme/api", n, name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        assert_eq!(
+            spell_results("acme/api", 1)
+                .into_iter()
+                .map(|(n, t, at)| {
+                    assert!(at > 0.0, "it says when it was cast");
+                    (n, t)
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("auth-check".to_string(), "a".to_string()),
+                ("test-gaps".to_string(), "t".to_string())
+            ]
+        );
+        assert!(spell_results("acme/web", 1).is_empty());
     }
 }
