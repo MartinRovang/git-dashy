@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { PostingRule, Pr, Section, StateData, Talk } from './types'
+import type { PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -727,5 +727,16 @@ describe('the posting tree', () => {
     const [acme] = postingTree([rule('acme/*', ['post', ''], ['post', '']), rule('acme/api', ['hold', 'repo'], ['post', ''])])
     expect(acme.governs).toBe(false)
     expect(acme.exceptions).toEqual([])
+  })
+})
+
+describe('canCastOn', () => {
+  const row = (over: Partial<Row> = {}): Row => ({ ...pr(), uid: 'u', section: 'REVIEW REQUESTED', older: [], ...over })
+  it('casts only where a review with instructions could start', () => {
+    expect(canCastOn(row())).toBe(true)
+    expect(canCastOn(row({ busy: true }))).toBe(false)
+    expect(canCastOn(row({ section: 'MINE' }))).toBe(false)
+    expect(canCastOn(row({ review: '✓ approved' }))).toBe(false)
+    expect(canCastOn(row({ waiting: true, review: '✓ approved (waiting to post)' }))).toBe(true)
   })
 })

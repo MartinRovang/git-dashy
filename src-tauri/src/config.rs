@@ -618,7 +618,7 @@ mod tests {
         let json = r#"{
             "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
             "hinted":true,"keyhints":false,"seen":"2.1.0","depth":"high","effort":"max","notify":true,
-            "theme":"nord","voice":["caveman"],"hunter":["security"]
+            "theme":"nord","voice":["caveman"],"hunter":["security"],"spells":["auth-check"]
         }"#;
         let saved: Saved = serde_json::from_str(json).unwrap();
         let mut c = Config::default();
@@ -639,6 +639,7 @@ mod tests {
         assert_eq!(c.theme, "nord");
         assert_eq!(c.voice, vec!["caveman"]);
         assert_eq!(c.hunter, vec!["security"]);
+        assert_eq!(c.spells, vec!["auth-check"]);
     }
 
     #[test]

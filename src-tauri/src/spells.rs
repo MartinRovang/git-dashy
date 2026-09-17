@@ -7,7 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// Written once, when the folder does not exist yet. Deleting them is a choice that sticks.
+/// Written once, when the folder does not exist yet; deleted starters are not written again.
+/// ponytail: prose, not bullets. A review that repeats a 24+ char instruction line is held (quotes_instructions),
+/// and a model mirrors a bullet list word for word.
 pub const STARTERS: &[(&str, &str)] = &[
     (
         "auth-check",
@@ -16,9 +18,8 @@ pub const STARTERS: &[(&str, &str)] = &[
 Trace every request path this PR touches back to where the caller is authenticated and authorised.
 
 ## Look for
-- a path that reaches data or a side effect without a check
-- a check that runs after the work it guards
-- a role or tenant assumption the code does not enforce
+Paths that reach data or a side effect with no check, checks that run after the work they guard, and role or
+tenant assumptions the code does not enforce.
 
 ## Report
 One line per path: `file:line`, what it reaches, and which check is missing.
@@ -31,9 +32,8 @@ One line per path: `file:line`, what it reaches, and which check is missing.
 Read every schema or data migration this PR adds, and the code that reads the tables it touches.
 
 ## For each migration
-- can it run on a live database without locking a busy table
-- can it be rolled back, and how
-- which existing rows or older app versions break while it runs
+Whether it runs on a live database without locking a busy table, how it rolls back, and which existing rows or
+older app versions break while it runs.
 
 ## Report
 One line per migration: `file:line`, the risk, and the safer order of steps.

@@ -273,7 +273,7 @@ pub const SELF_HEADER: &str = "# Pre-review — {repo}#{n}
 pub const TRUSTED: &[&str] = &["OWNER", "MEMBER", "COLLABORATOR"];
 
 /// The value beside `key` in one of the constant tables, "" when absent.
-fn table(t: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
+pub(crate) fn table(t: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
     t.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 

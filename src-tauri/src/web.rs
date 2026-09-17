@@ -741,13 +741,7 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
 /// The book: the spells on disk, and the built-in passives and voices with a line on what each does.
 fn get_spells(_state: &State, _q: &Query) -> Out {
     let c = config::get();
-    let about = |n: &str| {
-        review::ABOUT
-            .iter()
-            .find(|(k, _)| *k == n)
-            .map(|(_, v)| *v)
-            .unwrap_or("")
-    };
+    let about = |n: &str| review::table(review::ABOUT, n).unwrap_or("");
     let built = |names: &[&str], on: &[String]| -> Vec<Value> {
         names
             .iter()
@@ -3681,6 +3675,8 @@ mod tests {
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
             json!({"read": {"u": 1}}),
+            json!({"spells": ["no-such-spell"]}),
+            json!({"spells": "auth-check"}),
             json!({"hidden": {"u": 1}}),
             json!({"read": {"x".repeat(513): "t"}}),
             json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),
