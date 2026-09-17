@@ -381,7 +381,8 @@ What is not knowledge yet waits in the draft pool, one folder per person:
 The folders are checked against each other on every refresh and after every review. Word overlap only
 finds candidates; every candidate pair, however alike the wording, is put to the model, which answers only
 *same claim* or *not*: two near-identical sentences can say opposite things. A match counts **distinct review ids**, so two reviews by one person count as much as one each by
-two people, and a single review can never confirm itself. On a match the fact moves into the team's file
+two people, and a single review can never confirm itself. At least one of them has to be a review or a
+teammate's: one session calling `gitdashy remember` twice stays a draft. On a match the fact moves into the team's file
 and out of the drafts: your machine takes out your line, and your teammate's takes out theirs the next time
 it sees the team already knows it.
 

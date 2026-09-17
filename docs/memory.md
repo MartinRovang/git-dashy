@@ -177,7 +177,8 @@ so the reviewer must arrive at the fact again *blind*.
 **As of 2.32, a repo bound to a team drafts into the team, not into you.** When the
 gates below hold, `append` writes a review's draft to
 `<team>/memory/drafts/<you>/<repo>.md` rather than to your private queue, and a draft
-that reaches `PROMOTE_AT` distinct review ids there, from your reviews or a teammate's,
+that reaches `PROMOTE_AT` distinct run ids there, at least one of them a review's (a session's
+runs are marked `s:` and never promote a draft on their own), or that a teammate's draft matches,
 is appended to the team's `memory/<repo>.md` (or `general.md`) with your evidence line
 in `pool/<you>/`. It is never also written to your own memory. A private draft
 (`gitdashy remember --private`, or a team that has not agreed) promotes into your memory

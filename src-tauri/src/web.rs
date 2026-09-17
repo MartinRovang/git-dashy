@@ -1249,8 +1249,10 @@ fn truthy(body: &Body, key: &str) -> bool {
 fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
     let repo = repo_of(body);
     if let Some(r) = repo.as_deref() {
+        // ponytail: case folded. PROJECT.md is the brief on a case-insensitive filesystem (macOS, Windows)
         let slug = memory::slug(r);
-        if r.contains('\\') || r.contains("..") || slug == memory::PROJECT || slug == memory::AGENTS {
+        let names = |f: &str| slug.eq_ignore_ascii_case(f);
+        if r.contains('\\') || r.contains("..") || names(memory::PROJECT) || names(memory::AGENTS) {
             return Err(Fail::new(400, "not a repo"));
         }
     }
@@ -1622,11 +1624,11 @@ fn post_teams(state: &State, body: &Body) -> Out {
             .collect();
         fresh.sort();
         let err = team_error();
-        let foreign = fresh
-            .first()
-            .and_then(|k| team::dir_of(k))
-            .map(|d| team::foreign_files(&d))
-            .unwrap_or_default();
+        let foreign: Vec<String> = fresh
+            .iter()
+            .filter_map(|k| team::dir_of(k))
+            .flat_map(|d| team::foreign_files(&d))
+            .collect();
         let warning = if !err.is_empty() {
             format!(
                 "joined, but could not publish: {}",
@@ -1635,7 +1637,7 @@ fn post_teams(state: &State, body: &Body) -> Out {
         } else if !foreign.is_empty() {
             // a team's repo is its memory's alone: no pull request on it is ever reviewed by a model
             format!(
-                "joined, but this repo also holds {}: gitdashy never reviews a pull request on a team's repo, so give the memory a repo of its own",
+                "joined, but this repo also holds {}. Pull requests on a team's repo are never reviewed by a model; keep memory in its own repo.",
                 foreign.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
             )
         } else {
@@ -2800,10 +2802,19 @@ mod tests {
         assert!(!teams.join("strangers").exists());
 
         // a fact scope that is a founding document's file, or a path trick, is not a repo
-        for repo in ["project", "agents", "..\\x", "a/../b"] {
+        for repo in ["project", "agents", "PROJECT", "Agents", "..\\x", "a/../b"] {
             let (code, _) = post(
                 &format!("{base}/api/memory"),
                 json!({"op": "remove", "repo": repo, "fact": "x"}),
+                &token,
+            );
+            assert_eq!(code, 400, "{repo}");
+        }
+        // the pooled drop takes the same repo, and refuses the same tricks
+        for repo in ["PROJECT", "..\\x"] {
+            let (code, _) = post(
+                &format!("{base}/api/drafts"),
+                json!({"op": "drop", "pooled": true, "team": "crew", "repo": repo, "fact": "x"}),
                 &token,
             );
             assert_eq!(code, 400, "{repo}");
@@ -2917,6 +2928,7 @@ mod tests {
             json!({"url": "u"}),
             json!({"url": "u", "self": true}),
             json!({"url": "u", "ask": "look closer"}),
+            json!({"url": "u", "spell": "auth-check"}),
         ] {
             let (code, j) = post(&format!("{base}/api/review"), body.clone(), &token);
             assert_eq!(
@@ -2926,6 +2938,8 @@ mod tests {
             );
         }
         assert!(!state.busy("u"), "nothing was started");
+        assert!(review::cast_spell(&pr(), "opus", "auth-check", "look")
+            .is_err_and(|e| e.to_string() == team::HUMAN_ONLY));
         // and where a model run starts, whoever calls it
         let status = review::review(&pr(), "opus", autorev::Ran::Auto, "").unwrap();
         assert_eq!(status, format!("error: {}", team::HUMAN_ONLY));

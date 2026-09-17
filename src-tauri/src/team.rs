@@ -609,17 +609,10 @@ fn forge_of(url: &str, api_root: &str) -> Option<String> {
 /// ponytail: a team's repo is DEDICATED to its memory. Model review is refused for every pull request on a
 /// team's repo, keyed on the repo, so a team kept inside a code repo would lose review of all its code. This
 /// does not refuse the join; it says so, while there is still time to give the memory a repo of its own.
+/// ponytail: dot entries (.github, .gitignore) and top-level markdown (README, CLAUDE.md) are what any repo
+/// carries, not code; naming each one here was a list that would drift from what team repos hold.
 pub fn foreign_files(d: &Path) -> Vec<String> {
-    const TEAM: [&str; 8] = [
-        ".git",
-        ".gitattributes",
-        ".gitignore",
-        "team.json",
-        "memory",
-        "reviewed.jsonl",
-        "README.md",
-        "LICENSE",
-    ];
+    const TEAM: [&str; 4] = ["team.json", "memory", "reviewed.jsonl", "LICENSE"];
     let mut names: Vec<String> = std::fs::read_dir(d)
         .map(|rd| {
             rd.flatten()
@@ -627,7 +620,7 @@ pub fn foreign_files(d: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    names.retain(|n| !TEAM.contains(&n.as_str()));
+    names.retain(|n| !TEAM.contains(&n.as_str()) && !n.starts_with('.') && !n.ends_with(".md"));
     names.sort();
     names
 }
@@ -743,6 +736,11 @@ pub fn propose(
 }
 
 /// propose() for a team with no remote: the change written into the checkout and committed.
+///
+/// ponytail: "no remote" is has_remote's answer, which looks for `origin` only. Every team the app starts,
+/// joins or connects has its remote under that name, so that is the whole question for them; a checkout set up
+/// by hand with a remote under another name would take this path, and its next push publishes the change
+/// unapproved.
 ///
 /// ponytail: nobody to approve it. A team with no remote is this machine's alone (a path, a directory not yet
 /// connected), so a proposal would wait for a pull request that has nowhere to open, and the brief could not
@@ -2587,6 +2585,17 @@ mod tests {
             "x\n"
         );
         assert_eq!(git(&lone, &["status", "--porcelain"]).stdout, "", "committed");
+        // a commit that fails says so: the change is on disk, and not in the history yet
+        let hook = lone.join(".git/hooks/pre-commit");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let p = propose(&lone, "memory/project.md", &|_| Ok("y\n".into()), "brief: y").unwrap();
+        assert!(p.note.starts_with("written, but not committed"), "{p:?}");
     }
 
     #[test]
@@ -2611,7 +2620,8 @@ mod tests {
         for d in ["memory", ".git", "src"] {
             std::fs::create_dir_all(t.path().join(d)).unwrap();
         }
-        for f in ["team.json", "README.md", "Cargo.toml"] {
+        std::fs::create_dir_all(t.path().join(".github")).unwrap();
+        for f in ["team.json", "README.md", "CLAUDE.md", "Cargo.toml"] {
             std::fs::write(t.path().join(f), "").unwrap();
         }
         assert_eq!(foreign_files(t.path()), ["Cargo.toml", "src"]);
