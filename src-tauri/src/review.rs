@@ -1300,6 +1300,10 @@ pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String, f64)> {
 /// ponytail: no DB repo and no session. Add them when a spell needs the schema or a conversation.
 pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
     let (repo, n) = (pr.repo(), pr.number);
+    // a spell is a model run: refused on a team's repo here, where the run starts, as review() refuses it
+    if team::in_repos(&team::team_repos(), repo) {
+        return Err(anyhow!(team::HUMAN_ONLY));
+    }
     let number = n.to_string();
     let sc = scope(repo, n, model);
     let mut prompt = fill(crate::spells::CAST, &[("repo", repo), ("number", &number)]);

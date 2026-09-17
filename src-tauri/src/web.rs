@@ -1277,8 +1277,10 @@ fn truthy(body: &Body, key: &str) -> bool {
 fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
     let repo = repo_of(body);
     if let Some(r) = repo.as_deref() {
+        // ponytail: case folded. PROJECT.md is the brief on a case-insensitive filesystem (macOS, Windows)
         let slug = memory::slug(r);
-        if r.contains('\\') || r.contains("..") || slug == memory::PROJECT || slug == memory::AGENTS {
+        let names = |f: &str| slug.eq_ignore_ascii_case(f);
+        if r.contains('\\') || r.contains("..") || names(memory::PROJECT) || names(memory::AGENTS) {
             return Err(Fail::new(400, "not a repo"));
         }
     }
@@ -1660,11 +1662,11 @@ fn post_teams(state: &State, body: &Body) -> Out {
             .collect();
         fresh.sort();
         let err = team_error();
-        let foreign = fresh
-            .first()
-            .and_then(|k| team::dir_of(k))
-            .map(|d| team::foreign_files(&d))
-            .unwrap_or_default();
+        let foreign: Vec<String> = fresh
+            .iter()
+            .filter_map(|k| team::dir_of(k))
+            .flat_map(|d| team::foreign_files(&d))
+            .collect();
         let warning = if !err.is_empty() {
             format!(
                 "joined, but could not publish: {}",
@@ -1673,7 +1675,7 @@ fn post_teams(state: &State, body: &Body) -> Out {
         } else if !foreign.is_empty() {
             // a team's repo is its memory's alone: no pull request on it is ever reviewed by a model
             format!(
-                "joined, but this repo also holds {}: gitdashy never reviews a pull request on a team's repo, so give the memory a repo of its own",
+                "joined, but this repo also holds {}. Pull requests on a team's repo are never reviewed by a model; keep memory in its own repo.",
                 foreign.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
             )
         } else {
@@ -2915,7 +2917,7 @@ mod tests {
         );
 
         // and a fact scope that is a founding document's file, or a path trick, is not a repo
-        for repo in ["project", "agents", "..\\x", "a/../b"] {
+        for repo in ["project", "agents", "PROJECT", "Agents", "..\\x", "a/../b"] {
             let (code, _) = post(
                 &format!("{base}/api/memory"),
                 json!({"op": "remove", "repo": repo, "fact": "x"}),
@@ -2923,6 +2925,54 @@ mod tests {
             );
             assert_eq!(code, 400, "{repo}");
         }
+    }
+
+    #[test]
+    fn joining_a_team_repo_that_also_holds_code_says_so() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let remote = d.path().join("shared.git");
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main", &remote.to_string_lossy()])
+            .status()
+            .unwrap()
+            .success());
+        // one machine starts the team inside a repo that carries code, and publishes it
+        config::update(|c| {
+            c.demo = false;
+            c.teams = d.path().join("a/teams");
+            c.memory_dir = d.path().join("a/mem");
+            c.bindings = d.path().join("a/bindings");
+        });
+        std::fs::create_dir_all(d.path().join("a/mem")).unwrap();
+        assert_eq!(team::start("Shared", "d", ""), "");
+        let t = team::dir_of("shared").unwrap();
+        std::fs::create_dir_all(t.join("src")).unwrap();
+        std::fs::write(t.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(t.join("CLAUDE.md"), "not code\n").unwrap();
+        assert_eq!(team::connect("shared", &remote.to_string_lossy()), "");
+        // another machine joins it through the route
+        let bindings = config::get().bindings;
+        config::update(|c| {
+            c.teams = d.path().join("b/teams");
+            c.memory_dir = d.path().join("b/mem");
+            c.bindings = d.path().join("b/bindings");
+        });
+        std::fs::create_dir_all(d.path().join("b/mem")).unwrap();
+        let (base, token, _state) = served();
+        let (code, j) = post(
+            &format!("{base}/api/teams"),
+            json!({"op": "join", "repo": remote.to_string_lossy()}),
+            &token,
+        );
+        config::update(|c| c.bindings = bindings);
+        assert_eq!(code, 200, "{j}");
+        let warning = j["warning"].as_str().unwrap();
+        assert!(
+            warning.contains("src") && !warning.contains("CLAUDE.md"),
+            "{warning}"
+        );
+        assert!(warning.contains("never reviewed by a model"), "{warning}");
     }
 
     #[test]
@@ -2950,6 +3000,7 @@ mod tests {
             json!({"url": "u"}),
             json!({"url": "u", "self": true}),
             json!({"url": "u", "ask": "look closer"}),
+            json!({"url": "u", "spell": "auth-check"}),
         ] {
             let (code, j) = post(&format!("{base}/api/review"), body.clone(), &token);
             assert_eq!(
@@ -2959,6 +3010,8 @@ mod tests {
             );
         }
         assert!(!state.busy("u"), "nothing was started");
+        assert!(review::cast_spell(&pr(), "opus", "auth-check", "look")
+            .is_err_and(|e| e.to_string() == team::HUMAN_ONLY));
         // and where a model run starts, whoever calls it
         let status = review::review(&pr(), "opus", autorev::Ran::Auto, "").unwrap();
         assert_eq!(status, format!("error: {}", team::HUMAN_ONLY));
