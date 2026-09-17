@@ -362,13 +362,13 @@
   .ncard { position: relative; width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
           padding: 14px 12px; font: inherit; text-align: center; color: var(--ink2); cursor: pointer;
           border: 1px solid var(--rule); border-radius: 6px;
-          /* a leather card over the page, see-through enough that the sigil still shows behind it */
-          background: linear-gradient(160deg, color-mix(in srgb, var(--leather) 55%, transparent), color-mix(in srgb, var(--bg2) 70%, transparent));
+          /* black, see-through enough that the sigil still shows behind it */
+          background: rgba(0,0,0,.6);
           box-shadow: 0 2px 8px rgba(0,0,0,.35); }
   .ncard:hover { border-color: var(--gold); }
   .ncast { margin-top: 6px; align-self: center; }
   .nbuilt li.on .ncard { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold), 0 2px 8px rgba(0,0,0,.35);
-                         background: linear-gradient(160deg, color-mix(in srgb, var(--gold) 22%, transparent), color-mix(in srgb, var(--bg2) 70%, transparent)); }
+                         background: linear-gradient(160deg, color-mix(in srgb, var(--gold) 18%, rgba(0,0,0,.6)), rgba(0,0,0,.6)); }
   .ncard b { font-size: 19px; font-variant: small-caps; letter-spacing: .06em; color: var(--blood); }
   .ncard p { margin: 0; font-size: 14px; color: var(--ink); }
   /* the tick: top right of a card */
