@@ -717,8 +717,16 @@
   .acts .ai { display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px;
               border: 0; border-radius: 7px; background: none; font: inherit; text-align: left; cursor: pointer; }
   .acts .ai:hover:not(:disabled) { background: var(--bg4); }
-  .acts .ai kbd:empty { visibility: hidden; }
-  .acts .ai.sub b { padding-left: 14px; font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
+  .acts .flyrow { position: relative; }
+  .acts.fly { position: absolute; top: -5px; min-width: 180px; animation: none; }
+  .acts.fly.right { left: calc(100% + 5px); }
+  .acts.fly.left { right: calc(100% + 5px); }
+  .acts.fly .ai { gap: 8px; }
+  /* a bridge over the gap, so moving the pointer across to the flyout does not leave the row */
+  .acts.fly::before { content: ''; position: absolute; top: 0; bottom: 0; width: 12px; }
+  .acts.fly.right::before { right: 100%; }
+  .acts.fly.left::before { left: 100%; }
+  .acts.fly .nglyph { color: var(--amber); }
   .acts .ai b { font-size: 12.5px; font-weight: 500; color: var(--ink2); white-space: nowrap; }
   .acts .ai em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--dim3);
                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
