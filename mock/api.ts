@@ -91,21 +91,11 @@ const S = {
   reviewAt: {} as Record<string, string>,
   binding: {} as Record<string, string>,
   drafts: [] as { repo: string | null; n: number; kind: string; fact: string }[],
-  necro: {
-    // due 15s after the mock starts, so the reminder turning can be watched
-    learnedAt: Date.now() / 1000 - 86400 + 15,
-    nextAt: Date.now() / 1000 + 15,
-    points: [
-      { scope: '', text: 'Keep PRs small and rebase on main instead of merging it.', hits: 4, down: 0, score: 2.1, tier: 'open' },
-      { scope: '', text: 'Run make lint before flagging style.', hits: 1, down: 0, score: 1.2, tier: 'open' },
-      { scope: 'acme/api', text: 'The codebase is indented with tabs.', hits: 2, down: 0, score: 1.5, tier: 'open' },
-      { scope: 'acme/web', text: 'Session middleware is shared with the admin app: a change there touches both.', hits: 0, down: 0, score: 0.8, tier: 'open' },
-      { scope: 'acme/api', text: 'Old CI runs on Jenkins and can be ignored.', hits: 0, down: 1, score: 0.2, tier: 'faded' },
-      { scope: '', text: 'Prefer squash merges for release branches.', hits: 0, down: 2, score: 0.05, tier: 'depths' },
-      { scope: 'acme/billing', text: 'Invoices are immutable once sent: corrections are new credit notes.', hits: 3, down: 0, score: 1.4, tier: 'open' },
-      { scope: 'acme/infra', text: 'Terraform state lives in the shared bucket; never run apply locally.', hits: 1, down: 0, score: 0.9, tier: 'open' },
-    ] as { scope: string; text: string; hits: number; down: number; score: number; tier: string }[],
-  },
+  spells: [
+    { name: 'auth-check', text: 'Trace every request path this PR adds back to where the caller is authenticated and authorised.' },
+    { name: 'migration-audit', text: 'Read every migration this PR adds; say whether it locks a busy table and whether it rolls back.' },
+    { name: 'test-gaps', text: 'List the behaviours this PR changes and the test that would fail if each broke.' },
+  ] as { name: string; text: string }[],
   teams: [{ key: 'acme', name: 'Acme Guild', description: 'everything under acme/*', checkout: '~/.prs_teams/acme', remote: 'github.com/acme/guild' }],
   settings: {
     theme: 'pencil',
@@ -118,6 +108,7 @@ const S = {
     effort: '',
     voice: ['review'],
     hunter: [],
+    spells: ['migration-audit'],
     interval: 300,
     window: null as number | null,
     drafts: true,
@@ -127,8 +118,6 @@ const S = {
   fetchedAt: secs(),
   notices: [] as string[],
   reportAt: 0,
-  /** when Learn was pressed; the mock's learn takes 5s so the button's spinner can be seen */
-  learnAt: 0,
   reportLatest: null as string | null,
   // shown once per dev server start, as after an update; closing it clears it like /api/changelog does
   changelog: "v2.21.0\n\n## What's Changed\n* feat: release notes after an update\n* fix: the refresh button shows a spinner",
@@ -143,6 +132,8 @@ const S = {
   /** Owners switched to each repo on its own; their rule stays as the fallback. */
   perRepo: {} as Record<string, boolean>,
   held: {} as Record<string, MockTalk & { verdict: string; summary: string; body: string; at: number; moved?: boolean }>,
+  casting: {} as Record<string, boolean>,
+  spellResults: {} as Record<string, Record<string, string>>,
   /** Pre-reviews by PR url: their text, and the conversation beside it. */
   pres: {} as Record<string, MockTalk & { verdict: string; text: string }>,
   refreshes: 0,
@@ -329,7 +320,7 @@ function buildPayload() {
           prev: r.prev,
           checks: r.checks,
           reviewers: r.reviewers,
-          review: S.reviewText[r.url] || '',
+          review: S.casting[r.url] ? 'casting spell...' : S.reviewText[r.url] || '',
           busy: r.busy,
           since: r.since,
           team: teamOf(r.repo),
@@ -357,7 +348,6 @@ function buildPayload() {
     settings: { ...S.settings },
     options: { model: MODELS, depth: DEPTHS, effort: EFFORTS, voice: VOICES, hunter: HUNTERS, subs: SUBS, window: WINDOWS, interval: INTERVALS, theme: THEMES, scopes: SCOPES },
     knowledge: {
-      learn: { next: learnJob().next, running: learnJob().running },
       // the Friday report takes 4s here, so the row's writing state is visible in dev
       report: {
         job: S.reportAt && secs() - S.reportAt < 4 ? { running: true, elapsed: Math.round(secs() - S.reportAt) } : { running: false },
@@ -377,16 +367,6 @@ function buildPayload() {
     postingRules: postingRules(),
     changelog: S.changelog,
   }
-}
-
-/** The mock's learn: running for 5s after the press, then it lands and the reminder resets. */
-function learnJob() {
-  const elapsed = S.learnAt ? secs() - S.learnAt : 0
-  if (S.learnAt && elapsed >= 5 && S.necro.learnedAt < S.learnAt) {
-    S.necro.learnedAt = S.learnAt + 5
-    S.necro.nextAt = S.necro.learnedAt + 86400
-  }
-  return { running: !!S.learnAt && elapsed < 5, elapsed: Math.round(elapsed), next: S.necro.nextAt }
 }
 
 function detail(url: string) {
@@ -409,6 +389,7 @@ function detail(url: string) {
     ],
     brief: { whose: teamOf(r.repo), empty: false },
     pre: r.pre,
+    spells: Object.entries(S.spellResults[url] || {}).map(([name, text]) => ({ name, text, at: secs(), quotes: false })),
     review: info
       ? {
           verdict: S.reviewText[url],
@@ -478,8 +459,23 @@ const repoOf = (b: Body) => {
 function postReview(b: Body) {
   const url = str(b, 'url')
   if (str(b, 'ask').length > 8000) return json(400, { error: 'instructions are too long' })
+  const spell = str(b, 'spell')
+  if (spell && !S.spells.some((s) => s.name === spell)) return json(400, { error: `no spell ${spell}` })
   const r = S.rows.find((x) => x.url === url)
   if (!r) return json(404, { error: 'no such pr' })
+  if (spell) {
+    if (r.busy) return json(409, { error: 'already running' })
+    r.busy = true
+    r.since = secs()
+    S.casting[url] = true
+    setTimeout(() => {
+      r.busy = false
+      r.since = undefined
+      delete S.casting[url]
+      S.spellResults[url] = { ...S.spellResults[url], [spell]: `- \`api/auth.py:40\` mock finding for ${spell}` }
+    }, 1800)
+    return json(200, { ok: true })
+  }
   if (bool(b, 'self')) {
     r.pre = { at: secs(), moved: false }
     S.pres[r.url] = { model: 'opus', verdict: 'comment', text: `# Pre-review — ${r.repo}#${r.number}\n\n> **Not posted.** This is the mock reviewer.\n\n**Verdict (advisory):** comment — mock\n`, thread: [], proposed: null }
@@ -574,7 +570,7 @@ function postingRules() {
 
 function postSettings(b: Body) {
   const s = S.settings
-  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
+  for (const k of ['theme', 'notify', 'subs', 'model', 'depth', 'effort', 'voice', 'hunter', 'spells', 'interval', 'window', 'drafts', 'scopes', 'read', 'hinted', 'keyhints']) {
     if (k in b) s[k] = b[k]
   }
   if ('window' in b) {
@@ -637,9 +633,25 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts, backers })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
-    if (path === '/api/necronomicon') {
-      const j = learnJob()
-      return json(200, { ...S.necro, promoteAt: PROMOTE_AT, learning: S.drafts, job: { running: j.running, elapsed: j.elapsed } })
+    if (path === '/api/spells') {
+      const on = (list: unknown, n: string) => ((list as string[]) || []).includes(n)
+      const about: Record<string, string> = {
+        review: 'The plain review: a summary, the findings and a verdict.',
+        caveman: 'Adds the verdict again in caveman speech.',
+        bot: 'Adds the findings as a terse machine log.',
+        ponytail: 'Hunts over-engineering.',
+        security: 'Hunts security.',
+        tests: 'Hunts test coverage.',
+        perf: 'Hunts runtime cost.',
+        humanizer: 'Hunts AI-sounding prose.',
+      }
+      const built = (names: string[], setting: string) =>
+        names.map((n) => ({ name: n, about: about[n] || '', on: on(S.settings[setting], n) }))
+      return json(200, {
+        spells: S.spells.map((s) => ({ name: s.name, about: s.text, on: on(S.settings.spells, s.name) })),
+        passives: built(HUNTERS, 'hunter'),
+        voices: built(VOICES, 'voice'),
+      })
     }
     if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.kind === 'team' ? 'acme' : d.repo ? teamOf(d.repo) : '' })) })
     if (path === '/api/overlaps') {
@@ -736,6 +748,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
 
   if (method === 'POST') {
     if (path === '/api/review') return postReview(body)
+    if (path === '/api/spell') return S.spellResults[str(body, 'url')]?.[str(body, 'name')] ? json(200, { ok: true }) : json(404, { error: 'no such result' })
     if (path === '/api/stories') {
       S.follow = ((body as { follow?: { login: string }[] }).follow || []).map((f) => ({ login: f.login }))
       return json(200, { follow: S.follow })
@@ -777,18 +790,6 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       lines.splice(at, 1)
       memoryText[repo] = lines.join('\n')
       return json(200, { ok: true, error: '' })
-    }
-    if (path === '/api/necronomicon') {
-      // ponytail: the mock moves a point one tier per press; the real ranking is necro.rs's
-      const op = str(body, 'op')
-      if (op === 'learn' && !learnJob().running) S.learnAt = secs()
-      const p = S.necro.points.find((x) => x.scope === str(body, 'scope') && x.text === str(body, 'text'))
-      const tiers = ['open', 'faded', 'depths']
-      if (p && (op === 'up' || op === 'down')) {
-        p.down = Math.max(0, p.down + (op === 'down' ? 1 : -1))
-        p.tier = tiers[Math.max(0, Math.min(2, tiers.indexOf(p.tier) + (op === 'down' ? 1 : -1)))]
-      }
-      return json(200, { ok: true })
     }
     if (path === '/api/drafts') {
       const repo = repoOf(body)

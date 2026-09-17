@@ -36,24 +36,3 @@ export function Select({
     </select>
   )
 }
-
-/** A multi-select as pills. onToggle gets the value whose membership flipped. */
-export function Chips({
-  values,
-  options,
-  onToggle,
-}: {
-  values: string[]
-  options: string[]
-  onToggle: (v: string) => void
-}) {
-  return (
-    <div className="chips">
-      {options.map((o) => (
-        <i key={o} className={values.includes(o) ? 'on' : ''} onClick={() => onToggle(o)}>
-          {o}
-        </i>
-      ))}
-    </div>
-  )
-}

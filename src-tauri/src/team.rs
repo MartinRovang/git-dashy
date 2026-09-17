@@ -593,35 +593,63 @@ fn url(path: &Path) -> String {
 /// owner/name of the checkout's origin when that origin is on the GitHub this app talks to; None anywhere
 /// else (another host, a path, no origin). A pull request can only be opened where this is Some.
 pub fn forge_repo(d: &Path) -> Option<String> {
-    let url = origin_url(d);
-    let (host, api) = (host_of(&url), host_of(&github::api_root()));
-    let slug = slug_of(&url);
+    forge_of(&origin_url(d), &github::api_root())
+}
+
+/// forge_repo's rule: owner/name of `url` when it is on the host `api_root` is the API of (api.github.com for
+/// github.com, or a GitHub Enterprise host serving /api/v3 itself).
+fn forge_of(url: &str, api_root: &str) -> Option<String> {
+    let (host, api) = (host_of(url), host_of(api_root));
+    let slug = slug_of(url);
     (!host.is_empty() && (host == api || format!("api.{host}") == api) && slug.contains('/')).then_some(slug)
 }
 
-/// Whether `repo` ("owner/name") is the repo a joined team keeps its memory in.
+/// Names at the top of a team checkout that are not a team's: a sign the repo also carries code.
+///
+/// ponytail: a team's repo is DEDICATED to its memory. Model review is refused for every pull request on a
+/// team's repo, keyed on the repo, so a team kept inside a code repo would lose review of all its code. This
+/// does not refuse the join; it says so, while there is still time to give the memory a repo of its own.
+pub fn foreign_files(d: &Path) -> Vec<String> {
+    const TEAM: [&str; 8] = [
+        ".git",
+        ".gitattributes",
+        ".gitignore",
+        "team.json",
+        "memory",
+        "reviewed.jsonl",
+        "README.md",
+        "LICENSE",
+    ];
+    let mut names: Vec<String> = std::fs::read_dir(d)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.retain(|n| !TEAM.contains(&n.as_str()));
+    names.sort();
+    names
+}
+
+/// owner/name of every joined team's repo on GitHub: the repos a model never reviews (see in_repos).
 ///
 /// ponytail: by the repo, not by a branch name or a label. What lands in a team's repo is what every
 /// teammate's reviews read, so a change there is approved by a person with rights on it, never by a
 /// model: not auto, not `r`. Keying on the repo covers a pull request opened outside the app too, and a
 /// renamed branch cannot opt one back in.
-pub fn is_team_repo(repo: &str) -> bool {
-    in_repos(&team_repos(), repo)
-}
-
-/// owner/name of every joined team's repo on GitHub, to ask is_team_repo of many rows with one read.
 pub fn team_repos() -> Vec<String> {
     dirs().iter().filter_map(|d| forge_repo(d)).collect()
 }
 
-/// is_team_repo against a list team_repos() already read.
+/// Whether `repo` ("owner/name") is one of `repos`, as team_repos() read them.
 pub fn in_repos(repos: &[String], repo: &str) -> bool {
     !repo.is_empty() && repos.iter().any(|r| r.eq_ignore_ascii_case(repo))
 }
 
 /// Why a review of a PR on a team's repo is refused, for every place that would start one.
 pub const HUMAN_ONLY: &str =
-    "human review only: this is a team's memory repo, approved by a person with rights on it";
+    "human review only: this is a team's memory repo, and a change to it needs a person's approval";
 
 /// A change to one file of a team's repo, offered for approval instead of pushed.
 #[derive(Debug, Default, PartialEq)]
@@ -658,8 +686,11 @@ pub fn propose(
     edit: &dyn Fn(&str) -> Result<String, String>,
     title: &str,
 ) -> Result<Proposal, String> {
-    if !is_repo(d) || !has_remote(d) {
-        return Err("the team has no remote to propose a change to".into());
+    if !is_repo(d) {
+        return Err("the team's checkout is not a git repo".into());
+    }
+    if !has_remote(d) {
+        return write_here(d, rel, edit, title);
     }
     let tmp = std::env::temp_dir().join(format!(
         "gitdashy-propose-{}-{}",
@@ -709,6 +740,42 @@ pub fn propose(
             ..Default::default()
         }),
     }
+}
+
+/// propose() for a team with no remote: the change written into the checkout and committed.
+///
+/// ponytail: nobody to approve it. A team with no remote is this machine's alone (a path, a directory not yet
+/// connected), so a proposal would wait for a pull request that has nowhere to open, and the brief could not
+/// be changed at all. Once the team has a remote, every change is a proposal again.
+fn write_here(
+    d: &Path,
+    rel: &str,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+    title: &str,
+) -> Result<Proposal, String> {
+    let file = d.join(rel);
+    let now = std::fs::read_to_string(&file).unwrap_or_default();
+    let text = edit(&now)?;
+    if text == now {
+        return Err("nothing to propose: the team's repo already reads that way".into());
+    }
+    if text.is_empty() {
+        let _ = std::fs::remove_file(&file);
+    } else {
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&file, &text).map_err(|e| e.to_string())?;
+    }
+    let err = push_dir(d, title, "sync");
+    Ok(Proposal {
+        note: if err.is_empty() {
+            "written: this team has no remote, so there is nobody to approve it".into()
+        } else {
+            format!("written, but not committed: {err}")
+        },
+        ..Default::default()
+    })
 }
 
 /// The branch on origin the checkout follows: its upstream, else origin's branch of the same name.
@@ -2496,7 +2563,45 @@ mod tests {
         let lone = t.path().join("lone");
         std::fs::create_dir_all(&lone).unwrap();
         assert!(init_history(&lone));
-        assert!(propose(&lone, "memory/project.md", &|_| Ok("x".into()), "x").is_err());
+        // a team with no remote is this machine's: the change is written and committed, nothing to approve
+        let p = propose(&lone, "memory/project.md", &|_| Ok("x\n".into()), "brief: x").unwrap();
+        assert!(
+            p.url.is_empty() && p.branch.is_empty() && p.note.starts_with("written"),
+            "{p:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(lone.join("memory/project.md")).unwrap(),
+            "x\n"
+        );
+        assert_eq!(git(&lone, &["status", "--porcelain"]).stdout, "", "committed");
+    }
+
+    #[test]
+    fn a_github_enterprise_origin_is_a_forge_repo_on_its_own_host() {
+        assert_eq!(
+            forge_of("git@ghe.corp:acme/memory.git", "https://ghe.corp/api/v3"),
+            Some("acme/memory".into())
+        );
+        assert_eq!(
+            forge_of("https://github.com/acme/memory.git", "https://ghe.corp/api/v3"),
+            None
+        );
+        assert_eq!(
+            forge_of("git@github.com:acme/memory.git", "https://api.github.com"),
+            Some("acme/memory".into())
+        );
+    }
+
+    #[test]
+    fn a_team_checkout_that_also_carries_code_is_named() {
+        let t = tempfile::tempdir().unwrap();
+        for d in ["memory", ".git", "src"] {
+            std::fs::create_dir_all(t.path().join(d)).unwrap();
+        }
+        for f in ["team.json", "README.md", "Cargo.toml"] {
+            std::fs::write(t.path().join(f), "").unwrap();
+        }
+        assert_eq!(foreign_files(t.path()), ["Cargo.toml", "src"]);
     }
 
     #[test]
