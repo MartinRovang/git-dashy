@@ -1249,6 +1249,79 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     Ok((format!("{}{waiting}", self_status(&v)), dest))
 }
 
+/// Where a spell's result is kept: `<self_dir>/spells/<repo stem>__<n>__<spell>.md`. A spell name has no `_`, so
+/// the parts never run together.
+pub fn spell_path(repo: &str, n: u64, name: &str) -> PathBuf {
+    let slug = memory::slug(repo);
+    let stem = slug.strip_suffix(".md").unwrap_or(&slug);
+    config::get()
+        .self_dir
+        .join("spells")
+        .join(format!("{stem}__{n}__{name}.md"))
+}
+
+/// (spell, result) for every spell cast on this PR, sorted by spell.
+pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String)> {
+    let dir = spell_path(repo, n, "x");
+    let prefix = dir
+        .file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|f| f.strip_suffix("x.md"))
+        .unwrap_or_default()
+        .to_string();
+    let mut out: Vec<(String, String)> = std::fs::read_dir(dir.parent().unwrap_or(Path::new("")))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let file = e.file_name().into_string().ok()?;
+            let name = file.strip_prefix(&prefix)?.strip_suffix(".md")?.to_string();
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            crate::spells::name_ok(&name).then_some((name, text))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Cast a spell: one topic on one PR and nothing else. No voices, passives, memory or verdict, and nothing is
+/// posted: the answer is kept on this machine until you post it.
+///
+/// ponytail: no DB repo and no session. Add them when a spell needs the schema or a conversation.
+pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
+    let (repo, n) = (pr.repo(), pr.number);
+    let number = n.to_string();
+    let sc = scope(repo, n, model);
+    let mut prompt = fill(crate::spells::CAST, &[("repo", repo), ("number", &number)]);
+    if sc.claude {
+        let also = if sc.team.is_empty() {
+            String::new()
+        } else {
+            fill(ALSO, &[("team", &sc.team)])
+        };
+        prompt += &fill(
+            EXPLORE,
+            &[
+                ("cmd", &sc.cmd),
+                ("repo", repo),
+                ("number", &number),
+                ("also", &also),
+            ],
+        );
+    } else {
+        prompt += NO_TOOLS;
+        prompt += PR_FOLLOWS;
+        prompt += &github::context(repo, n)?;
+    }
+    let (answer, _, _) = llm::ask(&prompt, model, &system_for(text), &sc.tools, TIMEOUT, &sc.env)?;
+    let dest = spell_path(repo, n, name);
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&dest, answer.trim())?;
+    Ok(())
+}
+
 /// Post a review that was held, and forget it. The row's status string.
 ///
 /// ponytail: the model is never asked again. The verdict was computed once and parked whole, so
@@ -2215,5 +2288,29 @@ Hope that helps! {not json}"#;
         );
         assert!(h.starts_with("# Pre-review — a/b#7\n\n> **Not posted.**"));
         assert!(h.contains("**Verdict (advisory):** ~ commented — s"));
+    }
+
+    #[test]
+    fn spell_results_are_found_by_pr_and_never_by_a_longer_number() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.self_dir = d.path().to_path_buf());
+        for (n, name, text) in [
+            (1, "auth-check", "a"),
+            (1, "test-gaps", "t"),
+            (12, "auth-check", "other pr"),
+        ] {
+            let p = spell_path("acme/api", n, name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        assert_eq!(
+            spell_results("acme/api", 1),
+            vec![
+                ("auth-check".into(), "a".into()),
+                ("test-gaps".into(), "t".into())
+            ]
+        );
+        assert!(spell_results("acme/web", 1).is_empty());
     }
 }

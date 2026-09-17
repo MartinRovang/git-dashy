@@ -732,11 +732,10 @@ describe('the posting tree', () => {
 
 describe('canCastOn', () => {
   const row = (over: Partial<Row> = {}): Row => ({ ...pr(), uid: 'u', section: 'REVIEW REQUESTED', older: [], ...over })
-  it('casts only where a review with instructions could start', () => {
+  it('casts on any PR, reviewed or not, whenever nothing else is running on it', () => {
     expect(canCastOn(row())).toBe(true)
+    expect(canCastOn(row({ section: 'MINE' }))).toBe(true)
+    expect(canCastOn(row({ review: '✓ approved' }))).toBe(true)
     expect(canCastOn(row({ busy: true }))).toBe(false)
-    expect(canCastOn(row({ section: 'MINE' }))).toBe(false)
-    expect(canCastOn(row({ review: '✓ approved' }))).toBe(false)
-    expect(canCastOn(row({ waiting: true, review: '✓ approved (waiting to post)' }))).toBe(true)
   })
 })

@@ -134,6 +134,8 @@ const S = {
   perRepo: {} as Record<string, boolean>,
   held: {} as Record<string, MockTalk & { verdict: string; summary: string; body: string; at: number; moved?: boolean }>,
   /** Pre-reviews by PR url: their text, and the conversation beside it. */
+  casting: {} as Record<string, boolean>,
+  spellResults: {} as Record<string, Record<string, string>>,
   pres: {} as Record<string, MockTalk & { verdict: string; text: string }>,
   refreshes: 0,
   ticks: 0,
@@ -317,7 +319,7 @@ function buildPayload() {
           prev: r.prev,
           checks: r.checks,
           reviewers: r.reviewers,
-          review: S.reviewText[r.url] || '',
+          review: S.casting[r.url] ? 'casting spell...' : S.reviewText[r.url] || '',
           busy: r.busy,
           since: r.since,
           team: teamOf(r.repo),
@@ -386,6 +388,7 @@ function detail(url: string) {
     ],
     brief: { whose: teamOf(r.repo), empty: false },
     pre: r.pre,
+    spells: Object.entries(S.spellResults[url] || {}).map(([name, text]) => ({ name, text })),
     review: info
       ? {
           verdict: S.reviewText[url],
@@ -459,6 +462,19 @@ function postReview(b: Body) {
   if (spell && !S.spells.some((s) => s.name === spell)) return json(400, { error: `no spell ${spell}` })
   const r = S.rows.find((x) => x.url === url)
   if (!r) return json(404, { error: 'no such pr' })
+  if (spell) {
+    if (r.busy) return json(409, { error: 'already running' })
+    r.busy = true
+    r.since = secs()
+    S.casting[url] = true
+    setTimeout(() => {
+      r.busy = false
+      r.since = undefined
+      delete S.casting[url]
+      S.spellResults[url] = { ...S.spellResults[url], [spell]: `- \`api/auth.py:40\` mock finding for ${spell}` }
+    }, 1800)
+    return json(200, { ok: true })
+  }
   if (bool(b, 'self')) {
     r.pre = { at: secs(), moved: false }
     S.pres[r.url] = { model: 'opus', verdict: 'comment', text: `# Pre-review — ${r.repo}#${r.number}\n\n> **Not posted.** This is the mock reviewer.\n\n**Verdict (advisory):** comment — mock\n`, thread: [], proposed: null }
@@ -704,6 +720,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
 
   if (method === 'POST') {
     if (path === '/api/review') return postReview(body)
+    if (path === '/api/spell') return json(S.spellResults[str(body, 'url')]?.[str(body, 'name')] ? 200 : 404, { ok: true })
     if (path === '/api/stories') {
       S.follow = ((body as { follow?: { login: string }[] }).follow || []).map((f) => ({ login: f.login }))
       return json(200, { follow: S.follow })

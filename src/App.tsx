@@ -434,8 +434,8 @@ export default function App() {
 
   async function cast(p: Row, spell: string) {
     if (!p || !canCastOn(p)) return
-    if (!(await confirm(`Cast ${spell} on #${p.number}? It runs a review and posts its verdict.`))) return
-    await call('/api/review', { url: p.url, spell }, `${spell} cast on #${p.number}`)
+    if (!(await confirm(`Cast ${spell} on #${p.number}? It looks at that one topic, and nothing is posted until you post it.`))) return
+    await call('/api/review', { url: p.url, spell }, `casting ${spell} on #${p.number}`)
   }
 
   async function preReview(p: Row) {
@@ -602,6 +602,19 @@ export default function App() {
   function doAct(name: string, target?: Row | null) {
     const p = target || current
     if (!p) return
+    // a spell's result, offered per spell by acts(): read it, then post it if it is worth posting
+    const found = name.startsWith('spell:') && detail?.url === p.url ? detail.spells.find((s) => `spell:${s.name}` === name) : null
+    if (found) {
+      const m = viewer(`${found.name} on #${p.number}`, found.text, 'private until you post it')
+      const postIt = async () => {
+        if (!(await confirm(`Post ${found.name} on #${p.number} as a comment?`))) return
+        close(m)
+        await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
+      }
+      m.foot = [['p', 'post as comment', () => void postIt()], ...(m.foot || [])]
+      m.keys = { ...m.keys, p: () => void postIt() }
+      return
+    }
     const fns: Record<string, () => void> = {
       review: () => void review(p),
       ask: () => reviewWith(p),

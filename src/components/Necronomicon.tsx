@@ -83,7 +83,7 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
             </ol>
             {ch === 0 ? (
               <p className="nblank">
-                A spell is a one-time, in-depth look at one topic, cast on one PR. Each is a markdown file in ~/.prs_spells; add one there
+                A spell is a one-time, in-depth look at one topic, cast on any PR. Its result stays private until you post it. Each is a markdown file in ~/.prs_spells; add one there
                 and it shows here. Equipped spells can be cast from the sidebar and a PR's right-click menu.
               </p>
             ) : null}

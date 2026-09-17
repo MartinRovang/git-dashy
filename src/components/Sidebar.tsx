@@ -522,7 +522,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
             </div>
           ))}
           <div className="sub">
-            spells <em>{selected && canCastOn(selected) ? `cast on #${selected.number}` : 'pick a PR waiting on you'}</em>
+            spells <em>{selected && canCastOn(selected) ? `cast on #${selected.number}` : 'pick a PR'}</em>
           </div>
           {equipped.length ? (
             <div className="tags">
@@ -531,7 +531,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                   className="tag"
                   key={name}
                   disabled={!selected || !canCastOn(selected)}
-                  title={selected ? `cast ${name} on #${selected.number}` : 'select a PR waiting for your review'}
+                  title={selected ? `cast ${name} on #${selected.number}` : 'select a PR'}
                   onClick={() => selected && onCast(selected, name)}
                 >
                   <Glyph kind="spell" name={name} /> {name}

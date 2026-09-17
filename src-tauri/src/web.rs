@@ -298,6 +298,10 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
         "checks": d.as_ref().map(|d| d.checks.clone()).unwrap_or_default(),
         "brief": {"whose": whose, "empty": text.is_empty()},
         "pre": pre_json(pre),
+        "spells": review::spell_results(pr.repo(), pr.number)
+            .into_iter()
+            .map(|(name, text)| json!({"name": name, "text": text}))
+            .collect::<Vec<_>>(),
         "review": rev.as_ref().map(|rev| json!({
             "verdict": config::status(&rev.verdict).unwrap_or(""),
             "summary": rev.summary,
@@ -691,6 +695,23 @@ fn get_prereview(state: &State, query: &Query) -> Out {
 }
 
 /// Talk about your own PR's pre-review, the way a held review is discussed. Nothing here is posted.
+/// Post a spell's result on its PR as a plain comment: no verdict, just what it found.
+fn post_spell(state: &State, body: &Body) -> Out {
+    let (pr, _) = need_pr(state, &text(body, "url"))?;
+    let name = text(body, "name");
+    let Some((_, found)) = review::spell_results(pr.repo(), pr.number)
+        .into_iter()
+        .find(|(n, _)| *n == name)
+    else {
+        return Err(Fail(404, format!("no {name} result on this PR")));
+    };
+    if !config::get().demo {
+        github::comment(pr.repo(), pr.number, &format!("**{name}**\n\n{found}"))
+            .map_err(|e| Fail(502, format!("{e:#}")))?;
+    }
+    Ok(json!({"ok": true}))
+}
+
 fn post_prereview(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
     let op = text(body, "op");
@@ -1249,21 +1270,21 @@ fn post_review(state: &State, body: &Body) -> Out {
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
     let spell = text(body, "spell");
-    let mut ask = text(body, "ask");
+    let ask = text(body, "ask");
     if !spell.is_empty() {
-        if !ask.is_empty() {
-            return Err(Fail::new(400, "a spell or instructions, not both"));
-        }
-        if truthy(body, "self") {
-            return Err(Fail::new(400, "a spell is cast on a review, not a pre-review"));
+        if !ask.is_empty() || truthy(body, "self") {
+            return Err(Fail::new(400, "a spell is cast on its own"));
         }
         let Some(t) = spells::get(&spell) else {
             return Err(Fail(400, format!("no spell {spell}")));
         };
-        ask = spells::cast(&spell, &t);
-        if ask.chars().count() > ASK_MAX {
+        if t.chars().count() > ASK_MAX {
             return Err(Fail(400, format!("spell {spell} is too long: ~/.prs_spells/{spell}.md must stay under {ASK_MAX} characters")));
         }
+        if !state.start_spell(&pr, &spell, &t) {
+            return Err(Fail::new(409, "already running"));
+        }
+        return Ok(json!({"ok": true}));
     }
     if ask.chars().count() > ASK_MAX {
         return Err(Fail::new(400, "instructions are too long"));
@@ -2090,6 +2111,7 @@ fn post_route(path: &str) -> Option<Post> {
     Some(match path {
         "/api/review" => post_review,
         "/api/prereview" => post_prereview,
+        "/api/spell" => post_spell,
         "/api/auto" => post_auto,
         "/api/settings" => post_settings,
         "/api/refresh" => post_refresh,
@@ -3335,10 +3357,10 @@ mod tests {
     }
 
     #[test]
-    fn a_spell_is_refused_on_a_pre_review_and_when_its_file_is_too_long() {
+    fn a_spell_is_cast_alone_and_refused_when_its_file_is_too_long() {
         let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("huge.md"), "x".repeat(ASK_MAX)).unwrap();
+        std::fs::write(d.path().join("huge.md"), "x".repeat(ASK_MAX + 1)).unwrap();
         config::update(|c| c.spells_dir = d.path().to_path_buf());
         let (base, token, state) = served();
         let url = format!("{base}/api/review");
@@ -3349,7 +3371,7 @@ mod tests {
         );
         assert_eq!(
             (code, body["error"].as_str()),
-            (400, Some("a spell is cast on a review, not a pre-review"))
+            (400, Some("a spell is cast on its own"))
         );
         let (code, body) = post(&url, json!({"url": pr().url, "spell": "huge"}), &token);
         assert_eq!(code, 400);

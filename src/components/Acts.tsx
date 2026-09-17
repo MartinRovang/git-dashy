@@ -31,6 +31,7 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
       'pre',
     ])
   if (d?.review) out.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
+  for (const s of d?.spells || []) out.push(['', '', `Read spell: ${s.name}`, 'private until posted', false, `spell:${s.name}`])
   if (d?.review?.db && clean(d.review.db).tables.length) out.push(['B', '', 'View the database graph', 'tables it touches', false, 'db'])
   out.push(['2', '', 'View the code', 'diff and marks', false, 'code'])
   out.push(['o', '', 'Open in browser', 'github', false, 'open'])

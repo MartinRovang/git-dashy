@@ -534,6 +534,51 @@ impl State {
         })
     }
 
+    /// Cast a spell. The row says "casting spell..." while it runs and then goes back to what it said before,
+    /// because a spell is not a review: a reviewed PR stays reviewed, and auto still sees an unreviewed one.
+    pub fn start_spell(&self, pr: &Pr, name: &str, text: &str) -> bool {
+        let before = self.lock().reviews.get(&pr.url).cloned();
+        if !self.begin(&pr.url, "casting spell...") {
+            return false;
+        }
+        let model = config::get().model;
+        let (me, pr, name, text) = (self.clone(), pr.clone(), name.to_string(), text.to_string());
+        std::thread::spawn(move || {
+            let url = pr.url.clone();
+            let failed =
+                match catch_unwind(AssertUnwindSafe(|| review::cast_spell(&pr, &model, &name, &text))) {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(format!("{e:#}")),
+                    Err(e) => Some(panic_text(&*e)),
+                };
+            info!("spell {name} on {url} -> {}", failed.as_deref().unwrap_or("cast"));
+            me.end_spell(&url, before, failed);
+        });
+        true
+    }
+
+    /// The row after a spell: what it said before, or the error when the cast failed.
+    fn end_spell(&self, url: &str, before: Option<String>, failed: Option<String>) {
+        {
+            let mut inner = self.lock();
+            match (failed, before) {
+                (Some(e), _) => {
+                    let status = format!("error: {e}").chars().take(88).collect();
+                    inner.reviews.insert(url.to_string(), status);
+                }
+                (None, Some(s)) => {
+                    inner.reviews.insert(url.to_string(), s);
+                }
+                (None, None) => {
+                    inner.reviews.remove(url);
+                }
+            }
+            inner.running.remove(url);
+            inner.since.remove(url);
+        }
+        self.waker().set();
+    }
+
     /// Forget a held review's status, so the row goes back to what the board says it is.
     ///
     /// ponytail: the hold writes its verdict into `reviews` through finish(), which is how the row
@@ -1190,6 +1235,25 @@ mod tests {
         claim(&s);
         s.run_job("u", "job", || Err(anyhow::anyhow!("{}", "x".repeat(200))));
         assert_eq!(status(&s).chars().count(), 88);
+    }
+
+    /// A spell is not a review: the row goes back to what it said, so a reviewed PR stays reviewed and
+    /// auto, which skips any PR with a status, still reviews an unreviewed one.
+    #[test]
+    fn a_spell_leaves_the_row_as_it_found_it() {
+        let s = State::new();
+        s.lock().reviews.insert("done".into(), "✓ approved".into());
+        for (url, before, failed, after) in [
+            ("done", Some("✓ approved".to_string()), None, Some("✓ approved")),
+            ("new", None, None, None),
+            ("new", None, Some("no token".to_string()), Some("error: no token")),
+        ] {
+            assert!(s.begin(url, "casting spell..."));
+            s.end_spell(url, before, failed);
+            let inner = s.lock();
+            assert_eq!(inner.reviews.get(url).map(String::as_str), after, "{url}");
+            assert!(!inner.running.contains(url));
+        }
     }
 
     /// The line the fix turns on: whatever the read does, its key must not stay in flight. Nothing

@@ -189,6 +189,8 @@ export type Detail = {
   checks: Check[]
   brief: { whose: string; empty: boolean }
   pre: Pre
+  /** every spell cast on this PR and what it found, kept on this machine */
+  spells: { name: string; text: string }[]
   review: Review | null
 }
 
