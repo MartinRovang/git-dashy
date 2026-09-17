@@ -112,6 +112,8 @@ export default function App() {
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph' | 'necronomicon') => {
     setView(v)
+    // the book wants the width: shut the right pane when it opens
+    if (v === 'necronomicon') setPane(false)
     const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
@@ -768,7 +770,6 @@ export default function App() {
           onAuto={onAuto}
           onFollow={followSomeone}
           onFollowScope={followScope}
-          followed={followed.length}
           onFollowOwner={(repo) =>
             // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
             void (async () => {
