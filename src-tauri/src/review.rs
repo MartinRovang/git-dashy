@@ -1197,6 +1197,9 @@ fn error_status(e: &anyhow::Error) -> String {
 /// PORT-NOTE: Python never raised here: an error is the status string "error: ..." with an empty path,
 /// so this returns Ok in every case and the Result of the stub is never Err.
 pub fn self_review(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
+    if team::in_repos(&team::team_repos(), pr.repo()) {
+        return Ok((format!("error: {}", team::HUMAN_ONLY), PathBuf::new()));
+    }
     Ok(match self_review_inner(pr, model) {
         Ok(r) => r,
         Err(e) => (error_status(&e), PathBuf::new()),
@@ -1297,6 +1300,10 @@ pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String, f64)> {
 /// ponytail: no DB repo and no session. Add them when a spell needs the schema or a conversation.
 pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
     let (repo, n) = (pr.repo(), pr.number);
+    // a spell is a model run: refused on a team's repo here, where the run starts, as review() refuses it
+    if team::in_repos(&team::team_repos(), repo) {
+        return Err(anyhow!(team::HUMAN_ONLY));
+    }
     let number = n.to_string();
     let sc = scope(repo, n, model);
     let mut prompt = fill(crate::spells::CAST, &[("repo", repo), ("number", &number)]);
@@ -1381,6 +1388,11 @@ pub fn post_held(h: &held::Held) -> Result<String> {
 /// PORT-NOTE: as with self_review, Python returned "error: ..." instead of raising; this is never Err.
 /// `ask` is what the person running it typed for this one review, "" for none. Auto never has one.
 pub fn review(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<String> {
+    // ponytail: here as well as at the route and the auto tick: this is where a model run starts, so no
+    // caller added later can review a team's repo by forgetting to ask
+    if team::in_repos(&team::team_repos(), pr.repo()) {
+        return Ok(format!("error: {}", team::HUMAN_ONLY));
+    }
     Ok(review_inner(pr, model, ran, ask).unwrap_or_else(|e| error_status(&e)))
 }
 
@@ -1497,7 +1509,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     if hold {
         // ponytail: BOTH pushes, the same two the posted path makes. memory::append writes into the
         // team checkouts as well as your own, so committing only yours left a tracked file modified
-        // there — and pool_drafts' own ponytail records what that costs: the next tick's
+        // there — and write_team_drafts' own ponytail records what that costs: the next tick's
         // `pull --rebase` fails with "Please commit or stash them". The window here is until a
         // release, which may be never, and push_dir's ponytail is the recorded finding about an
         // unrelated push sweeping the change in under the wrong message.

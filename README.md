@@ -129,10 +129,10 @@ button somewhere on the page.
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
 | `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
-| `n` | edit this repo's review memory in the app |
-| `g` | edit the general review memory in the app |
-| `P` | your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
-| `W` | waiting: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `n` | the knowledge panel on **inspect**, open at this repo's facts |
+| `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
+| `W` | the knowledge panel on **drafts**: what a review proposed and no second review has confirmed — `t` makes one a fact (for a draft in a team's pool, `t` opens a pull request adding it to the team's file), `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `K` | the knowledge panel on **stats**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are stats / inspect / drafts (`K` `g` `W`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
@@ -142,7 +142,7 @@ button somewhere on the page.
 | `Z` | dream: Claude tidies all memory files (merge, dedupe, drop stale), you approve before anything is written |
 | `L` | point the local memory directory somewhere else, or give a git repo to clone as your memory |
 | `C` | point the whole team store (`~/.prs_teams`, every team) somewhere else — only while no team is joined |
-| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` edit its brief, `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
+| `T` | teams: `1-8` open one, `n` start one, `a` join one. Inside a team: `e` propose a change to its brief (a pull request on the team's repo), `d` describe it, `c` connect a remote, `o` cover an owner, `x` leave (see Team). The header shows `+N` beside a team that has sent facts since this dashboard started; opening this clears it |
 | `u` | shown when a newer release exists — opens the update panel |
 | `S` | collapse the left rail to 106px — each group keeps a digest of its own settings, and the status counts keep their dots and numbers |
 | `[` `]` | previous / next queue tab |
@@ -242,13 +242,18 @@ A second review arriving at the same thing (matched loosely, so rewording still 
 `~/.prs_memory/<owner>__<repo>.md`, where later reviews read it. That promotion is automatic: being wrong
 in your own memory costs only you, and you will meet the line again.
 
+**A repo bound to a team drafts into the team instead.** When the team has agreed to receive drafts, a
+review's draft goes to your folder of the team's draft pool, and a second independent sighting, by you or
+a teammate, moves it into the team's knowledge (see *The team's draft pool* below). Nothing about that
+repo is drafted into your private memory unless you ask for it with `gitdashy remember --private`.
+
 **Drafts are never fed back into a prompt.** If they were, a reviewer would meet its own earlier guess as
 evidence and agree with itself, and the count would measure repetition instead of durability. The signal
 is rediscovery, so the reviewer has to arrive at it again blind.
 
 `~/.prs_memory/general.md` goes into every review regardless of repo. All of these are plain markdown
-bullet lists — `n` opens the selected PR's repo memory and `g` the general one in an editor pane, so you can add,
-prune or correct freely.
+bullet lists — `n` inspects the selected PR's repo facts and `g` opens inspect on the general ones. Nothing is
+typed in there: a fact arrives when reviews find it, and `x` removes one.
 `Z` dreams: Claude reads every memory file — yours and the team's, each labelled — merges duplicates, drops
 stale or contradictory lines and moves repo-independent facts to that source's general file. It is told never
 to move a line from yours into the team's; sharing is your call, not its. It shows a summary and per-file line
@@ -332,11 +337,10 @@ your own machine rarely produces:
 
 Neither is read by a review, a session, the mirror or the dream — they are evidence, and the only thing
 they decide is whether two people saw the same thing. Two people's pools agreeing is four independent
-reviews across two humans, and `P` still says so with `★ 2 people found this`.
+reviews across two humans, and inspect says so beside a team's fact with `★ 2 people found this`.
 
-**`P` is the way back out.** It lists your facts for repos bound to a team and says which the team has;
-`x` removes one from your memory, from theirs, and from the evidence. Nobody chose to publish it, so
-nobody has to know it was published in order to take it back.
+**Inspect is how you watch it and take things out.** `x` on one of your facts removes it; on a team's fact
+it proposes removing it, as a pull request. Facts only arrive through reviews.
 
 A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
 private however many teams you are in.
@@ -359,6 +363,32 @@ still holds work it has not pushed.
 
 The whole model — every store, promotion rule and discard rule — is written up in
 [`docs/memory.md`](docs/memory.md).
+
+### The team's draft pool
+
+The team's knowledge is two kinds of file in its repo: `memory/general.md`, true of every repo the team
+covers, and `memory/<owner>__<repo>.md`, true of one. Reviews of a bound repo read both, beside your own.
+
+What is not knowledge yet waits in the draft pool, one folder per person:
+
+```
+<team>/memory/drafts/pontus/acme__api.md    - (1) [r:7a2c] retry owns backoff
+<team>/memory/drafts/martin/acme__api.md    - (1) [r:91cf] retry owns backoff
+                                                  ↓ two independent reviews: 2/2
+<team>/memory/acme__api.md                  - retry owns backoff
+```
+
+The folders are checked against each other on every refresh and after every review. Word overlap only
+finds candidates; every candidate pair, however alike the wording, is put to the model, which answers only
+*same claim* or *not*: two near-identical sentences can say opposite things. A match counts **distinct review ids**, so two reviews by one person count as much as one each by
+two people, and a single review can never confirm itself. At least one of them has to be a review or a
+teammate's: one session calling `gitdashy remember` twice stays a draft. On a match the fact moves into the team's file
+and out of the drafts: your machine takes out your line, and your teammate's takes out theirs the next time
+it sees the team already knows it.
+
+Drafts are never read into a prompt, yours or anyone's. `W` lists yours in each team beside your private
+ones: `x` drops one, and `t` proposes it as a team fact by pull request, since accepting something into
+what every teammate's reviews read is a hand edit. Only recurrence moves a draft there by itself.
 
 ### What the team is building
 
@@ -414,11 +444,34 @@ given *both* briefs concatenated — two statements of what the work is for, in 
 That split keeps two things apart: `project.md` is what the team is doing, and a corpus's `USER.md` is
 who *you* are. Nobody should have to restate the project in their own file.
 
+### Changes to a team's memory are pull requests
+
+A team's repo is what every teammate's reviews and sessions read, so nothing in the app writes to it by hand.
+Removing a fact from a team's file (`x` in inspect, or forgetting a shared fact nobody else backs) and changing
+a team's brief or `agents.md` each push a `gitdashy/propose-…` branch and open a pull request on the team's
+repo (or, when the team's repo is not on GitHub, push the branch and say so). A person with rights on that repo
+approves it. **gitdashy never reviews a pull request on a joined team's repo**: auto skips it, `r`, `R` and `p`
+are refused, and the row says "human review only". That is decided by the repo, not the branch name, so a pull
+request opened outside the app is covered too.
+
+**A team's repo holds its memory and nothing else.** Because no pull request on it is reviewed by a model, a
+team kept inside a code repo would lose review of all that code; joining one says so. **A team with no
+remote** is this machine's alone, so a change to its brief, `agents.md` or a fact is written and committed
+directly: there is nobody to approve it. Editing memory text by hand through the app or `POST /api/memory`
+is gone; reviews and `gitdashy remember` add facts, and the app only removes them.
+
 ### Where knowledge lives
 
-`K` opens the Knowledge group, which says where memory is actually read and written right now: `Memory` is the
+The Knowledge group in the rail says where memory is actually read and written right now: `Memory` is the
 solo directory when you are on your own and the team's when you are in a team, `Team` is the repo or `off`, and
 `Store` appears only once the checkout sits somewhere other than its default.
+
+`knowledge panel` in the same group (or `K`) opens the panel on its **stats** tab, a chart of how fast that memory grows. Nothing in a fact records when it was
+learned, so the chart reads it from git: each joined team's history, and your memory's history up to the day
+`~/.prs_learning.jsonl` began. From then on that file carries your side, one line per draft or fact gained,
+holding its time, repo and how it came — never its text. A fact from the history shows as **earlier**, because git says when
+a line appeared but not why. Team facts are credited to their git author and arrivals to the pool they landed in,
+so one person can appear under two names.
 
 `L` also takes a **git repo** — `owner/name`, a path, or a `git@`/`https://` URL. gitdashy clones it and
 makes it your memory directory, moving the facts already there into it (and refusing, rather than choosing,
@@ -555,10 +608,17 @@ It becomes a draft, not a fact — the same gate a review's claim passes. `--rep
 directory's origin. So a fact that a review proposed once and a session independently arrived at is
 confirmed by their agreement, and neither surface can confirm itself, since drafts are never read back.
 
-Once confirmed it becomes yours, and — if you are in a team and they can already see that repo, either
-from the shared log or because they hold memory for it — it also joins the evidence pool, so `P` can tell
-you when someone else found the same thing. A repo the team has never seen keeps its name to itself; the
-fact still becomes yours. Re-run it whenever you
+In a repo bound to a team that takes drafts, it goes where a review's would: your folder of the team's
+draft pool, so a teammate's review can match it, and once confirmed it is the team's. `--private` keeps
+it in your own drafts instead, and once confirmed it is yours alone:
+
+```sh
+gitdashy remember --private "I keep forgetting the migration flag"
+```
+
+A repo bound to no team keeps its name to itself; the fact becomes yours. `--general` there stays with that
+repo too. Your own `general.md` is for how you work, and it is read in every session: it takes what you file
+with no repo at all, and `--private --general` from anywhere. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
 cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled; the shipped hook
 then starts a pulling one in the background, so the file is current by the next read even when no
@@ -566,7 +626,7 @@ dashboard has been open for days.
 
 It is a copy, not a link: Claude Code confines instruction-file imports to the project tree, so `~`,
 absolute and symlinked paths are all refused. The mirrors carry a header saying they are read-only,
-naming their source and when they were taken — edit the real memory with `n` / `g`, never the mirror,
+naming their source and when they were taken — remove a fact with `n` / `g`, never by editing the mirror,
 or the two disagree.
 
 Memory is often team-private, so `sync-memory` refuses to write anywhere git would commit it. Ignore

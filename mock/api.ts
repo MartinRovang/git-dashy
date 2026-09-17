@@ -96,7 +96,6 @@ const S = {
     { name: 'migration-audit', text: 'Read every migration this PR adds; say whether it locks a busy table and whether it rolls back.' },
     { name: 'test-gaps', text: 'List the behaviours this PR changes and the test that would fail if each broke.' },
   ] as { name: string; text: string }[],
-  shares: [] as { repo: string | null; fact: string; sent: boolean; backers: string[] }[],
   teams: [{ key: 'acme', name: 'Acme Guild', description: 'everything under acme/*', checkout: '~/.prs_teams/acme', remote: 'github.com/acme/guild' }],
   settings: {
     theme: 'pencil',
@@ -148,6 +147,11 @@ const memoryText: Record<string, string> = {
   general: '# general\n\n- prefer small PRs\n- always rebase, never merge main\n- run make lint before flagging style\n',
   'acme/api': '# acme/api\n\n- run make lint before flagging style\n- uses tabs\n- old CI on jenkins, ignore\n',
   'acme/web': '# acme/web\n\n- session middleware is shared with the admin app\n',
+  // a team's files, keyed "<team>:<repo>"
+  'acme:general': '- verify claims against the pushed head, not the PR body\n',
+  'acme:acme/api': '- the retry client owns backoff; callers never sleep\n',
+  'acme:doc:brief': '# What we are building\n\nA billing platform for small clinics. Reviews should care most about money paths.\n',
+  'acme:doc:agents': '# For agent sessions\n\nFile what you work out with `gitdashy remember`.\n',
 }
 
 /** A conversation about a saved review, as the mock keeps it: the same for a held review and a pre-review. */
@@ -258,11 +262,8 @@ function seed() {
   S.drafts = [
     { repo: 'acme/api', n: 1, kind: 'self', fact: 'old CI on jenkins, ignore' },
     { repo: null, n: 2, kind: 'review', fact: 'always rebase, never merge main' },
-  ]
-  S.shares = [
-    { repo: 'acme/api', fact: 'run make lint before flagging style', sent: true, backers: ['alice'] },
-    { repo: 'acme/api', fact: 'uses tabs', sent: false, backers: ['alice', 'bob'] },
-    { repo: null, fact: 'prefer small PRs', sent: false, backers: [] },
+    // yours in team acme's draft pool: a teammate's review finding the same moves it into the team's knowledge
+    { repo: 'acme/api', n: 1, kind: 'team', fact: 'the webhook client retries with backoff, callers never sleep' },
   ]
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
   // both cases of the posting panel: acme is one setting for all its repos, tools is set per repo
@@ -502,6 +503,23 @@ function postReview(b: Body) {
   return json(200, { ok: true })
 }
 
+/** Six weeks of made-up learning, steady with a stall in the middle, so every view and filter has something to draw. */
+function learningEvents() {
+  const out: { at: number; kind: string; repo: string; team?: string; who?: string; source?: string }[] = []
+  const now = secs()
+  const repos = ['acme/api', 'acme/web', '']
+  let seed = 7
+  const rnd = (n: number) => ((seed = (seed * 9301 + 49297) % 233280), Math.floor((seed / 233280) * n))
+  for (let d = 42; d >= 0; d--) {
+    if (d > 20 && d < 26) continue // a quiet week
+    const at = now - d * 86400
+    for (let i = rnd(6); i > 0; i--) out.push({ at: at + i * 60, kind: 'draft', repo: repos[rnd(3)], who: 'alice', source: ['review', 'review', 'pre-review', 'session'][rnd(4)] })
+    for (let i = rnd(3); i > 0; i--) out.push({ at: at + i * 90, kind: 'fact', repo: repos[rnd(3)], who: 'alice', source: d > 30 ? '' : ['seen twice', 'seen twice', 'hand', 'teammate'][rnd(4)] })
+    for (let i = rnd(4); i > 0; i--) out.push({ at: at + i * 120, kind: 'arrival', repo: repos[rnd(2)], team: 'acme', who: ['bob', 'carol', 'alice'][rnd(3)], source: rnd(5) ? 'draft' : 'fact' })
+  }
+  return out
+}
+
 /** repo beats owner beats the default, the same chain the store resolves. One place, so the detail
  *  and the /api/posting route cannot disagree. */
 function postingOf(repo: string) {
@@ -597,10 +615,24 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/asks') return json(200, { asks: S.asks })
     if (path === '/api/pr') return json(200, detail(query.get('url') || ''))
     if (path === '/api/diff') return json(200, code(query.get('url') || ''))
-    if (path === '/api/memory') {
-      const repo = query.get('repo') || 'general'
-      return json(200, { repo, path: `~/.prs_memory/${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`, text: memoryText[repo] || '' })
+    if (path === '/api/memory/files') {
+      const files: { team: string; repo?: string; doc?: string }[] = [{ team: '', repo: '' }, ...Object.keys(memoryText).filter((k) => !k.includes(':') && k !== 'general').map((repo) => ({ team: '', repo }))]
+      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general` && !k.endsWith(':doc:brief') && !k.endsWith(':doc:agents')).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })), { team: t.key, doc: 'brief' }, { team: t.key, doc: 'agents' })
+      return json(200, { files })
     }
+    if (path === '/api/memory') {
+      const team = query.get('team') || ''
+      const doc = query.get('doc') || ''
+      if (doc) return json(200, { team, doc, path: `~/.prs_teams/${team}/memory/${doc === 'brief' ? 'project' : 'agents'}.md`, text: memoryText[`${team}:doc:${doc}`] || '' })
+      const repo = query.get('repo') || 'general'
+      const file = `${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`
+      const text = memoryText[team ? `${team}:${repo}` : repo] || ''
+      const facts = text.split('\n').filter((l) => /^\s*[-•]/.test(l)).map((l) => l.replace(/^\s*[-•\s]+/, '').trim()).filter(Boolean)
+      // who stands behind each team fact: the mock has alice and bob agreeing on the first one
+      const backers = team ? facts.map((_, k) => (k === 0 ? ['alice', 'bob'] : ['alice'])) : []
+      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts, backers })
+    }
+    if (path === '/api/learning') return json(200, { events: learningEvents() })
     if (path === '/api/spells') {
       const on = (list: unknown, n: string) => ((list as string[]) || []).includes(n)
       const about: Record<string, string> = {
@@ -621,11 +653,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         voices: built(VOICES, 'voice'),
       })
     }
-    if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.repo ? teamOf(d.repo) : '' })) })
-    if (path === '/api/share') {
-      const items = S.shares.map((s) => ({ ...s, team: s.repo ? teamOf(s.repo) : teamOf(query.get('about') || '') }))
-      return json(200, { inTeam: true, items })
-    }
+    if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.kind === 'team' ? 'acme' : d.repo ? teamOf(d.repo) : '' })) })
     if (path === '/api/overlaps') {
       return json(200, jobShape(S.overlaps))
     }
@@ -749,7 +777,18 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/copy') return json(200, { ok: true, tool: 'xclip' })
     if (path === '/api/memory') {
       const repo = repoOf(body) || 'general'
-      memoryText[repo] = str(body, 'text')
+      const team = str(body, 'team')
+      const op = str(body, 'op')
+      const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
+      if (op === 'propose') return json(200, pr)
+      if (op !== 'remove') return json(400, { error: 'op must be remove or propose' })
+      if (team) return json(200, pr) // a team's file changes only when its pull request is approved
+      const fact = str(body, 'fact')
+      const lines = (memoryText[repo] || '').split('\n')
+      const at = lines.findIndex((l) => l.replace(/^\s*[-•\s]+/, '').trim() === fact)
+      if (at < 0) return json(404, { error: 'that fact is not in this file any more' })
+      lines.splice(at, 1)
+      memoryText[repo] = lines.join('\n')
       return json(200, { ok: true, error: '' })
     }
     if (path === '/api/drafts') {
@@ -757,6 +796,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const fact = str(body, 'fact')
       const i = S.drafts.findIndex((d) => d.repo === repo && d.fact === fact)
       const op = str(body, 'op')
+      // a team draft accepted by hand is a pull request; it stays a draft until that is approved
+      if (op === 'promote' && body.pooled) return json(200, { ok: true, url: 'https://github.com/acme/guild-memory/pull/88', branch: 'gitdashy/propose-acme-api-mock', note: '' })
       if (op === 'promote' || op === 'drop') {
         if (i >= 0) S.drafts.splice(i, 1)
         return json(200, { ok: true })
@@ -780,20 +821,6 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         return json(200, { ok: true, count: 1 })
       }
       return json(400, { error: 'op must be start or merge' })
-    }
-    if (path === '/api/share') {
-      const repo = repoOf(body)
-      const fact = str(body, 'fact')
-      const item = S.shares.find((s) => s.repo === repo && s.fact === fact)
-      if (str(body, 'op') === 'send') {
-        if (item) item.sent = true
-        return json(200, { ok: true })
-      }
-      if (str(body, 'op') === 'forget') {
-        S.shares = S.shares.filter((s) => !(s.repo === repo && s.fact === fact))
-        return json(200, { ok: true })
-      }
-      return json(400, { error: 'op must be send or forget' })
     }
     if (path === '/api/teams') {
       const op = str(body, 'op')

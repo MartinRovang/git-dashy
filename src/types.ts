@@ -34,6 +34,8 @@ export type Pr = {
   pre: Pre
   /** A finished review nobody has posted yet. */
   waiting?: boolean
+  /** A team's memory repo: approved by a person with rights on it, never reviewed by a model. */
+  humanOnly?: boolean
 }
 
 export type Section = { name: string; prs: Pr[]; error: string }

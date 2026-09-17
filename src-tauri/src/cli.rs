@@ -102,6 +102,9 @@ pub enum Command {
         repo: Option<String>,
         #[arg(long)]
         general: bool,
+        /// keep it in your own drafts even in a team's repo
+        #[arg(long)]
+        private: bool,
         /// ponytail: the fact is everything that is not a flag or a flag's value.
         #[arg(num_args = 0..)]
         fact: Vec<String>,
@@ -537,40 +540,42 @@ fn init(into: Option<String>, loader: Option<String>, repo: Option<String>, forg
 }
 
 /// File a fact a coding session learned, into the same drafts a review writes to.
-fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
+fn remember(repo: Option<String>, general: bool, private: bool, fact: Vec<String>) -> i32 {
     let fact = fact.join(" ").trim().to_string();
     if fact.is_empty() {
         return fail("gitdashy: remember needs a fact to remember");
     }
     team::activate(); // so memory.sources() sees the team as a second source
     let named = repo.filter(|r| !r.is_empty());
-    let repo = if general {
-        String::new()
-    } else {
-        named.clone().unwrap_or_else(here)
-    };
-    if !general && repo.is_empty() {
+    if !general && named.is_none() && here().is_empty() {
         return fail("gitdashy: no git origin here — pass --repo owner/name, or --general");
     }
-    let where_ = if repo.is_empty() {
-        "general".to_string()
-    } else {
-        repo.clone()
-    };
     // ponytail: --general threw away the repo you are standing in, which is the only thing that says
     // WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all:
     // neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
     // general fact means "true across this project", and the project is that repo's team.
     let about = if general {
-        named.unwrap_or_else(here)
+        named.clone().unwrap_or_else(here)
     } else {
         String::new()
+    };
+    let repo = memory::general_scope(general, private, named.unwrap_or_else(here), &about);
+    let where_ = if repo.is_empty() {
+        "general".to_string()
+    } else {
+        repo.clone()
     };
     if memory::already_known(&repo, &fact) {
         println!("gitdashy: {where_} already knows that");
         return 0;
     }
-    let promoted = memory::append(&repo, &fact, &about);
+    // ponytail: in a team's repo a session drafts into the team's pool by default, like a review, so a
+    // teammate's review can match it. --private keeps a thought yours, wherever you are standing.
+    let (promoted, pooled) = if private {
+        (memory::append_private(&repo, &fact, "session"), false)
+    } else {
+        memory::append_routed(&repo, &fact, &about, "session")
+    };
     team::push_dir(
         &config::get().memory_dir,
         &format!("memory: remembered for {where_}"),
@@ -579,10 +584,16 @@ fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
     team::push(&format!("memory: evidence for {where_}")); // ponytail: a promotion writes the pool, which lives over there
     if let Some(first) = promoted.first() {
         // ponytail: the counter counts observations; it does not know which surface each came from
-        println!("gitdashy: {where_} — confirmed by a second independent observation: {first}");
+        let whose = if pooled {
+            "the team knows it now"
+        } else {
+            "confirmed"
+        };
+        println!("gitdashy: {where_} — {whose}, by a second independent observation: {first}");
         return 0;
     }
-    println!("gitdashy: {where_} — drafted; one more independent observation confirms it");
+    let whose = if pooled { " in the team's drafts" } else { "" };
+    println!("gitdashy: {where_} — drafted{whose}; one more independent observation confirms it");
     0
 }
 
@@ -1566,7 +1577,12 @@ pub fn run(args: Vec<String>) -> i32 {
             no_pull,
             general,
         }) => sync_memory(into, repo, no_pull, general),
-        Some(Command::Remember { repo, general, fact }) => remember(repo, general, fact),
+        Some(Command::Remember {
+            repo,
+            general,
+            private,
+            fact,
+        }) => remember(repo, general, private, fact),
         Some(Command::Install {
             full,
             corpus,
@@ -1694,6 +1710,106 @@ mod tests {
         assert_eq!(crate::dbrepo::of("acme/docs"), "");
         assert_eq!(db_cmd(s("acme/docs"), None, false, true), 0);
         assert_eq!(crate::dbrepo::of("acme/docs"), "acme/schema");
+    }
+
+    /// In a team's repo a session drafts where a review would, the team's pool; --private keeps it yours.
+    #[test]
+    fn remember_drafts_into_the_team_unless_private() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = root.join("mine");
+            c.local_memory = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.log = root.join("log.jsonl");
+            c.local_log = root.join("log.jsonl");
+            c.registry = root.join("mirrors");
+            c.settings = None;
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/.git")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/memory")).unwrap();
+        memory::allow_publishing("org-t", true);
+        assert_eq!(bind_mod::bind("a/b", "org-t"), "");
+        let me = memory::whoami();
+        let pooled = root.join("teams/org-t/memory/drafts").join(&me).join("a__b.md");
+
+        assert_eq!(
+            remember(Some("a/b".into()), false, true, vec!["kept to myself".into()]),
+            0
+        );
+        assert_eq!(memory::drafts(Some("a/b")), [(1, "kept to myself".to_string())]);
+        assert!(!pooled.exists(), "--private never reaches the team");
+
+        assert_eq!(
+            remember(
+                Some("a/b".into()),
+                false,
+                false,
+                vec!["the team should know".into()]
+            ),
+            0
+        );
+        assert!(std::fs::read_to_string(&pooled)
+            .unwrap()
+            .contains("the team should know"));
+        assert_eq!(memory::drafts(Some("a/b")).len(), 1, "and nothing more in yours");
+    }
+
+    /// A general fact filed in a repo bound to no team is that repo's own; your general file only takes what is
+    /// filed with no repo at all.
+    #[test]
+    fn remember_general_in_an_unbound_repo_stays_with_that_repo() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = root.join("mine");
+            c.local_memory = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.log = root.join("log.jsonl");
+            c.local_log = root.join("log.jsonl");
+            c.registry = root.join("mirrors");
+            c.settings = None;
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/.git")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/memory")).unwrap();
+        memory::allow_publishing("org-t", true);
+        assert_eq!(
+            remember(
+                Some("me/side-project".into()),
+                true,
+                false,
+                vec!["pin the toolchain".into()]
+            ),
+            0
+        );
+        assert_eq!(
+            memory::drafts(Some("me/side-project")),
+            [(1, "pin the toolchain".to_string())]
+        );
+        assert!(memory::drafts(None).is_empty(), "not your general file");
+        assert!(
+            !root.join("teams/org-t/memory/drafts").exists(),
+            "nor the one team this machine is in"
+        );
+        // unless it is said to be yours: --private --general is your general file, wherever you stand
+        assert_eq!(
+            remember(
+                Some("me/side-project".into()),
+                true,
+                true,
+                vec!["I prefer small commits".into()]
+            ),
+            0
+        );
+        assert_eq!(memory::drafts(None), [(1, "I prefer small commits".to_string())]);
     }
 
     #[test]
@@ -1828,8 +1944,9 @@ mod tests {
                 ..
             })
         ));
-        let Some(Command::Remember { repo, general, fact }) =
-            parse(&["remember", "--repo", "other/thing", "migrations", "run", "first"]).command
+        let Some(Command::Remember {
+            repo, general, fact, ..
+        }) = parse(&["remember", "--repo", "other/thing", "migrations", "run", "first"]).command
         else {
             panic!()
         };

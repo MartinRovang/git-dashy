@@ -82,7 +82,8 @@ pub fn reason(interrupts: u32, denials: u32) -> String {
     format!(
         "This session hit friction worth recording: {}. \
          If it taught you something durable about this codebase \u{2014} a constraint, a convention, why \
-         something is shaped as it is \u{2014} file it with `gitdashy remember \"...\"`. Not what this task \
+         something is shaped as it is \u{2014} file it with `gitdashy remember \"...\"` (`--general` for the \
+         whole project, `--private --general` only for your own way of working). Not what this task \
          did, not one bug, not what git already records. If it taught you nothing, say so and stop.",
         hit.join(", and ")
     )
@@ -264,6 +265,8 @@ mod tests {
         let said = reason(3, 0);
         assert!(said.contains("interrupted 3 times"));
         assert!(said.contains("gitdashy remember"));
+        // and which flag is which: a project rule filed as a personal habit follows you into every repo
+        assert!(said.contains("--private --general"));
     }
 
     #[test]
