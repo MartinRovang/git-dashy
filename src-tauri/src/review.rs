@@ -133,6 +133,38 @@ pub const HUNTER: &[(&str, &str)] = &[
          `file:L<n>: <tell>: the phrase. plain rewrite.` Never add a fact the text lacks. Nothing found: `Reads human.`",
     ),
 ];
+/// One line for the Necronomicon on what each voice and hunter does to a review.
+pub const ABOUT: &[(&str, &str)] = &[
+    (
+        "review",
+        "The plain review: a summary, the findings and a verdict.",
+    ),
+    (
+        "caveman",
+        "Adds the verdict again in caveman speech, ten lines at most.",
+    ),
+    ("bot", "Adds the findings as a terse machine log, one line each."),
+    (
+        "ponytail",
+        "Hunts over-engineering: what to delete, and the stdlib or native thing that replaces it.",
+    ),
+    (
+        "security",
+        "Hunts security: trust boundaries, injection, authz, secrets, SSRF, path traversal.",
+    ),
+    (
+        "tests",
+        "Hunts test coverage: changed logic nothing tests, and tests that cannot fail.",
+    ),
+    (
+        "perf",
+        "Hunts runtime cost the change adds, said with how often the code runs.",
+    ),
+    (
+        "humanizer",
+        "Hunts AI-sounding prose the PR adds to strings, docs and comments.",
+    ),
+];
 pub const EXPLORE: &str = "
 
 Read the PR with `{cmd} api <github api path>`: a GET against the GitHub API, files decoded, `--diff` for
@@ -241,7 +273,7 @@ pub const SELF_HEADER: &str = "# Pre-review — {repo}#{n}
 pub const TRUSTED: &[&str] = &["OWNER", "MEMBER", "COLLABORATOR"];
 
 /// The value beside `key` in one of the constant tables, "" when absent.
-fn table(t: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
+pub(crate) fn table(t: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
     t.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 
@@ -1406,6 +1438,13 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_voice_and_hunter_has_an_about() {
+        for name in config::VOICES.iter().chain(config::HUNTERS) {
+            assert!(table(ABOUT, name).is_some_and(|a| !a.is_empty()), "{name}");
+        }
+    }
+
     use super::*;
 
     fn strs(v: &[&str]) -> Vec<String> {

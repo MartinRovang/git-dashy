@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
-import { isReviewed } from '../board'
+import { canCastOn, isReviewed } from '../board'
 import { clean } from '../dbgraph'
+import { Glyph } from './Glyph'
 
 export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
@@ -53,18 +54,26 @@ export function ActsMenu({
   d,
   hidden,
   at,
+  spells,
   onAct,
+  onCast,
   onClose,
 }: {
   p: Row
   d: Detail | null
   hidden: boolean
   at: Anchor
+  /** The equipped spells; the menu offers them under one row that opens in place. */
+  spells: string[]
   onAct: (name: string, target: Row) => void
+  onCast: (target: Row, spell: string) => void
   onClose: () => void
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Anchor>(at)
+  // which side the spell flyout opens on, null while shut
+  const [casting, setCasting] = useState<'right' | 'left' | null>(null)
+  const fly = (row: HTMLElement) => setCasting(row.getBoundingClientRect().right + 220 > window.innerWidth ? 'left' : 'right')
 
   // ponytail: a resize used to close the menu, which throws it away for a window nudge. The clamp
   // runs on [at], so a resize changed nothing on its own — it re-clamps now instead.
@@ -123,6 +132,54 @@ export function ActsMenu({
           <em>{note}</em>
         </button>
       ))}
+      {spells.length ? (
+        // ponytail: a flyout beside the row, on the side with room. The menu's own clamp keeps the menu on screen,
+        // and a flyout wider than the space on both sides is a menu with more spells than anyone equips.
+        <div className="flyrow" onMouseEnter={(e) => canCastOn(p) && fly(e.currentTarget)} onMouseLeave={() => setCasting(null)}>
+          <button
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={!!casting}
+            className="ai"
+            disabled={!canCastOn(p)}
+            onClick={(e) => (casting ? setCasting(null) : fly(e.currentTarget.parentElement!))}
+          >
+            <kbd className="hint">✦</kbd>
+            <b>Cast a spell</b>
+            <em>▸</em>
+          </button>
+          {casting ? (
+            <div className={`acts fly ${casting}`} role="menu">
+              {spells.map((name) => (
+                <button
+                  key={name}
+                  role="menuitem"
+                  className="ai"
+                  onClick={() => {
+                    onClose()
+                    onCast(p, name)
+                  }}
+                >
+                  <Glyph kind="spell" name={name} />
+                  <b>{name}</b>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <button
+        role="menuitem"
+        className="ai"
+        onClick={() => {
+          onClose()
+          onAct('book', p)
+        }}
+      >
+        <kbd className="hint" />
+        <b>Open the book…</b>
+        <em>spells, passives, voices</em>
+      </button>
     </div>
   )
 }

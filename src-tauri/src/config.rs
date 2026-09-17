@@ -101,6 +101,8 @@ pub struct Config {
     pub depth: String,
     pub voice: Vec<String>,
     pub hunter: Vec<String>,
+    /// Spells on the quick list: the sidebar and the right-click menu. Names of files in spells_dir.
+    pub spells: Vec<String>,
     /// Text file appended to the review prompt.
     pub instructions: String,
     /// The OLD single team checkout; migrated into `teams`.
@@ -151,6 +153,8 @@ pub struct Config {
     pub autorev: PathBuf,
     /// Which repo holds each repo's database. See dbrepo.rs.
     pub dbrepo: PathBuf,
+    /// One .md per spell, named after it. See spells.rs.
+    pub spells_dir: PathBuf,
     /// Mirrors `gitdashy init` registered.
     pub registry: PathBuf,
     pub corpus_home: PathBuf,
@@ -185,6 +189,7 @@ impl Default for Config {
                 v.split(',').filter(|s| !s.is_empty()).map(String::from).collect()
             },
             hunter: split("PRS_HUNTER"),
+            spells: Vec::new(),
             instructions: std::env::var("PRS_INSTRUCTIONS").unwrap_or_default(),
             team: env_path("PRS_TEAM", ".prs_team"),
             teams: env_path("PRS_TEAMS", ".prs_teams"),
@@ -213,6 +218,7 @@ impl Default for Config {
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
             autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),
             dbrepo: env_path("PRS_DBREPO", ".prs_dbrepo"),
+            spells_dir: env_path("PRS_SPELLS", ".prs_spells"),
             registry: home().join(".prs_mirrors"),
             corpus_home: home().join(".agent-corpus"),
             demo: false,
@@ -267,6 +273,12 @@ pub struct Saved {
         deserialize_with = "one_or_many"
     )]
     pub hunter: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "one_or_many"
+    )]
+    pub spells: Option<Vec<String>>,
 }
 
 mod window_field {
@@ -446,6 +458,9 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let (Some(v), false) = (saved.hunter, env("PRS_HUNTER")) {
         c.hunter = v;
     }
+    if let Some(v) = saved.spells {
+        c.spells = v;
+    }
     normalise(c);
 }
 
@@ -490,6 +505,7 @@ pub fn snapshot(c: &Config) -> Saved {
         theme: Some(c.theme.clone()),
         voice: Some(c.voice.clone()),
         hunter: Some(c.hunter.clone()),
+        spells: Some(c.spells.clone()),
     }
 }
 
@@ -580,6 +596,20 @@ mod tests {
         assert!(!text.contains("model"));
     }
 
+    #[test]
+    fn equipped_spells_round_trip() {
+        let s: Saved = serde_json::from_str(r#"{"spells":["auth-check","test-gaps"]}"#).unwrap();
+        assert_eq!(
+            s.spells,
+            Some(vec!["auth-check".to_string(), "test-gaps".to_string()])
+        );
+        let c = Config {
+            spells: vec!["auth-check".into()],
+            ..Default::default()
+        };
+        assert_eq!(snapshot(&c).spells, Some(vec!["auth-check".to_string()]));
+    }
+
     /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
     /// file leaves out must keep the default rather than being cleared.
     #[test]
@@ -588,7 +618,7 @@ mod tests {
         let json = r#"{
             "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
             "hinted":true,"keyhints":false,"seen":"2.1.0","depth":"high","effort":"max","notify":true,
-            "theme":"nord","voice":["caveman"],"hunter":["security"]
+            "theme":"nord","voice":["caveman"],"hunter":["security"],"spells":["auth-check"]
         }"#;
         let saved: Saved = serde_json::from_str(json).unwrap();
         let mut c = Config::default();
@@ -609,6 +639,7 @@ mod tests {
         assert_eq!(c.theme, "nord");
         assert_eq!(c.voice, vec!["caveman"]);
         assert_eq!(c.hunter, vec!["security"]);
+        assert_eq!(c.spells, vec!["auth-check"]);
     }
 
     #[test]
