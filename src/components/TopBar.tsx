@@ -14,8 +14,8 @@ type Props = {
   onUpdate: () => void
   onHelp: () => void
   onLogo: () => void
-  view: 'board' | 'graph'
-  onView: (v: 'board' | 'graph') => void
+  view: 'board' | 'graph' | 'necronomicon'
+  onView: (v: 'board' | 'graph' | 'necronomicon') => void
   /** The repo and author picks; empty is all. */
   only: Only
   /** False when a picker would open empty (no data yet, or nothing on the board). */
@@ -60,7 +60,7 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
       </div>
       <div className="views" title="switch view (G)">
         <div className="vtabs">
-          {(['board', 'graph'] as const).map((v) => (
+          {(['board', 'graph', 'necronomicon'] as const).map((v) => (
             <button key={v} className={view === v ? 'on' : ''} onClick={() => onView(v)}>
               {v}
             </button>

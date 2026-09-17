@@ -151,6 +151,8 @@ pub struct Config {
     pub bindings: PathBuf,
     /// Which repos auto-review is armed for. Its own store: see autorev.rs.
     pub autorev: PathBuf,
+    /// Which repo holds each repo's database. See dbrepo.rs.
+    pub dbrepo: PathBuf,
     /// Mirrors `gitdashy init` registered.
     pub registry: PathBuf,
     pub corpus_home: PathBuf,
@@ -220,6 +222,7 @@ impl Default for Config {
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
             autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),
+            dbrepo: env_path("PRS_DBREPO", ".prs_dbrepo"),
             registry: home().join(".prs_mirrors"),
             corpus_home: home().join(".agent-corpus"),
             demo: false,
@@ -516,6 +519,17 @@ pub fn save(values: &Saved) -> std::io::Result<()> {
         std::fs::rename(tmp, p)?;
     }
     Ok(())
+}
+
+/// The lock for any test that touches a process-global, whichever module the test lives in.
+///
+/// ponytail: one, because twelve module locks never excluded each other and about a dozen tests failed
+/// at random, each reporting an assertion that belonged to whatever had rewritten the config under it
+/// (#134). It lives beside what it guards.
+#[cfg(test)]
+pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `~`-shortened path for display.

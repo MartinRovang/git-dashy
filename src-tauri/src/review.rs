@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use crate::types::{CheckResult, LogEntry, Pr, Verdict};
-use crate::{autorev, bind, config, github, held, llm, log as rlog, memory, team};
+use crate::{autorev, bind, config, dbrepo, github, held, llm, log as rlog, memory, team};
 
 pub const PROMPT: &str =
     "Review pull request {repo}#{number}. Look for bugs, logic errors, security issues and missing tests.
@@ -25,7 +25,7 @@ Respond with ONLY a JSON object, no prose, no code fences:
  "findings": [{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}],
  "kind": "feature" | "fix" | "security" | "perf" | "maintenance" | "refactor" | "docs" | "tests" | "deps", "breaking": <true when merging it breaks existing callers, users, data or config>,
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
- "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"}
+ "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"{db}}
 "findings" is the same review as "body", one line each, so a dashboard can list them: every blocking
 finding must appear there. Empty list when there is nothing to report.
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."#;
@@ -158,6 +158,28 @@ survive review.
 pub const ALSO: &str =
     " and the other repos bound to the team {team} — read a sibling by path when this change
 depends on one; `/repos/<owner>/<name>/contents/...` and `git/trees` work there the same way";
+/// Where the database is defined, for a repo pointed at a DB repo. See dbrepo.rs.
+pub const DB: &str = "
+
+The database this repo runs against is defined in {db}, its schema and migrations. Read it the same way:
+`{cmd} api /repos/{db}` for its default branch, then `git/trees/<branch>?recursive=1` and `contents/<file>`.
+Nothing here connects to a database, so {db} is the whole picture of it. {db} may be private while this review
+is posted where anyone who can see the PR reads it: name the tables and columns that matter, but never quote
+schema or migration files from {db}.
+
+When this PR touches the database (queries, models, ORM calls, migrations, table or column names), check each
+against {db}: which tables and columns it reads, writes, adds, alters or drops, and what could go wrong. Look
+for a table or column the code uses that does not exist or has another type, a migration that loses data or
+rewrites or locks a big table, a NOT NULL added without a default, a foreign key or a filtered column with no
+index, a constraint the code will violate, and callers of anything removed. Every blocking one goes in
+\"findings\" too.
+";
+/// The field DB asks for, in the contract. Null when the PR does not touch the database.
+pub const DB_FIELD: &str = r#",
+ "db": null | {"tables": [{"name": "<table>", "change": "read" | "written" | "added" | "altered" | "dropped",
+   "refs": ["<another table in this list it has a foreign key to>"],
+   "columns": [{"name": "<column>", "change": "read" | "written" | "added" | "altered" | "dropped", "note": "<type, or what changes; max 8 words>"}]}],
+   "risks": [{"kind": "data-loss" | "lock" | "mismatch" | "index" | "constraint" | "other", "loc": "<file:line, or the file alone>", "text": "<one line, max 16 words>"}]}"#;
 pub const NO_TOOLS: &str = "
 
 You cannot run any commands. Judge the PR from what follows and say what you could not check.
@@ -617,6 +639,8 @@ pub struct Inputs<'a> {
     pub cmd: String,
     /// The team whose repos may also be read, "" for none.
     pub team: String,
+    /// The DB repo that may also be read, "" for none.
+    pub db: String,
     pub pasted: String,
     pub voice: Vec<String>,
     pub hunter: Vec<String>,
@@ -660,7 +684,8 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                     ("at", &at),
                     ("verdict", &p.verdict),
                     ("tag", &tag),
-                    ("body", &p.body),
+                    // what with_db_note added is ours, not the model's: left in, the model copies it and it doubles
+                    ("body", p.body.split(DB_NOTE).next().unwrap_or_default()),
                 ],
             )
         })
@@ -698,6 +723,9 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                 ("also", &also),
             ],
         );
+        if !i.db.is_empty() {
+            out += &fill(DB, &[("db", &i.db), ("cmd", &i.cmd)]);
+        }
     } else {
         out += NO_TOOLS;
         out += PR_FOLLOWS;
@@ -705,8 +733,19 @@ pub fn prompt(i: &Inputs) -> Result<String> {
     }
     // how to write the body, then its shape: last, both
     out += &tail_for(&i.voice, &i.hunter);
-    out += &fill(CONTRACT, &[("sections", &sections_for(&i.voice, &i.hunter))]);
+    out += &contract(&sections_for(&i.voice, &i.hunter), &i.db);
     Ok(out)
+}
+
+/// The contract, with the db field when there is a DB repo to fill it from.
+fn contract(sections: &str, db: &str) -> String {
+    fill(
+        CONTRACT,
+        &[
+            ("sections", sections),
+            ("db", if db.is_empty() { "" } else { DB_FIELD }),
+        ],
+    )
 }
 
 /// What the model answered, parsed. `memory` may be a string of lines or a list; `verdict` must be there.
@@ -741,6 +780,10 @@ pub fn parse_verdict(text: &str) -> Result<Verdict> {
         _ => String::new(),
     };
     obj.insert("kind".into(), kind.into());
+    // anything but an object is no db section: the pane draws tables from it
+    if !obj.get("db").map(Value::is_object).unwrap_or(false) {
+        obj.remove("db");
+    }
     if !obj.get("breaking").map(Value::is_boolean).unwrap_or(false) {
         obj.insert("breaking".into(), false.into());
     }
@@ -753,6 +796,36 @@ fn memory_lines(s: &str) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(String::from)
         .collect()
+}
+
+const DB_NOTE: &str = "\n\n### Database risks\n";
+
+/// The db section's risks, on the body: the pane draws them from `db`, but only the body reaches the PR.
+/// ponytail: risks only, the tables stay in the pane's graph. Model output, so any non-string is skipped.
+pub fn with_db_note(mut v: Verdict) -> Verdict {
+    let s = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let risks: Vec<String> =
+        v.db.as_ref()
+            .and_then(|d| d.get("risks"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|r| !s(r, "text").is_empty())
+            .map(|r| {
+                let kind = match s(r, "kind") {
+                    k if k.is_empty() => "RISK".to_string(),
+                    k => k.to_uppercase(),
+                };
+                match s(r, "loc").replace('`', "'") {
+                    l if l.is_empty() => format!("- **{kind}**: {}", s(r, "text")),
+                    l => format!("- **{kind}** `{l}`: {}", s(r, "text")),
+                }
+            })
+            .collect();
+    if !risks.is_empty() {
+        v.body += &format!("{DB_NOTE}{}", risks.join("\n"));
+    }
+    v
 }
 
 /// The adaptive rule: when the reviewer chose the depth, the body says which and why.
@@ -773,6 +846,7 @@ struct Scope {
     cmd: String,
     tools: String,
     team: String,
+    db: String,
     env: Vec<(String, String)>,
 }
 
@@ -783,12 +857,13 @@ fn scope(repo: &str, n: u64, model: &str) -> Scope {
     // together: a diff cannot name one, it can only pick from what a person bound. Author standing says
     // when that is offered at all: an outsider's fork PR is the case the boundary exists for, and it
     // gets the repo under review and nothing else, exactly as before.
-    let team = if claude && !c.demo && trusted_author(repo, n) {
-        bind::of(repo)
+    // the DB repo is a declared set of one, behind the same two locks
+    let (team, db) = if claude && !c.demo && trusted_author(repo, n) {
+        (bind::of(repo), dbrepo::of(repo))
     } else {
-        String::new()
+        (String::new(), String::new())
     };
-    scope_with(repo, model, team)
+    scope_with(repo, model, team, db)
 }
 
 /// The scope a DISCUSSION resumes under: the review's own, with the team it was given at the time.
@@ -797,7 +872,7 @@ fn scope(repo: &str, n: u64, model: &str) -> Scope {
 /// and the conversation handed the resumed agent a team's repos the review itself could not read. A held
 /// review saved before the team was recorded has none, and gets the repo under review alone -- narrower,
 /// never wider.
-fn scope_with(repo: &str, model: &str, team: String) -> Scope {
+fn scope_with(repo: &str, model: &str, team: String, db: String) -> Scope {
     let claude = llm::provider(model).0 == "claude";
     let cmd = api_cmd();
     let tools = if claude {
@@ -806,11 +881,13 @@ fn scope_with(repo: &str, model: &str, team: String) -> Scope {
         String::new()
     };
     let team = if claude { team } else { String::new() };
+    let db = if claude { db } else { String::new() };
     // ponytail: the scope rides the environment, not the prompt or the argv: see github::scoped.
     let env: Vec<(String, String)> = if claude {
         vec![
             (github::SCOPE.into(), repo.into()),
             (github::SCOPE_TEAM.into(), team.clone()),
+            (github::SCOPE_DB.into(), db.clone()),
         ]
     } else {
         Vec::new()
@@ -820,6 +897,7 @@ fn scope_with(repo: &str, model: &str, team: String) -> Scope {
         cmd,
         tools,
         team,
+        db,
         env,
     }
 }
@@ -842,7 +920,7 @@ pub fn held_status(v: &Verdict) -> String {
     )
 }
 
-/// Build the prompt, run the reviewer, return its parsed verdict and the team it was allowed to read. Err on failure.
+/// Build the prompt, run the reviewer, return its parsed verdict and the team and DB repo it was allowed to read. Err on failure.
 ///
 /// ponytail: one implementation, because a pre-review that reasons differently from the real one is
 /// worth nothing as a preview of it. The only differences are what the caller does with the result.
@@ -854,7 +932,7 @@ fn verdict(
     prev: Option<&LogEntry>,
     ask: &str,
     session: llm::Session,
-) -> Result<(Verdict, String)> {
+) -> Result<(Verdict, String, String)> {
     let c = config::get();
     // ponytail: the repo SELECTS the brief now: one, by binding, instead of yours and the team's
     // concatenated into every review of every repo. `whose` goes into the prompt rather than being
@@ -889,6 +967,7 @@ fn verdict(
         claude,
         cmd: sc.cmd.clone(),
         team: sc.team.clone(),
+        db: sc.db.clone(),
         pasted,
         voice: c.voice.clone(),
         hunter: c.hunter.clone(),
@@ -910,7 +989,7 @@ fn verdict(
     v.depth = c.depth.clone();
     v.effort = c.effort.clone();
     v.instructions = ask.trim().to_string();
-    Ok((with_depth_note(v, &c.depth), sc.team))
+    Ok((with_depth_note(with_db_note(v), &c.depth), sc.team, sc.db))
 }
 
 /// A new session id for a review on `model`: every claude review gets one, so it can be discussed later;
@@ -981,7 +1060,7 @@ pub fn discuss(h: &held::Held, message: &str) -> Result<String> {
     if config::get().demo {
         return Ok(format!("demo: you said {:?}; nothing changed", message.trim()));
     }
-    let sc = scope_with(h.pr.repo(), &h.model, h.team.clone());
+    let sc = scope_with(h.pr.repo(), &h.model, h.team.clone(), h.db.clone());
     let (answer, _, _) = llm::ask_session(
         &fill(DISCUSS, &[("message", message.trim())]),
         &h.model,
@@ -1008,12 +1087,8 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
             ..Default::default()
         }
     } else {
-        let sc = scope_with(h.pr.repo(), &h.model, h.team.clone());
-        let text = format!(
-            "{REVISE}{}{}",
-            tail(),
-            fill(CONTRACT, &[("sections", &sections())])
-        );
+        let sc = scope_with(h.pr.repo(), &h.model, h.team.clone(), h.db.clone());
+        let text = format!("{REVISE}{}{}", tail(), contract(&sections(), &sc.db));
         let (answer, cost, ms) = llm::ask_session(
             &text,
             &h.model,
@@ -1050,7 +1125,7 @@ fn revised(from: &Verdict, mut v: Verdict) -> Verdict {
     v.instructions = from.instructions.clone();
     v.remember = Vec::new();
     // under adaptive depth the review's body ended with the depth it chose, and so does its revision
-    with_depth_note(v, &from.depth)
+    with_depth_note(with_db_note(v), &from.depth)
 }
 
 /// (written_at, moved_since) for this PR's pre-review. (0.0, false) when there is none.
@@ -1100,7 +1175,7 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     // not ours to speak for
     // a session, so the pre-review can be discussed like a held review
     let session = session_for(model);
-    let (v, team) = verdict(repo, n, model, None, "", named(&session))?;
+    let (v, team, db) = verdict(repo, n, model, None, "", named(&session))?;
     let c = config::get();
     std::fs::create_dir_all(&c.self_dir)?;
     let dest = self_review_path(repo, n);
@@ -1131,6 +1206,7 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
         at,
         session,
         team,
+        db,
         ..Default::default()
     };
     if let Err(e) = put_self_talk(&talk) {
@@ -1269,7 +1345,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     // ponytail: every claude review gets a session, held or not. Only a held one can be discussed, but
     // whether it is held was decided above and the id has to exist before the model runs.
     let session = session_for(model);
-    let (v, team) = verdict(repo, n, model, prev.as_ref(), ask, named(&session))?;
+    let (v, team, db) = verdict(repo, n, model, prev.as_ref(), ask, named(&session))?;
     // ponytail: held, not posted, when it repeats its private instructions -- and the hello, already on the PR,
     // is not posted a second time on release
     let leaked = !hold && quotes_instructions(&v, ask);
@@ -1290,6 +1366,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
             at: crate::state::now(),
             session: session.clone(),
             team: team.clone(),
+            db: db.clone(),
             thread: Vec::new(),
             proposed: None,
         })?;
@@ -1421,11 +1498,18 @@ mod tests {
         };
         let answer = Verdict {
             body: "revised".into(),
+            db: Some(serde_json::json!({"risks": [{"kind": "lock", "text": "long lock"}]})),
             depth_used: "high".into(),
             depth_reason: "touches auth".into(),
             ..Default::default()
         };
         let v = revised(&from, answer);
+        assert_eq!(v.body.matches("### Database risks").count(), 1);
+        assert!(
+            v.body.find("### Database risks") < v.body.find("_Dashy reviewed"),
+            "{}",
+            v.body
+        );
         assert!(
             v.body
                 .ends_with("_Dashy reviewed at **high** depth: touches auth_"),
@@ -1438,7 +1522,7 @@ mod tests {
     /// save the new one leaves none -- never the old one pointing at the new markdown.
     #[test]
     fn a_rerun_pre_review_never_keeps_the_last_conversation() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1491,16 +1575,19 @@ mod tests {
     #[test]
     fn a_discussion_reads_what_the_review_could_and_no_more() {
         // the team the review was given, whatever the repo is bound to today
-        let sc = scope_with("acme/api", "opus", "core".into());
+        let sc = scope_with("acme/api", "opus", "core".into(), "acme/schema".into());
+        assert!(sc.env.contains(&(github::SCOPE_DB.into(), "acme/schema".into())));
         assert!(sc.env.contains(&(github::SCOPE_TEAM.into(), "core".into())));
         assert!(sc.env.contains(&(github::SCOPE.into(), "acme/api".into())));
         // a review held before the team was recorded: the repo alone
-        let old = scope_with("acme/api", "opus", String::new());
+        let old = scope_with("acme/api", "opus", String::new(), String::new());
         assert!(old.env.contains(&(github::SCOPE_TEAM.into(), String::new())));
         // no backend but claude runs tools, so it gets no team either
-        assert!(scope_with("acme/api", "openrouter:x", "core".into())
-            .env
-            .is_empty());
+        assert!(
+            scope_with("acme/api", "openrouter:x", "core".into(), "acme/schema".into())
+                .env
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1547,7 +1634,7 @@ mod tests {
 
     #[test]
     fn a_revision_keeps_what_the_review_ran_with_and_proposes_no_memory() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         config::update(|c| c.demo = true);
         let v = revise(&held("opus", "5e3ae8e0-544e-4128-88af-fe301d354aae")).unwrap();
         assert_eq!((v.depth.as_str(), v.effort.as_str()), ("high", "max"));
@@ -1573,7 +1660,7 @@ mod tests {
     /// and skips the author lookup, so this runs the real verdict() with nothing leaving the machine.
     #[test]
     fn verdict_records_the_depth_and_effort_it_built_the_prompt_with() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1586,7 +1673,7 @@ mod tests {
             c.depth = "low".into();
             c.effort = "high".into();
         });
-        let (v, _) = verdict("acme/api", 7, "opus", None, "", llm::Session::None).unwrap();
+        let (v, _, _) = verdict("acme/api", 7, "opus", None, "", llm::Session::None).unwrap();
         assert_eq!(v.depth, "low");
         assert_eq!(v.effort, "high");
     }
@@ -1595,7 +1682,7 @@ mod tests {
     /// the two GitHub calls, which is the half a test cannot drive — everything after them is here.
     #[test]
     fn posting_a_held_review_logs_it_and_forgets_it() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1653,7 +1740,7 @@ mod tests {
     /// is pressed.
     #[test]
     fn posting_a_held_review_posts_what_was_parked() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1693,7 +1780,7 @@ mod tests {
     /// that must NOT leave the file, or the next press posts the same review again.
     #[test]
     fn a_failed_log_does_not_leave_the_review_to_post_again() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -1741,7 +1828,7 @@ mod tests {
     /// can go up.
     #[test]
     fn a_log_that_cannot_be_written_still_leaves_the_verdict_on_the_row() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         // a directory where the log file should be: every write to it fails
         std::fs::create_dir_all(d.path().join("reviewed.jsonl")).unwrap();
@@ -1867,6 +1954,7 @@ mod tests {
             claude: true,
             cmd: "gitdashy".into(),
             team: String::new(),
+            db: String::new(),
             pasted: String::new(),
             voice: strs(&["review", "bot"]),
             hunter: strs(&["ponytail"]),
@@ -1930,6 +2018,12 @@ mod tests {
     }
 
     #[test]
+    fn a_revision_asks_for_the_db_field_only_when_the_review_had_a_db_repo() {
+        assert!(contract("", "acme/schema").contains("\"db\": null | {"));
+        assert!(!contract("", "").contains("\"db\""));
+    }
+
+    #[test]
     fn a_trusted_author_widens_the_read_and_a_pasted_pr_replaces_the_tools() {
         let mut i = inputs(None);
         i.team = "acme/platform".into();
@@ -1942,6 +2036,13 @@ mod tests {
         assert!(p.contains("You cannot run any commands") && p.ends_with("comment if unsure."));
         assert!(p.contains("The pull request and its full diff follow.\n\nPASTED PR"));
         assert!(!p.contains("gitdashy api"));
+        let mut i = inputs(None);
+        i.db = "acme/schema".into();
+        let p = prompt(&i).unwrap();
+        assert!(p.contains("defined in acme/schema") && p.contains("\"db\": null | {"));
+        assert!(p.find("defined in acme/schema").unwrap() < p.find("Respond with ONLY").unwrap());
+        let p = prompt(&inputs(None)).unwrap();
+        assert!(!p.contains("\"db\"") && !p.contains("{db}"));
         let mut i = inputs(None);
         i.depth = "nope";
         assert!(prompt(&i).is_err());
@@ -1983,6 +2084,16 @@ Hope that helps! {not json}"#;
         assert_eq!(v.findings.len(), 1);
         assert_eq!(v.depth_used, "high");
         assert!(parse_verdict(r#"{"summary": "no verdict here"}"#).is_err());
+        // a db section is kept only as an object: the pane draws tables from it
+        for (db, kept) in [
+            ("null", false),
+            ("[]", false),
+            ("\"x\"", false),
+            (r#"{"tables": []}"#, true),
+        ] {
+            let v = parse_verdict(&format!(r#"{{"verdict": "comment", "db": {db}}}"#)).unwrap();
+            assert_eq!(v.db.is_some(), kept, "{db}");
+        }
         let tagged = |raw: &str| {
             let v = parse_verdict(raw).unwrap();
             (v.kind, v.breaking)
@@ -2004,6 +2115,26 @@ Hope that helps! {not json}"#;
             tagged(r#"{"verdict": "approve", "kind": " Fix"}"#),
             ("fix".into(), false)
         );
+    }
+
+    #[test]
+    fn db_risks_reach_the_body_and_junk_does_not() {
+        let v = Verdict {
+            body: "b".into(),
+            db: Some(serde_json::json!({"risks": [
+                {"kind": "mismatch", "loc": "property_check.py:57", "text": "nullable modality raises"},
+                {"kind": "other", "text": "UNION ALL may return two rows"},
+                {"kind": "index", "loc": "a`b.sql", "text": "no index"},
+                {"kind": "lock", "loc": "x.sql"},
+                7
+            ]})),
+            ..Default::default()
+        };
+        assert_eq!(
+            with_db_note(v.clone()).body,
+            "b\n\n### Database risks\n- **MISMATCH** `property_check.py:57`: nullable modality raises\n- **OTHER**: UNION ALL may return two rows\n- **INDEX** `a'b.sql`: no index"
+        );
+        assert_eq!(with_db_note(Verdict { db: None, ..v }).body, "b");
     }
 
     #[test]

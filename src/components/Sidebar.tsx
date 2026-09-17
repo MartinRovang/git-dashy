@@ -1,8 +1,12 @@
 import { useState } from 'react'
+import { Bot, Database, Eye, BookOpen, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
 import type { PostingRule, StateData } from '../types'
 import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { every, span } from '../tokens'
 import { Chips, Row, Select } from './Controls'
+import { close, open, repaint } from '../modals'
+import { api } from '../api'
+import { fuzzy, step } from '../stories'
 
 type Props = {
   data: StateData | null
@@ -15,8 +19,6 @@ type Props = {
   onFollow: () => void
   /** Follow everyone the board shows working under one `team:`/`org:` scope. */
   onFollowScope: (scope: string) => void
-  /** How many are followed, so the rail can say so when shut. */
-  followed: number
   /** `target` is a row's own name: `acme/api`, or `acme/*` for the whole owner. */
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
   /** Turn one owner's rule on for both kinds of review, or take it off both. */
@@ -25,40 +27,10 @@ type Props = {
   onFollowOwner: (repo: string) => void
   onAskAgain: (kind: string, key: string) => void
   onReport: (op: 'start' | 'open') => void
+  /** Point a repo or `acme/*` at its DB repo ("" for none), or take the rule away. */
+  onDb: (op: 'set' | 'clear', target: string, db?: string) => void
   collapsed: boolean
   onCollapse: () => void
-}
-
-/** One label/value pair in a collapsed group's stack. */
-function Ln({ label, value, off }: { label: string; value: string; off?: boolean }) {
-  return (
-    <span className="ln">
-      <em>{label}</em>
-      <s className={off ? 'off' : undefined}>{value}</s>
-    </span>
-  )
-}
-
-/** A setting that holds several at once, as the badges the expanded rail uses for the same thing.
- *
- * ponytail: joined with commas these ran off the narrow rail and you saw "review, cave…". One badge
- * per value, stacked, so every active one is readable at any width.
- */
-function Pills({ label, values }: { label: string; values: string[] }) {
-  return (
-    <span className="ln">
-      <em>{label}</em>
-      {values.length ? (
-        <span className="pills">
-          {values.map((v) => (
-            <i key={v}>{v}</i>
-          ))}
-        </span>
-      ) : (
-        <s className="off">none</s>
-      )}
-    </span>
-  )
 }
 
 /** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
@@ -133,26 +105,25 @@ function Sources({
   )
 }
 
-/** A settings group: a caret and a one-line summary when open, a stacked digest when collapsed.
+/** A settings group: a caret, its icon and a one-line summary when open, just the icon when collapsed.
  *
- * ponytail: the collapsed rail shows a digest. A column of icons tells you which group to click and
- * nothing about what it holds; label/value pairs tell you the model you are reviewing with without
- * expanding anything.
+ * ponytail: `flag` puts a dot on the icon. An icon alone says nothing about what a group holds, so the
+ * collapsed rail keeps a dot for what costs someone else (a hold) or is a nudge to undo (held back).
  */
 function Group({
-  k,
+  icon: Icon,
   label,
   summary,
-  digest,
+  flag,
   open,
   onToggle,
   collapsed,
   children,
 }: {
-  k: string
+  icon: LucideIcon
   label: string
   summary: string
-  digest: React.ReactNode
+  flag?: string
   open: boolean
   onToggle: () => void
   collapsed: boolean
@@ -164,19 +135,125 @@ function Group({
           group instead of toggling a body nobody can see. */}
       <button
         className="summary"
-        title={collapsed ? `${label} — open the rail here` : undefined}
+        title={collapsed ? `${label}${flag ? ` (${flag})` : ''} — open the rail here` : undefined}
+        aria-label={flag ? `${label}, ${flag}` : label}
         aria-expanded={open && !collapsed}
         onClick={onToggle}
       >
         <span className="car">▶</span>
-        <span className="ic">{k.toUpperCase()}</span>
-        <span className="icv">{digest}</span>
+        <span className="gi">
+          <Icon size={collapsed ? 18 : 14} aria-hidden />
+          {collapsed && flag ? <i className="dot" /> : null}
+        </span>
         <span className="lb">{label}</span>
         <span className="sv">{summary}</span>
       </button>
       {open && !collapsed ? <div className="fields">{children}</div> : null}
     </div>
   )
+}
+
+/** A text input that fuzzy-suggests `options` as you type: ↑/↓ move, Enter or Tab or a click takes one. Anything typed
+ *  still stands, so a repo not on the board can be named. The dialog reads the value back by `id`. */
+function Fuzzy({ id, placeholder, options, value }: { id: string; placeholder: string; options: string[]; value: string }) {
+  const [q, setQ] = useState(value)
+  const [idx, setIdx] = useState(-1)
+  const [focus, setFocus] = useState(false)
+  // Esc shuts the list and leaves the dialog open; typing opens it again
+  const [shut, setShut] = useState(false)
+  const hits = q.trim() ? fuzzy(q.trim(), options).filter((o) => o !== q.trim()).slice(0, 6) : []
+  const take = (v: string) => {
+    setQ(v)
+    setIdx(-1)
+    setShut(false)
+  }
+  return (
+    <div className="fuzzy">
+      <input
+        type="text"
+        id={id}
+        placeholder={placeholder}
+        autoComplete="off"
+        value={q}
+        onChange={(e) => take(e.target.value)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setFocus(false)}
+        onKeyDown={(e) => {
+          if (!hits.length || shut) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            setIdx((i) => step(i, hits.length, e.key === 'ArrowDown'))
+          } else if (e.key === 'Escape') {
+            e.stopPropagation()
+            setShut(true)
+          } else if ((e.key === 'Enter' || e.key === 'Tab') && idx >= 0) {
+            // stop the dialog's Enter from saving: this Enter picks a suggestion
+            e.preventDefault()
+            e.stopPropagation()
+            take(hits[idx])
+          }
+        }}
+      />
+      {focus && !shut && hits.length ? (
+        <div className="hits">
+          {hits.map((h, i) => (
+            <div key={h} className={`opt${i === idx ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); take(h) }}>
+              {h}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** The DB repo dialog: which repo or owner, and the repo its schema lives in. `target`/`db` prefill an edit. */
+function configureDb(board: string[], onDb: Props['onDb'], target = '', db = '') {
+  // the board's repos now, every repo you can reach once /api/repos answers: a DB repo rarely has open PRs
+  let repos = board
+  const owners = () => [...new Set(repos.map((r) => `${r.split('/')[0]}/*`))]
+  api('/api/repos')
+    .then((r) => (r.ok ? r.json() : { repos: [] }))
+    .then((j: { repos: string[] }) => {
+      repos = [...new Set([...board, ...j.repos])]
+      repaint()
+    })
+    .catch(() => {})
+  const val = (id: string) => (document.querySelector(id) as HTMLInputElement).value.trim()
+  const save = () => {
+    if (!val('#dbt')) return
+    // an edit that renames the target replaces the rule instead of adding a second one
+    if (target && val('#dbt') !== target) onDb('clear', target)
+    onDb('set', val('#dbt'), val('#dbr'))
+    close(m)
+  }
+  const m = open({
+    title: 'Configure database',
+    dismiss: false,
+    focus: target ? '#dbr' : '#dbt',
+    body: () => (
+      <div className="dbdlg">
+        <label htmlFor="dbt">Repo or owner</label>
+        <p>
+          The repo whose PRs get the database check. Use <code>acme/api</code> for one repo, or <code>acme/*</code> for every
+          repo under an owner. A repo's own rule beats its owner's.
+        </p>
+        <Fuzzy id="dbt" placeholder="acme/api or acme/*" options={[...owners(), ...repos]} value={target} />
+        <label htmlFor="dbr">DB repo</label>
+        <p>
+          The repo where that database's schema and migrations live, like <code>acme/db</code>. Reviews read it and say what a
+          PR does to the database. Leave it empty for <b>none</b>: this repo reads no schema, even under an owner rule. A
+          private schema's names can end up in a review posted to a public PR.
+        </p>
+        <Fuzzy id="dbr" placeholder="acme/db, empty for none" options={repos} value={db} />
+      </div>
+    ),
+    foot: [
+      ['Enter', 'save', save, 'go'],
+      ['Esc', 'cancel', () => close(m)],
+    ],
+  })
+  m.keys = { Enter: save, Escape: () => close(m) }
 }
 
 /** The left rail: the reviewer's settings as collapsible groups, then the session's outcomes. */
@@ -230,7 +307,7 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -240,7 +317,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const flip = (name: string) => {
     if (collapsed) {
-      // the rail is 106px: the fields have nowhere to render, so widen it and land on this group
+      // the rail is 52px: the fields have nowhere to render, so widen it and land on this group
       setOpen((o) => ({ ...o, [name]: true }))
       onCollapse()
       return
@@ -251,11 +328,13 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
   const rules = d?.postingRules || []
-  /** Every target that holds a review on either axis: what the collapsed rail shows of all this. */
+  /** Every target that holds a review on either axis: the collapsed rail flags the Agent icon while any do. */
   // a rule set on that row, not every repo that inherits one: an owner holding for four repos is one hold
   const holds = rules
     .filter((r) => (['manual', 'auto'] as const).some((ran) => r[ran] === 'hold' && ruleSource(r.target, r[`${ran}Via`]) === 'own'))
     .map((r) => r.target)
+  const dbRules = d?.dbRules || []
+  const boardRepos = [...new Set((d?.sections || []).flatMap((x) => x.prs.map((p) => p.repo)))].filter(Boolean).sort()
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
@@ -267,7 +346,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
       {collapsed ? null : <div className="grip" data-grip="side" />}
       <div className="sh">
         <button className="iconbtn" title={collapsed ? 'Expand sidebar (S)' : 'Collapse sidebar (S)'} onClick={onCollapse}>
-          ≡
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           {collapsed ? null : <kbd className="hint">S</kbd>}
         </button>
       </div>
@@ -276,28 +355,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <div className="grpname">Reviewer</div>
 
         <Group
-          k="agent"
+          icon={Bot}
           label="Agent"
+          flag={holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : undefined}
           summary={[
             [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
             holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : '',
           ]
             .filter(Boolean)
             .join(' · ')}
-          digest={
-            <>
-              <Ln label="model" value={s.model || '—'} />
-              <Ln label="depth" value={s.depth || 'default'} />
-              <Ln label="effort" value={s.effort || 'default'} off={!s.effort} />
-              <Pills label="voices" values={s.voice || []} />
-              <Pills label="hunters" values={s.hunter || []} />
-              <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
-              {/* the one setting here that changes what lands on someone else's PR, so it survives the
-                  collapse. Names the targets, not a count: at 106px "2 hold" is a number you have to
-                  open the rail to read. */}
-              <Pills label="holds" values={holds} />
-            </>
-          }
           open={!!open.agent}
           onToggle={() => flip('agent')}
           collapsed={collapsed}
@@ -433,33 +499,48 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="view"
+          icon={Database}
+          label="Database"
+          summary={dbRules.length ? `${dbRules.length} DB repo rule${dbRules.length === 1 ? '' : 's'}` : 'no DB repos'}
+          open={!!open.database}
+          onToggle={() => flip('database')}
+          collapsed={collapsed}
+        >
+          {/* the repo a repo's schema and migrations live in: its reviews read it and say what a PR does to the
+              database. A repo's own rule beats its owner's; "none" leaves one repo out of an owner rule. */}
+          <div className="sub">where each repo's database is defined</div>
+          {dbRules.length ? (
+            <div className="targets">
+              {dbRules.map((r) => (
+                <div className="dbrule" key={r.target}>
+                  <button className="dbedit" title={`edit the rule for ${r.target}`} onClick={() => configureDb(boardRepos, onDb, r.target, r.db)}>
+                    <span className="ln">
+                      <em>{r.target.endsWith('/*') ? 'owner' : 'repo'}</em>
+                      <b>{r.target}</b>
+                    </span>
+                    <span className="ln">
+                      <em>schema from</em>
+                      {r.db ? <b>{r.db}</b> : <i>none</i>}
+                    </span>
+                  </button>
+                  <button className="ib" title={`remove the rule for ${r.target}`} onClick={() => onDb('clear', r.target)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">reviews read no database schema</div>
+          )}
+          <button className="btn dbconf" onClick={() => configureDb(boardRepos, onDb)}>
+            configure
+          </button>
+        </Group>
+
+        <Group
+          icon={Eye}
           label="View"
           summary={`${win} history · ${every(s.interval || 0)}`}
-          digest={
-            <>
-              <Ln label="history" value={win} />
-              <Ln label="refresh" value={every(s.interval || 0)} />
-              <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
-              <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
-              {/* a count, not the names: seven badges is the whole rail, and "4 of 7" is the thing
-                  you actually want to know at this width */}
-              <Ln label="following" value={String(followed)} off={!followed} />
-              <Ln
-                label="sources"
-                value={
-                  !o.scopes.length
-                    ? 'none yet'
-                    : !(s.scopes || []).length
-                      ? 'none'
-                      : (s.scopes || []).length === o.scopes.length
-                        ? 'all'
-                        : `${(s.scopes || []).length} of ${o.scopes.length}`
-                }
-                off={!(s.scopes || []).length}
-              />
-            </>
-          }
           open={!!open.view}
           onToggle={() => flip('view')}
           collapsed={collapsed}
@@ -525,19 +606,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="know"
+          icon={BookOpen}
           label="Knowledge"
+          flag={held.length ? `${held.length} held back` : undefined}
           summary={[teams || 'no team', held.length ? `${held.length} held back` : ''].filter(Boolean).join(' · ')}
-          digest={
-            <>
-              <Ln label="memory" value={k.memory || 'default'} />
-              <Pills label="teams" values={teamList} />
-              {k.store ? <Ln label="store" value={k.store} /> : null}
-              {/* ponytail: a refused consent is a nudge, so it survives the collapse as a count.
-                  Everything else in this digest is a setting; this one is something to go and undo. */}
-              <Ln label="held back" value={String(held.length)} off={!held.length} />
-            </>
-          }
           open={!!open.know}
           onToggle={() => flip('know')}
           collapsed={collapsed}
@@ -580,10 +652,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="tools"
+          icon={Wrench}
           label="Tools"
           summary={rep?.job.running ? 'writing Friday report…' : rep?.latest ? `report ${rep.latest}` : 'Friday report'}
-          digest={<Ln label="report" value={rep?.job.running ? 'writing…' : rep?.latest || 'none'} off={!rep?.latest && !rep?.job.running} />}
           open={!!open.tools}
           onToggle={() => flip('tools')}
           collapsed={collapsed}

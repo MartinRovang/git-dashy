@@ -29,6 +29,8 @@ export type Pr = {
   /** the newest review's tag: feature, fix, security...; "" when no review tagged it. */
   kind: string
   breaking: boolean
+  /** Its newest review found schema changes or database risks. */
+  db?: boolean
   pre: Pre
   /** A finished review nobody has posted yet. */
   waiting?: boolean
@@ -58,6 +60,8 @@ export type Options = {
 }
 
 export type Knowledge = {
+  /** The Necronomicon's reminder: when it next wants learning (unix secs, 0 if never learned), and whether one runs now. */
+  learn?: { next: number; running: boolean }
   /** The Friday report's background job, and the newest report on disk by date ("2026-09-15"). */
   report?: { job: { running: boolean; elapsed?: number; error?: string }; latest: string | null }
   memory: string
@@ -130,6 +134,8 @@ export type Settings = {
 
 export type StateData = {
   version: string
+  /** Your GitHub login, "" until the first fetch. */
+  me?: string
   sections: Section[]
   fetchedAt: number | null
   interval: number
@@ -148,6 +154,8 @@ export type StateData = {
   asks: Ask[]
   notices: string[]
   postingRules?: PostingRule[]
+  /** Which repo holds each repo's database, owners (`acme/*`) first. `db` "" is a deliberate none. */
+  dbRules?: { target: string; db: string }[]
   /** Release notes since the last version run, "" once dismissed. */
   changelog: string
 }
@@ -164,6 +172,13 @@ export type Review = {
   at: string
   findings: Finding[]
   text: string
+  /** What the PR does to the database, when its repo has a DB repo. Model output: every field may be missing. */
+  db?: DbImpact | null
+}
+
+export type DbImpact = {
+  tables?: { name?: string; change?: string; refs?: string[]; columns?: { name?: string; change?: string; note?: string }[] }[]
+  risks?: { kind?: string; loc?: string; text?: string }[]
 }
 
 /** detail(): the side pane's frame for one PR. */

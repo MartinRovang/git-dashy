@@ -528,13 +528,11 @@ pub fn team_key() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use std::sync::MutexGuard;
 
     /// A fresh store under a tempdir, held for the test's lifetime.
     fn fresh() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.bindings = d.path().join("bindings"));
         (g, d)

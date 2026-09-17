@@ -539,6 +539,39 @@ pub fn editable() -> Vec<(String, Option<String>)> {
     out
 }
 
+/// (source label, file name, modified secs, facts) for every top-level .md under every source: all of
+/// memory as it stands, for the Necronomicon to read.
+///
+/// ponytail: top level only. drafts/ and pool/ are not facts yet, and the drafts reach the view through
+/// waiting(). Newest file first, as "recently learned": the memory dir's git history is off whenever it
+/// sits inside another repo, and a file's mtime is there on every machine.
+pub fn books() -> Vec<(String, String, u64, Vec<String>)> {
+    let mut out = Vec::new();
+    for (label, base) in every_source() {
+        if base.as_os_str().is_empty() {
+            continue;
+        }
+        for name in sorted_names(&base)
+            .into_iter()
+            .filter(|n| n.ends_with(".md") && n != PROJECT && n != AGENTS)
+        {
+            let p = base.join(&name);
+            let at = std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let lines: Vec<String> = facts(&p).into_iter().filter(|l| !l.starts_with('#')).collect();
+            if !lines.is_empty() {
+                out.push((label.clone(), name, at, lines));
+            }
+        }
+    }
+    out.sort_by_key(|a| std::cmp::Reverse(a.2));
+    out
+}
+
 /// One file's text, stripped. Only a missing file reads as empty.
 ///
 /// ponytail: only a missing file reads as empty. A permission error or a dangling symlink must be loud:
@@ -810,14 +843,77 @@ pub fn whoami() -> String {
     }
 }
 
-/// The memory dir for a fact that names no repo and has no context. None in none, or in several.
+/// One read of the bindings and one scan of the joined teams, for a caller resolving many repos.
 ///
-/// ponytail: None for several on purpose. A general fact is true of every repo a source covers, and with
-/// two teams that is two different claims; picking one would publish to a team that never asked. It is
-/// the LAST resort now: `about` usually says which project the observation came from.
-fn the_one_team() -> Option<PathBuf> {
-    let got = team::dirs();
-    (got.len() == 1).then(|| got[0].join("memory"))
+/// ponytail: `mine_for_teams` asked per FILE and `in_team` per FACT, and every ask reopened the
+/// bindings store and walked TEAMS twice over — bind::resolver() exists for exactly this and was not
+/// used here. Built once it is also one answer: the list cannot change its mind halfway down.
+struct Teams {
+    of: Box<dyn Fn(&str) -> String + Send + Sync>,
+    /// lowercased slug -> that team's memory dir, as bind::team_dir resolves it
+    dirs: HashMap<String, PathBuf>,
+    joined: Vec<String>,
+}
+
+impl Teams {
+    fn read() -> Teams {
+        let joined = team::joined();
+        // ponytail: through bind::team_dir itself, once per joined team, rather than a second copy of
+        // its slug -> dir rule. Which team a fact is published to is decided here; two spellings of
+        // that rule is the disagreement this module exists to refuse, and the teams are a handful.
+        let dirs = joined
+            .iter()
+            .filter_map(|s| bind::team_dir(s).map(|d| (s.to_lowercase(), d)))
+            .collect();
+        Teams {
+            of: bind::resolver(),
+            dirs,
+            joined,
+        }
+    }
+
+    /// bind::team_dir against this read: the team's memory dir, if this machine has joined it.
+    fn dir_of(&self, slug: &str) -> Option<PathBuf> {
+        if slug.is_empty() {
+            return None;
+        }
+        self.dirs.get(&slug.to_lowercase()).cloned()
+    }
+
+    fn project_key(&self, repo: Option<&str>, about: &str) -> (String, Option<PathBuf>) {
+        if let Some(r) = repo {
+            let k = (self.of)(r);
+            return match self.dir_of(&k) {
+                Some(d) => (k, Some(d)),
+                None => (String::new(), None),
+            };
+        }
+        if !about.is_empty() {
+            let k = (self.of)(about);
+            if !k.is_empty() {
+                if let Some(d) = self.dir_of(&k) {
+                    return (k, Some(d));
+                }
+            }
+        }
+        // ponytail: the LAST resort, and None for several on purpose. A general fact is true of every
+        // repo a source covers, and with two teams that is two different claims; picking one would
+        // publish to a team that never asked. `about` usually says which project it came from.
+        match self.joined.as_slice() {
+            [only] => (only.clone(), self.dir_of(only)),
+            _ => (String::new(), None),
+        }
+    }
+
+    fn visible(&self, repo: &str, about: &str) -> bool {
+        if self.joined.is_empty() {
+            return false;
+        }
+        let Some(repo) = opt(repo) else {
+            return self.project_key(None, about).1.is_some(); // a general fact belongs to the project it was observed in
+        };
+        self.dir_of(&(self.of)(repo)).is_some()
+    }
 }
 
 /// The memory dir a fact at `repo` scope belongs to. None when nothing selects one.
@@ -843,27 +939,7 @@ fn project(repo: Option<&str>, about: &str) -> Option<PathBuf> {
 
 /// (team key, memory dir) for a fact at `repo` scope. ("", None) when nothing selects one.
 fn project_key(repo: Option<&str>, about: &str) -> (String, Option<PathBuf>) {
-    if let Some(r) = repo {
-        let k = bind::of(r);
-        return match bind::team_dir(&k) {
-            Some(d) => (k, Some(d)),
-            None => (String::new(), None),
-        };
-    }
-    if !about.is_empty() {
-        let k = bind::of(about);
-        if !k.is_empty() {
-            if let Some(d) = bind::team_dir(&k) {
-                return (k, Some(d));
-            }
-        }
-    }
-    let got = team::joined();
-    if got.len() == 1 {
-        (got[0].clone(), the_one_team())
-    } else {
-        (String::new(), None)
-    }
+    Teams::read().project_key(repo, about)
 }
 
 /// Your evidence for `repo`, inside the team it is BOUND to. None when nothing selects one.
@@ -904,20 +980,14 @@ pub fn logged_repos(wh: Option<&Path>) -> HashSet<String> {
 /// disclosure: whether a fact about your private work is published to other people. That is the last
 /// place an irreversible side effect belongs. Joining still seeds bindings from the log, so nothing
 /// stops working; it just becomes something you can see and take back.
+/// ponytail: through the team's dir, exactly as every READ resolves it. bind.of(repo) being non-empty
+/// was true for a binding to ANY team, including one this machine is not in, so a repo bound to
+/// org/other had its name and facts written into org/mem's pool and offered for sharing, while
+/// sources() and brief() both said it was not ours. One binding meaning "ours" for disclosure and "not
+/// ours" for reading is the two-mechanisms-disagree failure this module argues against, in the
+/// direction that publishes.
 pub fn team_visible(repo: &str, about: &str) -> bool {
-    if team::joined().is_empty() {
-        return false;
-    }
-    let Some(repo) = opt(repo) else {
-        return project(None, about).is_some(); // a general fact belongs to the project it was observed in
-    };
-    // ponytail: through team_dir, exactly as every READ resolves it. bind.of(repo) being non-empty was
-    // true for a binding to ANY team, including one this machine is not in, so a repo bound to org/other
-    // had its name and facts written into org/mem's pool and offered for sharing, while sources() and
-    // brief() both said it was not ours. One binding meaning "ours" for disclosure and "not ours" for
-    // reading is the two-mechanisms-disagree failure this module argues against, in the direction that
-    // publishes.
-    bind::team_dir(&bind::of(repo)).is_some()
+    Teams::read().visible(repo, about)
 }
 
 /// "- (n) [r:id,...] fact\n" for every row: the one spelling of the counted line format.
@@ -2119,7 +2189,8 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
     }
     let (mut items, settled, rid) = (rows(r), known(repo), rid());
     for fact in proposed {
-        if settled.iter().any(|t| same(&fact, t)) {
+        if let Some(t) = settled.iter().find(|t| same(&fact, t)) {
+            crate::necro::remind(t); // nothing new for memory, but the Necronomicon ranks by how often a fact comes up
             continue; // already approved somewhere: proposing it again says nothing new
         }
         if observe(&mut items, repo, fact, &rid) {
@@ -2223,9 +2294,45 @@ pub fn facts_in(p: &Path) -> Vec<String> {
         .collect()
 }
 
-/// A team file's text with one fact taken out, exactly matched: what a removal proposes.
-pub fn team_without(p: &Path, fact: &str) -> String {
-    without(p, fact, plain)
+/// `text` with the one line stating `fact` taken out, every other line (blank ones included) as it was: what
+/// a removal from a team's file proposes. None when no line states it.
+///
+/// ponytail: EXACT, and one line. `is` normalises, so a near-duplicate a teammate wrote would have gone with it,
+/// and `without` drops blank lines, so every removal rewrote the whole file and the person approving it could
+/// not see the one change. This is the one file where a wrong removal costs everyone.
+pub fn without_fact(text: &str, fact: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with(['-', '•']) && plain(l) == fact)?;
+    let left: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != at)
+        .map(|(_, l)| *l)
+        .collect();
+    if left.iter().all(|l| l.trim().is_empty()) {
+        return Some(String::new());
+    }
+    Some(left.join("\n") + "\n")
+}
+
+/// `text` with `fact` added as one line at the end, every other line as it was: what accepting a draft into a
+/// team's file proposes. Err when the file already states it, however it is worded.
+pub fn with_fact(text: &str, fact: &str) -> Result<String, String> {
+    let known = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with(['-', '•']))
+        .any(|l| same(&plain(l), fact));
+    if known {
+        return Err("the team already knows that".into());
+    }
+    let head = text.trim_end();
+    Ok(if head.is_empty() {
+        format!("- {fact}\n")
+    } else {
+        format!("{head}\n- {fact}\n")
+    })
 }
 
 /// "a__b.md" -> Some("a/b"); "general.md" -> None. The inverse of slug().
@@ -2520,13 +2627,10 @@ pub fn write(new: &[(String, String)]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// A memory dir of its own for one test, every path config knows pointed under it.
     fn setup() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         config::update(|c| {
@@ -2548,6 +2652,59 @@ mod tests {
         std::fs::create_dir_all(d.join(".git")).unwrap();
         std::fs::create_dir_all(d.join("memory")).unwrap();
         d.join("memory")
+    }
+
+    /// The Necronomicon reads facts from every source, headings and drafts left out.
+    #[test]
+    fn books_reads_every_sources_facts_and_no_drafts() {
+        let (_g, tmp) = setup();
+        let team = a_team(tmp.path(), "org-t");
+        let mine = config::get().memory_dir;
+        std::fs::write(mine.join("acme__api.md"), "# acme/api\n\n- uses tabs\n").unwrap();
+        std::fs::create_dir_all(mine.join(QUEUE)).unwrap();
+        std::fs::write(mine.join(QUEUE).join("acme__api.md"), "- (1) a draft\n").unwrap();
+        std::fs::write(team.join("general.md"), "- run make lint\n").unwrap();
+
+        let mut got = books();
+        got.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("mine", "acme__api.md"));
+        assert_eq!(got[0].3, vec!["uses tabs".to_string()]);
+        assert_eq!(
+            (got[1].0.as_str(), got[1].3.as_slice()),
+            ("team org-t", &["run make lint".to_string()][..])
+        );
+    }
+
+    /// What team_visible answers, off ONE read of the bindings and one scan of the joined teams: a repo bound
+    /// to a team this machine is in, and nothing else.
+    #[test]
+    fn only_a_repo_bound_to_a_joined_team_is_the_teams() {
+        let (_g, tmp) = setup();
+        a_team(tmp.path(), "org-t");
+        assert_eq!(bind::bind("acme/api", "org-t"), "");
+        assert!(team_visible("acme/api", ""));
+        assert!(!team_visible("other/thing", ""), "unbound is not the team's");
+    }
+
+    /// A general fact names no repo of its own: `about` says which project it was observed in, and
+    /// with exactly one team joined that team is the last resort. With two, neither is chosen.
+    #[test]
+    fn a_general_fact_follows_its_context_then_the_one_team() {
+        let (_g, tmp) = setup();
+        a_team(tmp.path(), "org-t");
+        assert_eq!(bind::bind("acme/api", "org-t"), "");
+        std::fs::write(config::get().memory_dir.join("general.md"), "- run make lint\n").unwrap();
+
+        assert!(team_visible("", "acme/api"), "the repo it was seen in is bound");
+        assert!(team_visible("", ""), "one team joined: the last resort");
+
+        a_team(tmp.path(), "org-two");
+        assert!(
+            !team_visible("", ""),
+            "two teams: a general fact belongs to neither"
+        );
+        assert!(team_visible("", "acme/api"), "context still names one of them");
     }
 
     #[test]
@@ -2677,6 +2834,37 @@ mod tests {
         assert_eq!(lines(&mine.join("general.md")), ["- mine, tidied"]);
         assert_eq!(lines(&shared.join("general.md")), ["- theirs, and not"]);
         assert_eq!(lines(&shared.join("a__b.md")), ["- theirs too"]);
+    }
+
+    #[test]
+    fn accepting_into_a_team_file_adds_one_line_unless_it_is_known() {
+        assert_eq!(with_fact("", "one"), Ok("- one\n".to_string()));
+        assert_eq!(
+            with_fact("# team\n\n- one\n", "two"),
+            Ok("# team\n\n- one\n- two\n".to_string())
+        );
+        assert_eq!(
+            with_fact(
+                "- the retry client owns backoff\n",
+                "The retry client owns backoff."
+            ),
+            Err("the team already knows that".to_string())
+        );
+    }
+
+    #[test]
+    fn a_removal_takes_one_exact_line_and_keeps_the_rest() {
+        assert_eq!(
+            without_fact("# team\n\n- one fact\n- two\n", "one fact"),
+            Some("# team\n\n- two\n".to_string()),
+            "one line out, the rest as it was"
+        );
+        assert_eq!(
+            without_fact("- One fact\n", "one fact"),
+            None,
+            "exact, not normalised"
+        );
+        assert_eq!(without_fact("- one fact\n", "one fact"), Some(String::new()));
     }
 
     #[test]

@@ -256,6 +256,11 @@ export function findLogin(title: string, logins: string[], following: string[]):
 /** The stack. Mounted once, next to the app. */
 export function ModalHost() {
   useSyncExternalStore(subscribe, snapshot)
+  // a modal's `focus` selector, once, when it comes to the top
+  const top = topModal()
+  useEffect(() => {
+    if (top?.focus) (document.querySelector(top.focus) as HTMLElement | null)?.focus()
+  }, [top])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const m = topModal()
