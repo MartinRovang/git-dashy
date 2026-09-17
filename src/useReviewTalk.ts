@@ -36,23 +36,27 @@ export function useReviewTalk(source: Source, onFlash: (s: string) => void, onTe
   const held = source.kind === 'held'
   const key = held ? `${source.repo}#${source.number}` : source.url
 
-  // `alive` is the open screen's, not this call's: a fetch still in the air when the screen switches PRs
-  // used to land afterwards and write the OLD review over the new one, since nothing cancelled it. The
-  // board's own poll has always guarded its setState this way (usePoll.ts); this one did not.
-  const alive = useRef(true)
+  // Which PR the screen is on now. Every load remembers the key it was built for and drops its reply if
+  // that is no longer it, so a fetch still in the air when the screen switches PRs cannot write the OLD
+  // review over the new one.
+  //
+  // ponytail: NOT one `alive` ref flipped in the effect's cleanup. The outgoing cleanup sets it false and
+  // the incoming effect sets it true again in the same commit, so the old request finds it true and lands
+  // anyway -- that guards unmount and nothing else, which is the bug wearing a fix. It is the key because
+  // every `load` closure already knows its own, which covers the interval and act()'s reload too; a flag
+  // scoped to one effect run would leave both of those unguarded.
+  const on = useRef(key)
   const load = async () => {
+    const mine = key
     const got = await fetchView(source)
-    if (!alive.current) return
+    if (on.current !== mine) return
     if (typeof got === 'string') return setFailed(got)
     setView(got)
     onText?.(got.text)
   }
   useEffect(() => {
-    alive.current = true
+    on.current = key
     void load()
-    return () => {
-      alive.current = false
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
   const busy = !!view?.talk?.busy

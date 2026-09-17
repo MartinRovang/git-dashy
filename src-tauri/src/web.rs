@@ -2511,6 +2511,14 @@ fn handle(state: &State, token: &str, mut req: Request) {
             let Some(f) = post_route(path) else {
                 return send_json(req, 404, json!({"error": "not found"}));
             };
+            // an honest Content-Length is refused without reading a byte of it; a body that lies, or
+            // declares nothing at all, is caught by the cap on the read below
+            if header(&req, "Content-Length")
+                .parse::<u64>()
+                .is_ok_and(|n| n > BODY_MAX as u64)
+            {
+                return send_json(req, 413, json!({"error": "body too large"}));
+            }
             let mut raw = Vec::new();
             // one byte past the cap, so a body that hits it is known to be over rather than exactly at it
             let read = req.as_reader().take(BODY_MAX as u64 + 1).read_to_end(&mut raw);
@@ -3046,6 +3054,67 @@ mod tests {
             "the fact's text never leaves the machine's memory"
         );
         config::update(|c| c.learning = std::path::PathBuf::new());
+    }
+
+    #[test]
+    fn clearing_every_scope_with_the_window_does_not_wake_a_fetch() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.settings = Some(d.path().join("settings.json"));
+            c.scopes = vec!["org:acme".into()];
+            c.window = Some(168);
+        });
+        let (base, token, state) = served();
+        // ponytail: both keys in ONE body. The window's refetch used to be decided against the scopes the
+        // same request was about to replace, so this woke a fetch for a board with nothing left to search.
+        let (code, body) = post(
+            &format!("{base}/api/settings"),
+            json!({"window": 24, "scopes": []}),
+            &token,
+        );
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(config::get().scopes, Vec::<String>::new());
+        assert!(!state.lock().wake.is_set(), "no scope is left to search");
+
+        // and the other way: a window change with a scope still on is exactly what has to refetch
+        config::update(|c| c.scopes = vec!["org:acme".into()]);
+        let (base, token, state) = served();
+        let (code, body) = post(&format!("{base}/api/settings"), json!({"window": 720}), &token);
+        assert_eq!(code, 200, "{body}");
+        assert!(state.lock().wake.is_set());
+    }
+
+    #[test]
+    fn a_poisoned_job_lock_still_reads_as_running() {
+        let name = "poisoned-probe";
+        let go = std::sync::Arc::new(Mutex::new(false));
+        // a job that will not finish until this test lets it, so `running` is still true below
+        let wait = go.clone();
+        start_job(name, move || {
+            while !*wait.lock().unwrap_or_else(|e| e.into_inner()) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(json!({}))
+        });
+        let first = job_of(name).expect("the job is registered");
+        // poison its mutex: a panic while the lock is held is the only way one gets poisoned
+        let p = first.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = p.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert!(first.is_poisoned());
+        // ponytail: `.map(..).unwrap_or(false)` read a poisoned lock as "not running" and started a SECOND
+        // job for this name on top of the one still going -- which shows up as the registry's entry being
+        // REPLACED. Asserting on the new closure instead would race it: it can finish before we look.
+        start_job(name, || Ok(json!({})));
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &job_of(name).unwrap()),
+            "a second job replaced the one still running under {name}"
+        );
+        *go.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     #[test]
