@@ -2786,6 +2786,26 @@ mod tests {
         );
     }
 
+    /// The schema graph only clones a DB repo some rule names: anything else is refused before git runs.
+    #[test]
+    fn db_schema_refuses_a_repo_no_rule_names() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.dbrepo = d.path().join("dbrepo"));
+        assert_eq!(dbrepo::set("acme/*", "acme/schema"), "");
+        let (base, token, _state) = served();
+        for db in ["", "acme/other", "not a repo", "acme/*"] {
+            let (code, body) = get(
+                &format!("{base}/api/dbschema?db={}", urlencoding::encode(db)),
+                Some(&token),
+            );
+            assert_eq!(
+                (db, code, body["error"].as_str()),
+                (db, 400, Some("db must be a DB repo a rule names"))
+            );
+        }
+    }
+
     /// The rail's Database group through HTTP: set, clear, and a bad op or target refused, each read back off the payload.
     #[test]
     fn db_repo_rules_through_the_route() {

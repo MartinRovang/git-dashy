@@ -268,13 +268,10 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
       lines()
     }
     colSim.on('tick', () => {
-      for (const kd of kindsHere) {
-        const mine = byKind.get(kd)!
-        const cx = mine.reduce((a, c) => a + c.x!, 0) / mine.length
-        const cy = mine.reduce((a, c) => a + c.y!, 0) / mine.length
-        const r = Math.max(0, ...mine.map((c) => Math.hypot(c.x! - cx, c.y! - cy) + cr(c)))
-        kname.filter((d) => d === kd).attr('x', cx).attr('y', cy + r + 8)
-      }
+      kname.each(function (kd) {
+        const { cx, cy, r } = circle(byKind.get(kd)!, 0, cr)
+        select(this).attr('x', cx).attr('y', cy + r + 8)
+      })
       colTitle.attr('y', Math.min(...cols.map((c) => c.y! - cr(c))) - 30)
       col.attr('transform', (c) => `translate(${c.x},${c.y})`)
       lines()
@@ -303,25 +300,33 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
       node.classed('named', (t) => k >= 1.5 || t.degree >= busiest / 6)
       col.classed('named', (c) => k >= 1.8 || c.tables.length >= most / 4)
     }
-    const circle = (mine: Table[], pad: number) => {
+    // the centre of a set of nodes, and how far out its farthest edge reaches
+    const circle = <N extends Table | ColumnNode>(mine: N[], pad: number, size: (n: N) => number = radius as (n: N) => number) => {
       const cx = mine.reduce((a, t) => a + t.x!, 0) / mine.length
       const cy = mine.reduce((a, t) => a + t.y!, 0) / mine.length
-      return { cx, cy, r: Math.max(0, ...mine.map((t) => Math.hypot(t.x! - cx, t.y! - cy) + radius(t))) + pad }
+      return { cx, cy, r: Math.max(0, ...mine.map((t) => Math.hypot(t.x! - cx, t.y! - cy) + size(t))) + pad }
     }
+    // membership is fixed until the next rebuild; a tick only measures each ring, once, and places what hangs off it
+    const inSpace = new Map(spaces.map((s) => [s, tables.filter((t) => t.space === s)]))
     sim.on('tick', () => {
-      for (const c of groups) {
-        const { cx, cy, r } = circle(members.get(c)!, 12)
-        ringOf.filter((d) => d === c).attr('cx', cx).attr('cy', cy).attr('r', r)
-        cname.filter((d) => d === c).attr('x', cx).attr('y', cy + r + 4)
-      }
-      for (const s of spaces) {
-        const mine = tables.filter((t) => t.space === s)
-        const cx = mine.reduce((a, t) => a + t.x!, 0) / mine.length
-        const cy = mine.reduce((a, t) => a + t.y!, 0) / mine.length
-        const r = Math.max(0, ...mine.map((t) => Math.hypot(t.x! - cx, t.y! - cy) + radius(t))) + 30
-        halo.filter((d) => d === s).attr('cx', cx).attr('cy', cy).attr('r', r)
-        name.filter((d) => d === s).attr('x', cx).attr('y', cy - r + 8)
-      }
+      const rings = new Map(groups.map((c) => [c, circle(members.get(c)!, 12)]))
+      const clouds = new Map(spaces.map((s) => [s, circle(inSpace.get(s)!, 30)]))
+      ringOf.each(function (d) {
+        const { cx, cy, r } = rings.get(d)!
+        select(this).attr('cx', cx).attr('cy', cy).attr('r', r)
+      })
+      cname.each(function (d) {
+        const { cx, cy, r } = rings.get(d)!
+        select(this).attr('x', cx).attr('y', cy + r + 4)
+      })
+      halo.each(function (d) {
+        const { cx, cy, r } = clouds.get(d)!
+        select(this).attr('cx', cx).attr('cy', cy).attr('r', r)
+      })
+      name.each(function (d) {
+        const { cx, cy, r } = clouds.get(d)!
+        select(this).attr('x', cx).attr('y', cy - r + 8)
+      })
       link
         .attr('x1', (l) => l.source.x!)
         .attr('y1', (l) => l.source.y!)

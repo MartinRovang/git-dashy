@@ -5,11 +5,12 @@
 //!
 //! ponytail: files are read in path order and CREATE/ALTER/DROP applied as met, not in true migration
 //! order. Good for a schema kept as one file per table; a repo of numbered migrations sorts right too.
-//! Postgres-flavoured DDL only. ORM models (SQLAlchemy, Prisma) would need their own patterns.
+//! Postgres-flavoured DDL only: ORM models (SQLAlchemy, Prisma) would need their own patterns. A reference
+//! to a table renamed after it was written still names the old table.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -45,10 +46,13 @@ static KEYS: LazyLock<Regex> =
     LazyLock::new(|| re(r#"(?i)\b(primary|foreign)\s+key\s*\(([^)]*)\)(?:\s*references\s+([\w."]+))?"#));
 static PK: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)\bprimary\s+key\b"));
 static REFS: LazyLock<Regex> = LazyLock::new(|| re(r#"(?i)\breferences\s+([\w."]+)"#));
+// one action of an ALTER TABLE, split at its top-level commas so `numeric(10,2)` stays whole
 static ADD: LazyLock<Regex> =
-    LazyLock::new(|| re(r#"(?i)\badd\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?("[^"]+"|\w+)\s+([^,;]*)"#));
+    LazyLock::new(|| re(r#"(?is)^\s*add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?("[^"]+"|\w+)\s+(.*)$"#));
 static DROP: LazyLock<Regex> =
-    LazyLock::new(|| re(r#"(?i)\bdrop\s+(?:column\s+)?(?:if\s+exists\s+)?("[^"]+"|\w+)"#));
+    LazyLock::new(|| re(r#"(?i)^\s*drop\s+(?:column\s+)?(?:if\s+exists\s+)?("[^"]+"|\w+)"#));
+static RENAME: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"(?i)^\s*rename\s+(?:(?:column\s+)?("[^"]+"|\w+)\s+)?to\s+([\w."]+)"#));
 // where a column's type ends and its constraints start
 static TAIL: LazyLock<Regex> = LazyLock::new(|| {
     re(
@@ -174,21 +178,47 @@ fn apply(tables: &mut BTreeMap<String, Table>, sql: &str) {
             }
             keys(t, body);
         } else {
-            let stop = sql[end..].find(';').map_or(sql.len(), |i| end + i);
+            // the body ends at its `;`, or where the next statement starts when a file leaves the `;` out
+            let semi = sql[end..].find(';').map_or(sql.len(), |i| end + i);
+            let next = STMT.find_at(&sql, end).map_or(sql.len(), |n| n.start());
+            let stop = semi.min(next);
             let body = &sql[end..stop];
             from = stop;
-            let t = tables.entry(tname).or_default();
-            for c in DROP.captures_iter(body) {
-                let col = name(&c[1]);
-                if !NOT_COLUMN.contains(&col.as_str()) {
-                    t.columns.retain(|c| c.name != col);
+            let t = tables.entry(tname.clone()).or_default();
+            let mut moved = None;
+            for p in pieces(body) {
+                if let Some(c) = ADD.captures(p) {
+                    column(t, &c[1], &c[2]);
+                } else if let Some(c) = RENAME.captures(p) {
+                    match c.get(1) {
+                        Some(old) => {
+                            let (old, new) = (name(old.as_str()), name(&c[2]));
+                            if let Some(col) = t.columns.iter_mut().find(|x| x.name == old) {
+                                col.name = new;
+                            }
+                        }
+                        // RENAME TO keeps the schema: `restricted.users RENAME TO people` is `restricted.people`
+                        None => {
+                            let new = name(&c[2]);
+                            moved = Some(match tname.rsplit_once('.') {
+                                Some((schema, _)) if !new.contains('.') => format!("{schema}.{new}"),
+                                _ => new,
+                            });
+                        }
+                    }
+                } else if let Some(c) = DROP.captures(p) {
+                    let col = name(&c[1]);
+                    if !NOT_COLUMN.contains(&col.as_str()) {
+                        t.columns.retain(|c| c.name != col);
+                    }
                 }
-            }
-            for c in ADD.captures_iter(body) {
-                column(t, &c[1], &c[2]);
             }
             refs(t, body);
             keys(t, body);
+            if let Some(new) = moved {
+                let t = tables.remove(&tname).unwrap_or_default();
+                tables.insert(new, t);
+            }
         }
     }
 }
@@ -236,20 +266,37 @@ pub fn parse(files: &[String]) -> Value {
     json!({"tables": out, "risks": []})
 }
 
+/// A .sql file bigger than this is a data dump or a seed, not a schema: skipped.
+const MAX_SQL: u64 = 2 * 1024 * 1024;
+
+/// Every .sql file under `dir`, skipping .git, anything too big, and every symlink.
+///
+/// ponytail: the DB repo is anyone-who-can-push input. A symlink is never followed: `loop -> .` would recurse
+/// until the stack overflows and aborts the app, and `x.sql -> ~/.ssh/...` would read outside the clone.
+/// DirEntry's file type and metadata describe the link itself, never its target.
 fn sql_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
+        let Ok(ft) = e.file_type() else { continue };
         let p = e.path();
-        if p.file_name().is_some_and(|n| n == ".git") {
+        if ft.is_symlink() || p.file_name().is_some_and(|n| n == ".git") {
             continue;
         }
-        if p.is_dir() {
+        if ft.is_dir() {
             sql_files(&p, out);
-        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("sql")) {
+        } else if ft.is_file()
+            && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("sql"))
+            && e.metadata().is_ok_and(|m| m.len() <= MAX_SQL)
+        {
             out.push(p);
         }
     }
 }
+
+/// ponytail: one lock for every DB repo. Two clicks, or two tabs, would otherwise clone or reset the same
+/// directory at once and one would delete the other's checkout half-way. Per-repo locks if several DB repos
+/// ever need reading at the same moment.
+static CHECKOUT: Mutex<()> = Mutex::new(());
 
 /// Clone or refresh `db` (owner/name), then parse it. Err says why not.
 pub fn get(db: &str) -> Result<Value, String> {
@@ -261,6 +308,7 @@ pub fn get(db: &str) -> Result<Value, String> {
         .join(".prs_dbschema")
         .join(k.replace('/', "__"));
     let d = dir.to_string_lossy().to_string();
+    let _held = CHECKOUT.lock().unwrap_or_else(|e| e.into_inner());
     let auth = github::git_auth();
     let url = format!("{}{k}.git", github::GITHUB);
     let steps: Vec<Vec<&str>> = if dir.join(".git").is_dir() {
@@ -343,5 +391,54 @@ CREATE TABLE copy AS SELECT * FROM analytics;"#
         assert_eq!(t("analytics").unwrap()["refs"], json!(["restricted.users"]));
         assert!(t("tmp").is_none());
         assert!(t("copy").is_some_and(|c| c["columns"] == json!([])));
+    }
+
+    #[test]
+    fn alter_actions_split_at_top_level_commas_and_renames_follow() {
+        let v = parse(&[
+            // no `;` after the first ALTER: the CREATE after it is still read
+            "CREATE TABLE auth.users (id int, nick text);
+             ALTER TABLE auth.users ADD COLUMN amount numeric(10,2) NOT NULL, RENAME COLUMN nick TO handle, ALTER COLUMN id DROP DEFAULT
+             CREATE TABLE later (x int);
+             ALTER TABLE auth.users RENAME TO people;
+             ALTER TABLE auth.people ADD COLUMN email text;"
+                .to_string(),
+        ]);
+        let names: Vec<_> = v["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["auth.people", "later"]);
+        let cols: Vec<_> = v["tables"][0]["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| format!("{} {}", c["name"].as_str().unwrap(), c["note"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            cols,
+            ["id int", "handle text", "amount numeric(10,2)", "email text"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sql_files_never_follow_a_symlink() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.sql"), "CREATE TABLE secret (x int);").unwrap();
+        std::fs::create_dir_all(d.path().join("schema")).unwrap();
+        std::fs::create_dir_all(d.path().join(".git")).unwrap();
+        std::fs::write(d.path().join("schema/users.sql"), "CREATE TABLE users (x int);").unwrap();
+        std::fs::write(d.path().join(".git/hidden.sql"), "").unwrap();
+        std::fs::write(d.path().join("dump.sql"), vec![b' '; MAX_SQL as usize + 1]).unwrap();
+        std::os::unix::fs::symlink(".", d.path().join("schema/loop")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.sql"), d.path().join("leak.sql")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), d.path().join("away")).unwrap();
+        let mut found = Vec::new();
+        sql_files(d.path(), &mut found);
+        assert_eq!(found, [d.path().join("schema/users.sql")]);
     }
 }
