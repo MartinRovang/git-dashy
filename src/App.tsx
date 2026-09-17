@@ -471,8 +471,9 @@ export default function App() {
       close(m)
       await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
     }
-    m.foot = [['p', 'post as comment', () => void postIt()], ...(m.foot || [])]
-    m.keys = { ...m.keys, p: () => void postIt() }
+    const copy = async () => setFlash(await copyText(found.text, found.name))
+    m.foot = [['p', 'post as comment', () => void postIt()], ['y', 'copy', () => void copy()], ...(m.foot || [])]
+    m.keys = { ...m.keys, p: () => void postIt(), y: () => void copy() }
   }
 
   async function preReview(p: Row) {
