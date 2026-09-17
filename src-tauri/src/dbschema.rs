@@ -302,15 +302,26 @@ fn sql_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// ever need reading at the same moment.
 static CHECKOUT: Mutex<()> = Mutex::new(());
 
-/// Runs of digits compare as numbers, the rest as text: `V2__a.sql` sorts before `V10__b.sql`.
+/// Runs of digits compare as numbers, the rest as text: `V2__a.sql` sorts before `V10__b.sql`. A `.` or `_` between
+/// two digit runs joins them into one version, and a version that ends sorts before one that goes on, so Flyway's
+/// `V1__init.sql` comes before `V1_1__add.sql` and `V1.1__add.sql`.
 fn natural(s: &str) -> Vec<(u8, u128, String)> {
-    static RUNS: LazyLock<Regex> = LazyLock::new(|| re(r"\d+|\D+"));
-    RUNS.find_iter(s)
-        .map(|m| match m.as_str().parse::<u128>() {
-            Ok(n) => (0, n, String::new()),
-            Err(_) => (1, 0, m.as_str().to_string()),
-        })
-        .collect()
+    // (1, n): a part of a version; (0): that version ends here; (2, text): anything else
+    static RUNS: LazyLock<Regex> = LazyLock::new(|| re(r"\d+(?:[._]\d+)*|\D+"));
+    let mut key = Vec::new();
+    for m in RUNS.find_iter(s) {
+        let t = m.as_str();
+        if t.starts_with(|c: char| c.is_ascii_digit()) {
+            key.extend(
+                t.split(['.', '_'])
+                    .map(|n| (1, n.parse().unwrap_or(u128::MAX), String::new())),
+            );
+            key.push((0, 0, String::new()));
+        } else {
+            key.push((2, 0, t.to_string()));
+        }
+    }
+    key
 }
 
 /// Every .sql file under `dir`, in natural path order, parsed.
@@ -326,7 +337,8 @@ fn read(dir: &Path) -> Value {
 }
 
 /// A shallow checkout of `url` at `dir`, fresh: fetched and reset when it is there, cloned when it is not, and
-/// cloned again when a fetch fails on a checkout that is corrupt or was cut off half-way.
+/// cloned again when the checkout is corrupt or was cut off half-way. A fetch that fails on a sound checkout
+/// (offline, a timeout, an expired token) keeps it: the next click that can reach GitHub only fetches.
 fn checkout(url: &str, dir: &Path) -> Result<(), String> {
     let d = dir.to_string_lossy().to_string();
     let auth = github::git_auth();
@@ -338,11 +350,12 @@ fn checkout(url: &str, dir: &Path) -> Result<(), String> {
             Err(o.last_line())
         }
     };
-    if dir.join(".git").is_dir()
-        && run(&["git", "-C", &d, "fetch", "--depth", "1", "origin"]).is_ok()
-        && run(&["git", "-C", &d, "reset", "--hard", "FETCH_HEAD"]).is_ok()
-    {
-        return Ok(());
+    if dir.join(".git").is_dir() {
+        let fresh = run(&["git", "-C", &d, "fetch", "--depth", "1", "origin"])
+            .and_then(|_| run(&["git", "-C", &d, "reset", "--hard", "FETCH_HEAD"]));
+        if fresh.is_ok() || run(&["git", "-C", &d, "rev-parse", "--verify", "HEAD"]).is_ok() {
+            return fresh;
+        }
     }
     let _ = std::fs::remove_dir_all(dir);
     run(&["git", "clone", "--depth", "1", url, &d])
@@ -499,6 +512,11 @@ CREATE TABLE copy AS SELECT * FROM analytics;"#
         )
         .unwrap();
         std::fs::write(d.path().join("V10__drop.sql"), "DROP TABLE gone;").unwrap();
+        // a point version comes after its base: V1_1's DROP runs after V1's CREATE, and V1.3's after V1.2's
+        std::fs::write(d.path().join("V1__make.sql"), "CREATE TABLE point (x int);").unwrap();
+        std::fs::write(d.path().join("V1_1__unmake.sql"), "DROP TABLE point;").unwrap();
+        std::fs::write(d.path().join("V1.2__again.sql"), "CREATE TABLE twice (x int);").unwrap();
+        std::fs::write(d.path().join("V1.3__unmake.sql"), "DROP TABLE twice;").unwrap();
         assert_eq!(
             read(d.path())["tables"],
             json!([{"name": "kept", "change": "", "refs": [], "columns": [{"name": "x", "change": "", "note": "int", "key": "", "ref": ""}]}])
@@ -542,6 +560,11 @@ CREATE TABLE copy AS SELECT * FROM analytics;"#
         git(origin.path(), &["commit", "-qm", "b"]);
         assert_eq!(checkout(&url, &dir), Ok(()));
         assert_eq!(names(), ["a", "b"]);
+        // unreachable remote, sound checkout: an error, and the cache stays for the next click
+        git(&dir, &["remote", "set-url", "origin", "file:///nowhere/at/all"]);
+        assert!(checkout(&url, &dir).is_err());
+        assert_eq!(names(), ["a", "b"]);
+        git(&dir, &["remote", "set-url", "origin", &url]);
         std::fs::write(dir.join(".git/HEAD"), "garbage").unwrap();
         assert_eq!(checkout(&url, &dir), Ok(()));
         assert_eq!(names(), ["a", "b"]);

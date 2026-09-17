@@ -20,9 +20,8 @@ type Props = {
 }
 
 /** A cluster, named for its busiest table, which it goes to; the unclustered tables have nowhere to go. */
-function Cluster({ g, c, go }: { g: Schema; c: string; go: (id: string) => void }) {
+function Cluster({ c, size, go }: { c: string; size: number; go: (id: string) => void }) {
   const hub = c.slice(c.indexOf('/') + 1)
-  const size = g.tables.filter((t) => t.group === c).length
   return hub ? (
     <button className="cref mono" title={`go to ${hub}, the busiest table in this cluster`} onClick={() => go(hub)}>
       cluster {split(hub)[1]} · {size}
@@ -79,7 +78,7 @@ export function SchemaPanel({ g, table, shown, colQuery, onColQuery, kinds, onKi
             <span className="mono">
               {table.columns.length} columns · {table.degree} foreign keys
             </span>
-            <Cluster g={g} c={table.group} go={go} />
+            <Cluster c={table.group} size={size(table.group)} go={go} />
           </div>
           <div className="schfilter">
             <div className="search">
@@ -145,7 +144,7 @@ export function SchemaPanel({ g, table, shown, colQuery, onColQuery, kinds, onKi
                 .filter((c) => c.startsWith(`${s}/`))
                 .map((c) => (
                   <div className="schkey sub2" key={c}>
-                    <Cluster g={g} c={c} go={go} />
+                    <Cluster c={c} size={size(c)} go={go} />
                   </div>
                 ))}
             </div>
