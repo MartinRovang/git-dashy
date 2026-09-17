@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
 
 let n = 0
 
@@ -730,6 +730,15 @@ describe('the posting tree', () => {
   })
 })
 
+describe('paging a screen that shows one item at a time', () => {
+  it('steps and wraps at both ends', () => {
+    expect([pageTo(0, 1, 3), pageTo(2, 1, 3), pageTo(0, -1, 3)]).toEqual([1, 0, 2])
+  })
+  it('stays put on one item and does not divide by zero on none', () => {
+    expect([pageTo(0, 1, 1), pageTo(0, -1, 0)]).toEqual([0, 0])
+  })
+})
+
 describe('canCastOn', () => {
   const row = (over: Partial<Row> = {}): Row => ({ ...pr(), uid: 'u', section: 'REVIEW REQUESTED', older: [], ...over })
   it('casts on any PR, reviewed or not, whenever nothing else is running on it', () => {
@@ -737,6 +746,7 @@ describe('canCastOn', () => {
     expect(canCastOn(row({ section: 'MINE' }))).toBe(true)
     expect(canCastOn(row({ review: '✓ approved' }))).toBe(true)
     expect(canCastOn(row({ busy: true }))).toBe(false)
+    expect(canCastOn(row({ humanOnly: true }))).toBe(false)
   })
 })
 

@@ -985,7 +985,11 @@ impl State {
             inner.absorb_scope(&scope);
             match (&inner.auto, &inner.auto_baseline) {
                 (true, Some(baseline)) => {
-                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| scope.armed(r))
+                    // a team's memory repo is approved by a person, never reviewed by auto
+                    let theirs = team::team_repos();
+                    auto_starts(inner.rr_prs(), baseline, &inner.reviews, &|r| {
+                        scope.armed(r) && !team::in_repos(&theirs, r)
+                    })
                 }
                 _ => Vec::new(),
             }

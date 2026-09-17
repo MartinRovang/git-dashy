@@ -19,7 +19,7 @@ import { Countdown, TopBar } from './components/TopBar'
 import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
-import { askConsents, draftsScreen, dreamScreen, escMenu, whatsNew, memoryEditor, setPath, shareScreen, teamsScreen, updateScreen } from './screens'
+import { askConsents, dreamScreen, knowledgeScreen, escMenu, whatsNew, setPath, teamsScreen, updateScreen } from './screens'
 import { CONTEXTS, age, every, span } from './tokens'
 import type { Ask, Code, Detail, Row, StateData } from './types'
 import { useStatePoll } from './usePoll'
@@ -410,10 +410,7 @@ export default function App() {
       if (out?.asks) await askConsents(ctx, (out.asks as Ask[]).filter((a) => a.key === key && a.kind === kind))
     })()
   const onModal = (name: string) => {
-    if (name === 'drafts') void draftsScreen(ctx)
-    else if (name === 'share') void shareScreen(ctx, current)
-    else if (name === 'dream') void dreamScreen(ctx)
-    else if (name === 'general') void memoryEditor(ctx, '')
+    if (name === 'knowledge') void knowledgeScreen(ctx, 'stats')
   }
   const onMenu = () => escMenu(ctx)
   const onUpdate = () => void updateScreen(ctx)
@@ -422,8 +419,15 @@ export default function App() {
     [],
   )
 
+  /** A team's memory repo is approved by a person: say so, and start nothing. The server refuses too. */
+  function humanOnly(p: Row) {
+    if (p.humanOnly) setFlash(`#${p.number} is on a team's memory repo: human review only`)
+    return !!p.humanOnly
+  }
+
   async function review(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (humanOnly(p)) return
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
@@ -482,6 +486,7 @@ export default function App() {
 
   async function preReview(p: Row) {
     if (!p || p.busy || p.section !== 'MINE') return
+    if (humanOnly(p)) return
     if (p.pre && !p.pre.moved) {
       const r = await api(`/api/prereview?url=${encodeURIComponent(p.url)}`)
       if (!r.ok) {
@@ -538,6 +543,7 @@ export default function App() {
   /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
   function reviewWith(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
+    if (humanOnly(p)) return
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
@@ -675,7 +681,7 @@ export default function App() {
       reviewer: () => void addReviewer(p),
       bind: () => void bindScreen(p),
       waiting: () => void waitingScreen(p),
-      memory: () => void memoryEditor(ctx, p.repo),
+      memory: () => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }),
       hide: () => toggleHide(p),
       book: () => show('necronomicon'),
     }
@@ -756,11 +762,11 @@ export default function App() {
     if (k === '+' && p) return one(() => void addReviewer(p))
     if (k === 'p' && p) return one(() => void preReview(p))
     if (k === 'y' && p) return one(() => void copyUrl(p))
-    if (k === 'g') return one(() => void memoryEditor(ctx, ''))
-    if (k === 'n' && p) return one(() => void memoryEditor(ctx, p.repo))
+    if (k === 'g') return one(() => void knowledgeScreen(ctx, 'inspect'))
+    if (k === 'n' && p) return one(() => void knowledgeScreen(ctx, 'inspect', { team: '', repo: p.repo }))
     if (k === 'Z') return one(() => void dreamScreen(ctx))
-    if (k === 'P' && p) return one(() => void shareScreen(ctx, p))
-    if (k === 'W') return one(() => void draftsScreen(ctx))
+    if (k === 'K') return one(() => void knowledgeScreen(ctx, 'stats'))
+    if (k === 'W') return one(() => void knowledgeScreen(ctx, 'drafts'))
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)

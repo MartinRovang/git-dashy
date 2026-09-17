@@ -28,6 +28,9 @@ pub const QUEUE: &str = "drafts";
 pub const POOL: &str = "pool";
 /// Under the team's memory: each person's UNCONFIRMED observations, never read.
 pub const DRAFT_POOL: &str = "drafts";
+/// Under a team's memory: the wordings a cross-check agreed were a fact the team now has, so the teammate whose
+/// wording did not become the line can take their draft out. Never read into a prompt.
+pub const LANDED: &str = "landed";
 /// Under your own memory: pairs a model has already called different, so we stop asking.
 pub const SETTLED: &str = ".settled";
 /// Under your own memory: team keys you have agreed may receive facts automatically.
@@ -207,6 +210,9 @@ pub fn append_self(repo: &str, text: &str) -> Vec<String> {
         }
     }
     history_();
+    for f in &fresh {
+        crate::learning::record("draft", repo, "pre-review", f);
+    }
     rewrite_counted(&self_path(repo), &items);
     fresh
 }
@@ -518,6 +524,24 @@ pub fn every_source() -> Vec<(String, PathBuf)> {
     out
 }
 
+/// Every learned-memory file that exists, for the editor's picker: (team key, "" for yours; repo, None for
+/// general). Yours first, each source's general before its repos. What people wrote, the brief and agents.md,
+/// is left out: it has its own editor.
+pub fn editable() -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    for (label, base) in every_source() {
+        let team = label.strip_prefix("team ").unwrap_or("").to_string();
+        let mut here: Vec<Option<String>> = sorted_names(&base)
+            .into_iter()
+            .filter(|n| n.ends_with(".md") && n != PROJECT && n != AGENTS && base.join(n).is_file())
+            .map(|n| repo_of(&n))
+            .collect();
+        here.sort_by_key(|r| r.is_some());
+        out.extend(here.into_iter().map(|r| (team.clone(), r)));
+    }
+    out
+}
+
 /// (source label, file name, modified secs, facts) for every top-level .md under every source: all of
 /// memory as it stands, for the Necronomicon to read.
 ///
@@ -738,7 +762,8 @@ fn plain(line: &str) -> String {
 /// the evidence the promotion gate trusts is not a parsing nicety. Every pre-upgrade file is prose in
 /// this slot, so this is the common case, not the exotic one.
 pub fn parse(line: &str) -> Draft {
-    let m = re(r"^-\s*\((\d+)\)\s*(?:\[(r:[0-9a-f]{4}(?:,r:[0-9a-f]{4})*)\]\s*)?(.*)$").captures(line.trim());
+    let m = re(r"^-\s*\((\d+)\)\s*(?:\[([rs]:[0-9a-f]{4}(?:,[rs]:[0-9a-f]{4})*)\]\s*)?(.*)$")
+        .captures(line.trim());
     let Some(m) = m else {
         return Draft {
             count: 1,
@@ -755,7 +780,19 @@ pub fn parse(line: &str) -> Draft {
     };
     let ids = m
         .get(2)
-        .map(|g| g.as_str().split(',').map(|i| i[2..].to_string()).collect())
+        // a review's id is kept bare, a session's keeps its "s:" (see SESSION_RUN)
+        .map(|g| {
+            g.as_str()
+                .split(',')
+                .map(|i| {
+                    if i.starts_with(SESSION_RUN) {
+                        i.to_string()
+                    } else {
+                        i[2..].to_string()
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
     Draft {
         count,
@@ -763,6 +800,10 @@ pub fn parse(line: &str) -> Draft {
         fact: m[3].trim().to_string(),
     }
 }
+
+/// The mark on a run id that came from a session (`gitdashy remember`) rather than a review: "s:1a2b" in a
+/// drafts line, where a review's is "r:1a2b". Kept on the id in memory too, bare ids being reviews'.
+pub const SESSION_RUN: &str = "s:";
 
 /// A short id for ONE run of one review. Never stored anywhere but the drafts line it stamps.
 ///
@@ -875,13 +916,11 @@ impl Teams {
                 }
             }
         }
-        // ponytail: the LAST resort, and None for several on purpose. A general fact is true of every
-        // repo a source covers, and with two teams that is two different claims; picking one would
-        // publish to a team that never asked. `about` usually says which project it came from.
-        match self.joined.as_slice() {
-            [only] => (only.clone(), self.dir_of(only)),
-            _ => (String::new(), None),
-        }
+        // ponytail: no last resort. With exactly one team joined, a general fact seen in a repo bound to
+        // nothing, or with no repo at all, used to go to that team: a private project's lesson published to
+        // people who never covered it, on every machine that happens to be in one team. A general fact is
+        // the team's only when the repo it was seen in is the team's; anything else stays yours.
+        (String::new(), None)
     }
 
     fn visible(&self, repo: &str, about: &str) -> bool {
@@ -969,11 +1008,6 @@ pub fn team_visible(repo: &str, about: &str) -> bool {
     Teams::read().visible(repo, about)
 }
 
-/// Where `user`'s unconfirmed observations about `repo` live, inside the team it is bound to.
-pub fn draft_pool_path(user: &str, repo: &str, about: &str) -> Option<PathBuf> {
-    project(opt(repo), about).map(|d| d.join(DRAFT_POOL).join(user).join(slug(repo)))
-}
-
 /// "- (n) [r:id,...] fact\n" for every row: the one spelling of the counted line format.
 fn counted_text(items: &[Draft]) -> String {
     items
@@ -986,7 +1020,11 @@ fn counted_text(items: &[Draft]) -> String {
                     "[{}] ",
                     d.ids
                         .iter()
-                        .map(|i| format!("r:{i}"))
+                        .map(|i| if i.starts_with(SESSION_RUN) {
+                            i.clone()
+                        } else {
+                            format!("r:{i}")
+                        })
                         .collect::<Vec<_>>()
                         .join(",")
                 )
@@ -996,39 +1034,46 @@ fn counted_text(items: &[Draft]) -> String {
         .collect()
 }
 
-/// Publish your unconfirmed observations about `repo`. True when a team file changed.
+/// The team memory dir a review's observations about `repo` go to, or None when they stay yours.
 ///
-/// ponytail: one machine almost never proposes the same fact twice: 140 drafts on the operator's store,
-/// every one at (1), and not a single specific fact ever promoted. Two people reviewing the same repo do
-/// land on the same facts. This is what makes the second observation reachable, and it is a stronger
-/// independence than same-machine recurrence: different person, different PR, different moment.
-/// ponytail: the same disclosure rule the evidence pool uses: team_visible, so a repo bound to nothing
-/// stays private and an unbound side project publishes nothing. What is new is that these are
-/// UNCONFIRMED, so a teammate reads guesses as well as facts. They can never reach a prompt: nothing
-/// under DRAFT_POOL is read by sources(), scope_text() or the mirror, exactly as POOL is not.
-/// ponytail: the whole file is rewritten rather than appended per fact, so the pool says what the queue
-/// says. A dropped or promoted draft leaves the pool the same way it leaves the queue.
-/// ponytail: no return value. It used to answer `true` even when the write failed, and not one caller
-/// read the answer, so the only thing the bool did was look like a check nobody was making. rewrite()
-/// logs a failed write, which is all any caller here could act on anyway.
-fn pool_drafts(repo: Option<&str>, about: &str) {
+/// ponytail: the review path, not the person. A repo bound to a joined team that has agreed to receive
+/// facts (`publishing`) drafts into that team's pool; anything else drafts privately, exactly as before.
+/// A session can still keep a thought private in a team repo: `gitdashy remember --private` never asks.
+pub fn team_home(repo: Option<&str>, about: &str) -> Option<PathBuf> {
     let r = repo.unwrap_or("");
     if !team_visible(r, about) || !publishing(&team_for(repo, about)) {
+        return None;
+    }
+    project(repo, about)
+}
+
+/// Your drafts about `repo` in a team's pool: <team>/memory/drafts/<you>/<repo>.md.
+fn my_team_drafts(base: &Path, repo: Option<&str>) -> PathBuf {
+    base.join(DRAFT_POOL).join(whoami()).join(slug_of(repo))
+}
+
+/// What the team already knows at `repo` scope: its general facts and the repo's.
+fn team_known(base: &Path, repo: Option<&str>) -> Vec<String> {
+    let mut out = facts(&path(None, Some(base)));
+    if repo.is_some() {
+        out.extend(facts(&path(repo, Some(base))));
+    }
+    out
+}
+
+/// Replace a team drafts file, writing nothing when it would not change.
+///
+/// ponytail: these files live inside the team's git checkout, so a rewrite that changes nothing still
+/// leaves a modified tracked file, and `pull --rebase` on the next tick then fails with "Please commit or
+/// stash them", which kills team sync until some unrelated push sweeps it in. Compared STRIPPED, because
+/// read_file() strips and counted_text() does not; a byte-for-byte test never matched. Reproduced, both.
+fn write_team_drafts(p: &Path, items: &[Draft]) {
+    let want = counted_text(items);
+    if want.trim() == read_file(p) {
         return;
     }
-    let Some(p) = draft_pool_path(&whoami(), r, about) else {
-        return;
-    };
-    let items = rows(repo);
-    let want = counted_text(&items);
-    // ponytail: reports whether the FILE CHANGED, and writes nothing when it did not. These files live
-    // inside the team's git checkout, so a rewrite that changes nothing still leaves a modified tracked
-    // file, and `pull --rebase` on the next tick then fails with "Please commit or stash them", which
-    // kills team sync until some unrelated push sweeps it in under its own message. Reproduced.
-    // ponytail: compared STRIPPED, because read_file() strips and rewrite() does not, so a byte-for-byte
-    // test never matched and every sweep rewrote every pool file, which is exactly the dirty tracked
-    // file this check exists to prevent. The one that fails silently is the one worth spelling out.
-    if want.trim() == read_file(&p) {
+    if items.is_empty() {
+        let _ = std::fs::remove_file(p);
         return;
     }
     if let Some(d) = p.parent() {
@@ -1036,31 +1081,44 @@ fn pool_drafts(repo: Option<&str>, about: &str) {
             return; // ponytail: a pool that cannot be written must never fail the review that produced it
         }
     }
-    if !items.is_empty() {
-        rewrite(&p, &want);
-    } else if p.exists() {
-        let _ = std::fs::remove_file(&p);
+    if let Err(e) = std::fs::write(p, want) {
+        log::error!("could not write {}: {e}", p.display());
     }
 }
 
-/// Every OTHER person's unconfirmed observations about `repo`: (user, count, ids, fact).
+/// Land a fact in the team's knowledge: its general or repo file, and your evidence line beside it.
+///
+/// ponytail: straight into the team, not into your memory first. A fact two independent reviews of a
+/// team repo found is the team's; copying it into your own file as well is how one fact came to live in
+/// two places that then had to be kept in step (and forgotten in step).
+fn to_team(base: &Path, repo: Option<&str>, fact: &str, also: &[&str]) {
+    let dest = path(repo, Some(base));
+    // ponytail: `also` is the other wording a cross-check agreed on. Two machines can land the same pair in one
+    // refresh, each in its own wording; the one that pulls second finds the other's line and adds none.
+    let held = facts(&dest);
+    if !held
+        .iter()
+        .any(|t| same(fact, t) || also.iter().any(|w| is(w, t)))
+    {
+        append_line(&dest, fact);
+    }
+    let evidence = base.join(POOL).join(whoami()).join(slug_of(repo));
+    if !facts(&evidence).iter().any(|t| is(fact, t)) {
+        append_line(&evidence, fact);
+    }
+}
+
+/// Every OTHER person's unconfirmed observations about `repo` in one team's pool: (user, count, ids, fact).
 ///
 /// ponytail: yours are excluded. Your own file is in the pool too, and reading it back as corroboration
 /// would let one review confirm itself: the exact thing PROMOTE_AT exists to refuse, arriving by a
 /// route that did not exist when that rule was written.
-pub fn theirs(repo: &str) -> Vec<(String, u32, Vec<String>, String)> {
-    // ponytail: the BOUND team's pool, which is what docs/memory.md says and what every write here uses.
-    // Walking every joined team found nothing extra (a repo binds to one team and the slugs are unique)
-    // but it was a second reading of the binding living beside the first, and those are the two that
-    // drift. One resolver, one answer.
+fn theirs_in(base: &Path, repo: Option<&str>) -> Vec<(String, u32, Vec<String>, String)> {
     let me = whoami();
     let mut out = Vec::new();
-    let Some(base) = project(opt(repo), "") else {
-        return out;
-    };
     let root = base.join(DRAFT_POOL);
     for user in sorted_names(&root) {
-        let p = root.join(&user).join(slug(repo));
+        let p = root.join(&user).join(slug_of(repo));
         if user == me || !p.is_file() {
             continue;
         }
@@ -1142,116 +1200,192 @@ fn settle(keys: &BTreeSet<String>) {
     }
 }
 
-/// Pool every bound repo's drafts, cross-check them all, and commit. What became yours.
+/// Cross-check every draft of yours in every team's pool, and commit. The facts the teams just gained.
 ///
 /// ponytail: cross_check ran only inside review(), for the repo just reviewed, so a teammate's
 /// corroboration arriving after your last review of a repo waited until you reviewed it again, or
-/// forever if you never did. And a backlog of drafts written before pooling existed published nothing
-/// at all, which is 140 observations on the operator's machine that a colleague could not see.
-/// ponytail: pooling is free and runs every time; the MODEL is only asked about pairs that are new,
-/// because settled() remembers the nos. So a sweep on the refresh tick costs nothing on a quiet machine.
+/// forever if you never did.
+/// ponytail: the model is only asked about pairs that are new, because settled() remembers the nos. So a
+/// sweep on the refresh tick costs nothing on a quiet machine.
 pub fn sweep(model: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for (repo, _p) in counted_files(QUEUE) {
-        pool_drafts(repo.as_deref(), "");
-        out.extend(cross_check(repo.as_deref().unwrap_or(""), model));
-    }
+    let out = sweep_by(|pairs| judge(pairs, model));
     // ponytail: ALWAYS, not only when this sweep wrote something. The pool files live inside the team's
-    // git checkout and every writer of them (append(), promote(), drop()) leaves the tree dirty for
-    // somebody else to commit. Tying the push to "did I write" made the sweep clean up after itself and
-    // after nobody else, so a pool written by a review that failed to push stayed uncommitted, and the
-    // next `pull --rebase` failed with "Please commit or stash them": team sync dead until something
-    // unrelated swept it in. A commit that has to be remembered by each writer is the guard that gets
-    // forgotten; this makes "after a sweep the checkout is clean" true whatever put it there.
+    // git checkout and every writer of them leaves the tree dirty for somebody else to commit. Tying the
+    // push to "did I write" made the sweep clean up after itself and after nobody else, so a pool written
+    // by a review that failed to push stayed uncommitted, and the next `pull --rebase` failed with
+    // "Please commit or stash them": team sync dead until something unrelated swept it in.
     // ponytail: push_dir is a no-op past `git add -A` and one `diff --cached --quiet` when nothing is
     // staged, so the cost on a quiet machine is two git calls per joined team per refresh.
     team::push("memory: what my reviews have proposed");
     out
 }
 
-/// Promote what a teammate independently observed too. The facts that just became yours.
+/// sweep's cross-checks, with `judge` making the call, and nothing pushed.
 ///
-/// The cheap pass finds candidates loosely (CROSS) and the model makes the call, so the threshold can
-/// be low: missing a pair costs a fact, a false candidate costs one true/false answer.
+/// ponytail: the SAME gate the write took. Drafts that pooled while a team had agreed stay in its checkout
+/// after the consent is taken back or the repo is unbound, and walking every folder landed them anyway: a
+/// push into what every teammate's reviews read, past the one rule that decides whether this machine writes
+/// there at all. A team that has not agreed is skipped whole, and a repo drafts file is judged only while
+/// the repo still resolves to that team, as team_home resolves it for a review.
+fn sweep_by(judge: impl Fn(&[(String, String)]) -> Option<Vec<bool>>) -> Vec<String> {
+    let mut out = Vec::new();
+    let me = whoami();
+    for (key, dir) in team::joined().into_iter().zip(team::dirs()) {
+        if !publishing(&key) {
+            continue;
+        }
+        let base = dir.join("memory");
+        for name in sorted_names(&base.join(DRAFT_POOL).join(&me)) {
+            if !name.ends_with(".md") {
+                continue;
+            }
+            let repo = repo_of(&name);
+            if repo.is_some() && team_home(repo.as_deref(), "").as_deref() != Some(base.as_path()) {
+                continue;
+            }
+            out.extend(cross_check_by(&base, repo.as_deref(), &judge));
+        }
+    }
+    out
+}
+
+/// Cross-check your team drafts about `repo` against your teammates'. The facts the team just gained.
+pub fn cross_check(repo: &str, model: &str) -> Vec<String> {
+    let r = opt(repo);
+    match team_home(r, "") {
+        Some(base) => cross_check_by(&base, r, |pairs| judge(pairs, model)),
+        None => vec![],
+    }
+}
+
+/// A candidate pair: one of your team drafts, one of a teammate's.
+type Pair = (Draft, Draft);
+
+/// Your drafts in `base`'s pool that are worth comparing with a teammate's, and the pairs to compare.
+///
+/// A draft the team already knows is taken out of your file first: a teammate's machine promoted it, and
+/// the match moves the fact out of BOTH people's drafts, one machine each.
+fn candidates(base: &Path, repo: Option<&str>) -> Vec<Pair> {
+    let _g = guard();
+    let file = my_team_drafts(base, repo);
+    let known = team_known(base, repo);
+    let landed = facts(&base.join(LANDED).join(slug_of(repo)));
+    let mine: Vec<Draft> = counted(&file);
+    // ponytail: a wording the judge agreed on is gone too, not only one `same` as a team fact. The judge
+    // exists for pairs worded differently, and those are exactly the ones `same` does not match, so the
+    // teammate whose wording did not become the line kept their draft for ever, free to promote again.
+    let left: Vec<Draft> = mine
+        .iter()
+        .filter(|d| !known.iter().any(|t| same(&d.fact, t)) && !landed.iter().any(|w| is(&d.fact, w)))
+        .cloned()
+        .collect();
+    if left.len() != mine.len() {
+        write_team_drafts(&file, &left);
+    }
+    let other = theirs_in(base, repo);
+    if left.is_empty() || other.is_empty() {
+        return vec![];
+    }
+    let done = settled();
+    let mut pairs = Vec::new();
+    for a in &left {
+        for (_u, n, ids, f) in &other {
+            if overlap(&a.fact, f) >= CROSS && !done.contains(&pair_key(&a.fact, f)) {
+                pairs.push((
+                    a.clone(),
+                    Draft {
+                        count: *n,
+                        ids: ids.clone(),
+                        fact: f.clone(),
+                    },
+                ));
+            }
+        }
+    }
+    pairs
+}
+
+/// Move what was agreed into the team's knowledge and out of your drafts. The facts that moved.
 ///
 /// ponytail: the count is over DISTINCT REVIEW IDS across both people, which is the same arithmetic
 /// would_merge does, so "two observations" means two runs that did not know about each other, whoever
 /// ran them. Two ids from one person is already two independent reviews; one each is two people.
-/// ponytail: promotion goes through promote(), so it lands with the already_known guard, the evidence
-/// pool and the pre-review queue cleared, exactly as every other promotion does: the team's file
-/// included, since v1.43.0, under team_visible and that team's consent.
-pub fn cross_check(repo: &str, model: &str) -> Vec<String> {
-    let r = opt(repo);
-    // ponytail: the lock is taken to READ and taken again to WRITE, and is not held across judged().
-    // It was, and judged() waits up to JUDGE_TIMEOUT on a model, so a sweep on the tick thread held the
-    // lock for five minutes while the UI thread's `x`, `t` and `P` all block on it: the screen frozen,
-    // over a promotion that could have happened next tick. Nothing else has to move, because the promote
-    // loop already re-reads the queue and tolerates it having changed while the model was thinking.
-    let pairs: Vec<(Draft, Draft, f64)> = {
-        let _g = guard();
-        let (mine, other) = (rows(r), theirs(repo));
-        if mine.is_empty() || other.is_empty() {
-            return vec![];
-        }
-        let done = settled();
-        let mut pairs = Vec::new();
-        for a in &mine {
-            for (_u, n, ids, f) in &other {
-                let ratio = overlap(&a.fact, f);
-                if ratio >= CROSS && !done.contains(&pair_key(&a.fact, f)) {
-                    pairs.push((
-                        a.clone(),
-                        Draft {
-                            count: *n,
-                            ids: ids.clone(),
-                            fact: f.clone(),
-                        },
-                        ratio,
-                    ));
-                }
+/// ponytail: your file is re-read under the lock. The model may have taken minutes, and a review or a
+/// drop may have changed it; a draft that is gone is not promoted from the copy taken before.
+fn land_agreed(base: &Path, repo: Option<&str>, agreed: &[&Pair]) -> Vec<String> {
+    let _g = guard();
+    let file = my_team_drafts(base, repo);
+    let mut items = counted(&file);
+    let mut moved = Vec::new();
+    for (a, b) in agreed {
+        let ids: HashSet<&String> = a.ids.iter().chain(&b.ids).collect();
+        if ids.len() as u32 >= PROMOTE_AT
+            && items.iter().any(|d| d.fact == a.fact)
+            && !moved.contains(&a.fact)
+        {
+            to_team(base, repo, &a.fact, &[&b.fact]);
+            // the teammate's wording, so their machine can take their draft out (see candidates)
+            let record = base.join(LANDED).join(slug_of(repo));
+            if !facts(&record).iter().any(|w| is(w, &b.fact)) {
+                append_line(&record, &b.fact);
             }
+            items.retain(|d| d.fact != a.fact);
+            moved.push(a.fact.clone());
         }
-        pairs
-    };
+    }
+    if !moved.is_empty() {
+        write_team_drafts(&file, &items);
+    }
+    moved
+}
+
+/// cross_check for one team's pool: the cheap pass finds candidates loosely (CROSS), and `judge` makes the
+/// call on every one of them. What it agreed and what reaches PROMOTE_AT moves.
+///
+/// ponytail: EVERY pair is judged, however alike the wording. Word matching cannot decide whether two
+/// sentences are one claim (§4b-2: subject and object swapped share every token, and a near-identical
+/// sentence can say the opposite), and across people a false match writes into what every teammate's
+/// reviews read. A shortcut that agreed close wordings without asking was tried and taken back out.
+/// ponytail: the judge is a parameter so the landing can be tested without a model; production passes judge().
+/// ponytail: the lock is taken to READ and taken again to WRITE, and is not held across the judge. It was,
+/// and judge() waits up to JUDGE_TIMEOUT on a model, so a sweep on the tick thread held the lock for five
+/// minutes while the UI thread's keys all blocked on it.
+fn cross_check_by(
+    base: &Path,
+    repo: Option<&str>,
+    judge: impl FnOnce(&[(String, String)]) -> Option<Vec<bool>>,
+) -> Vec<String> {
+    let pairs = candidates(base, repo);
     if pairs.is_empty() {
         return vec![];
     }
-    // ponytail: asked ONCE. Calling judge() again to work out what to settle would buy the same answer
-    // a second time, at the same cost, on every sweep.
     let asked: Vec<(String, String)> = pairs
         .iter()
-        .map(|(a, b, _)| (a.fact.clone(), b.fact.clone()))
+        .map(|(a, b)| (a.fact.clone(), b.fact.clone()))
         .collect();
-    let Some(agreed) = judge(&asked, model) else {
+    // ponytail: asked ONCE. Calling the judge again to work out what to settle would buy the same answer a
+    // second time, at the same cost, on every sweep.
+    let Some(yes) = judge(&asked) else {
         return vec![]; // ponytail: not asked. Promote nothing, settle nothing, ask again next time.
     };
-    let _g = guard();
-    let mut promoted: Vec<String> = Vec::new();
-    for ((a, b, _), yes) in pairs.iter().zip(&agreed) {
-        if !yes {
-            continue;
-        }
-        let ids: HashSet<&String> = a.ids.iter().chain(&b.ids).collect();
-        if rows(r).iter().any(|d| d.fact == a.fact) && ids.len() as u32 >= PROMOTE_AT {
-            promote_locked(r, &a.fact);
-            promoted.push(a.fact.clone());
-        }
-    }
-    // ponytail: settled by what did NOT PROMOTE, not by what the model rejected. A pair it AGREED on
-    // whose ids cannot reach PROMOTE_AT (two drafts written before ids existed both parse as ()) is
-    // neither promoted nor recorded, so it was asked again on every tick, forever, about exactly the
-    // backlog this feature exists to serve.
+    let agreed: Vec<&Pair> = pairs
+        .iter()
+        .zip(&yes)
+        .filter(|(_, y)| **y)
+        .map(|(p, _)| p)
+        .collect();
+    let moved = land_agreed(base, repo, &agreed);
+    // ponytail: settled by what did NOT MOVE, not by what the model rejected. A pair it AGREED on whose
+    // ids cannot reach PROMOTE_AT (two drafts written before ids existed both parse as ()) is neither
+    // promoted nor recorded, so it was asked again on every tick, forever.
     settle(
         &pairs
             .iter()
-            .filter(|(a, _, _)| !promoted.contains(&a.fact))
-            .map(|(a, b, _)| pair_key(&a.fact, &b.fact))
+            .filter(|(a, _)| !moved.contains(&a.fact))
+            .map(|(a, b)| pair_key(&a.fact, &b.fact))
             .collect(),
     );
-    if !promoted.is_empty() {
-        pool_drafts(r, ""); // ponytail: the queue shrank, so the pool must say so
-    }
-    promoted
+    moved
 }
 
 /// Whether team `key` may receive facts and drafts without anyone sending them.
@@ -1634,39 +1768,15 @@ fn team_for(repo: Option<&str>, about: &str) -> String {
     project_key(repo, about).0
 }
 
-/// Publish a fact you have accepted, as evidence that you did, AND into the team's memory.
-///
-/// ponytail: sharing is no longer a keypress. Every fact of yours about a repo bound to a team is the
-/// team's: a pipeline that promoted automatically and then waited for someone to press P produced, on
-/// a real machine, nine facts a colleague never saw. The operator asked for the wait to go.
-/// ponytail: the disclosure rule is unchanged and is the whole safety of this: team_visible, so a repo
-/// bound to nothing publishes nothing, and an unbound side project is as private as it ever was. What
-/// changed is only WHO decides for a bound repo, and binding is that decision, made once, visibly.
-/// ponytail: the evidence line is still written. It is what "★ 2 people found this" reads, and with
-/// sharing automatic it is the only record of who arrived at a fact independently.
-/// ponytail: what makes this safe to automate is that it is REVERSIBLE and visible: plain markdown in
-/// git, attributed, and forget() now takes a fact out of the team as well as out of your own memory.
-/// Nobody chose to publish it, so nobody should have to know it was published to remove it.
-fn pool(repo: Option<&str>, fact: &str, about: &str) {
-    let r = repo.unwrap_or("");
-    if !team_visible(r, about) || !publishing(&team_for(repo, about)) {
-        return;
-    }
-    if let Some(p) = pool_path(&whoami(), r, about) {
-        append_line(&p, fact);
-    }
-    if let Some(base) = project(repo, about) {
-        let theirs = facts(&path(repo, Some(&base)));
-        if !theirs.iter().any(|t| same(fact, t)) {
-            append_line(&path(repo, Some(&base)), fact);
-        }
-    }
-}
-
 /// {user: [(repo, fact)]} across everyone's pool. {} when you are not in a team.
 pub fn pools() -> HashMap<String, Vec<(Option<String>, String)>> {
+    pools_in(&team::dirs())
+}
+
+/// pools() for these team checkouts only: what one team's inspect needs, without walking every team.
+pub fn pools_in(dirs: &[PathBuf]) -> HashMap<String, Vec<(Option<String>, String)>> {
     let mut out: HashMap<String, Vec<(Option<String>, String)>> = HashMap::new();
-    for base in team::dirs() {
+    for base in dirs {
         // ponytail: every joined team: corroboration is per fact, not per team
         let root = base.join("memory").join(POOL);
         for user in sorted_names(&root) {
@@ -2060,48 +2170,136 @@ pub fn write_drafts(repo: Option<&str>, items: &[Draft]) {
     rewrite_counted(&queue_path(repo), items); // ponytail: rewrite reaches history_(); the call here was a second one
 }
 
-/// Record what a review proposed; the facts that just became yours.
+/// The scope a fact filed from a shell lands in: `repo` for a repo fact; for a general one, "" when it is
+/// `private`, when the repo it was seen in (`about`) is a team's, or when there is none, and that repo itself
+/// when it is bound to no team.
+///
+/// ponytail: your general file is yours, how you work, read in every session. A lesson from a repo nobody
+/// shares is that repo's, so it stays beside the repo and is there to merge if the repo is bound later;
+/// filing it as general is how project knowledge filled a personal file with neo-api's CI rules.
+pub fn general_scope(general: bool, private: bool, repo: String, about: &str) -> String {
+    if !general {
+        return repo;
+    }
+    // --private --general is the explicit "this is how I work": your general file, wherever you stand
+    if private || about.is_empty() || team_home(None, about).is_some() {
+        return String::new();
+    }
+    about.to_string()
+}
+
+/// Record what a review proposed; the facts that were just confirmed.
 ///
 /// ponytail: drafts are NEVER read back into a prompt. If they were, the reviewer would meet its own
 /// earlier guess as evidence and agree with itself: the count has to come from rediscovery, not recall.
 /// That is the whole difference between measuring durability and keeping a tally.
 pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
+    append_as(repo, text, about, "review")
+}
+
+/// `append`, saying where the observations came from for the learning chart: "review", or "session" for a
+/// fact an agent session filed with `gitdashy remember`.
+///
+/// A repo whose team takes drafts (team_home) drafts into your folder of that team's pool, and a draft
+/// seen twice there becomes the TEAM's fact. Anything else drafts privately and becomes yours.
+pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<String> {
+    append_routed(repo, text, about, source).0
+}
+
+/// `append_as`, and whether it went to a team's pool: the one decision, so a caller's message cannot say
+/// one route while the write took the other.
+pub fn append_routed(repo: &str, text: &str, about: &str, source: &str) -> (Vec<String>, bool) {
+    match team_home(opt(repo), about) {
+        Some(base) => (append_team(&base, repo, text, source == "session"), true),
+        None => (append_private(repo, text, source), false),
+    }
+}
+
+/// The observations `text` proposes, one per fact however a review worded it twice.
+///
+/// ponytail: one review contributes at most +1 to a fact. Without this, a reviewer that words the same
+/// thing twice in one call clears the gate by itself.
+fn fresh(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for fact in proposed(text) {
+        if !out.iter().any(|t| same(&fact, t)) {
+            out.push(fact);
+        }
+    }
+    out
+}
+
+/// What a matching pre-review finding does for an observation: add one to its count, be used up without
+/// counting, or be left where it is.
+#[derive(Clone, Copy)]
+enum Pre {
+    Counts,
+    Spent,
+    Kept,
+}
+
+/// Add one observation to a counted file's rows: a new draft, or +1 (and this run's id) on a matching one.
+/// (whether it is new, whether a pre-review's finding added to it).
+///
+/// ponytail: a pre-review of your own PR that found this counts as the other observation: two runs, one of
+/// which did not know the other existed. Consumed either way, so one pre-review cannot keep paying out; it
+/// adds to the count only where `pre` says it counts, which is your own memory and not a team's (see append_team).
+/// ponytail: the first wording wins and the count is what carries meaning; the ids record WHICH runs are
+/// behind that count, so a later merge can tell two runs from one run twice.
+fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str, pre: Pre) -> (bool, bool) {
+    let bonus = match pre {
+        Pre::Counts => u32::from(consume_self(repo, &fact)),
+        Pre::Spent => {
+            consume_self(repo, &fact);
+            0
+        }
+        Pre::Kept => 0,
+    };
+    match items.iter_mut().find(|d| same(&d.fact, &fact)) {
+        Some(d) => {
+            d.count += 1 + bonus;
+            if !d.ids.iter().any(|i| i == rid) {
+                d.ids.push(rid.to_string());
+            }
+            (false, bonus == 1)
+        }
+        None => {
+            items.push(Draft {
+                count: 1 + bonus,
+                ids: vec![rid.to_string()],
+                fact,
+            });
+            (true, bonus == 1)
+        }
+    }
+}
+
+/// Draft privately: your queue, and a draft seen twice becomes one of YOUR facts. Also what
+/// `gitdashy remember --private` calls, in a team repo or not.
+///
+/// ponytail: private stays private. A promotion here used to be copied into the bound team's file as
+/// well; a thought you kept to yourself is not the team's because it recurred on your machine.
+pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
     let _g = guard();
     let r = opt(repo);
-    let proposed = proposed(text);
+    let proposed = fresh(text);
     if proposed.is_empty() {
         return vec![];
     }
-    // ponytail: one review contributes at most +1 to a fact. Without this, a reviewer that words the same
-    // thing twice in one call clears the gate by itself, and pools the result as corroborated evidence.
-    let mut fresh: Vec<String> = Vec::new();
-    for fact in proposed {
-        if !fresh.iter().any(|t| same(&fact, t)) {
-            fresh.push(fact);
-        }
-    }
     let (mut items, settled, rid) = (rows(r), known(repo), rid());
-    for fact in fresh {
+    // facts a pre-review carried over the gate: the chart says so rather than "seen twice"
+    let mut with_bonus: Vec<String> = Vec::new();
+    for fact in proposed {
         if settled.iter().any(|t| same(&fact, t)) {
             continue; // already approved somewhere: proposing it again says nothing new
         }
-        // ponytail: a pre-review of your own PR that found this counts as the other observation: two runs,
-        // one of which did not know the other existed. Consumed, so one pre-review cannot keep paying out.
-        let bonus = if consume_self(repo, &fact) { 1 } else { 0 };
-        match items.iter_mut().find(|d| same(&d.fact, &fact)) {
-            Some(d) => {
-                // ponytail: the first wording wins and the count is what carries meaning; the ids record
-                // WHICH runs are behind that count, so a later merge can tell two runs from one run twice.
-                d.count += 1 + bonus;
-                if !d.ids.contains(&rid) {
-                    d.ids.push(rid.clone());
-                }
-            }
-            None => items.push(Draft {
-                count: 1 + bonus,
-                ids: vec![rid.clone()],
-                fact,
-            }),
+        let (new, bonused) = observe(&mut items, repo, fact.clone(), &rid, Pre::Counts);
+        if bonused {
+            with_bonus.push(fact.clone());
+        }
+        // a draft that promotes at once (a pre-review bonus) is recorded as the fact it becomes
+        if new && items.last().is_some_and(|d| d.count < PROMOTE_AT) {
+            crate::learning::record("draft", repo, source, &fact);
         }
     }
     let promoted: Vec<String> = items
@@ -2113,89 +2311,70 @@ pub fn append(repo: &str, text: &str, about: &str) -> Vec<String> {
     // write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
     for t in &promoted {
         append_line(&path(r, None), t);
-        pool(r, t, about);
+        let how = if with_bonus.iter().any(|b| same(b, t)) {
+            "pre-review"
+        } else {
+            "seen twice"
+        };
+        crate::learning::record("fact", repo, how, t);
     }
     let left: Vec<Draft> = items.into_iter().filter(|d| d.count < PROMOTE_AT).collect();
     write_drafts(r, &left);
-    pool_drafts(r, about); // ponytail: so a teammate's next review can count these beside their own
     promoted
 }
 
-/// (repo, fact, shared): your facts about repos bound to a team, and whether the team has each.
+/// Draft into a team's pool: your folder of it, and a draft seen twice becomes the TEAM's fact.
 ///
-/// ponytail: what `P` lists now that sharing is automatic. It replaced shareable(), which answered "what
-/// has NOT gone": after auto-sharing almost always nothing, so the screen said "nothing of yours the
-/// team is missing" and its withdraw key became unreachable, which is the one key that matters more once
-/// nobody chose to publish. Deleted rather than kept beside this: two queries over the same files, one
-/// of them with no caller, is the pair that drifts and the one nobody notices drifting.
-/// ponytail: unshared rows still exist and are worth the `t` key: facts promoted before this version
-/// never went, and a write can fail. Sorting them first puts the actionable ones under the cursor.
-pub fn in_team(about: &str) -> Vec<(Option<String>, String, bool)> {
-    // ponytail: NOT sorted here. share_screen sorts by the same key plus corroboration, and two sorts
-    // over one list is the pair where the second silently decides and the first is decoration.
-    // ponytail: one read for the whole list, and the same one the files were chosen with
-    let teams = Teams::read();
-    mine_for_teams(&teams, about)
-        .into_iter()
-        .map(|(repo, fact)| {
-            let shared = teams
-                .project_key(repo.as_deref(), about)
-                .1
-                .map(|base| {
-                    facts(&path(repo.as_deref(), Some(&base)))
-                        .iter()
-                        .any(|t| same(&fact, t))
-                })
-                .unwrap_or(false);
-            (repo, fact, shared)
-        })
-        .collect()
-}
-
-/// [(repo, fact)] every fact of yours about a repo the team can see.
-fn mine_for_teams(teams: &Teams, about: &str) -> Vec<(Option<String>, String)> {
-    let mut out = Vec::new();
-    for name in sorted_names(&config::get().memory_dir) {
-        if !name.ends_with(".md") || name == PROJECT {
-            continue;
-        }
-        let repo = repo_of(&name);
-        let r = repo.as_deref().unwrap_or("");
-        if teams.visible(r, about) && teams.project_key(repo.as_deref(), about).1.is_some() {
-            out.extend(
-                facts(&path(repo.as_deref(), None))
-                    .into_iter()
-                    .map(|f| (repo.clone(), f)),
-            );
-        }
-    }
-    out
-}
-
-/// Put one of your facts into the BOUND team's memory. The file written, or None.
-///
-/// ponytail: `about` names the project for a GENERAL fact: the repo you were looking at when you sent
-/// it. A repo fact is unaffected: its own binding says where it goes.
-pub fn share(repo: Option<&str>, fact: &str, about: &str) -> Option<PathBuf> {
+/// ponytail: only what the TEAM knows settles a proposal here. A fact in your private memory that the
+/// team does not have is exactly what this pool exists to let the team find out.
+/// ponytail: no learning event is recorded. The team's git history is the chart's record of team drafts
+/// and team facts; an event here as well would count each one twice.
+/// ponytail: DISTINCT RUN IDS reach the gate here, and a pre-review adds nothing. The count once decided it,
+/// so your pre-review plus one review of your own PR (one run id, the same model on the same diff) wrote
+/// straight into what every teammate's reviews read. It is the rule cross-checks already use.
+fn append_team(base: &Path, repo: &str, text: &str, session: bool) -> Vec<String> {
     let _g = guard();
-    let base = project(repo, about)?;
-    let dest = path(repo, Some(&base));
-    // ponytail: not twice. Sharing a fact the team already holds appended a second copy: reachable from
-    // `t` on a row the automatic path had already sent, which after auto-sharing is most of them.
-    if !facts(&dest).iter().any(|t| is(fact, t)) {
-        append_line(&dest, fact);
+    let r = opt(repo);
+    let proposed = fresh(text);
+    if proposed.is_empty() {
+        return vec![];
     }
-    // ponytail: the evidence line STAYS. It used to be withdrawn here ("it is memory now") and that was
-    // right while sharing was the last step. It is not the last step now: forget() asks backers() whether
-    // anyone else is behind a fact before it deletes the team's copy, so a fact sent with `t` left no
-    // trace of you, and a teammate's `x` on the same line then removed the copy you were behind. It also
-    // never earned "★ 2 people found this". pool keeps it for exactly these two reasons; this matches.
-    if let Some(p) = pool_path(&whoami(), repo.unwrap_or(""), about) {
-        if !facts(&p).iter().any(|t| is(fact, t)) {
-            append_line(&p, fact);
+    let file = my_team_drafts(base, r);
+    let settled = team_known(base, r);
+    let rid = if session {
+        format!("{SESSION_RUN}{}", rid())
+    } else {
+        rid()
+    };
+    let mut items: Vec<Draft> = counted(&file)
+        .into_iter()
+        .filter(|d| !settled.iter().any(|t| same(&d.fact, t)))
+        .collect();
+    for fact in proposed {
+        if !settled.iter().any(|t| same(&fact, t)) {
+            // a review spends a pre-review's finding; a session leaves it for the review that can use it
+            let pre = if session { Pre::Kept } else { Pre::Spent };
+            observe(&mut items, repo, fact, &rid, pre);
         }
     }
-    Some(dest)
+    // ponytail: and one of the runs is a REVIEW. Each `gitdashy remember` call is a run of its own, so one
+    // session filing the same line twice made two runs and a team fact out of one opinion. A teammate's
+    // matching draft still promotes through the cross-check, which pairs two people whatever their runs were.
+    let ready = |d: &Draft| {
+        d.ids.iter().collect::<HashSet<_>>().len() as u32 >= PROMOTE_AT
+            && d.ids.iter().any(|i| !i.starts_with(SESSION_RUN))
+    };
+    let promoted: Vec<String> = items
+        .iter()
+        .filter(|d| ready(d))
+        .map(|d| d.fact.clone())
+        .collect();
+    for t in &promoted {
+        to_team(base, r, t, &[]);
+    }
+    let left: Vec<Draft> = items.into_iter().filter(|d| !ready(d)).collect();
+    write_team_drafts(&file, &left);
+    promoted
 }
 
 /// The lines of a facts file with `fact` taken out, as the text to write back ("" when none is left).
@@ -2213,38 +2392,70 @@ fn without(p: &Path, fact: &str, line_fact: impl Fn(&str) -> String) -> String {
     }
 }
 
-/// Drop one fact from your own memory, from the team's, and as evidence.
-///
-/// ponytail: the team's copy too, now that nobody chose to put it there. A withdraw that only reached
-/// your own file would leave the published copy behind, and the person removing it would have to know
-/// it had been published at all, which is exactly the knowledge automatic sharing takes away.
-/// ponytail: EXACT match on the team's side, like the pool. `same` would take a neighbouring fact with
-/// it, and this is the one file where a wrong removal costs everyone.
-/// ponytail: and ONLY when nobody else is still behind it. Your evidence goes first, then the team's
-/// copy goes only if no other contributor remains, otherwise one person's `x` deletes a fact a
-/// colleague independently reached, and nothing puts it back, because pool writes at promotion and
-/// that already happened for them.
-pub fn forget(repo: Option<&str>, fact: &str, about: &str) {
-    let _g = guard();
-    if let Some(p) = pool_path(&whoami(), repo.unwrap_or(""), about) {
-        rewrite(&p, &without(&p, fact, plain));
-    }
-    if !backers(&pools(), repo, fact).is_empty() {
-        return forget_mine(repo, fact);
-    }
-    if let Some(base) = project(repo, about) {
-        let q = path(repo, Some(&base));
-        if q.exists() {
-            rewrite(&q, &without(&q, fact, plain));
-        }
-    }
-    forget_mine(repo, fact);
-}
-
 /// Take one fact out of your own memory, leaving every other copy alone.
 fn forget_mine(repo: Option<&str>, fact: &str) {
     let p = path(repo, None);
     rewrite(&p, &without(&p, fact, |l| parse(l).fact));
+}
+
+/// Remove one fact from your own memory file, and nothing else. True when a line went.
+pub fn remove_mine(repo: Option<&str>, fact: &str) -> bool {
+    let _g = guard();
+    let p = path(repo, None);
+    let before = facts_in(&p).len();
+    forget_mine(repo, fact);
+    facts_in(&p).len() < before
+}
+
+/// The facts of one memory file, in order: its "- " lines, without the marker. Headings and prose are not facts.
+pub fn facts_in(p: &Path) -> Vec<String> {
+    read_file(p)
+        .lines()
+        .filter(|l| l.trim_start().starts_with(['-', '•']))
+        .map(plain)
+        .filter(|f| !f.is_empty())
+        .collect()
+}
+
+/// `text` with the one line stating `fact` taken out, every other line (blank ones included) as it was: what
+/// a removal from a team's file proposes. None when no line states it.
+///
+/// ponytail: EXACT, and one line. `is` normalises, so a near-duplicate a teammate wrote would have gone with it,
+/// and `without` drops blank lines, so every removal rewrote the whole file and the person approving it could
+/// not see the one change. This is the one file where a wrong removal costs everyone.
+pub fn without_fact(text: &str, fact: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with(['-', '•']) && plain(l) == fact)?;
+    let left: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != at)
+        .map(|(_, l)| *l)
+        .collect();
+    if left.iter().all(|l| l.trim().is_empty()) {
+        return Some(String::new());
+    }
+    Some(left.join("\n") + "\n")
+}
+
+/// `text` with `fact` added as one line at the end, every other line as it was: what accepting a draft into a
+/// team's file proposes. Err when the file already states it, however it is worded.
+pub fn with_fact(text: &str, fact: &str) -> Result<String, String> {
+    let known = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with(['-', '•']))
+        .any(|l| same(&plain(l), fact));
+    if known {
+        return Err("the team already knows that".into());
+    }
+    let head = text.trim_end();
+    Ok(if head.is_empty() {
+        format!("- {fact}\n")
+    } else {
+        format!("{head}\n- {fact}\n")
+    })
 }
 
 /// "a__b.md" -> Some("a/b"); "general.md" -> None. The inverse of slug().
@@ -2287,6 +2498,42 @@ pub fn waiting() -> Vec<(Option<String>, u32, String, String)> {
     kept
 }
 
+/// Your drafts in every team's pool, not a fact yet: (team key, repo, count, fact).
+///
+/// ponytail: yours only. A teammate's drafts are theirs to drop, and reading them here would put a
+/// `t` under a line nobody on this machine proposed.
+pub fn team_waiting() -> Vec<(String, Option<String>, u32, String)> {
+    let me = whoami();
+    let mut out = Vec::new();
+    for (key, dir) in team::joined().into_iter().zip(team::dirs()) {
+        let root = dir.join("memory").join(DRAFT_POOL).join(&me);
+        for name in sorted_names(&root) {
+            if name.ends_with(".md") {
+                for d in counted(&root.join(&name)) {
+                    out.push((key.clone(), repo_of(&name), d.count, d.fact));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Take one of your drafts out of a team's pool. True when one went.
+pub fn drop_team(key: &str, repo: Option<&str>, fact: &str) -> bool {
+    let _g = guard();
+    let Some(dir) = team::dir_of(key) else {
+        return false;
+    };
+    let file = my_team_drafts(&dir.join("memory"), repo);
+    let items = counted(&file);
+    let kept: Vec<Draft> = items.iter().filter(|d| !is(&d.fact, fact)).cloned().collect();
+    if kept.len() == items.len() {
+        return false;
+    }
+    write_team_drafts(&file, &kept);
+    true
+}
+
 /// Forget one unconfirmed observation, from whichever queue holds it. True when one went.
 ///
 /// ponytail: the prune the drafts store never had. Everything else self-limits (facts are dropped by
@@ -2306,9 +2553,6 @@ fn drop_locked(repo: Option<&str>, fact: &str) -> bool {
             rewrite_counted(&p, &kept);
         }
     }
-    if gone {
-        pool_drafts(repo, ""); // ponytail: withdrawn here means withdrawn there; the pool mirrors the queue
-    }
     gone
 }
 
@@ -2323,14 +2567,14 @@ fn drop_locked(repo: Option<&str>, fact: &str) -> bool {
 /// repos only: pool checks team_visible.
 pub fn promote(repo: Option<&str>, fact: &str) -> Option<PathBuf> {
     let _g = guard();
-    Some(promote_locked(repo, fact))
+    Some(promote_locked(repo, fact, "hand"))
 }
 
-fn promote_locked(repo: Option<&str>, fact: &str) -> PathBuf {
+fn promote_locked(repo: Option<&str>, fact: &str, source: &str) -> PathBuf {
     drop_locked(repo, fact);
     if !already_known(repo.unwrap_or(""), fact) {
         append_line(&path(repo, None), fact);
-        pool(repo, fact, "");
+        crate::learning::record("fact", repo.unwrap_or(""), source, fact);
     }
     path(repo, None)
 }
@@ -2555,43 +2799,34 @@ mod tests {
         );
     }
 
-    /// What the team screen lists, and what team_visible answers, off ONE read of the bindings and one
-    /// scan of the joined teams: a repo bound to a team this machine is in, and nothing else.
+    /// What team_visible answers, off ONE read of the bindings and one scan of the joined teams: a repo bound
+    /// to a team this machine is in, and nothing else.
     #[test]
-    fn in_team_lists_a_bound_repos_facts_and_nothing_elses() {
+    fn only_a_repo_bound_to_a_joined_team_is_the_teams() {
         let (_g, tmp) = setup();
         a_team(tmp.path(), "org-t");
         assert_eq!(bind::bind("acme/api", "org-t"), "");
-        let mine = config::get().memory_dir;
-        std::fs::write(mine.join("acme__api.md"), "- uses tabs\n").unwrap();
-        std::fs::write(mine.join("other__thing.md"), "- not ours\n").unwrap();
-
-        let got = in_team("");
-        assert_eq!(got.len(), 1, "{got:?}");
-        assert_eq!(got[0].0.as_deref(), Some("acme/api"));
-        assert!(got[0].1.contains("uses tabs"), "{:?}", got[0].1);
-        assert!(!got[0].2, "the team's own file has nothing in it yet");
         assert!(team_visible("acme/api", ""));
         assert!(!team_visible("other/thing", ""), "unbound is not the team's");
     }
 
-    /// A general fact names no repo of its own: `about` says which project it was observed in, and
-    /// with exactly one team joined that team is the last resort. With two, neither is chosen.
+    /// A general fact names no repo of its own: `about` says which project it was observed in, and only a
+    /// repo bound to a team makes it that team's. Nothing else does, not even being in exactly one team.
     #[test]
-    fn a_general_fact_follows_its_context_then_the_one_team() {
+    fn a_general_fact_is_a_teams_only_when_it_was_seen_in_the_teams_repo() {
         let (_g, tmp) = setup();
         a_team(tmp.path(), "org-t");
+        allow_publishing("org-t", true);
         assert_eq!(bind::bind("acme/api", "org-t"), "");
         std::fs::write(config::get().memory_dir.join("general.md"), "- run make lint\n").unwrap();
 
         assert!(team_visible("", "acme/api"), "the repo it was seen in is bound");
-        assert!(team_visible("", ""), "one team joined: the last resort");
-        let got = in_team("");
-        assert!(
-            got.iter()
-                .any(|(r, f, _)| r.is_none() && f.contains("run make lint")),
-            "{got:?}"
-        );
+        assert!(!team_visible("", ""), "no context: yours, however many teams");
+        assert!(!team_visible("", "me/side-project"), "an unbound repo: yours");
+        // and a session filing one there drafts it privately
+        append("", "- I prefer small commits", "me/side-project");
+        assert_eq!(drafts(None), [(1, "I prefer small commits".to_string())]);
+        assert!(!tmp.path().join("teams/org-t/memory/drafts").exists());
 
         a_team(tmp.path(), "org-two");
         assert!(
@@ -2599,10 +2834,6 @@ mod tests {
             "two teams: a general fact belongs to neither"
         );
         assert!(team_visible("", "acme/api"), "context still names one of them");
-        assert!(
-            in_team("").iter().all(|(r, _, _)| r.is_some()),
-            "and it is not listed"
-        );
     }
 
     #[test]
@@ -2732,6 +2963,469 @@ mod tests {
         assert_eq!(lines(&mine.join("general.md")), ["- mine, tidied"]);
         assert_eq!(lines(&shared.join("general.md")), ["- theirs, and not"]);
         assert_eq!(lines(&shared.join("a__b.md")), ["- theirs too"]);
+    }
+
+    #[test]
+    fn accepting_into_a_team_file_adds_one_line_unless_it_is_known() {
+        assert_eq!(with_fact("", "one"), Ok("- one\n".to_string()));
+        assert_eq!(
+            with_fact("# team\n\n- one\n", "two"),
+            Ok("# team\n\n- one\n- two\n".to_string())
+        );
+        assert_eq!(
+            with_fact(
+                "- the retry client owns backoff\n",
+                "The retry client owns backoff."
+            ),
+            Err("the team already knows that".to_string())
+        );
+    }
+
+    #[test]
+    fn a_removal_takes_one_exact_line_and_keeps_the_rest() {
+        assert_eq!(
+            without_fact("# team\n\n- one fact\n- two\n", "one fact"),
+            Some("# team\n\n- two\n".to_string()),
+            "one line out, the rest as it was"
+        );
+        assert_eq!(
+            without_fact("- One fact\n", "one fact"),
+            None,
+            "exact, not normalised"
+        );
+        assert_eq!(without_fact("- one fact\n", "one fact"), Some(String::new()));
+    }
+
+    #[test]
+    fn a_fact_a_pre_review_carried_over_the_gate_is_charted_as_that() {
+        let (_g, tmp) = setup();
+        config::update(|c| c.learning = tmp.path().join("learning.jsonl"));
+        append_self("a/b", "- the router is stubbed");
+        append("a/b", "- the router is stubbed", "");
+        append("a/b", "- uses tabs", "");
+        append("a/b", "- uses tabs", "");
+        let facts: Vec<(String, String)> = crate::learning::recorded()
+            .into_iter()
+            .filter(|e| e.kind == "fact")
+            .map(|e| (e.source, e.id))
+            .collect();
+        config::update(|c| c.learning = PathBuf::new());
+        assert_eq!(
+            facts,
+            [
+                (
+                    "pre-review".to_string(),
+                    crate::learning::fact_id("the router is stubbed")
+                ),
+                ("seen twice".to_string(), crate::learning::fact_id("uses tabs"))
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_mine_takes_one_fact_and_says_whether_it_did() {
+        let (_g, _t) = setup();
+        let p = path(Some("a/b"), None);
+        std::fs::write(&p, "# a/b\n- keep\n- drop me\n").unwrap();
+        assert_eq!(facts_in(&p), ["keep", "drop me"]);
+        assert!(remove_mine(Some("a/b"), "drop me"));
+        assert!(!remove_mine(Some("a/b"), "drop me"));
+        assert_eq!(facts_in(&p), ["keep"]);
+    }
+
+    /// A joined team "org-t" that takes drafts, with a/b bound to it: (its memory dir, my name).
+    fn a_team_repo(root: &Path) -> (PathBuf, String) {
+        let shared = a_team(root, "org-t");
+        allow_publishing("org-t", true);
+        assert_eq!(bind::bind("a/b", "org-t"), "");
+        (shared, whoami())
+    }
+
+    #[test]
+    fn a_review_of_a_team_repo_drafts_into_the_team_pool_and_twice_makes_it_the_teams() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+
+        assert!(append("a/b", "- retry owns backoff", "").is_empty());
+        assert_eq!(
+            counted(&mine)
+                .iter()
+                .map(|d| (d.count, d.fact.as_str()))
+                .collect::<Vec<_>>(),
+            [(1, "retry owns backoff")]
+        );
+        assert!(
+            !queue_path(Some("a/b")).exists(),
+            "a team repo's draft is not a private draft"
+        );
+
+        // a second, independent review: the team's fact, out of the drafts, and never into your own memory
+        assert_eq!(append("a/b", "- retry owns backoff", ""), ["retry owns backoff"]);
+        assert_eq!(lines(&shared.join("a__b.md")), ["- retry owns backoff"]);
+        assert!(!mine.exists());
+        assert!(!path(Some("a/b"), None).exists());
+        assert_eq!(
+            lines(&shared.join(POOL).join(&me).join("a__b.md")),
+            ["- retry owns backoff"]
+        );
+        // and once the team knows it, proposing it again says nothing new
+        assert!(append("a/b", "- retry owns backoff", "").is_empty());
+        assert!(!mine.exists());
+    }
+
+    #[test]
+    fn private_stays_private_in_a_team_repo_and_without_consent() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        // remember --private: yours, twice, is YOUR fact, and the team neither drafts nor learns it
+        append_private("a/b", "- I keep forgetting the flag", "session");
+        assert_eq!(
+            append_private("a/b", "- I keep forgetting the flag", "session"),
+            ["I keep forgetting the flag"]
+        );
+        assert_eq!(lines(&path(Some("a/b"), None)), ["- I keep forgetting the flag"]);
+        assert!(!shared.join("a__b.md").exists());
+        assert!(!shared.join(DRAFT_POOL).join(&me).exists());
+        // a team that has not agreed to receive drafts gets none: the review drafts privately
+        allow_publishing("org-t", false);
+        append("a/b", "- the router is stubbed", "");
+        assert_eq!(drafts(Some("a/b")), [(1, "the router is stubbed".to_string())]);
+        assert!(!shared.join(DRAFT_POOL).join(&me).join("a__b.md").exists());
+    }
+
+    #[test]
+    fn a_teammates_matching_draft_moves_it_into_the_team() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        std::fs::write(
+            &theirs,
+            "- (1) [r:beef] the retry client owns backoff\n- (1) [r:beef] retry owns backoff\n",
+        )
+        .unwrap();
+        append("a/b", "- retry owns backoff\n- only I saw this", "");
+        let base = shared.as_path();
+        let r = Some("a/b");
+
+        // every candidate goes to the judge, close wording or not; a judge that cannot be asked moves nothing
+        let mut seen = Vec::new();
+        assert!(cross_check_by(base, r, |p| {
+            seen = p.to_vec();
+            None
+        })
+        .is_empty());
+        // the identical wording is asked about too: across people nothing is a match without the judge
+        assert_eq!(
+            seen,
+            [
+                (
+                    "retry owns backoff".to_string(),
+                    "the retry client owns backoff".to_string()
+                ),
+                ("retry owns backoff".to_string(), "retry owns backoff".to_string())
+            ]
+        );
+        assert!(!shared.join("a__b.md").exists());
+        // and a no moves nothing either
+        assert!(cross_check_by(base, r, |p| Some(vec![false; p.len()])).is_empty());
+        std::fs::remove_file(tmp.path().join("mine").join(SETTLED)).unwrap();
+
+        // the judge agrees: their review and mine, one each, is 2/2; the fact moves into the team and out of mine
+        assert_eq!(
+            cross_check_by(base, r, |p| Some(vec![true; p.len()])),
+            ["retry owns backoff"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- retry owns backoff"]);
+        assert_eq!(
+            counted(&mine).iter().map(|d| d.fact.as_str()).collect::<Vec<_>>(),
+            ["only I saw this"]
+        );
+        // their line is theirs to take out
+        assert_eq!(counted(&theirs).len(), 2);
+
+        // a draft of mine the team already knows, because their machine moved it: taken out of mine, unasked
+        std::fs::write(
+            shared.join("a__b.md"),
+            "- retry owns backoff\n- only I saw this\n",
+        )
+        .unwrap();
+        assert!(cross_check_by(base, r, |_| panic!("nothing is left to ask about")).is_empty());
+        assert!(!mine.exists());
+
+        // the teammate's side: their wording was agreed and landed, so their draft goes although it is worded
+        // nothing like the team's line. Played here by putting that wording in this machine's own folder.
+        assert_eq!(
+            lines(&shared.join(LANDED).join("a__b.md")),
+            ["- the retry client owns backoff"]
+        );
+        std::fs::write(&mine, "- (1) [r:beef] the retry client owns backoff\n").unwrap();
+        assert!(cross_check_by(base, r, |_| panic!("nothing is left to ask about")).is_empty());
+        assert!(
+            !mine.exists(),
+            "a landed wording is taken out of the drafts that proposed it"
+        );
+    }
+
+    #[test]
+    fn a_sweep_moves_nothing_for_a_team_that_withdrew_or_a_repo_unbound_since() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [r:beef] retry owns backoff\n").unwrap();
+        append("a/b", "- retry owns backoff", "");
+        // and a general one, which names no repo for the binding check to refuse: only consent guards it
+        std::fs::write(theirs.with_file_name("general.md"), "- (1) [r:beef] small PRs\n").unwrap();
+        append("", "- small PRs", "a/b");
+        let yes = |p: &[(String, String)]| Some(vec![true; p.len()]);
+
+        allow_publishing("org-t", false);
+        assert!(sweep_by(yes).is_empty(), "consent taken back");
+        assert!(!shared.join("general.md").exists());
+        allow_publishing("org-t", true);
+        assert_eq!(bind::forget("a/b"), "");
+        // consent is back, so the general draft lands; the repo's does not, it is no longer the team's
+        assert_eq!(sweep_by(yes), ["small PRs"]);
+        assert!(!shared.join("a__b.md").exists());
+
+        assert_eq!(bind::bind("a/b", "org-t"), "");
+        assert_eq!(sweep_by(yes), ["retry owns backoff"]);
+        assert_eq!(lines(&shared.join("a__b.md")), ["- retry owns backoff"]);
+    }
+
+    #[test]
+    fn a_general_fact_from_the_shell_is_general_only_in_a_teams_repo_or_no_repo() {
+        let (_g, tmp) = setup();
+        a_team_repo(tmp.path());
+        assert_eq!(
+            general_scope(false, false, "x/y".into(), ""),
+            "x/y",
+            "a repo fact is its repo's"
+        );
+        assert_eq!(
+            general_scope(true, false, "a/b".into(), "a/b"),
+            "",
+            "seen in the team's repo: general, the team's"
+        );
+        assert_eq!(
+            general_scope(true, false, String::new(), ""),
+            "",
+            "no repo at all: your general file"
+        );
+        assert_eq!(
+            general_scope(true, false, "me/side".into(), "me/side"),
+            "me/side",
+            "an unbound repo keeps it"
+        );
+        assert_eq!(
+            general_scope(true, true, "me/side".into(), "me/side"),
+            "",
+            "--private --general is how you work: your general file, even in an unbound repo"
+        );
+    }
+
+    #[test]
+    fn a_general_draft_goes_to_the_team_of_the_repo_it_was_seen_in() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        a_team(tmp.path(), "org-two"); // two teams: only the context can pick one
+        allow_publishing("org-two", true);
+        append("", "- logic that can live in the API does", "a/b");
+        assert_eq!(
+            counted(&shared.join(DRAFT_POOL).join(&me).join("general.md")).len(),
+            1
+        );
+        assert!(!queue_path(None).exists());
+    }
+
+    #[test]
+    fn a_pair_the_judge_turned_down_is_not_asked_again() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [r:beef] retries never back off\n").unwrap();
+        append("a/b", "- retries back off", "");
+        assert!(cross_check_by(&shared, Some("a/b"), |p| Some(vec![false; p.len()])).is_empty());
+        assert!(cross_check_by(&shared, Some("a/b"), |_| panic!("already settled")).is_empty());
+    }
+
+    #[test]
+    fn one_review_cannot_confirm_itself_through_the_pool() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        append("a/b", "- retry owns backoff", "");
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        let rid = counted(&mine)[0].ids[0].clone();
+        let yes = |p: &[(String, String)]| Some(vec![true; p.len()]);
+        // the same review id on both sides is one run, however it got there; no ids is origin unknown
+        for line in [
+            format!("- (1) [r:{rid}] retry owns backoff\n"),
+            "- (1) retry owns backoff\n".to_string(),
+        ] {
+            std::fs::write(&theirs, &line).unwrap();
+            let _ = std::fs::remove_file(tmp.path().join("mine").join(SETTLED));
+            assert!(cross_check_by(&shared, Some("a/b"), yes).is_empty(), "{line}");
+            assert!(!shared.join("a__b.md").exists());
+        }
+        // and your own folder is never a teammate's: a line of yours carrying two ids still pairs with nothing
+        std::fs::remove_file(&theirs).unwrap();
+        std::fs::write(&mine, "- (1) [r:aaaa,r:bbbb] retry owns backoff\n").unwrap();
+        assert!(cross_check_by(&shared, Some("a/b"), yes).is_empty());
+        assert!(!shared.join("a__b.md").exists());
+    }
+
+    #[test]
+    fn in_a_team_a_pre_review_adds_no_count_and_distinct_runs_decide() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        // your pre-review, then one review of your own PR: one run id, so a draft, not the team's fact
+        append_self("a/b", "- the router is stubbed");
+        assert!(append("a/b", "- the router is stubbed", "").is_empty());
+        assert!(!shared.join("a__b.md").exists());
+        assert_eq!(
+            (counted(&mine)[0].count, counted(&mine)[0].ids.len()),
+            (1, 1),
+            "no bonus on the count either"
+        );
+        assert!(
+            self_drafts("a/b").is_empty(),
+            "the pre-review's finding is spent all the same"
+        );
+        // a count of 2 behind one run, as an older store can hold, is still one run
+        let mut rows = counted(&mine);
+        rows.push(Draft {
+            count: 2,
+            ids: vec!["aaaa".into()],
+            fact: "an old count".into(),
+        });
+        write_team_drafts(&mine, &rows);
+        // a second, independent review is the second run
+        assert_eq!(
+            append("a/b", "- the router is stubbed", ""),
+            ["the router is stubbed"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- the router is stubbed"]);
+    }
+
+    #[test]
+    fn a_session_alone_never_makes_a_team_fact() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        // one session filing the same line twice: two runs, both a session's
+        assert!(append_as("a/b", "- migrations run first", "", "session").is_empty());
+        assert!(append_as("a/b", "- migrations run first", "", "session").is_empty());
+        assert!(!shared.join("a__b.md").exists());
+        let d = &counted(&mine)[0];
+        assert_eq!(d.ids.len(), 2);
+        assert!(d.ids.iter().all(|i| i.starts_with(SESSION_RUN)), "{:?}", d.ids);
+        assert!(read_file(&mine).contains("[s:"), "the mark survives the file");
+        // a review arriving at it is the second kind of observation
+        assert_eq!(
+            append("a/b", "- migrations run first", ""),
+            ["migrations run first"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- migrations run first"]);
+    }
+
+    #[test]
+    fn two_teammates_sessions_are_two_people_and_promote_through_the_cross_check() {
+        // by design: the review requirement is for ONE person's folder; two people finding a thing is the
+        // corroboration the pool exists for, whatever kind of run each of them made
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [s:beef] migrations run first\n").unwrap();
+        append_as("a/b", "- migrations run first", "", "session");
+        assert_eq!(
+            cross_check_by(&shared, Some("a/b"), |p| Some(vec![true; p.len()])),
+            ["migrations run first"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- migrations run first"]);
+    }
+
+    #[test]
+    fn a_session_leaves_a_pre_review_finding_for_a_review() {
+        let (_g, tmp) = setup();
+        a_team_repo(tmp.path());
+        append_self("a/b", "- the router is stubbed");
+        append_as("a/b", "- the router is stubbed", "", "session");
+        assert_eq!(self_drafts("a/b").len(), 1, "not spent by a session");
+        append("a/b", "- the router is stubbed", "");
+        assert!(self_drafts("a/b").is_empty(), "spent by the review");
+    }
+
+    #[test]
+    fn a_session_run_id_reads_back_as_written() {
+        let d = parse("- (2) [r:1a2b,s:3c4d] a fact");
+        assert_eq!(
+            (d.count, d.ids.clone(), d.fact.as_str()),
+            (2, vec!["1a2b".to_string(), "s:3c4d".to_string()], "a fact")
+        );
+        assert_eq!(counted_text(&[d]), "- (2) [r:1a2b,s:3c4d] a fact\n");
+    }
+
+    #[test]
+    fn a_pair_two_machines_landed_at_once_is_one_line_in_the_team() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [r:beef] the retry client owns backoff\n").unwrap();
+        append("a/b", "- retry owns backoff", "");
+        // their machine landed the same pair first, in their wording, and this machine has pulled it
+        std::fs::write(shared.join("a__b.md"), "- the retry client owns backoff\n").unwrap();
+        let yes = |p: &[(String, String)]| Some(vec![true; p.len()]);
+        // the wordings differ, so it is still judged and agreed: yours leaves the drafts, and the team keeps one line
+        assert_eq!(cross_check_by(&shared, Some("a/b"), yes), ["retry owns backoff"]);
+        assert_eq!(
+            lines(&shared.join("a__b.md")),
+            ["- the retry client owns backoff"],
+            "no second line"
+        );
+    }
+
+    #[test]
+    fn your_team_drafts_are_listed_and_can_be_dropped() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        append("a/b", "- retry owns backoff\n- uses tabs", "");
+        let got: Vec<(String, Option<String>, String)> = team_waiting()
+            .into_iter()
+            .map(|(k, r, _n, f)| (k, r, f))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "org-t".to_string(),
+                    Some("a/b".to_string()),
+                    "retry owns backoff".to_string()
+                ),
+                (
+                    "org-t".to_string(),
+                    Some("a/b".to_string()),
+                    "uses tabs".to_string()
+                )
+            ]
+        );
+        assert!(waiting().is_empty(), "waiting() is your private drafts");
+        assert!(drop_team("org-t", Some("a/b"), "uses tabs"));
+        assert!(!drop_team("org-t", Some("a/b"), "uses tabs"));
+        assert!(!drop_team("no-such-team", Some("a/b"), "retry owns backoff"));
+        assert_eq!(team_waiting().len(), 1);
+        assert!(
+            !shared.join("a__b.md").exists(),
+            "dropping a draft teaches the team nothing"
+        );
     }
 
     fn lines(p: &Path) -> Vec<String> {
@@ -2982,7 +3676,7 @@ mod tests {
     }
 
     #[test]
-    fn forget_removes_exactly_one_line_and_deletes_an_empty_file() {
+    fn removing_takes_exactly_one_line_and_deletes_an_empty_file() {
         let (_g, _t) = setup();
         let p = path(Some("a/b"), None);
         std::fs::write(
@@ -2990,9 +3684,9 @@ mod tests {
             "- CI reports skipping for format-check\n- CI reports skipping for type-check\n",
         )
         .unwrap();
-        forget(Some("a/b"), "CI reports skipping for format-check", "");
+        assert!(remove_mine(Some("a/b"), "CI reports skipping for format-check"));
         assert_eq!(lines(&p), vec!["- CI reports skipping for type-check"]);
-        forget(Some("a/b"), "ci  reports skipping for type-check", "");
+        assert!(remove_mine(Some("a/b"), "ci  reports skipping for type-check"));
         assert!(!p.exists());
     }
 
