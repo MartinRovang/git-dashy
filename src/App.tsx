@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Necronomicon } from './components/Necronomicon'
@@ -433,7 +433,7 @@ export default function App() {
   }
 
   async function cast(p: Row, spell: string) {
-    if (!p || p.busy || p.section !== 'REVIEW REQUESTED' || isReviewed(p)) return
+    if (!p || !canCastOn(p)) return
     if (!(await confirm(`Cast ${spell} on #${p.number}? It runs a review and posts its verdict.`))) return
     await call('/api/review', { url: p.url, spell }, `${spell} cast on #${p.number}`)
   }

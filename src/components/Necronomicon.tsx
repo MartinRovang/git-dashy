@@ -105,7 +105,7 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
                   ))}
                 </ul>
               ) : (
-                <p className="nblank">No spells yet. Put a markdown file in ~/.prs_spells.</p>
+                <p className="nblank">{ch === 0 ? 'No spells yet. Put a markdown file in ~/.prs_spells.' : `No ${title.toLowerCase()}.`}</p>
               )}
             </section>
           </div>

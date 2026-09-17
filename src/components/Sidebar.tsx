@@ -3,7 +3,6 @@ import { Bot, Database, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftO
 import type { PostingRule, Row as Pr, StateData } from '../types'
 import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { Glyph } from './Glyph'
-import { useBook } from './Necronomicon'
 import { every, span } from '../tokens'
 import { Row, Select } from './Controls'
 import { close, open, repaint } from '../modals'
@@ -314,9 +313,8 @@ function PostControls({
 
 export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook }: Props) {
   const s = d?.settings || {}
-  // ponytail: the setting names what is equipped, and the book is only read to drop a name whose file was deleted elsewhere
-  const [book] = useBook()
-  const equipped = (s.spells || []).filter((n) => !book || book.spells.some((x) => x.name === n))
+  // the server already drops a spell whose file was deleted
+  const equipped = s.spells || []
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const rep = k.report

@@ -55,7 +55,10 @@ type Query = HashMap<String, String>;
 
 /// Everything the settings can change, in the shape config::save writes.
 pub fn snapshot() -> Value {
-    serde_json::to_value(config::snapshot(&config::get())).unwrap_or_default()
+    let mut c = config::get();
+    // a spell whose file was deleted stays saved but is not shown, so no surface offers a cast that 400s
+    c.spells.retain(|n| spells::get(n).is_some());
+    serde_json::to_value(config::snapshot(&c)).unwrap_or_default()
 }
 
 fn team_error() -> String {
@@ -1157,7 +1160,7 @@ fn repo_of(body: &Body) -> Option<String> {
 
 /// The longest instructions or discussion message taken, in characters. A few paragraphs is the use;
 /// anything past this is a paste gone wrong, and it would ride along in every turn of the session.
-const ASK_MAX: usize = 9000;
+const ASK_MAX: usize = 8000;
 
 /// What can be done to a saved review from its screen: talk about it, ask for a revision, take it or not.
 const TALK_OPS: [&str; 4] = ["discuss", "revise", "accept", "keep"];
@@ -1257,10 +1260,16 @@ fn post_review(state: &State, body: &Body) -> Out {
         if !ask.is_empty() {
             return Err(Fail::new(400, "a spell or instructions, not both"));
         }
+        if truthy(body, "self") {
+            return Err(Fail::new(400, "a spell is cast on a review, not a pre-review"));
+        }
         let Some(t) = spells::get(&spell) else {
             return Err(Fail(400, format!("no spell {spell}")));
         };
         ask = spells::cast(&spell, &t);
+        if ask.chars().count() > ASK_MAX {
+            return Err(Fail(400, format!("spell {spell} is too long: ~/.prs_spells/{spell}.md must stay under {ASK_MAX} characters")));
+        }
     }
     if ask.chars().count() > ASK_MAX {
         return Err(Fail::new(400, "instructions are too long"));
@@ -3327,6 +3336,32 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (400, Some("instructions are too long"))
+        );
+        assert!(!state.busy(&pr().url), "no review was started");
+    }
+
+    #[test]
+    fn a_spell_is_refused_on_a_pre_review_and_when_its_file_is_too_long() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("huge.md"), "x".repeat(ASK_MAX)).unwrap();
+        config::update(|c| c.spells_dir = d.path().to_path_buf());
+        let (base, token, state) = served();
+        let url = format!("{base}/api/review");
+        let (code, body) = post(
+            &url,
+            json!({"url": pr().url, "spell": "huge", "self": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("a spell is cast on a review, not a pre-review"))
+        );
+        let (code, body) = post(&url, json!({"url": pr().url, "spell": "huge"}), &token);
+        assert_eq!(code, 400);
+        assert!(
+            body["error"].as_str().unwrap().contains("huge.md"),
+            "the error names the file"
         );
         assert!(!state.busy(&pr().url), "no review was started");
     }

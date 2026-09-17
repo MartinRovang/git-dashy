@@ -596,8 +596,6 @@ mod tests {
         assert!(!text.contains("model"));
     }
 
-    /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
-    /// file leaves out must keep the default rather than being cleared.
     #[test]
     fn equipped_spells_round_trip() {
         let s: Saved = serde_json::from_str(r#"{"spells":["auth-check","test-gaps"]}"#).unwrap();
@@ -612,6 +610,8 @@ mod tests {
         assert_eq!(snapshot(&c).spells, Some(vec!["auth-check".to_string()]));
     }
 
+    /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
+    /// file leaves out must keep the default rather than being cleared.
     #[test]
     fn a_saved_file_reaches_every_setting() {
         let none = |_: &str| false;
