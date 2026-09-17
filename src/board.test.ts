@@ -303,11 +303,16 @@ describe('forView: the graph draws the whole board', () => {
   it('switching to the graph clears every part of the filter row', () => {
     // the bucket is the one that bit: a node outside the pick resolved to a uid flat() never made,
     // and selected() answered with rows[0] — the pane opened on some other PR
-    expect(forView('graph', dirty)).toEqual({ query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] })
+    expect(forView('graph', dirty, dirty)).toEqual({ query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] })
   })
 
-  it('switching back to the board changes nothing, so your tab survives the round trip', () => {
-    expect(forView('board', dirty)).toBe(dirty)
+  it('switching back to the board restores the row it was left with, so your tabs survive the round trip', () => {
+    const cleared = forView('graph', dirty, dirty)
+    expect(forView('board', cleared, dirty)).toBe(dirty)
+  })
+
+  it('the book leaves the row alone', () => {
+    expect(forView('necronomicon', dirty, dirty)).toBe(dirty)
   })
 })
 

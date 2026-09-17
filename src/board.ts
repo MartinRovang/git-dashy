@@ -229,15 +229,17 @@ export function pickBucket(bucket: readonly string[], key: string): string[] {
 
 export type Filters = { query: string; failing: boolean; drafts: boolean; hidden: boolean; bucket: string[] }
 
-/** The filter row after a view switch: cleared for the graph, untouched for the board.
+/** The filter row after a view switch: cleared for the graph, and the board's own row (`kept`, saved
+ *  as you left it) back on the board, so a trip through the graph or the book does not cost your tabs.
  *
  * ponytail: the graph has no filter row of its own, so a narrowed board there is a filter you can
  * neither see nor clear — and a node outside the pick resolves to a uid `flat()` never produced,
  * which `selected()` then answers with rows[0]. It lives here because `show()` has no harness and
  * this is the third field that has been forgotten in it.
  */
-export function forView(v: 'board' | 'graph' | 'necronomicon', cur: Filters): Filters {
-  return v === 'graph' ? { query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] } : cur
+export function forView(v: 'board' | 'graph' | 'necronomicon', cur: Filters, kept: Filters): Filters {
+  if (v === 'graph') return { query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] }
+  return v === 'board' ? kept : cur
 }
 
 /** The two filter chips over the bucket on screen, with the rule for when one goes dead.

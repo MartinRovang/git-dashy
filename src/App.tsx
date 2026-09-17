@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, type Cast, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, castResult, castStep, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, type Cast, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, castResult, castStep, type Filters, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Necronomicon } from './components/Necronomicon'
@@ -109,6 +109,8 @@ export default function App() {
   // f was pressed: the ticks count that answers it (Infinity until the POST says), and the ⟳ spins till then
   const [pressed, setPressed] = useState<number | null>(null)
   const [view, setView] = useState<'board' | 'graph' | 'necronomicon'>('board')
+  // the board's filter row as it was left, put back on return
+  const boardFilters = useRef<Filters>({ query: '', failing: false, drafts: false, hidden: false, bucket: [ALL] })
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
   // update as the switch so the graph lays out once and not twice.
@@ -119,7 +121,9 @@ export default function App() {
       paneBefore.current = pane
       setPane(false)
     } else if (v !== 'necronomicon' && view === 'necronomicon') setPane(paneBefore.current)
-    const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
+    const cur = { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket }
+    if (view === 'board') boardFilters.current = cur
+    const f = forView(v, cur, boardFilters.current)
     setQuery(f.query)
     setFailing(f.failing)
     setOnlyDrafts(f.drafts)
