@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
-    review, spells, story, team, textdiff, update,
+    autorev, bind, config, dbrepo, dbschema, diff, github, held, install, knowledge, log as review_log,
+    memory, report, review, spells, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -1218,6 +1218,15 @@ fn get_story(_state: &State, query: &Query) -> Out {
     Ok(story::get(login, !q(query, "fresh").is_empty())?)
 }
 
+/// A DB repo's whole schema, parsed from its .sql files. Only a repo some rule names: this clones it.
+fn get_dbschema(_state: &State, query: &Query) -> Out {
+    let db = bind::key(q(query, "db"));
+    if db.is_empty() || !dbrepo::rules().listed().iter().any(|(_, d)| *d == db) {
+        return Err(Fail::new(400, "db must be a DB repo a rule names"));
+    }
+    dbschema::get(&db).map_err(|e| Fail::new(502, e))
+}
+
 // ---------------------------------------------------------------- routes: POST
 
 type Body = Map<String, Value>;
@@ -2241,6 +2250,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
+        "/api/dbschema" => get_dbschema,
         "/api/repos" => |_, _| Ok(json!({"repos": github::my_repos()})),
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
         "/api/changelog" => |_, _| {
@@ -3243,6 +3253,26 @@ mod tests {
             (code, body["error"].as_str()),
             (400, Some("acme/api is not an owner"))
         );
+    }
+
+    /// The schema graph only clones a DB repo some rule names: anything else is refused before git runs.
+    #[test]
+    fn db_schema_refuses_a_repo_no_rule_names() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.dbrepo = d.path().join("dbrepo"));
+        assert_eq!(dbrepo::set("acme/*", "acme/schema"), "");
+        let (base, token, _state) = served();
+        for db in ["", "acme/other", "not a repo", "acme/*"] {
+            let (code, body) = get(
+                &format!("{base}/api/dbschema?db={}", urlencoding::encode(db)),
+                Some(&token),
+            );
+            assert_eq!(
+                (db, code, body["error"].as_str()),
+                (db, 400, Some("db must be a DB repo a rule names"))
+            );
+        }
     }
 
     /// The rail's Database group through HTTP: set, clear, and a bad op or target refused, each read back off the payload.

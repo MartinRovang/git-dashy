@@ -234,6 +234,7 @@
   .modal { background: var(--bg3); border: 1px solid var(--edge); border-radius: 12px; min-width: 420px; max-width: min(760px, 92vw);
            max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
   .modal.wide { width: min(920px, 94vw); max-width: 94vw; }
+  .modal.wide:has(.schema) { width: min(1400px, 96vw); max-width: 96vw; }
   .modal .mh { padding: 14px 18px 10px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
   .modal .mh b { font-size: 14px; font-weight: 600; }
   .modal .mh em { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--dim2); margin-left: auto; }
@@ -771,6 +772,84 @@
   .graph.dbg .gnode.hub circle { filter: none; }
   .graph.dbg .gnode.hub text { font-weight: 600; }
   .graph.dbg .gnode.dropped circle { stroke-dasharray: 3 2; }
+  /* a whole schema (SchemaGraph): tables grouped by schema on the left, the chosen table's columns on the right */
+  .schema { display: flex; gap: 14px; height: min(74vh, 700px); }
+  .graph.schemag { --k: 1; --label: 1; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; }
+  .schfind { position: absolute; top: 8px; left: 8px; width: 280px; max-width: calc(100% - 16px); z-index: 1; }
+  .schfind .search { width: 100%; background: var(--bg); }
+  .schhits { list-style: none; margin: 4px 0 0; padding: 4px; background: var(--bg3); border: 1px solid var(--edge); border-radius: 8px;
+             max-height: 50vh; overflow-y: auto; box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+  .schhits li { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; min-width: 0; }
+  .schhits li[aria-selected='true'] { background: var(--bg4); }
+  .schhits li.sum { cursor: default; font-size: 10.5px; color: var(--dim2); padding: 3px 8px; }
+  .schhits .hn { color: var(--ink); font-weight: 600; }
+  .schhits .hc { color: var(--cyan); }
+  .schhits .ht { margin-left: auto; font-size: 10.5px; color: var(--dim2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .schemag line { opacity: .45; }
+  .graph.schemag line.sel { stroke: var(--ink2); opacity: 1; }
+  .schemag .gnode.sel circle { stroke-width: 3; }
+  .schemag .gnode.sel text { fill: var(--ink); font-weight: 600; }
+  .schemag .clusters circle { fill: none; stroke-width: 1px; stroke-dasharray: 4 4; opacity: .35; vector-effect: non-scaling-stroke; }
+  .schemag .clusters, .schemag .cnames { pointer-events: none; }
+  .schemag .cnames text { font-size: calc(11px / var(--k)); font-family: var(--mono); text-anchor: middle; dominant-baseline: hanging;
+                          opacity: .8; paint-order: stroke; stroke: var(--bg); stroke-width: calc(3px / var(--k)); }
+  .graph.schemag svg.focus .clusters, .graph.schemag svg.focus .cnames { opacity: .3; }
+  .schhead .cref { align-self: flex-start; max-width: 100%; }
+  .schkey.sub2 { padding-left: 17px; }
+  .schkey .dim { color: var(--dim2); font-size: 10.5px; }
+  .schemag .tether line { stroke: var(--dim2); stroke-dasharray: 2 5; opacity: .5; }
+  .schemag .fklines line { stroke: var(--cyan); stroke-dasharray: 4 3; opacity: .45; }
+  .graph.schemag svg.tsel:not(.focus, .search) .gnode:not(.near) { opacity: .15; }
+  .graph.schemag svg.tsel:not(.focus, .search) .links line:not(.sel) { opacity: .06; }
+  .graph.schemag svg.tsel:not(.focus, .search) .gnode.near text { display: inline; opacity: 1; fill: var(--ink); }
+  .schemag .gcol { cursor: pointer; transition: opacity .2s; }
+  .schemag .gcol circle { stroke: var(--bg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .schemag .gcol text { font-size: calc(10px / var(--k)); fill: var(--ink3); dominant-baseline: middle; pointer-events: none;
+                        paint-order: stroke; stroke: var(--bg); stroke-width: calc(3px / var(--k)); }
+  .schemag .gcol:not(.named, .sel, .lit, .hit) text { display: none; }
+  .schemag .gcol.sel circle, .schemag .gcol.hit circle, .schemag .gcol.lit circle { stroke: var(--ink); stroke-width: 1.5px; }
+  .schemag .gcol.sel text, .schemag .gcol.lit text, .schemag .gcol.hit text { fill: var(--ink); }
+  .graph.schemag svg.colsel:not(.focus, .search) .gcol:not(.sel) { opacity: .3; }
+  .graph.schemag svg.focus .gcol:not(.lit) { opacity: .15; }
+  .graph.schemag svg.search:not(.focus) .gcol:not(.hit) { opacity: .1; }
+  .schemag .knames text { font-size: calc(11px / var(--k)); font-family: var(--mono); text-anchor: middle; dominant-baseline: hanging;
+                          pointer-events: none; opacity: .85; paint-order: stroke; stroke: var(--bg); stroke-width: calc(3px / var(--k)); }
+  .schemag .colhint { font-size: calc(20px / var(--k)); font-weight: 700; fill: var(--ink3); text-anchor: middle; pointer-events: none; opacity: .85; }
+  .schpick { padding: 0 6px 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .schpick .sub { justify-content: space-between; }
+  .schpick b { color: var(--ink); }
+  .schfilter .kdot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .schcols { width: 300px; flex: none; overflow-y: auto; min-height: 0; }
+  .schhead { display: flex; flex-direction: column; gap: 2px; padding: 2px 6px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+  .schhead em { font-style: normal; font-family: var(--mono); font-size: 11px; }
+  .schhead b { font-size: 15px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .schhead span { font-size: 11px; color: var(--dim2); }
+  .schcols ul { list-style: none; margin: 0 0 10px; padding: 0; }
+  .schcols li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12px; min-width: 0; }
+  .schcols li:hover { background: var(--bg4); }
+  .schcols li svg { flex: none; }
+  .schcols .cn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+  .schcols .ct { font-size: 10.5px; color: var(--dim2); white-space: nowrap; }
+  .schcols .cref { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: none; padding: 0;
+                   font-size: 10.5px; color: var(--cyan); cursor: pointer; }
+  .schcols .cref:hover { text-decoration: underline; }
+  .schfilter { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 8px; }
+  .schfilter .search { width: 100%; height: 28px; }
+  .schfilter .tag[aria-pressed='true'] { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 50%, transparent); }
+  .schfilter .sub { justify-content: space-between; }
+  .schcols .ck { font-size: 9.5px; padding: 0 4px; border-radius: 4px; }
+  .schcols .ck.pk { color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent); }
+  .schhint { padding: 2px 6px; font-size: 12px; color: var(--ink3); }
+  .schhint p { margin: 0 0 12px; }
+  .schhint .sub { margin: 10px 0 4px; }
+  .schkey { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .schkey i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .schkey span { margin-left: auto; color: var(--dim2); font-size: 11px; }
+  @media (max-width: 720px) {
+    .schema { flex-direction: column; height: auto; }
+    .graph.schemag { height: 55vh; flex: none; }
+    .schcols { width: auto; max-height: 40vh; }
+  }
   .dblegend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--dim2); margin-top: 4px; }
   /* the DB repo rules: target → repo, and the form that adds one */
   .dbrule { display: flex; align-items: flex-start; gap: 6px; padding: 5px 6px; border-radius: 6px; background: var(--bg4); min-width: 0; }
