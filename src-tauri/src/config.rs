@@ -605,8 +605,10 @@ mod tests {
             s.spells,
             Some(vec!["auth-check".to_string(), "test-gaps".to_string()])
         );
-        let mut c = Config::default();
-        c.spells = vec!["auth-check".into()];
+        let c = Config {
+            spells: vec!["auth-check".into()],
+            ..Default::default()
+        };
         assert_eq!(snapshot(&c).spells, Some(vec!["auth-check".to_string()]));
     }
 
