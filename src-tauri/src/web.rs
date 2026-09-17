@@ -2692,7 +2692,14 @@ mod tests {
         }
         // ponytail: the whole point. narrow() computes `i + context`, so usize::MAX off the wire
         // overflowed that sum -- a panic here in debug, wrong lines in release.
-        for bad in ["", "context=", "context=9", "context=-1", "context=x", &format!("context={}", usize::MAX)] {
+        for bad in [
+            "",
+            "context=",
+            "context=9",
+            "context=-1",
+            "context=x",
+            &format!("context={}", usize::MAX),
+        ] {
             assert_eq!(of(bad), diff::CONTEXTS[0], "{bad}");
         }
     }
