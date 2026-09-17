@@ -575,11 +575,10 @@ fn remember(repo: Option<String>, general: bool, private: bool, fact: Vec<String
     }
     // ponytail: in a team's repo a session drafts into the team's pool by default, like a review, so a
     // teammate's review can match it. --private keeps a thought yours, wherever you are standing.
-    let pooled = !private && memory::team_home((!repo.is_empty()).then_some(repo.as_str()), &about).is_some();
-    let promoted = if private {
-        memory::append_private(&repo, &fact, "session")
+    let (promoted, pooled) = if private {
+        (memory::append_private(&repo, &fact, "session"), false)
     } else {
-        memory::append_as(&repo, &fact, &about, "session")
+        memory::append_routed(&repo, &fact, &about, "session")
     };
     team::push_dir(
         &config::get().memory_dir,
@@ -1715,6 +1714,53 @@ mod tests {
         assert_eq!(crate::dbrepo::of("acme/docs"), "");
         assert_eq!(db_cmd(s("acme/docs"), None, false, true), 0);
         assert_eq!(crate::dbrepo::of("acme/docs"), "acme/schema");
+    }
+
+    /// In a team's repo a session drafts where a review would, the team's pool; --private keeps it yours.
+    #[test]
+    fn remember_drafts_into_the_team_unless_private() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = root.join("mine");
+            c.local_memory = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.log = root.join("log.jsonl");
+            c.local_log = root.join("log.jsonl");
+            c.registry = root.join("mirrors");
+            c.settings = None;
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/.git")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/memory")).unwrap();
+        memory::allow_publishing("org-t", true);
+        assert_eq!(bind_mod::bind("a/b", "org-t"), "");
+        let me = memory::whoami();
+        let pooled = root.join("teams/org-t/memory/drafts").join(&me).join("a__b.md");
+
+        assert_eq!(
+            remember(Some("a/b".into()), false, true, vec!["kept to myself".into()]),
+            0
+        );
+        assert_eq!(memory::drafts(Some("a/b")), [(1, "kept to myself".to_string())]);
+        assert!(!pooled.exists(), "--private never reaches the team");
+
+        assert_eq!(
+            remember(
+                Some("a/b".into()),
+                false,
+                false,
+                vec!["the team should know".into()]
+            ),
+            0
+        );
+        assert!(std::fs::read_to_string(&pooled)
+            .unwrap()
+            .contains("the team should know"));
+        assert_eq!(memory::drafts(Some("a/b")).len(), 1, "and nothing more in yours");
     }
 
     #[test]

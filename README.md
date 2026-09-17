@@ -131,7 +131,7 @@ button somewhere on the page.
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
 | `n` | the knowledge panel on **inspect**, open at this repo's facts |
 | `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
-| `W` | the knowledge panel on **drafts**: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `W` | the knowledge panel on **drafts**: what a review proposed and no second review has confirmed — `t` makes one a fact (for a draft in a team's pool, `t` opens a pull request adding it to the team's file), `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
 | `K` | the knowledge panel on **stats**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are stats / inspect / drafts (`K` `g` `W`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
@@ -340,7 +340,7 @@ they decide is whether two people saw the same thing. Two people's pools agreein
 reviews across two humans, and inspect says so beside a team's fact with `★ 2 people found this`.
 
 **Inspect is how you watch it and take things out.** `x` on one of your facts removes it; on a team's fact
-it proposes removing it, as a pull request. Everything that arrives, arrives on its own.
+it proposes removing it, as a pull request. Facts only arrive through reviews.
 
 A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
 private however many teams you are in.

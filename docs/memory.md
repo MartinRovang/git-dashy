@@ -203,9 +203,10 @@ more: team knowledge arrives in the team's file directly, from the team's draft
 pool. Inspect (`g`) covers what was left: a team's facts show **★ N people found
 this** from the evidence pool, and `x` on one proposes removing it as a pull request.
 
-**Evidence and drafts are both in the team, neither is context.** `pool/<user>/`
-records who stands behind each team fact; `drafts/<user>/` holds what a bound repo's
-reviews proposed and nobody has confirmed. Neither is ever read into a prompt.
+Evidence and drafts both live in the team repo; neither is read into a prompt.
+`pool/<user>/` records who stands behind each team fact, `drafts/<user>/` holds what a
+bound repo's reviews proposed and nobody has confirmed, and `landed/<repo>.md` keeps the
+wordings a cross-check agreed on, so each teammate's machine can take its own draft out.
 
 **When does a fact pool?** On promotion, and only if the repo belongs to the team
 — `team_visible()`, which asks the binding:
