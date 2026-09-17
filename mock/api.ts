@@ -600,7 +600,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const built = (names: string[], setting: string) =>
         names.map((n) => ({ name: n, about: about[n] || '', on: on(S.settings[setting], n) }))
       return json(200, {
-        spells: S.spells.map((s) => ({ ...s, on: on(S.settings.spells, s.name) })),
+        spells: S.spells.map((s) => ({ name: s.name, about: s.text, on: on(S.settings.spells, s.name) })),
         passives: built(HUNTERS, 'hunter'),
         voices: built(VOICES, 'voice'),
       })
@@ -734,21 +734,6 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const repo = repoOf(body) || 'general'
       memoryText[repo] = str(body, 'text')
       return json(200, { ok: true, error: '' })
-    }
-    if (path === '/api/spells') {
-      const name = str(body, 'name')
-      if (!/^[a-z0-9-]{1,40}$/.test(name)) return json(400, { error: 'a spell name is 1-40 of a-z, 0-9 and -' })
-      const i = S.spells.findIndex((s) => s.name === name)
-      if (str(body, 'op') === 'save') {
-        if (i >= 0) S.spells[i].text = str(body, 'text')
-        else S.spells.push({ name, text: str(body, 'text') })
-        S.spells.sort((a, b) => a.name.localeCompare(b.name))
-      } else {
-        if (i < 0) return json(404, { error: `no spell ${name}` })
-        S.spells.splice(i, 1)
-        S.settings.spells = ((S.settings.spells as string[]) || []).filter((n) => n !== name)
-      }
-      return json(200, { ok: true })
     }
     if (path === '/api/drafts') {
       const repo = repoOf(body)

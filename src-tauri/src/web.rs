@@ -755,7 +755,7 @@ fn get_spells(_state: &State, _q: &Query) -> Out {
         .into_iter()
         .map(|(name, text)| {
             let on = c.spells.contains(&name);
-            json!({"name": name, "text": text, "on": on})
+            json!({"name": name, "about": spells::about(&text), "on": on})
         })
         .collect();
     Ok(json!({
@@ -763,28 +763,6 @@ fn get_spells(_state: &State, _q: &Query) -> Out {
         "passives": built(config::HUNTERS, &c.hunter),
         "voices": built(config::VOICES, &c.voice),
     }))
-}
-
-/// `save` writes one spell, `delete` removes it and takes it off the quick list.
-fn post_spells(_state: &State, body: &Body) -> Out {
-    let name = text(body, "name");
-    match text(body, "op").as_str() {
-        "save" => spells::save(&name, &text(body, "text")).map_err(|e| Fail(400, e.to_string()))?,
-        "delete" => {
-            spells::delete(&name).map_err(|e| Fail(404, e.to_string()))?;
-            let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
-            let mut c = config::get();
-            if c.spells.contains(&name) {
-                c.spells.retain(|n| n != &name);
-                config::normalise(&mut c);
-                let saved = config::snapshot(&c);
-                config::update(|cfg| *cfg = c);
-                config::save(&saved)?;
-            }
-        }
-        _ => return Err(Fail::new(400, "op must be save or delete")),
-    }
-    Ok(json!({"ok": true}))
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
@@ -2123,7 +2101,6 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/posting" => post_posting,
         "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
-        "/api/spells" => post_spells,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,

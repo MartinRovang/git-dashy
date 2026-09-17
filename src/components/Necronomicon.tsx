@@ -1,19 +1,24 @@
 // The Necronomicon: the reviewer's abilities as a book. Spells are cast once on a PR, passives (hunters) and voices
-// ride along on every review. Spells are yours to write; passives and voices are built in and only switched.
+// ride along on every review. Spells are markdown files in ~/.prs_spells; passives and voices are built in. The book
+// only equips them, and casts spells.
 //
-// ponytail: everything the pages say about passives and voices comes from /api/spells. This page holds none of that text.
+// ponytail: everything the pages say comes from /api/spells. This page holds none of that text.
 import { useCallback, useEffect, useState } from 'react'
-import { api, errorText, post } from '../api'
+import { api } from '../api'
 import { modalCount } from '../modals'
 import type { Row } from '../types'
 import { canCastOn } from '../board'
 import { Check } from 'lucide-react'
 import { Glyph } from './Glyph'
 
-type Built = { name: string; about: string; on: boolean }
-export type Book = { spells: { name: string; text: string; on: boolean }[]; passives: Built[]; voices: Built[] }
+type Card = { name: string; about: string; on: boolean }
+export type Book = { spells: Card[]; passives: Card[]; voices: Card[] }
 
-const CHAPTERS = ['Spells', 'Passives', 'Voices'] as const
+const CHAPTERS = [
+  ['Spells', 'spells', 'spell'],
+  ['Passives', 'hunter', 'passive'],
+  ['Voices', 'voice', 'voice'],
+] as const
 
 /** The book's contents, and a reload. The sidebar and the right-click menu read the same. */
 export function useBook(): [Book | null, () => Promise<void>] {
@@ -44,10 +49,6 @@ export function Necronomicon({
 }) {
   const [book, reload] = useBook()
   const [ch, setCh] = useState(0)
-  // the spell open on the right page; '' is a new one
-  const [pick, setPick] = useState<string | null>(null)
-  const [draft, setDraft] = useState({ name: '', text: '' })
-  const [error, setError] = useState('')
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -62,156 +63,73 @@ export function Necronomicon({
 
   if (!book) return <div className="necro"><div className="ncover-msg">opening the book…</div></div>
 
-  const open = (name: string) => {
-    const s = book.spells.find((x) => x.name === name)
-    setPick(name)
-    setDraft({ name, text: s?.text || '' })
-    setError('')
-  }
-  const act = async (body: Record<string, string>) => {
-    const r = await post('/api/spells', body)
-    if (!r.ok) {
-      setError(await errorText(r))
-      return false
-    }
-    setError('')
-    await reload()
-    return true
-  }
-  const save = async () => {
-    // a rename writes the new name and removes the old one, so it does not leave two
-    if (!(await act({ op: 'save', name: draft.name, text: draft.text }))) return
-    if (pick && pick !== draft.name) await act({ op: 'delete', name: pick })
-    setPick(draft.name)
-  }
-  const flip = async (key: 'spells' | 'hunter' | 'voice', list: { name: string; on: boolean }[], name: string) => {
+  const lists = [book.spells, book.passives, book.voices]
+  const [title, key, kind] = CHAPTERS[ch]
+  const list = lists[ch]
+  const canCast = !!selected && canCastOn(selected)
+  const flip = async (name: string) => {
     const on = list.filter((x) => x.on).map((x) => x.name)
     await setting(key, on.includes(name) ? on.filter((n) => n !== name) : [...on, name])
-    // the book re-reads so its switches follow what the server kept
+    // the book re-reads so its ticks follow what the server kept
     await reload()
   }
-  const current = pick === null ? null : book.spells.find((s) => s.name === pick)
-  const canCast = !!selected && canCastOn(selected)
-
-  const built = (list: Built[], key: 'hunter' | 'voice') => (
-    <ul className="nbuilt">
-      {list.map((b) => (
-        <li key={b.name} className={b.on ? 'on' : ''}>
-          <button className="ncard" aria-pressed={b.on} title={b.on ? 'equipped: click to take it off' : 'click to equip'} onClick={() => void flip(key, list, b.name)}>
-            <Tick on={b.on} />
-            <Glyph kind={key === 'hunter' ? 'passive' : 'voice'} name={b.name} size={96} />
-            <b>{b.name}</b>
-            <p>{b.about}</p>
-          </button>
-        </li>
-      ))}
-    </ul>
-  )
 
   return (
     <div className="necro scroll">
       <div className="ncover">
         <div className="nhead">
           <span className="ntitle">Necronomicon</span>
-          <span className="nsub">{error ? `✗ ${error}` : selected ? `open on #${selected.number} ${selected.repo}` : 'no PR selected'}</span>
+          <span className="nsub">{selected ? `open on #${selected.number} ${selected.repo}` : 'no PR selected'}</span>
         </div>
         <div className="nspread">
           <div className="npage left">
             <h2>Chapters</h2>
             <ol className="nindex">
-              {CHAPTERS.map((c, i) => (
+              {CHAPTERS.map(([c], i) => (
                 <li key={c} className={i === ch ? 'on' : ''}>
                   <button onClick={() => setCh(i)}>{c}</button>
                   <span className="nleader" />
-                  <span>{[book.spells, book.passives, book.voices][i].length}</span>
+                  <span>{lists[i].length}</span>
                 </li>
               ))}
             </ol>
             {ch === 0 ? (
-              <>
-                <h3>Spells</h3>
-                <ul className="nspells">
-                  {book.spells.map((s) => (
-                    <li key={s.name}>
-                      <button className={s.name === pick ? 'on' : ''} onClick={() => open(s.name)}>
-                        <Glyph kind="spell" name={s.name} size={40} />
-                        <b>{s.name}</b>
-                      </button>
-                      <button
-                        className="ntick-btn"
-                        aria-pressed={s.on}
-                        title={s.on ? 'equipped: click to take it off' : 'equip it'}
-                        onClick={() => void flip('spells', book.spells, s.name)}
-                      >
-                        <Tick on={s.on} />
-                      </button>
-                    </li>
-                  ))}
-                  <li>
-                    <button className={`new${pick === '' ? ' on' : ''}`} onClick={() => open('')}>
-                      <b>+ new spell</b>
-                    </button>
-                  </li>
-                </ul>
-              </>
+              <p className="nblank">
+                A spell is a one-time, in-depth look at one topic, cast on one PR. Each is a markdown file in ~/.prs_spells; add one there
+                and it shows here. Equipped spells can be cast from the sidebar and a PR's right-click menu.
+              </p>
             ) : null}
           </div>
           <div className="npage right">
-            {ch === 0 ? (
-              pick === null ? (
-                <p className="nblank">Pick a spell, or write a new one. A spell is a one-time, in-depth look at one topic, cast on one PR.</p>
-              ) : (
-                <section className="nspell">
-                  <h2>
-                    <Glyph kind="spell" name={pick || 'new'} /> {pick || 'A new spell'}
-                  </h2>
-                  <label>
-                    name
-                    <input value={draft.name} placeholder="migration-audit" onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-                  </label>
-                  <label>
-                    what it investigates
-                    <textarea rows={10} value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} />
-                  </label>
-                  <div className="nspell-acts">
-                    <button className="btn" onClick={() => void save()}>save</button>
-                    {current ? (
-                      <>
-                        <button className="nequip" aria-pressed={current.on} onClick={() => void flip('spells', book.spells, current.name)}>
-                          <Tick on={current.on} /> {current.on ? 'equipped' : 'equip'}
-                        </button>
+            <section>
+              <h2>{title}</h2>
+              {list.length ? (
+                <ul className="nbuilt">
+                  {list.map((b) => (
+                    <li key={b.name} className={b.on ? 'on' : ''}>
+                      <button className="ncard" aria-pressed={b.on} title={b.on ? 'equipped: click to take it off' : 'click to equip'} onClick={() => void flip(b.name)}>
+                        <Tick on={b.on} />
+                        <Glyph kind={kind} name={b.name} size={96} />
+                        <b>{b.name}</b>
+                        <p>{b.about}</p>
+                      </button>
+                      {kind === 'spell' ? (
                         <button
-                          className="btn go"
+                          className="btn ncast"
                           disabled={!canCast}
-                          title={canCast ? `cast on #${selected!.number}` : 'select a PR waiting for your review'}
-                          onClick={() => selected && onCast(selected, current.name)}
+                          title={canCast ? `cast ${b.name} on #${selected!.number}` : 'select a PR waiting for your review'}
+                          onClick={() => selected && onCast(selected, b.name)}
                         >
                           cast on {canCast ? `#${selected!.number}` : 'a PR waiting on you'}
                         </button>
-                        <button
-                          className="btn"
-                          onClick={async () => {
-                            if (await act({ op: 'delete', name: current.name })) setPick(null)
-                          }}
-                        >
-                          delete
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </section>
-              )
-            ) : ch === 1 ? (
-              <section>
-                <h2>Passives</h2>
-                {built(book.passives, 'hunter')}
-              </section>
-            ) : (
-              <section>
-                <h2>Voices</h2>
-                {built(book.voices, 'voice')}
-              </section>
-            )}
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="nblank">No spells yet. Put a markdown file in ~/.prs_spells.</p>
+              )}
+            </section>
           </div>
         </div>
       </div>
