@@ -762,7 +762,8 @@ fn plain(line: &str) -> String {
 /// the evidence the promotion gate trusts is not a parsing nicety. Every pre-upgrade file is prose in
 /// this slot, so this is the common case, not the exotic one.
 pub fn parse(line: &str) -> Draft {
-    let m = re(r"^-\s*\((\d+)\)\s*(?:\[(r:[0-9a-f]{4}(?:,r:[0-9a-f]{4})*)\]\s*)?(.*)$").captures(line.trim());
+    let m = re(r"^-\s*\((\d+)\)\s*(?:\[([rs]:[0-9a-f]{4}(?:,[rs]:[0-9a-f]{4})*)\]\s*)?(.*)$")
+        .captures(line.trim());
     let Some(m) = m else {
         return Draft {
             count: 1,
@@ -779,7 +780,19 @@ pub fn parse(line: &str) -> Draft {
     };
     let ids = m
         .get(2)
-        .map(|g| g.as_str().split(',').map(|i| i[2..].to_string()).collect())
+        // a review's id is kept bare, a session's keeps its "s:" (see SESSION_RUN)
+        .map(|g| {
+            g.as_str()
+                .split(',')
+                .map(|i| {
+                    if i.starts_with(SESSION_RUN) {
+                        i.to_string()
+                    } else {
+                        i[2..].to_string()
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
     Draft {
         count,
@@ -787,6 +800,10 @@ pub fn parse(line: &str) -> Draft {
         fact: m[3].trim().to_string(),
     }
 }
+
+/// The mark on a run id that came from a session (`gitdashy remember`) rather than a review: "s:1a2b" in a
+/// drafts line, where a review's is "r:1a2b". Kept on the id in memory too, bare ids being reviews'.
+pub const SESSION_RUN: &str = "s:";
 
 /// A short id for ONE run of one review. Never stored anywhere but the drafts line it stamps.
 ///
@@ -1003,7 +1020,11 @@ fn counted_text(items: &[Draft]) -> String {
                     "[{}] ",
                     d.ids
                         .iter()
-                        .map(|i| format!("r:{i}"))
+                        .map(|i| if i.starts_with(SESSION_RUN) {
+                            i.clone()
+                        } else {
+                            format!("r:{i}")
+                        })
                         .collect::<Vec<_>>()
                         .join(",")
                 )
@@ -2189,7 +2210,7 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
 /// one route while the write took the other.
 pub fn append_routed(repo: &str, text: &str, about: &str, source: &str) -> (Vec<String>, bool) {
     match team_home(opt(repo), about) {
-        Some(base) => (append_team(&base, repo, text), true),
+        Some(base) => (append_team(&base, repo, text, source == "session"), true),
         None => (append_private(repo, text, source), false),
     }
 }
@@ -2295,7 +2316,7 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
 /// ponytail: DISTINCT RUN IDS reach the gate here, and a pre-review adds nothing. The count once decided it,
 /// so your pre-review plus one review of your own PR (one run id, the same model on the same diff) wrote
 /// straight into what every teammate's reviews read. It is the rule cross-checks already use.
-fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
+fn append_team(base: &Path, repo: &str, text: &str, session: bool) -> Vec<String> {
     let _g = guard();
     let r = opt(repo);
     let proposed = fresh(text);
@@ -2304,7 +2325,11 @@ fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
     }
     let file = my_team_drafts(base, r);
     let settled = team_known(base, r);
-    let rid = rid();
+    let rid = if session {
+        format!("{SESSION_RUN}{}", rid())
+    } else {
+        rid()
+    };
     let mut items: Vec<Draft> = counted(&file)
         .into_iter()
         .filter(|d| !settled.iter().any(|t| same(&d.fact, t)))
@@ -2314,16 +2339,22 @@ fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
             observe(&mut items, repo, fact, &rid, false);
         }
     }
-    let runs = |d: &Draft| d.ids.iter().collect::<HashSet<_>>().len() as u32;
+    // ponytail: and one of the runs is a REVIEW. Each `gitdashy remember` call is a run of its own, so one
+    // session filing the same line twice made two runs and a team fact out of one opinion. A teammate's
+    // matching draft still promotes through the cross-check, which pairs two people whatever their runs were.
+    let ready = |d: &Draft| {
+        d.ids.iter().collect::<HashSet<_>>().len() as u32 >= PROMOTE_AT
+            && d.ids.iter().any(|i| !i.starts_with(SESSION_RUN))
+    };
     let promoted: Vec<String> = items
         .iter()
-        .filter(|d| runs(d) >= PROMOTE_AT)
+        .filter(|d| ready(d))
         .map(|d| d.fact.clone())
         .collect();
     for t in &promoted {
         to_team(base, r, t, &[]);
     }
-    let left: Vec<Draft> = items.into_iter().filter(|d| runs(d) < PROMOTE_AT).collect();
+    let left: Vec<Draft> = items.into_iter().filter(|d| !ready(d)).collect();
     write_team_drafts(&file, &left);
     promoted
 }
@@ -3263,6 +3294,37 @@ mod tests {
             ["the router is stubbed"]
         );
         assert_eq!(lines(&shared.join("a__b.md")), ["- the router is stubbed"]);
+    }
+
+    #[test]
+    fn a_session_alone_never_makes_a_team_fact() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        // one session filing the same line twice: two runs, both a session's
+        assert!(append_as("a/b", "- migrations run first", "", "session").is_empty());
+        assert!(append_as("a/b", "- migrations run first", "", "session").is_empty());
+        assert!(!shared.join("a__b.md").exists());
+        let d = &counted(&mine)[0];
+        assert_eq!(d.ids.len(), 2);
+        assert!(d.ids.iter().all(|i| i.starts_with(SESSION_RUN)), "{:?}", d.ids);
+        assert!(read_file(&mine).contains("[s:"), "the mark survives the file");
+        // a review arriving at it is the second kind of observation
+        assert_eq!(
+            append("a/b", "- migrations run first", ""),
+            ["migrations run first"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- migrations run first"]);
+    }
+
+    #[test]
+    fn a_session_run_id_reads_back_as_written() {
+        let d = parse("- (2) [r:1a2b,s:3c4d] a fact");
+        assert_eq!(
+            (d.count, d.ids.clone(), d.fact.as_str()),
+            (2, vec!["1a2b".to_string(), "s:3c4d".to_string()], "a fact")
+        );
+        assert_eq!(counted_text(&[d]), "- (2) [r:1a2b,s:3c4d] a fact\n");
     }
 
     #[test]

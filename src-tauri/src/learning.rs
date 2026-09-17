@@ -415,10 +415,16 @@ pub fn mine(from_git: Vec<Event>, recorded: Vec<Event>) -> Vec<Event> {
         .filter(|e| !e.id.is_empty())
         .map(|e| (e.kind.clone(), e.id.clone()))
         .collect();
+    // log lines written before they carried an id cannot vouch for a fact; their stretch keeps the old rule
+    let legacy = recorded
+        .iter()
+        .filter(|e| e.id.is_empty())
+        .map(|e| e.at)
+        .fold(f64::NEG_INFINITY, f64::max);
     let me = memory::whoami();
     let mut all: Vec<Event> = from_git
         .into_iter()
-        .filter(|e| e.at < cut || !logged.contains(&(e.kind.clone(), fact_id(&e.fact))))
+        .filter(|e| e.at < cut || (e.at > legacy && !logged.contains(&(e.kind.clone(), fact_id(&e.fact)))))
         .map(|mut e| {
             if e.who.is_empty() {
                 e.who = me.clone();
@@ -754,5 +760,23 @@ mod tests {
             "no log yet: all of git"
         );
         assert_eq!(fact_id("d from  ELSEWHERE"), fact_id("D  from elsewhere"));
+        // a log from before ids: its stretch drops git as it always did, and after it the id rule applies
+        let old = |at: f64| Event {
+            at,
+            kind: "draft".into(),
+            who: "me".into(),
+            ..Default::default()
+        };
+        let all = mine(
+            vec![git(2.0, "x"), git(4.0, "y")],
+            vec![old(1.0), old(3.0), log(5.0, "z")],
+        );
+        let mut ats: Vec<f64> = all.iter().map(|e| e.at).collect();
+        ats.sort_by(f64::total_cmp);
+        assert_eq!(
+            ats,
+            [1.0, 3.0, 4.0, 5.0],
+            "git's 2 is inside the id-less stretch; 4 is after it and unlogged"
+        );
     }
 }
