@@ -38,6 +38,24 @@ pub struct Event {
     /// The fact's text, to tell a first appearance from a file rewritten with it still in. Never sent.
     #[serde(skip)]
     pub fact: String,
+    /// A short hash of the fact, never its text: what lets git history on another machine be told from what
+    /// this machine's log already holds.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+/// The id of a fact: 16 hex characters of a hash of its words, case and spacing aside.
+pub fn fact_id(fact: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let words = fact
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    Sha256::digest(words.as_bytes())[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn log_path() -> PathBuf {
@@ -45,7 +63,7 @@ fn log_path() -> PathBuf {
 }
 
 /// Record one event now, in your own memory. Never fails a caller: a lost chart point is not worth a lost review.
-pub fn record(kind: &str, repo: &str, source: &str) {
+pub fn record(kind: &str, repo: &str, source: &str, fact: &str) {
     let c = config::get();
     if c.demo || c.learning.as_os_str().is_empty() {
         return;
@@ -56,6 +74,7 @@ pub fn record(kind: &str, repo: &str, source: &str) {
         repo: repo.into(),
         who: memory::whoami(),
         source: source.into(),
+        id: fact_id(fact),
         ..Default::default()
     };
     let line = match serde_json::to_string(&e) {
@@ -161,6 +180,7 @@ fn classify(
         who: who.to_lowercase(),
         source: source.into(),
         fact: fact.into(),
+        id: String::new(),
     };
     // a team checkout keeps its memory under memory/; your own memory dir is the memory itself
     let rel = if team_key.is_empty() {
@@ -319,6 +339,40 @@ fn from_git(dir: &Path, team_key: &str) -> Vec<Event> {
     if !team::is_repo(dir) {
         return Vec::new();
     }
+    // ponytail: cached by HEAD. `git log -p` over a whole history is the cost of opening the panel, and the
+    // answer only changes when a commit does.
+    type Cache = std::sync::Mutex<std::collections::HashMap<(PathBuf, String), (String, Vec<Event>)>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let key = (dir.to_path_buf(), team_key.to_string());
+    let cache = CACHE.get_or_init(Default::default);
+    if !head.is_empty() {
+        if let Some((h, events)) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            if *h == head {
+                return events.clone();
+            }
+        }
+    }
+    let events = git_events(dir, team_key);
+    if !head.is_empty() {
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, (head, events.clone()));
+    }
+    events
+}
+
+/// from_git without the cache.
+fn git_events(dir: &Path, team_key: &str) -> Vec<Event> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -344,13 +398,34 @@ fn from_git(dir: &Path, team_key: &str) -> Vec<Event> {
     }
 }
 
-/// Your own memory's events: git before the log began, the log after it.
+/// Your own memory's events: git before the log began, the log after it, and git after it too for what the
+/// log does not hold.
 ///
 /// ponytail: the cut is the first recorded event, not "now". Git keeps committing every write after the log
 /// starts, so taking both for the same stretch counted every draft twice.
+/// ponytail: but the log is this machine's and the memory is every machine's. A fact learned on another
+/// machine arrives here only as a commit after the cut, and dropping every such commit lost that machine's
+/// learning from this one's chart. After the cut a git event stays unless the log has the same fact, by id.
+/// ponytail: your git history names no one, and the log names you; both are you, so the person filter finds
+/// what you learned before the log began.
 pub fn mine(from_git: Vec<Event>, recorded: Vec<Event>) -> Vec<Event> {
     let cut = recorded.iter().map(|e| e.at).fold(f64::INFINITY, f64::min);
-    let mut all: Vec<Event> = from_git.into_iter().filter(|e| e.at < cut).collect();
+    let logged: std::collections::HashSet<(String, String)> = recorded
+        .iter()
+        .filter(|e| !e.id.is_empty())
+        .map(|e| (e.kind.clone(), e.id.clone()))
+        .collect();
+    let me = memory::whoami();
+    let mut all: Vec<Event> = from_git
+        .into_iter()
+        .filter(|e| e.at < cut || !logged.contains(&(e.kind.clone(), fact_id(&e.fact))))
+        .map(|mut e| {
+            if e.who.is_empty() {
+                e.who = me.clone();
+            }
+            e
+        })
+        .collect();
     all.extend(recorded);
     all
 }
@@ -612,10 +687,10 @@ mod tests {
             c.demo = false; // the talk tests leave demo on under this lock, and demo records nothing
             c.learning = PathBuf::new();
         });
-        record("draft", "acme/api", "review");
+        record("draft", "acme/api", "review", "x");
         config::update(|c| c.learning = d.path().join("learning.jsonl"));
-        record("draft", "acme/api", "review");
-        record("fact", "", "hand");
+        record("draft", "acme/api", "review", "x");
+        record("fact", "", "hand", "y");
         let got = recorded();
         assert_eq!(got.len(), 2);
         assert_eq!(
@@ -638,15 +713,46 @@ mod tests {
     }
 
     #[test]
-    fn git_counts_only_until_the_log_begins() {
-        let ev = |at: f64| Event {
+    fn git_counts_until_the_log_begins_and_after_it_only_what_the_log_lacks() {
+        let git = |at: f64, fact: &str| Event {
             at,
             kind: "draft".into(),
+            fact: fact.into(),
             ..Default::default()
         };
-        let all = mine(vec![ev(1.0), ev(5.0), ev(9.0)], vec![ev(5.0), ev(7.0)]);
-        let ats: Vec<f64> = all.iter().map(|e| e.at).collect();
-        assert_eq!(ats, [1.0, 5.0, 7.0], "git's 5 and 9 are the log's era");
-        assert_eq!(mine(vec![ev(1.0)], vec![]).len(), 1, "no log yet: all of git");
+        let log = |at: f64, fact: &str| Event {
+            at,
+            kind: "draft".into(),
+            id: fact_id(fact),
+            who: "me".into(),
+            ..Default::default()
+        };
+        // git: a before the log, b and c written here (the log has them), d from another machine
+        let all = mine(
+            vec![
+                git(1.0, "a"),
+                git(5.0, "b"),
+                git(7.0, "c"),
+                git(8.0, "D  from elsewhere"),
+            ],
+            vec![log(5.0, "b"), log(7.0, "c"), log(9.0, "e")],
+        );
+        let mut ats: Vec<f64> = all.iter().map(|e| e.at).collect();
+        ats.sort_by(f64::total_cmp);
+        assert_eq!(
+            ats,
+            [1.0, 5.0, 7.0, 8.0, 9.0],
+            "b and c once each, d kept: the log never saw it"
+        );
+        assert!(
+            all.iter().all(|e| !e.who.is_empty()),
+            "your git history is you too"
+        );
+        assert_eq!(
+            mine(vec![git(1.0, "a")], vec![]).len(),
+            1,
+            "no log yet: all of git"
+        );
+        assert_eq!(fact_id("d from  ELSEWHERE"), fact_id("D  from elsewhere"));
     }
 }

@@ -425,6 +425,12 @@ approves it. **gitdashy never reviews a pull request on a joined team's repo**: 
 are refused, and the row says "human review only". That is decided by the repo, not the branch name, so a pull
 request opened outside the app is covered too.
 
+**A team's repo holds its memory and nothing else.** Because no pull request on it is reviewed by a model, a
+team kept inside a code repo would lose review of all that code; joining one says so. **A team with no
+remote** is this machine's alone, so a change to its brief, `agents.md` or a fact is written and committed
+directly: there is nobody to approve it. Editing memory text by hand through the app or `POST /api/memory`
+is gone; reviews and `gitdashy remember` add facts, and the app only removes them.
+
 ### Where knowledge lives
 
 The Knowledge group in the rail says where memory is actually read and written right now: `Memory` is the

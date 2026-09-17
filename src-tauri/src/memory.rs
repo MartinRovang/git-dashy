@@ -207,8 +207,8 @@ pub fn append_self(repo: &str, text: &str) -> Vec<String> {
         }
     }
     history_();
-    for _ in &fresh {
-        crate::learning::record("draft", repo, "pre-review");
+    for f in &fresh {
+        crate::learning::record("draft", repo, "pre-review", f);
     }
     rewrite_counted(&self_path(repo), &items);
     fresh
@@ -2108,6 +2108,8 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
         }
     }
     let (mut items, settled, rid) = (rows(r), known(repo), rid());
+    // facts a pre-review carried over the gate: the chart says so rather than "seen twice"
+    let mut with_bonus: Vec<String> = Vec::new();
     for fact in fresh {
         if let Some(t) = settled.iter().find(|t| same(&fact, t)) {
             crate::necro::remind(t); // nothing new for memory, but the Necronomicon ranks by how often a fact comes up
@@ -2116,6 +2118,9 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
         // ponytail: a pre-review of your own PR that found this counts as the other observation: two runs,
         // one of which did not know the other existed. Consumed, so one pre-review cannot keep paying out.
         let bonus = if consume_self(repo, &fact) { 1 } else { 0 };
+        if bonus == 1 {
+            with_bonus.push(fact.clone());
+        }
         match items.iter_mut().find(|d| same(&d.fact, &fact)) {
             Some(d) => {
                 // ponytail: the first wording wins and the count is what carries meaning; the ids record
@@ -2128,7 +2133,7 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
             None => {
                 // a draft that promotes at once (a pre-review bonus) is recorded as the fact it becomes
                 if 1 + bonus < PROMOTE_AT {
-                    crate::learning::record("draft", repo, source);
+                    crate::learning::record("draft", repo, source, &fact);
                 }
                 items.push(Draft {
                     count: 1 + bonus,
@@ -2148,7 +2153,12 @@ pub fn append_as(repo: &str, text: &str, about: &str, source: &str) -> Vec<Strin
     for t in &promoted {
         append_line(&path(r, None), t);
         pool(r, t, about);
-        crate::learning::record("fact", repo, "seen twice");
+        let how = if with_bonus.iter().any(|b| same(b, t)) {
+            "pre-review"
+        } else {
+            "seen twice"
+        };
+        crate::learning::record("fact", repo, how, t);
     }
     let left: Vec<Draft> = items.into_iter().filter(|d| d.count < PROMOTE_AT).collect();
     write_drafts(r, &left);
@@ -2269,7 +2279,9 @@ pub fn forget(repo: Option<&str>, fact: &str, about: &str) -> Option<PathBuf> {
         return None;
     }
     let q = path(repo, Some(&project(repo, about)?));
-    facts_in(&q).iter().any(|f| is(f, fact)).then_some(q)
+    // ponytail: EXACT, as the removal it proposes is. A loose match here named a file whose copy the
+    // removal then could not find, and the forget reported "not on origin any more" with the copy still there.
+    facts_in(&q).iter().any(|f| f == fact).then_some(q)
 }
 
 /// Take one fact out of your own memory, leaving every other copy alone.
@@ -2404,7 +2416,7 @@ fn promote_locked(repo: Option<&str>, fact: &str, source: &str) -> PathBuf {
     if !already_known(repo.unwrap_or(""), fact) {
         append_line(&path(repo, None), fact);
         pool(repo, fact, "");
-        crate::learning::record("fact", repo.unwrap_or(""), source);
+        crate::learning::record("fact", repo.unwrap_or(""), source, fact);
     }
     path(repo, None)
 }
@@ -2848,6 +2860,32 @@ mod tests {
         assert_eq!(lines(&shared.join("general.md")), ["- one fact", "- two"]);
         // and a fact the team never had names no file
         assert_eq!(forget(None, "only ever mine", ""), None);
+    }
+
+    #[test]
+    fn a_fact_a_pre_review_carried_over_the_gate_is_charted_as_that() {
+        let (_g, tmp) = setup();
+        config::update(|c| c.learning = tmp.path().join("learning.jsonl"));
+        append_self("a/b", "- the router is stubbed");
+        append("a/b", "- the router is stubbed", "");
+        append("a/b", "- uses tabs", "");
+        append("a/b", "- uses tabs", "");
+        let facts: Vec<(String, String)> = crate::learning::recorded()
+            .into_iter()
+            .filter(|e| e.kind == "fact")
+            .map(|e| (e.source, e.id))
+            .collect();
+        config::update(|c| c.learning = PathBuf::new());
+        assert_eq!(
+            facts,
+            [
+                (
+                    "pre-review".to_string(),
+                    crate::learning::fact_id("the router is stubbed")
+                ),
+                ("seen twice".to_string(), crate::learning::fact_id("uses tabs"))
+            ]
+        );
     }
 
     #[test]

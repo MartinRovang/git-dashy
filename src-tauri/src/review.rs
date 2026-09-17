@@ -1160,7 +1160,7 @@ fn error_status(e: &anyhow::Error) -> String {
 /// PORT-NOTE: Python never raised here: an error is the status string "error: ..." with an empty path,
 /// so this returns Ok in every case and the Result of the stub is never Err.
 pub fn self_review(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
-    if team::is_team_repo(pr.repo()) {
+    if team::in_repos(&team::team_repos(), pr.repo()) {
         return Ok((format!("error: {}", team::HUMAN_ONLY), PathBuf::new()));
     }
     Ok(match self_review_inner(pr, model) {
@@ -1274,7 +1274,7 @@ pub fn post_held(h: &held::Held) -> Result<String> {
 pub fn review(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<String> {
     // ponytail: here as well as at the route and the auto tick: this is where a model run starts, so no
     // caller added later can review a team's repo by forgetting to ask
-    if team::is_team_repo(pr.repo()) {
+    if team::in_repos(&team::team_repos(), pr.repo()) {
         return Ok(format!("error: {}", team::HUMAN_ONLY));
     }
     Ok(review_inner(pr, model, ran, ask).unwrap_or_else(|e| error_status(&e)))

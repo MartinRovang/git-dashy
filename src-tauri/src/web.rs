@@ -1256,6 +1256,19 @@ fn truthy(body: &Body, key: &str) -> bool {
 }
 
 /// `body.get("repo") or None`.
+/// The body's repo when it can only name a memory file of facts. 400 for a path trick (`\\`, `..`) or a name
+/// that is a founding document's file: those go through their own route, which refuses an empty proposal.
+fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
+    let repo = repo_of(body);
+    if let Some(r) = repo.as_deref() {
+        let slug = memory::slug(r);
+        if r.contains('\\') || r.contains("..") || slug == memory::PROJECT || slug == memory::AGENTS {
+            return Err(Fail::new(400, "not a repo"));
+        }
+    }
+    Ok(repo)
+}
+
 fn repo_of(body: &Body) -> Option<String> {
     Some(text(body, "repo")).filter(|r| !r.is_empty())
 }
@@ -1356,7 +1369,7 @@ fn post_review(state: &State, body: &Body) -> Out {
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
-    if team::is_team_repo(pr.repo()) {
+    if team::in_repos(&team::team_repos(), pr.repo()) {
         return Err(Fail(403, team::HUMAN_ONLY.into()));
     }
     let ask = text(body, "ask");
@@ -1435,7 +1448,7 @@ fn post_copy(state: &State, body: &Body) -> Out {
 /// pull request on the team's repo, because every teammate reads it.
 fn post_memory(_state: &State, body: &Body) -> Out {
     let (team, fact) = (text(body, "team"), text(body, "fact"));
-    let repo = repo_of(body).filter(|r| r != "general");
+    let repo = checked_repo(body)?.filter(|r| r != "general");
     let label = repo.as_deref().unwrap_or("general").to_string();
     match text(body, "op").as_str() {
         "remove" if team.is_empty() => {
@@ -1475,7 +1488,7 @@ fn post_memory(_state: &State, body: &Body) -> Out {
 }
 
 fn post_drafts(_state: &State, body: &Body) -> Out {
-    let (repo, fact) = (repo_of(body), text(body, "fact"));
+    let (repo, fact) = (checked_repo(body)?, text(body, "fact"));
     let label = repo.as_deref().unwrap_or("general");
     let dir = config::get().memory_dir;
     match text(body, "op").as_str() {
@@ -1509,7 +1522,7 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
             Ok(json!({"ok": true}))
         }
         "merge" => {
-            let repo = repo_of(body);
+            let repo = checked_repo(body)?;
             let label = repo.as_deref().unwrap_or("general").to_string();
             let n = memory::merge(repo.as_deref(), &text(body, "keep"), &text(body, "drop"));
             team::push_dir(
@@ -1525,7 +1538,7 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
 }
 
 fn post_share(_state: &State, body: &Body) -> Out {
-    let (repo, fact, about) = (repo_of(body), text(body, "fact"), text(body, "about"));
+    let (repo, fact, about) = (checked_repo(body)?, text(body, "fact"), text(body, "about"));
     let label = repo.as_deref().unwrap_or("general");
     match text(body, "op").as_str() {
         "send" => {
@@ -1615,13 +1628,24 @@ fn post_teams(state: &State, body: &Body) -> Out {
             .collect();
         fresh.sort();
         let err = team_error();
-        let warning = if err.is_empty() {
-            String::new()
-        } else {
+        let foreign = fresh
+            .first()
+            .and_then(|k| team::dir_of(k))
+            .map(|d| team::foreign_files(&d))
+            .unwrap_or_default();
+        let warning = if !err.is_empty() {
             format!(
                 "joined, but could not publish: {}",
                 err.chars().take(70).collect::<String>()
             )
+        } else if !foreign.is_empty() {
+            // a team's repo is its memory's alone: no pull request on it is ever reviewed by a model
+            format!(
+                "joined, but this repo also holds {}: gitdashy never reviews a pull request on a team's repo, so give the memory a repo of its own",
+                foreign.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            )
+        } else {
+            String::new()
         };
         return Ok(
             json!({"ok": true, "key": fresh.first().cloned().unwrap_or_default(), "warning": warning}),
@@ -2779,33 +2803,81 @@ mod tests {
         let t = teams.join("crew");
         std::fs::create_dir_all(t.join("memory")).unwrap();
         std::fs::create_dir_all(&mine).unwrap();
-        assert!(team::init_history(&t)); // a team with no remote: nothing can be proposed to it
-        std::fs::write(t.join("memory/general.md"), "- shared once\n").unwrap();
-        std::fs::write(mine.join("general.md"), "- shared once\n- mine\n").unwrap();
+        assert!(team::init_history(&t));
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&t)
+                .status()
+                .unwrap()
+                .success())
+        };
+        std::fs::write(t.join("memory/general.md"), "- shared once\n- Loud CASE\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
+        std::fs::write(mine.join("general.md"), "- shared once\n- mine\n- loud case\n").unwrap();
         config::update(|c| {
             c.demo = false;
             c.memory_dir = mine.clone();
             c.teams = teams.clone();
         });
         let (base, token, _state) = served();
-        let (code, j) = post(
-            &format!("{base}/api/share"),
-            json!({"op": "forget", "fact": "shared once"}),
-            &token,
+        let forget = |fact: &str| {
+            post(
+                &format!("{base}/api/share"),
+                json!({"op": "forget", "fact": fact}),
+                &token,
+            )
+        };
+
+        // a team this machine alone has: no remote, nobody to approve, so the team's copy goes here and now
+        let (code, j) = forget("shared once");
+        assert_eq!(code, 200, "{j}");
+        assert!(j["note"].as_str().unwrap().starts_with("written"), "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- Loud CASE\n"
         );
+
+        // the team's copy differs in case: not the same line, so nothing of the team's is touched
+        let (code, j) = forget("loud case");
+        assert_eq!((code, j.get("note"), j.get("error")), (200, None, None), "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- Loud CASE\n"
+        );
+
+        // a remote that cannot be reached: the proposal fails, and the forget still says what it did
+        std::fs::write(mine.join("general.md"), "- Loud CASE\n").unwrap();
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            &d.path().join("gone.git").to_string_lossy(),
+        ]);
+        let (code, j) = forget("Loud CASE");
         assert_eq!(code, 200, "{j}");
         assert!(
             j["error"].as_str().unwrap().contains("could not be proposed"),
             "{j}"
         );
         assert_eq!(
-            std::fs::read_to_string(mine.join("general.md")).unwrap(),
-            "- mine\n"
+            std::fs::read_to_string(mine.join("general.md")).unwrap_or_default(),
+            ""
         );
         assert_eq!(
             std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
-            "- shared once\n"
+            "- Loud CASE\n"
         );
+
+        // and a fact scope that is a founding document's file, or a path trick, is not a repo
+        for repo in ["project", "agents", "..\\x", "a/../b"] {
+            let (code, _) = post(
+                &format!("{base}/api/memory"),
+                json!({"op": "remove", "repo": repo, "fact": "x"}),
+                &token,
+            );
+            assert_eq!(code, 400, "{repo}");
+        }
     }
 
     #[test]
@@ -2863,7 +2935,7 @@ mod tests {
             c.teams = d.path().join("no-teams");
         });
         // a repo no other test names: memory.rs tests record events too, and theirs can land in this log
-        crate::learning::record("draft", "learning-route/probe", "review");
+        crate::learning::record("draft", "learning-route/probe", "review", "a probe");
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/learning"), None).0, 401);
         let (code, j) = get(&format!("{base}/api/learning"), Some(&token));
