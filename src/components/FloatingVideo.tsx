@@ -89,6 +89,9 @@ export function FloatingVideo() {
           ref={frame}
           src={`${EMBED}/embed/bTyq_1kGzgY?autoplay=1&enablejsapi=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&cc_load_policy=0`}
           title="gitdashy"
+          // ponytail: the server sends Referrer-Policy: no-referrer to keep ?token= private, and YouTube
+          // refuses an embed with no referrer (Error 153). strict-origin sends only http://127.0.0.1:port.
+          referrerPolicy="strict-origin"
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
           style={{ pointerEvents: playing ? 'none' : 'auto' }}
