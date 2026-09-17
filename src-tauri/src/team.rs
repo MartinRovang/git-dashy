@@ -1576,6 +1576,18 @@ gitdashy remember \"the viewer owns mask state; the store only mirrors it\"
 gitdashy remember --general \"logic that can live in the API does\"
 ```
 
+Where it lands is the flag you pass:
+
+| | goes to |
+|---|---|
+| `gitdashy remember \"...\"` | this repo: the team's drafts when the repo is bound to a team, yours when not |
+| `--general` | the whole project: every repo the team covers (in a repo bound to no team, it stays with that repo; outside any repo, your own general file) |
+| `--private` | yours, not the team's: a half-formed thought you are not ready to show |
+| `--private --general` | how *you* work: a habit or preference true in any repo, read in every session. Never a project's rule |
+
+When unsure, file it without a flag. A project rule filed as your own habit follows you into every
+repo, where it is wrong.
+
 It becomes a draft, never a fact. A draft is confirmed only when a review, or a teammate, arrives
 at the same thing independently — so file freely. What does not belong: what this task did, one
 bug, anything git already records.
@@ -2065,6 +2077,33 @@ mod tests {
             c.settings = None;
         });
         std::fs::create_dir_all(root.join("mem")).unwrap();
+    }
+
+    /// What a session is told about where a fact lands, in both places a session reads it from: a new team's
+    /// agents.md and the corpus gitdashy ships. The flags mean different stores, and a project rule filed as
+    /// a personal habit follows you into every repo.
+    #[test]
+    fn sessions_are_told_which_flag_files_where() {
+        let corpus = include_str!("../corpus/identity/AGENT.md");
+        for (name, text) in [("agents.md", AGENTS_TEMPLATE), ("corpus AGENT.md", corpus)] {
+            for flag in ["`--general`", "`--private`", "`--private --general`"] {
+                assert!(text.contains(flag), "{name} says nothing of {flag}");
+            }
+            assert!(text.contains("Never a project's rule"), "{name}");
+        }
+        // and the same table in both, row for row: a destination changed in one copy only is a session told
+        // two different things depending on which file it read
+        let table = |text: &str| {
+            let at = text
+                .find("Where it lands is the flag you pass:")
+                .expect("the table's lead-in");
+            let end = text[at..]
+                .find("where it is wrong.")
+                .expect("the table's closing line")
+                + at;
+            text[at..end].to_string()
+        };
+        assert_eq!(table(AGENTS_TEMPLATE), table(corpus));
     }
 
     #[test]
