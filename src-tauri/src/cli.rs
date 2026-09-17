@@ -559,7 +559,7 @@ fn remember(repo: Option<String>, general: bool, private: bool, fact: Vec<String
     } else {
         String::new()
     };
-    let repo = memory::general_scope(general, named.unwrap_or_else(here), &about);
+    let repo = memory::general_scope(general, private, named.unwrap_or_else(here), &about);
     let where_ = if repo.is_empty() {
         "general".to_string()
     } else {
@@ -1799,6 +1799,17 @@ mod tests {
             !root.join("teams/org-t/memory/drafts").exists(),
             "nor the one team this machine is in"
         );
+        // unless it is said to be yours: --private --general is your general file, wherever you stand
+        assert_eq!(
+            remember(
+                Some("me/side-project".into()),
+                true,
+                true,
+                vec!["I prefer small commits".into()]
+            ),
+            0
+        );
+        assert_eq!(memory::drafts(None), [(1, "I prefer small commits".to_string())]);
     }
 
     #[test]

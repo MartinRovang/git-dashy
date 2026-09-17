@@ -2143,17 +2143,19 @@ pub fn write_drafts(repo: Option<&str>, items: &[Draft]) {
     rewrite_counted(&queue_path(repo), items); // ponytail: rewrite reaches history_(); the call here was a second one
 }
 
-/// The scope a fact filed from a shell lands in: `repo` for a repo fact; for a general one, "" when the repo
-/// it was seen in (`about`) is a team's or there is none, and that repo itself when it is bound to no team.
+/// The scope a fact filed from a shell lands in: `repo` for a repo fact; for a general one, "" when it is
+/// `private`, when the repo it was seen in (`about`) is a team's, or when there is none, and that repo itself
+/// when it is bound to no team.
 ///
 /// ponytail: your general file is yours, how you work, read in every session. A lesson from a repo nobody
 /// shares is that repo's, so it stays beside the repo and is there to merge if the repo is bound later;
 /// filing it as general is how project knowledge filled a personal file with neo-api's CI rules.
-pub fn general_scope(general: bool, repo: String, about: &str) -> String {
+pub fn general_scope(general: bool, private: bool, repo: String, about: &str) -> String {
     if !general {
         return repo;
     }
-    if about.is_empty() || team_home(None, about).is_some() {
+    // --private --general is the explicit "this is how I work": your general file, wherever you stand
+    if private || about.is_empty() || team_home(None, about).is_some() {
         return String::new();
     }
     about.to_string()
@@ -3104,24 +3106,29 @@ mod tests {
         let (_g, tmp) = setup();
         a_team_repo(tmp.path());
         assert_eq!(
-            general_scope(false, "x/y".into(), ""),
+            general_scope(false, false, "x/y".into(), ""),
             "x/y",
             "a repo fact is its repo's"
         );
         assert_eq!(
-            general_scope(true, "a/b".into(), "a/b"),
+            general_scope(true, false, "a/b".into(), "a/b"),
             "",
             "seen in the team's repo: general, the team's"
         );
         assert_eq!(
-            general_scope(true, String::new(), ""),
+            general_scope(true, false, String::new(), ""),
             "",
             "no repo at all: your general file"
         );
         assert_eq!(
-            general_scope(true, "me/side".into(), "me/side"),
+            general_scope(true, false, "me/side".into(), "me/side"),
             "me/side",
             "an unbound repo keeps it"
+        );
+        assert_eq!(
+            general_scope(true, true, "me/side".into(), "me/side"),
+            "",
+            "--private --general is how you work: your general file, even in an unbound repo"
         );
     }
 

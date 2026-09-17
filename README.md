@@ -610,8 +610,8 @@ gitdashy remember --private "I keep forgetting the migration flag"
 ```
 
 A repo bound to no team keeps its name to itself; the fact becomes yours. `--general` there stays with that
-repo too: your own `general.md` is for how you work, what you file with no repo at all, and it is read in
-every session. Re-run it whenever you
+repo too. Your own `general.md` is for how you work, and it is read in every session: it takes what you file
+with no repo at all, and `--private --general` from anywhere. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
 cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled; the shipped hook
 then starts a pulling one in the background, so the file is current by the next read even when no
