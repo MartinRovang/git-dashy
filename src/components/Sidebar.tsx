@@ -105,11 +105,16 @@ function Sources({
   )
 }
 
-/** A settings group: a caret, its icon and a one-line summary when open, just the icon when collapsed. */
+/** A settings group: a caret, its icon and a one-line summary when open, just the icon when collapsed.
+ *
+ * ponytail: `flag` puts a dot on the icon. An icon alone says nothing about what a group holds, so the
+ * collapsed rail keeps a dot for what costs someone else (a hold) or is a nudge to undo (held back).
+ */
 function Group({
   icon: Icon,
   label,
   summary,
+  flag,
   open,
   onToggle,
   collapsed,
@@ -118,6 +123,7 @@ function Group({
   icon: LucideIcon
   label: string
   summary: string
+  flag?: string
   open: boolean
   onToggle: () => void
   collapsed: boolean
@@ -129,13 +135,16 @@ function Group({
           group instead of toggling a body nobody can see. */}
       <button
         className="summary"
-        title={collapsed ? `${label} — open the rail here` : undefined}
-        aria-label={label}
+        title={collapsed ? `${label}${flag ? ` (${flag})` : ''} — open the rail here` : undefined}
+        aria-label={flag ? `${label}, ${flag}` : label}
         aria-expanded={open && !collapsed}
         onClick={onToggle}
       >
         <span className="car">▶</span>
-        <Icon className="gi" size={collapsed ? 18 : 14} aria-hidden />
+        <span className="gi">
+          <Icon size={collapsed ? 18 : 14} aria-hidden />
+          {collapsed && flag ? <i className="dot" /> : null}
+        </span>
         <span className="lb">{label}</span>
         <span className="sv">{summary}</span>
       </button>
@@ -319,7 +328,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
   const rules = d?.postingRules || []
-  /** Every target that holds a review on either axis: what the collapsed rail shows of all this. */
+  /** Every target that holds a review on either axis: the collapsed rail flags the Agent icon while any do. */
   // a rule set on that row, not every repo that inherits one: an owner holding for four repos is one hold
   const holds = rules
     .filter((r) => (['manual', 'auto'] as const).some((ran) => r[ran] === 'hold' && ruleSource(r.target, r[`${ran}Via`]) === 'own'))
@@ -348,6 +357,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           icon={Bot}
           label="Agent"
+          flag={holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : undefined}
           summary={[
             [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
             holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : '',
@@ -598,6 +608,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <Group
           icon={BookOpen}
           label="Knowledge"
+          flag={held.length ? `${held.length} held back` : undefined}
           summary={[teams || 'no team', held.length ? `${held.length} held back` : ''].filter(Boolean).join(' · ')}
           open={!!open.know}
           onToggle={() => flip('know')}

@@ -537,7 +537,8 @@
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sgrp.open .sv { display: none; }
   /* collapsed: the group's icon and nothing else */
-  .gi { grid-column: 2; color: var(--dim); }
+  .gi { grid-column: 2; position: relative; display: flex; color: var(--dim); }
+  .gi .dot { position: absolute; top: -2px; right: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--pink); }
   .sgrp.open .gi { color: var(--pink); }
   .side.shut .sgrp, .side.shut .sgrp.open { background: none; border-color: transparent; }
   .side.shut .summary { display: flex; justify-content: center; padding: 9px 0; }
