@@ -107,3 +107,19 @@ Every spell, passive and voice shows an icon wherever it is listed: in the book,
 - Learning spells from past reviews.
 - Casting several spells in one run.
 - Any memory-system work (the collaborator owns it).
+
+## What changed while building it
+
+This section overrides anything above it that disagrees.
+
+- **Spells are read-only markdown.** They have no editor and no `POST /api/spells`. You write a spell as a whole `.md` file in
+  `~/.prs_spells`. A card shows its name and the first line of prose (`spells::about`). The three starters are written as markdown too.
+- **A cast goes through the existing private instructions path** (`ask`). There is no `Inputs.spell` and no contract change. The hello
+  comment does not name the spell.
+- **The book** shows every chapter as cards, two to a row: a drawing, the name, one line, and a tick to equip. The cards are black at 60%
+  opacity, with a gold tint when equipped. Spell cards have a cast button. The passives use the hunter sprites in `public/sprites`;
+  spells and voices keep a placeholder Lucide icon (`Glyph`).
+- **Sidebar:** the Necronomicon group lists only what is on. Voices and passives are read-only. Equipped spells are cast
+  buttons. Equipping happens in the book only.
+- **Right-click:** "Cast a spell" opens a flyout of equipped spells beside the menu, on the side with room.
+- `GET /api/spells` returns `about` and `on` for every card. Prompt text is not sent.
