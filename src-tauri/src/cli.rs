@@ -547,27 +547,23 @@ fn remember(repo: Option<String>, general: bool, private: bool, fact: Vec<String
     }
     team::activate(); // so memory.sources() sees the team as a second source
     let named = repo.filter(|r| !r.is_empty());
-    let repo = if general {
-        String::new()
-    } else {
-        named.clone().unwrap_or_else(here)
-    };
-    if !general && repo.is_empty() {
+    if !general && named.is_none() && here().is_empty() {
         return fail("gitdashy: no git origin here — pass --repo owner/name, or --general");
     }
-    let where_ = if repo.is_empty() {
-        "general".to_string()
-    } else {
-        repo.clone()
-    };
     // ponytail: --general threw away the repo you are standing in, which is the only thing that says
     // WHICH PROJECT a general fact is about. With two teams joined it then had no destination at all:
     // neither poolable nor shareable, with nothing on screen saying why. The context is kept now; a
     // general fact means "true across this project", and the project is that repo's team.
     let about = if general {
-        named.unwrap_or_else(here)
+        named.clone().unwrap_or_else(here)
     } else {
         String::new()
+    };
+    let repo = memory::general_scope(general, named.unwrap_or_else(here), &about);
+    let where_ = if repo.is_empty() {
+        "general".to_string()
+    } else {
+        repo.clone()
     };
     if memory::already_known(&repo, &fact) {
         println!("gitdashy: {where_} already knows that");
@@ -1761,6 +1757,48 @@ mod tests {
             .unwrap()
             .contains("the team should know"));
         assert_eq!(memory::drafts(Some("a/b")).len(), 1, "and nothing more in yours");
+    }
+
+    /// A general fact filed in a repo bound to no team is that repo's own; your general file only takes what is
+    /// filed with no repo at all.
+    #[test]
+    fn remember_general_in_an_unbound_repo_stays_with_that_repo() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = root.join("mine");
+            c.local_memory = root.join("mine");
+            c.teams = root.join("teams");
+            c.bindings = root.join("bindings");
+            c.log = root.join("log.jsonl");
+            c.local_log = root.join("log.jsonl");
+            c.registry = root.join("mirrors");
+            c.settings = None;
+        });
+        std::fs::create_dir_all(root.join("mine")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/.git")).unwrap();
+        std::fs::create_dir_all(root.join("teams/org-t/memory")).unwrap();
+        memory::allow_publishing("org-t", true);
+        assert_eq!(
+            remember(
+                Some("me/side-project".into()),
+                true,
+                false,
+                vec!["pin the toolchain".into()]
+            ),
+            0
+        );
+        assert_eq!(
+            memory::drafts(Some("me/side-project")),
+            [(1, "pin the toolchain".to_string())]
+        );
+        assert!(memory::drafts(None).is_empty(), "not your general file");
+        assert!(
+            !root.join("teams/org-t/memory/drafts").exists(),
+            "nor the one team this machine is in"
+        );
     }
 
     #[test]

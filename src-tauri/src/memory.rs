@@ -899,13 +899,11 @@ impl Teams {
                 }
             }
         }
-        // ponytail: the LAST resort, and None for several on purpose. A general fact is true of every
-        // repo a source covers, and with two teams that is two different claims; picking one would
-        // publish to a team that never asked. `about` usually says which project it came from.
-        match self.joined.as_slice() {
-            [only] => (only.clone(), self.dir_of(only)),
-            _ => (String::new(), None),
-        }
+        // ponytail: no last resort. With exactly one team joined, a general fact seen in a repo bound to
+        // nothing, or with no repo at all, used to go to that team: a private project's lesson published to
+        // people who never covered it, on every machine that happens to be in one team. A general fact is
+        // the team's only when the repo it was seen in is the team's; anything else stays yours.
+        (String::new(), None)
     }
 
     fn visible(&self, repo: &str, about: &str) -> bool {
@@ -2145,6 +2143,22 @@ pub fn write_drafts(repo: Option<&str>, items: &[Draft]) {
     rewrite_counted(&queue_path(repo), items); // ponytail: rewrite reaches history_(); the call here was a second one
 }
 
+/// The scope a fact filed from a shell lands in: `repo` for a repo fact; for a general one, "" when the repo
+/// it was seen in (`about`) is a team's or there is none, and that repo itself when it is bound to no team.
+///
+/// ponytail: your general file is yours, how you work, read in every session. A lesson from a repo nobody
+/// shares is that repo's, so it stays beside the repo and is there to merge if the repo is bound later;
+/// filing it as general is how project knowledge filled a personal file with neo-api's CI rules.
+pub fn general_scope(general: bool, repo: String, about: &str) -> String {
+    if !general {
+        return repo;
+    }
+    if about.is_empty() || team_home(None, about).is_some() {
+        return String::new();
+    }
+    about.to_string()
+}
+
 /// Record what a review proposed; the facts that were just confirmed.
 ///
 /// ponytail: drafts are NEVER read back into a prompt. If they were, the reviewer would meet its own
@@ -2725,17 +2739,23 @@ mod tests {
         assert!(!team_visible("other/thing", ""), "unbound is not the team's");
     }
 
-    /// A general fact names no repo of its own: `about` says which project it was observed in, and
-    /// with exactly one team joined that team is the last resort. With two, neither is chosen.
+    /// A general fact names no repo of its own: `about` says which project it was observed in, and only a
+    /// repo bound to a team makes it that team's. Nothing else does, not even being in exactly one team.
     #[test]
-    fn a_general_fact_follows_its_context_then_the_one_team() {
+    fn a_general_fact_is_a_teams_only_when_it_was_seen_in_the_teams_repo() {
         let (_g, tmp) = setup();
         a_team(tmp.path(), "org-t");
+        allow_publishing("org-t", true);
         assert_eq!(bind::bind("acme/api", "org-t"), "");
         std::fs::write(config::get().memory_dir.join("general.md"), "- run make lint\n").unwrap();
 
         assert!(team_visible("", "acme/api"), "the repo it was seen in is bound");
-        assert!(team_visible("", ""), "one team joined: the last resort");
+        assert!(!team_visible("", ""), "no context: yours, however many teams");
+        assert!(!team_visible("", "me/side-project"), "an unbound repo: yours");
+        // and a session filing one there drafts it privately
+        append("", "- I prefer small commits", "me/side-project");
+        assert_eq!(drafts(None), [(1, "I prefer small commits".to_string())]);
+        assert!(!tmp.path().join("teams/org-t/memory/drafts").exists());
 
         a_team(tmp.path(), "org-two");
         assert!(
@@ -3077,6 +3097,32 @@ mod tests {
         assert_eq!(bind::bind("a/b", "org-t"), "");
         assert_eq!(sweep_by(yes), ["retry owns backoff"]);
         assert_eq!(lines(&shared.join("a__b.md")), ["- retry owns backoff"]);
+    }
+
+    #[test]
+    fn a_general_fact_from_the_shell_is_general_only_in_a_teams_repo_or_no_repo() {
+        let (_g, tmp) = setup();
+        a_team_repo(tmp.path());
+        assert_eq!(
+            general_scope(false, "x/y".into(), ""),
+            "x/y",
+            "a repo fact is its repo's"
+        );
+        assert_eq!(
+            general_scope(true, "a/b".into(), "a/b"),
+            "",
+            "seen in the team's repo: general, the team's"
+        );
+        assert_eq!(
+            general_scope(true, String::new(), ""),
+            "",
+            "no repo at all: your general file"
+        );
+        assert_eq!(
+            general_scope(true, "me/side".into(), "me/side"),
+            "me/side",
+            "an unbound repo keeps it"
+        );
     }
 
     #[test]

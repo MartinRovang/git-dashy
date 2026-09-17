@@ -43,7 +43,8 @@ remember files a fact you learned while working, into the same drafts a review w
   review and a coding session found independently is confirmed by their agreement. In a repo bound to a
   team that takes drafts, that is your folder of the team's draft pool, and confirmed means the team knows
   it; --private keeps it in your own drafts instead. --repo defaults to this directory's origin; --general
-  is for something true of every repo.
+  is for something true of every repo of the team this repo belongs to. In a repo bound to no team a
+  --general fact stays with that repo, and your own general facts are what you file outside any repo.
 
 self-review runs the reviewer over one of your OWN PRs and posts nothing — a pass before you ask a
   person, not a substitute for one. The review is written to ~/.prs_reviews/ and its findings wait in a

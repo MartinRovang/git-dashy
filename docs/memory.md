@@ -317,8 +317,10 @@ teammate's review still appears in your list — per team, and only for repos th
 return reversed *file* order and call that newest-first, which is only the same thing when appends
 arrive in time order. With several logs it never is.)
 
-**A general fact needs exactly one team.** It names no repo, so no binding selects a team for it, and
-with two joined that is two different claims — so it stays yours until you say where it goes.
+**A general fact is a team's only when it was seen in that team's repo.** It names no repo, so the repo
+you were standing in decides: bound to a team, the team's; bound to nothing, or no repo at all, yours. Being
+in exactly one team used to be a last resort that sent it there anyway; that is gone (2.30), so a private
+project's lesson never reaches a team. Private general facts are yours: how you work, read in every session.
 
 **A team is a git repo — or just a directory — that pools what reviews learn.** Whoever can reach it is
 on the team. There is no service and no account, and nothing here assumes GitHub: `git clone` takes any
