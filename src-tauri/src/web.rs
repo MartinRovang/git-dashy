@@ -129,6 +129,7 @@ pub fn payload(state: &State) -> Value {
         }
     }
     let mut out = Vec::new();
+    let team_repos = team::team_repos();
     for s in &sections {
         let mut rows = Vec::new();
         for p in s.prs.iter().flatten() {
@@ -176,6 +177,8 @@ pub fn payload(state: &State) -> Value {
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.
                 "waiting": held::is_waiting(&waiting, p.repo(), p.number),
+                // a team's memory repo: approved by a person, never reviewed by a model
+                "humanOnly": team::in_repos(&team_repos, p.repo()),
             }));
         }
         out.push(json!({"name": s.name, "prs": rows, "error": s.err.clone().unwrap_or_default()}));
@@ -731,12 +734,100 @@ fn post_prereview(state: &State, body: &Body) -> Out {
     talk(state, review::Talk::Pre, h, &op, body)
 }
 
+/// Where a memory edit reads and writes: your memory dir, or a joined team's memory/ when `team` is named.
+/// (the directory memory::path joins onto, the checkout to pull and push, the push label). 404 for a team
+/// this machine is not in, so a typed key never becomes a new directory.
+fn memory_home(team: &str) -> Result<(Option<std::path::PathBuf>, std::path::PathBuf, &'static str), Fail> {
+    if team.is_empty() {
+        return Ok((None, config::get().memory_dir, "mine"));
+    }
+    let d = team::dir_of(team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
+    Ok((Some(d.join("memory")), d, "sync"))
+}
+
+/// Every memory file there is, yours and each team's, and each team's founding documents: what inspect lists.
+fn get_memory_files(_state: &State, _query: &Query) -> Out {
+    let mut files: Vec<Value> = memory::editable()
+        .into_iter()
+        .map(|(team, repo)| json!({"team": team, "repo": repo.unwrap_or_default()}))
+        .collect();
+    for team in team::joined() {
+        for doc in DOCS.map(|(d, _)| d) {
+            files.push(json!({"team": team, "doc": doc}));
+        }
+    }
+    Ok(json!({ "files": files }))
+}
+
+/// A team's founding documents: what people wrote, not what reviews learned. (the name inspect uses, its file)
+const DOCS: [(&str, &str); 2] = [("brief", memory::PROJECT), ("agents", memory::AGENTS)];
+
+/// The file a founding document lives in, in a joined team's checkout. 400 for a name that is not one.
+fn doc_path(team: &str, doc: &str) -> Result<std::path::PathBuf, Fail> {
+    let (_, file) = DOCS
+        .iter()
+        .find(|(d, _)| *d == doc)
+        .ok_or_else(|| Fail::new(400, "doc must be brief or agents"))?;
+    let d = team::dir_of(team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
+    Ok(d.join("memory").join(file))
+}
+
+/// One memory file to inspect: its facts, or a founding document's text. Read only; nothing here writes.
 fn get_memory(_state: &State, query: &Query) -> Out {
+    let (team, doc) = (q(query, "team"), q(query, "doc"));
+    if !doc.is_empty() {
+        let path = doc_path(team, doc)?;
+        if doc == "brief" {
+            team::seed_project(&path);
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        return Ok(json!({"team": team, "doc": doc, "path": knowledge::tilde(&path), "text": text}));
+    }
     let repo = Some(q(query, "repo")).filter(|r| !r.is_empty());
-    let path = memory::path(repo, None);
-    team::pull_dir(&config::get().memory_dir, "mine");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    Ok(json!({"repo": repo.unwrap_or("general"), "path": knowledge::tilde(&path), "text": text}))
+    let (base, dir, label) = memory_home(team)?;
+    let path = memory::path(repo, base.as_deref());
+    team::pull_dir(&dir, label);
+    Ok(json!({
+        "repo": repo.unwrap_or("general"),
+        "team": team,
+        "path": knowledge::tilde(&path),
+        "facts": memory::facts_in(&path),
+    }))
+}
+
+/// Offer a change to a file in a team's checkout as a pull request, `edit` applied to origin's copy of it.
+/// {url, branch, note}.
+fn propose_in_team(
+    file: &std::path::Path,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+    title: &str,
+) -> Out {
+    let checkout = file
+        .parent()
+        .and_then(|m| m.parent())
+        .ok_or_else(|| Fail::new(400, "not a file in a team's checkout"))?;
+    let rel = file
+        .strip_prefix(checkout)
+        .map_err(|_| Fail::new(400, "not a file in a team's checkout"))?;
+    let p = team::propose(checkout, &rel.to_string_lossy(), edit, title).map_err(|e| Fail(409, e))?;
+    Ok(json!({"ok": true, "url": p.url, "branch": p.branch, "note": p.note}))
+}
+
+/// The edit a removal from a team's file proposes: one line out of origin's copy, or why not.
+fn remove_from_origin(fact: &str) -> impl Fn(&str) -> Result<String, String> + '_ {
+    move |now| {
+        memory::without_fact(now, fact)
+            .ok_or_else(|| "that fact is not in the team's file on origin any more".to_string())
+    }
+}
+
+/// A founding document's proposed text. 400 for an empty one: an empty proposal would delete the file.
+fn founding_text(body: &Body) -> Result<String, Fail> {
+    let t = text(body, "text");
+    if t.trim().is_empty() {
+        return Err(Fail::new(400, "a founding document cannot be proposed empty"));
+    }
+    Ok(t)
 }
 
 fn get_drafts(_state: &State, _q: &Query) -> Out {
@@ -1099,6 +1190,14 @@ fn get_posting(state: &State, query: &Query) -> Out {
     Ok(out)
 }
 
+/// Every learning event on this machine, for the Knowledge chart. The page buckets and filters them.
+///
+/// ponytail: the events, not the counts. The chart's filters (kind, team, repo, person, day or week) all apply
+/// to the same few hundred rows, so the page recomputes on each change instead of asking again.
+fn get_learning(_state: &State, _q: &Query) -> Out {
+    Ok(json!({"events": crate::learning::events()}))
+}
+
 fn get_dream(_state: &State, _q: &Query) -> Out {
     let mut j = job("dream");
     if let Some(result) = j["result"].as_object_mut() {
@@ -1173,6 +1272,21 @@ fn truthy(body: &Body, key: &str) -> bool {
 }
 
 /// `body.get("repo") or None`.
+/// The body's repo when it can only name a memory file of facts. 400 for a path trick (`\\`, `..`) or a name
+/// that is a founding document's file: those go through their own route, which refuses an empty proposal.
+fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
+    let repo = repo_of(body);
+    if let Some(r) = repo.as_deref() {
+        // ponytail: case folded. PROJECT.md is the brief on a case-insensitive filesystem (macOS, Windows)
+        let slug = memory::slug(r);
+        let names = |f: &str| slug.eq_ignore_ascii_case(f);
+        if r.contains('\\') || r.contains("..") || names(memory::PROJECT) || names(memory::AGENTS) {
+            return Err(Fail::new(400, "not a repo"));
+        }
+    }
+    Ok(repo)
+}
+
 fn repo_of(body: &Body) -> Option<String> {
     Some(text(body, "repo")).filter(|r| !r.is_empty())
 }
@@ -1273,6 +1387,9 @@ fn post_review(state: &State, body: &Body) -> Out {
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
+    if team::in_repos(&team::team_repos(), pr.repo()) {
+        return Err(Fail(403, team::HUMAN_ONLY.into()));
+    }
     let spell = text(body, "spell");
     let ask = text(body, "ask");
     if !spell.is_empty() {
@@ -1358,26 +1475,54 @@ fn post_copy(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true, "tool": github::copy(&what)}))
 }
 
+/// Change a memory file the only ways there are: take a fact out of yours, or propose a change to a team's.
+///
+/// ponytail: no op writes text. Facts arrive through reviews and the two-sightings gate, never typed in; a
+/// person only removes them. What people wrote, a team's brief and agents.md, can be changed, and only as a
+/// pull request on the team's repo, because every teammate reads it.
 fn post_memory(_state: &State, body: &Body) -> Out {
-    let repo = repo_of(body).filter(|r| r != "general");
-    let path = memory::path(repo.as_deref(), None);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let (team, fact) = (text(body, "team"), text(body, "fact"));
+    let repo = checked_repo(body)?.filter(|r| r != "general");
+    let label = repo.as_deref().unwrap_or("general").to_string();
+    match text(body, "op").as_str() {
+        "remove" if team.is_empty() => {
+            let dir = config::get().memory_dir;
+            team::pull_dir(&dir, "mine");
+            if !memory::remove_mine(repo.as_deref(), &fact) {
+                return Err(Fail::new(404, "that fact is not in this file any more"));
+            }
+            let err = team::push_dir(&dir, &format!("memory: removed a fact from {label}"), "mine");
+            Ok(json!({"ok": true, "error": err}))
+        }
+        "remove" => {
+            let (base, dir, label_) = memory_home(&team)?;
+            team::pull_dir(&dir, label_);
+            let path = memory::path(repo.as_deref(), base.as_deref());
+            if !memory::facts_in(&path).iter().any(|f| f == &fact) {
+                return Err(Fail::new(404, "that fact is not in this file any more"));
+            }
+            propose_in_team(
+                &path,
+                &remove_from_origin(&fact),
+                &format!("memory: remove a fact from {label}"),
+            )
+        }
+        "propose" => {
+            let doc = text(body, "doc");
+            let path = doc_path(&team, &doc)?;
+            let new = founding_text(body)?;
+            propose_in_team(
+                &path,
+                &move |_| Ok(new.clone()),
+                &format!("{doc}: proposed change for team {team}"),
+            )
+        }
+        _ => Err(Fail::new(400, "op must be remove or propose")),
     }
-    let dir = config::get().memory_dir;
-    team::pull_dir(&dir, "mine");
-    memory::history(); // the state before the edit is the version you want back if you regret it
-    std::fs::write(&path, text(body, "text"))?;
-    let err = team::push_dir(
-        &dir,
-        &format!("memory: {} edited", repo.as_deref().unwrap_or("general")),
-        "mine",
-    );
-    Ok(json!({"ok": true, "error": err}))
 }
 
 fn post_drafts(_state: &State, body: &Body) -> Out {
-    let (repo, fact) = (repo_of(body), text(body, "fact"));
+    let (repo, fact) = (checked_repo(body)?, text(body, "fact"));
     let label = repo.as_deref().unwrap_or("general");
     let dir = config::get().memory_dir;
     match text(body, "op").as_str() {
@@ -1411,7 +1556,7 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
             Ok(json!({"ok": true}))
         }
         "merge" => {
-            let repo = repo_of(body);
+            let repo = checked_repo(body)?;
             let label = repo.as_deref().unwrap_or("general").to_string();
             let n = memory::merge(repo.as_deref(), &text(body, "keep"), &text(body, "drop"));
             team::push_dir(
@@ -1427,7 +1572,7 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
 }
 
 fn post_share(_state: &State, body: &Body) -> Out {
-    let (repo, fact, about) = (repo_of(body), text(body, "fact"), text(body, "about"));
+    let (repo, fact, about) = (checked_repo(body)?, text(body, "fact"), text(body, "about"));
     let label = repo.as_deref().unwrap_or("general");
     match text(body, "op").as_str() {
         "send" => {
@@ -1435,13 +1580,31 @@ fn post_share(_state: &State, body: &Body) -> Out {
             team::push(&format!("memory: share {label}"));
         }
         "forget" => {
-            memory::forget(repo.as_deref(), &fact, &about);
+            let theirs = memory::forget(repo.as_deref(), &fact, &about);
             team::push_dir(
                 &config::get().memory_dir,
                 &format!("memory: forget {label}"),
                 "mine",
             );
             team::push(&format!("memory: withdraw {label}"));
+            // yours and your evidence are gone; the team's copy goes only when its repo approves that
+            // ponytail: 200 either way. The local half has already happened and been pushed, so a proposal that
+            // could not be made (no remote, a failed fetch) is reported beside a success, not as a failed forget
+            // that in fact half-happened.
+            if let Some(q) = theirs {
+                return Ok(
+                    match propose_in_team(
+                        &q,
+                        &remove_from_origin(&fact),
+                        &format!("memory: remove a fact from {label}"),
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            json!({"ok": true, "error": format!("forgotten here, but the team's copy could not be proposed for removal: {}", e.1)})
+                        }
+                    },
+                );
+            }
         }
         _ => return Err(Fail::new(400, "op must be send or forget")),
     }
@@ -1499,13 +1662,24 @@ fn post_teams(state: &State, body: &Body) -> Out {
             .collect();
         fresh.sort();
         let err = team_error();
-        let warning = if err.is_empty() {
-            String::new()
-        } else {
+        let foreign: Vec<String> = fresh
+            .iter()
+            .filter_map(|k| team::dir_of(k))
+            .flat_map(|d| team::foreign_files(&d))
+            .collect();
+        let warning = if !err.is_empty() {
             format!(
                 "joined, but could not publish: {}",
                 err.chars().take(70).collect::<String>()
             )
+        } else if !foreign.is_empty() {
+            // a team's repo is its memory's alone: no pull request on it is ever reviewed by a model
+            format!(
+                "joined, but this repo also holds {}. Pull requests on a team's repo are never reviewed by a model; keep memory in its own repo.",
+                foreign.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            )
+        } else {
+            String::new()
         };
         return Ok(
             json!({"ok": true, "key": fresh.first().cloned().unwrap_or_default(), "warning": warning}),
@@ -1536,10 +1710,14 @@ fn post_teams(state: &State, body: &Body) -> Out {
             Ok(json!({"ok": true}))
         }
         "brief" => {
-            let path = brief_path(&key)?;
-            std::fs::write(&path, text(body, "text"))?;
-            let err = team::push_dir(&dir, &format!("memory: the brief for {key}"), "sync");
-            Ok(json!({"ok": true, "error": err}))
+            // ponytail: proposed, not pushed. The brief reaches every teammate's reviews and sessions, so a
+            // change to it is a pull request a person with rights on the team's repo approves.
+            let new = founding_text(body)?;
+            propose_in_team(
+                &brief_path(&key)?,
+                &move |_| Ok(new.clone()),
+                &format!("brief: proposed change for team {key}"),
+            )
         }
         "claim" => {
             let (kind, v) = bind::target(&text(body, "target"));
@@ -2090,6 +2268,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/diff" => get_diff,
         "/api/prereview" => get_prereview,
         "/api/memory" => get_memory,
+        "/api/memory/files" => get_memory_files,
         "/api/drafts" => get_drafts,
         "/api/spells" => get_spells,
         "/api/overlaps" => get_overlaps,
@@ -2097,6 +2276,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
         "/api/posting" => get_posting,
+        "/api/learning" => get_learning,
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
@@ -2509,6 +2689,367 @@ mod tests {
             );
         }
         assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
+    }
+
+    #[test]
+    fn inspect_reads_removes_yours_and_only_ever_proposes_a_change_to_a_team() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let origin = d.path().join("crew.git");
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
+        let git = |cwd: &std::path::Path, args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(cwd)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "{args:?}"
+            )
+        };
+        git(
+            d.path(),
+            &["init", "-q", "--bare", "-b", "main", &origin.to_string_lossy()],
+        );
+        assert!(team::init_history(&t));
+        git(&t, &["remote", "add", "origin", &origin.to_string_lossy()]);
+        std::fs::write(t.join("memory/general.md"), "- theirs\n- kept\n").unwrap();
+        std::fs::write(t.join("memory/acme__api.md"), "- api\n").unwrap();
+        std::fs::write(t.join("memory/project.md"), "the brief\n").unwrap();
+        std::fs::write(t.join("memory/agents.md"), "file what you learn\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
+        std::fs::write(mine.join("acme__web.md"), "# acme/web\n- web\n").unwrap();
+        std::fs::write(mine.join("general.md"), "- mine one\n- mine two\n").unwrap();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+        });
+        let (base, token, _state) = served();
+
+        // yours first, general before repos in each; a team's founding documents listed apart from its facts
+        let (code, j) = get(&format!("{base}/api/memory/files"), Some(&token));
+        assert_eq!(code, 200);
+        let files: Vec<String> = j["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                format!(
+                    "{}|{}|{}",
+                    f["team"].as_str().unwrap(),
+                    f["repo"].as_str().unwrap_or(""),
+                    f["doc"].as_str().unwrap_or("")
+                )
+            })
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "||",
+                "|acme/web|",
+                "crew||",
+                "crew|acme/api|",
+                "crew||brief",
+                "crew||agents"
+            ]
+        );
+
+        // facts, not text: a heading is not one
+        let (_, j) = get(&format!("{base}/api/memory?repo=acme/web"), Some(&token));
+        assert_eq!(j["facts"], json!(["web"]));
+        let (_, j) = get(&format!("{base}/api/memory?team=crew"), Some(&token));
+        assert_eq!(j["facts"], json!(["theirs", "kept"]));
+        let (_, j) = get(&format!("{base}/api/memory?team=crew&doc=agents"), Some(&token));
+        assert_eq!(j["text"], "file what you learn\n");
+
+        // yours: removed there and then, and only the one
+        let remove = |team: &str, fact: &str| {
+            post(
+                &format!("{base}/api/memory"),
+                json!({"op": "remove", "team": team, "repo": "general", "fact": fact}),
+                &token,
+            )
+        };
+        assert_eq!(remove("", "mine one").0, 200);
+        assert_eq!(
+            std::fs::read_to_string(mine.join("general.md")).unwrap(),
+            "- mine two\n"
+        );
+        assert_eq!(remove("", "mine one").0, 404, "already gone");
+
+        // a team's: a branch on its repo, and the checkout every review reads is what it was
+        let (code, j) = remove("crew", "theirs");
+        assert_eq!(code, 200, "{j}");
+        let branch = j["branch"].as_str().unwrap().to_string();
+        assert!(branch.starts_with("gitdashy/propose-general-"), "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- theirs\n- kept\n"
+        );
+        let shown = std::process::Command::new("git")
+            .args(["show", &format!("origin/{branch}:memory/general.md")])
+            .current_dir(&t)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&shown.stdout), "- kept\n");
+
+        let (code, j) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "propose", "team": "crew", "doc": "brief", "text": "a sharper brief\n"}),
+            &token,
+        );
+        assert_eq!(code, 200, "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/project.md")).unwrap(),
+            "the brief\n"
+        );
+
+        // an empty founding document would be a proposal to delete it
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "propose", "team": "crew", "doc": "agents", "text": "  \n"}),
+            &token,
+        );
+        assert_eq!(code, 400);
+
+        // there is no way left to type a fact in, nor to propose a file that is not a founding document
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"repo": "general", "text": "- typed\n"}),
+            &token,
+        );
+        assert_eq!(code, 400);
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "propose", "team": "crew", "doc": "general", "text": "- typed\n"}),
+            &token,
+        );
+        assert_eq!(code, 400);
+        assert_eq!(
+            post(
+                &format!("{base}/api/memory"),
+                json!({"op": "remove", "team": "strangers", "fact": "x"}),
+                &token
+            )
+            .0,
+            404
+        );
+        assert!(!teams.join("strangers").exists());
+    }
+
+    #[test]
+    fn a_forget_whose_team_proposal_fails_still_says_it_forgot() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
+        assert!(team::init_history(&t));
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&t)
+                .status()
+                .unwrap()
+                .success())
+        };
+        std::fs::write(t.join("memory/general.md"), "- shared once\n- Loud CASE\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
+        std::fs::write(mine.join("general.md"), "- shared once\n- mine\n- loud case\n").unwrap();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+        });
+        let (base, token, _state) = served();
+        let forget = |fact: &str| {
+            post(
+                &format!("{base}/api/share"),
+                json!({"op": "forget", "fact": fact}),
+                &token,
+            )
+        };
+
+        // a team this machine alone has: no remote, nobody to approve, so the team's copy goes here and now
+        let (code, j) = forget("shared once");
+        assert_eq!(code, 200, "{j}");
+        assert!(j["note"].as_str().unwrap().starts_with("written"), "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- Loud CASE\n"
+        );
+
+        // the team's copy differs in case: not the same line, so nothing of the team's is touched
+        let (code, j) = forget("loud case");
+        assert_eq!((code, j.get("note"), j.get("error")), (200, None, None), "{j}");
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- Loud CASE\n"
+        );
+
+        // a remote that cannot be reached: the proposal fails, and the forget still says what it did
+        std::fs::write(mine.join("general.md"), "- Loud CASE\n").unwrap();
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            &d.path().join("gone.git").to_string_lossy(),
+        ]);
+        let (code, j) = forget("Loud CASE");
+        assert_eq!(code, 200, "{j}");
+        assert!(
+            j["error"].as_str().unwrap().contains("could not be proposed"),
+            "{j}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(mine.join("general.md")).unwrap_or_default(),
+            ""
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- Loud CASE\n"
+        );
+
+        // and a fact scope that is a founding document's file, or a path trick, is not a repo
+        for repo in ["project", "agents", "PROJECT", "Agents", "..\\x", "a/../b"] {
+            let (code, _) = post(
+                &format!("{base}/api/memory"),
+                json!({"op": "remove", "repo": repo, "fact": "x"}),
+                &token,
+            );
+            assert_eq!(code, 400, "{repo}");
+        }
+    }
+
+    #[test]
+    fn joining_a_team_repo_that_also_holds_code_says_so() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let remote = d.path().join("shared.git");
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main", &remote.to_string_lossy()])
+            .status()
+            .unwrap()
+            .success());
+        // one machine starts the team inside a repo that carries code, and publishes it
+        config::update(|c| {
+            c.demo = false;
+            c.teams = d.path().join("a/teams");
+            c.memory_dir = d.path().join("a/mem");
+            c.bindings = d.path().join("a/bindings");
+        });
+        std::fs::create_dir_all(d.path().join("a/mem")).unwrap();
+        assert_eq!(team::start("Shared", "d", ""), "");
+        let t = team::dir_of("shared").unwrap();
+        std::fs::create_dir_all(t.join("src")).unwrap();
+        std::fs::write(t.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(t.join("CLAUDE.md"), "not code\n").unwrap();
+        assert_eq!(team::connect("shared", &remote.to_string_lossy()), "");
+        // another machine joins it through the route
+        let bindings = config::get().bindings;
+        config::update(|c| {
+            c.teams = d.path().join("b/teams");
+            c.memory_dir = d.path().join("b/mem");
+            c.bindings = d.path().join("b/bindings");
+        });
+        std::fs::create_dir_all(d.path().join("b/mem")).unwrap();
+        let (base, token, _state) = served();
+        let (code, j) = post(
+            &format!("{base}/api/teams"),
+            json!({"op": "join", "repo": remote.to_string_lossy()}),
+            &token,
+        );
+        config::update(|c| c.bindings = bindings);
+        assert_eq!(code, 200, "{j}");
+        let warning = j["warning"].as_str().unwrap();
+        assert!(
+            warning.contains("src") && !warning.contains("CLAUDE.md"),
+            "{warning}"
+        );
+        assert!(warning.contains("never reviewed by a model"), "{warning}");
+    }
+
+    #[test]
+    fn a_pr_on_a_teams_repo_is_never_reviewed_by_a_model() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let t = d.path().join("teams/crew");
+        std::fs::create_dir_all(&t).unwrap();
+        assert!(team::init_history(&t));
+        // pr() is on a/b: make a/b the team's repo
+        assert!(std::process::Command::new("git")
+            .args(["remote", "add", "origin", "git@github.com:a/b.git"])
+            .current_dir(&t)
+            .status()
+            .unwrap()
+            .success());
+        config::update(|c| {
+            c.demo = false;
+            c.teams = d.path().join("teams");
+        });
+        let (base, token, state) = served();
+        let (_, j) = get(&format!("{base}/api/state"), Some(&token));
+        assert_eq!(j["sections"][0]["prs"][0]["humanOnly"], true);
+        for body in [
+            json!({"url": "u"}),
+            json!({"url": "u", "self": true}),
+            json!({"url": "u", "ask": "look closer"}),
+            json!({"url": "u", "spell": "auth-check"}),
+        ] {
+            let (code, j) = post(&format!("{base}/api/review"), body.clone(), &token);
+            assert_eq!(
+                (code, j["error"].as_str()),
+                (403, Some(team::HUMAN_ONLY)),
+                "{body}"
+            );
+        }
+        assert!(!state.busy("u"), "nothing was started");
+        assert!(review::cast_spell(&pr(), "opus", "auth-check", "look")
+            .is_err_and(|e| e.to_string() == team::HUMAN_ONLY));
+        // and where a model run starts, whoever calls it
+        let status = review::review(&pr(), "opus", autorev::Ran::Auto, "").unwrap();
+        assert_eq!(status, format!("error: {}", team::HUMAN_ONLY));
+        assert!(review::self_review(&pr(), "opus")
+            .unwrap()
+            .0
+            .contains(team::HUMAN_ONLY));
+    }
+
+    #[test]
+    fn the_learning_route_needs_the_token_and_sends_events_without_their_text() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            // the talk tests leave demo on under this lock, and demo records and reads nothing
+            c.demo = false;
+            c.learning = d.path().join("learning.jsonl");
+            c.memory_dir = d.path().join("not-a-repo");
+            c.teams = d.path().join("no-teams");
+        });
+        // a repo no other test names: memory.rs tests record events too, and theirs can land in this log
+        crate::learning::record("draft", "learning-route/probe", "review", "a probe");
+        let (base, token, _state) = served();
+        assert_eq!(get(&format!("{base}/api/learning"), None).0, 401);
+        let (code, j) = get(&format!("{base}/api/learning"), Some(&token));
+        assert_eq!(code, 200);
+        let events = j["events"].as_array().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| e["repo"] == "learning-route/probe" && e["source"] == "review"),
+            "{j}"
+        );
+        assert!(
+            events.iter().all(|e| e.get("fact").is_none()),
+            "the fact's text never leaves the machine's memory"
+        );
+        config::update(|c| c.learning = std::path::PathBuf::new());
     }
 
     #[test]

@@ -570,7 +570,7 @@ fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
         println!("gitdashy: {where_} already knows that");
         return 0;
     }
-    let promoted = memory::append(&repo, &fact, &about);
+    let promoted = memory::append_as(&repo, &fact, &about, "session");
     team::push_dir(
         &config::get().memory_dir,
         &format!("memory: remembered for {where_}"),

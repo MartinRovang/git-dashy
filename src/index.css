@@ -899,6 +899,44 @@
                       text-underline-offset: 3px; }
 .held .talkbar .lnk:not(:disabled):hover { color: var(--ink); text-decoration-color: currentColor; }
 
+/* the learning chart: one measure, its breakdown stacked, and the filters that narrow it */
+.learning { display: flex; flex-direction: column; gap: 10px; }
+.learning .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.learning .lbar .sp, .learning .legend .sp { flex: 1; }
+.learning .lbar select, .kpanel .lbar select { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--bg4);
+                         border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; max-width: 240px;
+                         color-scheme: dark; cursor: pointer; }
+.learning .lbar select:hover, .kpanel .lbar select:hover { border-color: var(--dim3); }
+.learning .lbar select option, .kpanel .lbar select option, .kpanel .lbar select optgroup { color: var(--ink); background: var(--bg4); }
+.learning .seg button { font-size: 11.5px; padding: 3px 9px; }
+.learning .lchart { width: 100%; height: auto; display: block; }
+.learning .lchart .grid { stroke: var(--line); stroke-width: 1; }
+.learning .lchart .tick { font-family: var(--mono); font-size: 10px; fill: var(--dim3); }
+.learning .lchart rect { shape-rendering: crispEdges; }
+.learning .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 11.5px; color: var(--ink2); }
+.learning .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.learning .legend b { font-family: var(--mono); font-weight: 500; color: var(--dim2); margin-left: 3px; }
+.learning .legend .dim { font-family: var(--mono); font-size: 10.5px; color: var(--dim3); }
+.learning .empty { margin: 30px 0; text-align: center; color: var(--dim3); }
+.learning .note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--dim3); }
+.kpanel { display: flex; flex-direction: column; gap: 14px; min-height: 320px; }
+.kpanel > .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.kpanel > .lbar .sp { flex: 1; }
+.kpanel > .lbar .seg button { font-size: 12px; padding: 4px 11px; }
+.kpanel > .empty { margin: 60px 0; text-align: center; color: var(--dim3); }
+.kpanel .knote { margin: -6px 0 0; font-size: 11px; line-height: 1.5; color: var(--dim3); }
+.kpanel .knote b { color: var(--ink3); font-weight: 600; }
+.kpanel .inspect { display: flex; flex-direction: column; gap: 10px; }
+.kpanel .inspect .lbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kpanel .inspect .lbar .sp { flex: 1; }
+.kpanel .inspect .lbar .dim { font-size: 10.5px; color: var(--dim3); }
+.kpanel .inspect .knote { margin: 0; }
+.kpanel .inspect .facts { display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow: auto; }
+.kpanel .inspect .facts .opt { cursor: pointer; line-height: 1.45; }
+.kpanel .inspect pre.doc { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--ink2);
+                           background: var(--bg4); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px;
+                           max-height: 46vh; overflow: auto; }
+.kpanel .inspect .empty { margin: 40px 0; text-align: center; color: var(--dim3); }
 /* ponytail: the open left rail wraps its text instead of cutting it off with …; long repo names and paths break anywhere */
 .side:not(.shut) :is(.sv, .tsum, .fields .row b, .fields .pair > span, .sfoot .stat span, .fld > span:not(.sw)) {
   white-space: normal; text-overflow: clip; overflow-wrap: anywhere;

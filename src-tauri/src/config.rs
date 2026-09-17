@@ -147,6 +147,8 @@ pub struct Config {
     pub reports: PathBuf,
     /// Reviews that finished and are waiting to be posted. See held.rs.
     pub held_dir: PathBuf,
+    /// Dated learning events for the Knowledge chart, one JSON object per line.
+    pub learning: PathBuf,
     pub backups: PathBuf,
     pub bindings: PathBuf,
     /// Which repos auto-review is armed for. Its own store: see autorev.rs.
@@ -214,6 +216,14 @@ impl Default for Config {
             self_dir: home().join(".prs_reviews"),
             reports: home().join(".prs_reports"),
             held_dir: home().join(".prs_held"),
+            // ponytail: nowhere in a test build. memory::append records an event and dozens of tests call it
+            // for real; the first run of this wrote 21 fake events into the real ~/.prs_learning.jsonl. An
+            // empty path makes record() a no-op, so a test that wants events names a temp file itself.
+            learning: if cfg!(test) {
+                PathBuf::new()
+            } else {
+                home().join(".prs_learning.jsonl")
+            },
             backups: home().join(".prs_backups"),
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
             autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),

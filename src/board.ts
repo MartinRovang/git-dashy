@@ -360,9 +360,10 @@ export function isReviewed(p: Pr): boolean {
   return !p.waiting && !!tone(p.review)
 }
 
-/** A spell looks at one topic and posts nothing, so it runs on any PR nothing else is running on. */
+/** A spell looks at one topic and posts nothing, so it runs on any PR nothing else is running on, except a
+ *  team's memory repo: a spell is a model review, and those are approved by a person. */
 export function canCastOn(p: Row): boolean {
-  return !p.busy
+  return !p.busy && !p.humanOnly
 }
 
 /** A spell cast from this app, waiting for its row to finish. `busy` is whether a poll has shown the row running. */
@@ -446,3 +447,6 @@ export function talkControls(t: Talk | null, draft: string) {
     decide: idle && !!t.proposed,
   }
 }
+
+/** The item one `step` along from `i` in a list of `len`, wrapping at both ends; 0 for an empty list. */
+export const pageTo = (i: number, step: number, len: number) => (len ? (((i + step) % len) + len) % len : 0)

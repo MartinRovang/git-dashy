@@ -4,6 +4,9 @@ import { api, copyText, errorText, post } from './api'
 import type { Foot } from './modals'
 import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Ask, Row, StateData } from './types'
+import type { LEvent } from './learning'
+import { LearningChart } from './components/LearningChart'
+import { pageTo } from './board'
 
 export type Ctx = {
   getData: () => StateData | null
@@ -17,73 +20,338 @@ export type Ctx = {
 
 type Json = Record<string, unknown>
 
-export async function memoryEditor(ctx: Ctx, repo: string) {
-  const r = await api(`/api/memory?repo=${encodeURIComponent(repo || '')}`)
+/** ‹ previous and next › for a screen that shows one item at a time.
+ *
+ *  ponytail: buttons as well as keys. These screens paged with j and k only, and the footer never said so, so
+ *  with a mouse the first item was the only one there was. As footer entries the keys still work -- ModalHost
+ *  fires an entry's key -- and they are left out when there is nothing to page to. No Esc entry either: Esc
+ *  closes every screen. */
+function pager(len: number, go: (step: number) => void): Foot[] {
+  return len > 1
+    ? [
+        ['k', '‹ previous', () => go(-1)],
+        ['j', 'next ›', () => go(1)],
+      ]
+    : []
+}
+
+/** What a proposal to a team's repo came back as: the pull request to approve, or why there is none. */
+function proposed(ctx: Ctx, out: Json | null) {
+  if (!out || out.error) return
+  const url = String(out.url || '')
+  if (!url) {
+    notice(String(out.note || 'proposed'), 'proposed')
+    return
+  }
+  notice(
+    <>
+      <div>A pull request is open on the team's repo. A person with rights on that repo approves it; gitdashy never reviews it.</div>
+      <div className="link mono" style={{ marginTop: 8 }} title="click to copy" onClick={async () => ctx.flash(await copyText(url, 'the pull request'))}>
+        {url}
+      </div>
+    </>,
+    'pull request opened',
+  )
+}
+
+/** Propose a change to a team's founding document, the brief or agents.md, as a pull request on its repo.
+ *
+ *  ponytail: the only text anyone types into memory, and it never lands by itself. Every teammate's reviews
+ *  and sessions read these, so the change waits for a person with rights on the team's repo. */
+export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
+  const r = await api(`/api/memory?team=${encodeURIComponent(team)}&doc=${encodeURIComponent(doc)}`)
   if (!r.ok) {
     ctx.flash(`✗ ${await errorText(r)}`)
     return
   }
   const got = await r.json()
+  const name = doc === 'agents' ? 'agents.md' : 'the brief'
   editor(
-    `memory · ${got.repo}`,
+    `propose a change · ${team} / ${name}`,
     got.text,
     async (text) => {
-      const out = await ctx.call('/api/memory', { repo: got.repo, text }, `${got.repo} memory saved`)
-      if (out?.error) ctx.flash(`saved, but not pushed: ${out.error}`)
+      if (!(await confirm(`This opens a pull request on team ${team}'s repo. Nothing changes until a person with rights on that repo approves it.`, { yes: 'open pull request', no: 'keep editing' }))) return false
+      const out = await ctx.call('/api/memory', { op: 'propose', team, doc, text })
+      // refused (no remote, a failed fetch): the editor stays open, so the text is not lost
+      if (!out) return false
+      proposed(ctx, out)
     },
     got.path,
   )
 }
 
-export async function draftsScreen(ctx: Ctx) {
-  let items: Json[] = []
-  let i = 0
+export type KnowledgeTab = 'stats' | 'inspect' | 'drafts' | 'shared'
+const TABS: [KnowledgeTab, string][] = [
+  ['stats', 'K'],
+  ['inspect', 'g'],
+  ['drafts', 'W'],
+  ['shared', 'P'],
+]
+
+/** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
+export type KFile = { team: string; repo?: string; doc?: string }
+const fileKey = (f: KFile) => JSON.stringify([f.team, f.repo || '', f.doc || ''])
+const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : 'brief') : f.repo || 'general')
+
+/** Everything the memory holds, in one panel: how fast it learns, what it knows file by file, what is waiting
+ *  for a second sighting, what the team has of yours, and the dream as an action over it.
+ *
+ *  ponytail: these were five buttons in the rail, each its own screen. One panel with tabs keeps K / g / W / P
+ *  as keys that open it on their tab, and switch tabs inside it. A tab reloads when it is shown, so a dream
+ *  made over the panel is not acted on from a stale list.
+ *  ponytail: inspect reads and removes, it does not write. Facts arrive through reviews and the two-sightings
+ *  gate; a person only takes them out. Out of yours at once, out of a team's by pull request. */
+export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile = { team: '', repo: '' }) {
+  const about = ctx.current?.repo || ''
+  let tab = first
+  let events: LEvent[] = []
+  let drafts: Json[] = []
   let promoteAt = 2
-  const load = async () => {
-    const got = await (await api('/api/drafts')).json()
-    items = got.items
-    promoteAt = got.promoteAt
-    i = items.length ? i % items.length : 0
+  let shared: Json[] = []
+  let inTeam = true
+  let i = 0
+  const failed: Partial<Record<KnowledgeTab, string>> = {}
+  let files: KFile[] = []
+  let file = pick
+  let facts: string[] = []
+  let doc = ''
+  let where = ''
+  const model = ctx.getData()?.model || 'the model'
+
+  const load = async (t: KnowledgeTab) => {
+    const url =
+      t === 'stats'
+        ? '/api/learning'
+        : t === 'drafts'
+          ? '/api/drafts'
+          : t === 'shared'
+            ? `/api/share?about=${encodeURIComponent(about)}`
+            : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
+    const r = await api(url)
+    if (!r.ok) {
+      failed[t] = await errorText(r)
+      return
+    }
+    delete failed[t]
+    const got = await r.json()
+    if (t === 'stats') events = got.events
+    else if (t === 'drafts') {
+      drafts = got.items
+      promoteAt = got.promoteAt
+    } else if (t === 'shared') {
+      shared = got.items
+      inTeam = got.inTeam !== false
+    } else {
+      facts = got.facts || []
+      doc = got.text || ''
+      where = got.path || ''
+    }
+    if (t === tab) i = pageTo(i, 0, items().length)
   }
-  await load()
-  if (!items.length) {
-    notice('nothing waiting — every observation so far is either a fact or gone')
-    return
+  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
+
+  const show = async (t: KnowledgeTab) => {
+    if (t !== tab) i = 0
+    tab = t
+    await load(t)
+    refresh()
   }
-  const m = open({
-    title: 'waiting',
-    body: () => {
-      const it = items[i]
-      if (!it) return <div>nothing waiting any more</div>
+  const open_ = async (f: KFile) => {
+    file = f
+    i = 0
+    await show('inspect')
+  }
+  const go = (step: number) => {
+    i = pageTo(i, step, items().length)
+    refresh()
+  }
+  const act = async (path: string, body: Json, ok: string) => {
+    const out = await ctx.call(path, body, ok)
+    // a forget can leave the team's copy to remove: that is a pull request, and it says so
+    if (out?.branch) proposed(ctx, out)
+    else if (out?.error) notice(String(out.error))
+    await load(tab)
+    refresh()
+  }
+  const remove = async () => {
+    const fact = facts[i]
+    if (fact === undefined) return
+    const theirs = !!file.team
+    const ask = theirs
+      ? `Propose removing this fact from team ${file.team}'s ${fileName(file)} memory? It opens a pull request on the team's repo; the fact stays until a person with rights on that repo approves it.`
+      : `Remove this fact from your ${fileName(file)} memory? It is gone from your reviews at once.`
+    if (!(await confirm(`${ask}\n\n${fact}`, { yes: theirs ? 'open pull request' : 'remove', no: 'keep it' }))) return
+    const out = await ctx.call('/api/memory', { op: 'remove', team: file.team, repo: file.repo || 'general', fact }, theirs ? '' : 'removed')
+    if (theirs) proposed(ctx, out)
+    await load('inspect')
+    refresh()
+  }
+
+  const factCard = (repo: unknown, team: string, mark: string, warn: boolean, fact: unknown) => (
+    <>
+      <div className="kv">
+        <span>
+          {String(repo || 'general')}
+          {team}
+        </span>
+        <b className={`mark${warn ? ' warn' : ''}`}>{mark}</b>
+      </div>
+      <div className="fact">{String(fact)}</div>
+    </>
+  )
+
+  const picker_ = () => {
+    const all = files.some((f) => fileKey(f) === fileKey(file)) ? files : [file, ...files]
+    return (
+      <select
+        value={fileKey(file)}
+        aria-label="which memory to inspect"
+        onChange={(e) => {
+          const f = all.find((x) => fileKey(x) === e.target.value)
+          if (f) void open_(f)
+        }}
+      >
+        {[...new Set(all.map((f) => f.team))].map((team) => (
+          <optgroup key={team} label={team ? `team ${team}` : 'your memory'}>
+            {all
+              .filter((f) => f.team === team)
+              .map((f) => (
+                <option key={fileKey(f)} value={fileKey(f)}>
+                  {team ? `${team} / ` : ''}
+                  {fileName(f)}
+                  {f.doc ? ' (founding document)' : ''}
+                </option>
+              ))}
+          </optgroup>
+        ))}
+      </select>
+    )
+  }
+
+  const inspect = () => (
+    <div className="inspect">
+      <div className="lbar">
+        {picker_()}
+        <span className="sp" />
+        <span className="dim mono">{where}</span>
+      </div>
+      <p className="knote">
+        {file.doc
+          ? `A founding document: what team ${file.team} wrote, read by every teammate's reviews and sessions. A change to it is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
+          : file.team
+            ? `Team ${file.team}'s facts, learned by its reviews. Removing one opens a pull request on the team's repo; it stays until a person with rights on that repo approves it.`
+            : 'Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once.'}
+      </p>
+      {failed.inspect ? (
+        <p className="empty">✗ {failed.inspect}</p>
+      ) : file.doc ? (
+        doc.trim() ? <pre className="doc">{doc}</pre> : <p className="empty">nothing written yet</p>
+      ) : facts.length ? (
+        <div className="facts">
+          {facts.map((f, k) => (
+            <div key={k} className={`opt${k === i ? ' on' : ''}`} onClick={() => { i = k; refresh() }}>
+              <span className="tick">{k === i ? '›' : ''}</span>
+              <span>{f}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="empty">nothing learned here yet</p>
+      )}
+    </div>
+  )
+
+  const content = () => {
+    if (tab === 'inspect') return inspect()
+    if (failed[tab]) return <p className="empty">✗ {failed[tab]}</p>
+    if (tab === 'stats') {
+      return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
+    }
+    const it = items()[i] as Json | undefined
+    if (tab === 'drafts') {
+      if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
       const left = promoteAt - (it.n as number)
       const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
-      return (
-        <>
-          <div className="kv">
-            <span>
-              {String(it.repo || 'general')}
-              {it.team ? ` · team ${it.team}` : ''}
-            </span>
-            <b className="mark warn">{mark}</b>
+      return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
+    }
+    if (!it) return <p className="empty">no facts of yours belong to a team yet{inTeam ? '' : ' — you are not in a team'}</p>
+    const backers = (it.backers as string[]) || []
+    const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
+    return factCard(it.repo, it.team ? ` → ${it.team}` : '', mark, !it.sent, it.fact)
+  }
+
+  // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading
+  await Promise.all([
+    ...TABS.map(([t]) => load(t)),
+    api('/api/memory/files')
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then((j) => (files = j.files)),
+  ])
+  const m = open({
+    title: 'knowledge',
+    wide: true,
+    body: () => (
+      <div className="kpanel">
+        <div className="lbar">
+          <div className="seg" role="tablist" aria-label="knowledge">
+            {TABS.map(([t, key]) => (
+              <button key={t} role="tab" aria-pressed={tab === t} onClick={() => void show(t)}>
+                {t}
+                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
+              </button>
+            ))}
           </div>
-          <div className="fact">{String(it.fact)}</div>
-        </>
-      )
-    },
-    foot: [
-      ['t', 'make it a fact', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'); await load(); repaint() }, 'go'],
-      ['x', 'drop', async () => { const it = items[i]; if (!it) return; await ctx.call('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'); await load(); repaint() }, 'warn'],
-      ['s', 'scan for repeats', () => overlapScreen(ctx, async () => { i = 0; await load(); repaint() })],
-      ['Esc', 'close', () => close(m)],
-    ] as Foot[],
+          <span className="sp" />
+          <div className="tags">
+            <button className="tag" title="asks before it starts" onClick={() => void dreamScreen(ctx)}>
+              dream: tidy memory <kbd className="hint">Z</kbd>
+            </button>
+          </div>
+        </div>
+        {(
+          <p className="knote">
+            <b>Dream</b> has {model} read every memory file, yours and your teams', and propose a tidier version of yours:
+            overlapping facts merged, duplicates removed, stale ones dropped. You see each file's before and
+            after and nothing is written until you accept. Team files are only read, so yours do not end up
+            repeating theirs; a dream never rewrites them.
+          </p>
+        )}
+        {content()}
+      </div>
+    ),
+    foot: [],
   })
+
   const refresh = () => {
-    m.sub = `${items.length ? i + 1 : 0}/${items.length}`
+    const list = items()
+    const it = list[i] as Json | undefined
+    m.sub = tab === 'stats' ? (events.length ? `${events.length} events` : '') : tab === 'inspect' && file.doc ? '' : `${list.length ? i + 1 : 0}/${list.length}`
+    const foot: Foot[] = [...pager(list.length, go)]
+    if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
+    if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
+    if (tab === 'drafts' && it) {
+      foot.push(
+        ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
+        ['x', 'drop', () => void act('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'), 'warn'],
+      )
+    }
+    if (tab === 'drafts' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('drafts'))])
+    if (tab === 'shared' && it) {
+      if (!it.sent) foot.push(['t', 'send it', () => void act('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'), 'go'])
+      foot.push(['x', it.sent ? 'forget it everywhere' : 'forget', () => void act('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'), 'warn'])
+    }
+    m.foot = foot
     repaint()
   }
+  const step = (by: number) => void show(TABS[pageTo(TABS.findIndex(([t]) => t === tab), by, TABS.length)][0])
   m.keys = {
-    j: () => { if (items.length) { i = (i + 1) % items.length; refresh() } },
-    k: () => { if (items.length) { i = (i - 1 + items.length) % items.length; refresh() } },
+    K: () => void show('stats'),
+    g: () => void show('inspect'),
+    W: () => void show('drafts'),
+    P: () => void show('shared'),
+    '[': () => step(-1),
+    ']': () => step(1),
+    Z: () => void dreamScreen(ctx),
     Escape: () => close(m),
     q: () => close(m),
   }
@@ -170,66 +438,6 @@ export async function overlapScreen(ctx: Ctx, onDone?: () => void) {
     repaint()
   }
   poll()
-}
-
-export async function shareScreen(ctx: Ctx, p: Row | null) {
-  const about = p?.repo || ''
-  let items: Json[] = []
-  let i = 0
-  const load = async () => {
-    const got = await (await api(`/api/share?about=${encodeURIComponent(about)}`)).json()
-    items = got.items
-    i = items.length ? i % items.length : 0
-    return got
-  }
-  const got0 = await load()
-  if (!items.length) {
-    notice(`no facts of yours belong to a team yet${got0.inTeam ? '' : ' — you are not in a team'}`)
-    return
-  }
-  const m = open({
-    title: 'the team knows',
-    body: () => {
-      const it = items[i]
-      if (!it) return <div>nothing left to show</div>
-      const backers = (it.backers as string[]) || []
-      const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
-      return (
-        <>
-          <div className="kv">
-            <span>
-              {String(it.repo || 'general')}
-              {it.team ? ` → ${it.team}` : ''}
-            </span>
-            <b className={`mark${it.sent ? '' : ' warn'}`}>{mark}</b>
-          </div>
-          <div className="fact">{String(it.fact)}</div>
-        </>
-      )
-    },
-    foot: [],
-  })
-  const refresh = () => {
-    const it = items[i]
-    m.sub = `${items.length ? i + 1 : 0}/${items.length}`
-    m.foot = [
-      ...(it && !it.sent
-        ? ([['t', 'send it', async () => { await ctx.call('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'); await load(); refresh() }, 'go']] as Foot[])
-        : []),
-      ...(it
-        ? ([['x', it.sent ? 'forget it everywhere' : 'forget', async () => { await ctx.call('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'); await load(); refresh() }, 'warn']] as Foot[])
-        : []),
-      ['Esc', 'close', () => close(m)],
-    ] as Foot[]
-    m.keys = {
-      j: () => { if (items.length) { i = (i + 1) % items.length; refresh() } },
-      k: () => { if (items.length) { i = (i - 1 + items.length) % items.length; refresh() } },
-      Escape: () => close(m),
-      q: () => close(m),
-    }
-    repaint()
-  }
-  refresh()
 }
 
 export async function teamsScreen(ctx: Ctx, p: Row | null) {
@@ -338,18 +546,8 @@ export function teamScreen(ctx: Ctx, key: string, p: Row | null): Promise<void> 
         repaint()
       }
       const verbs: Record<string, () => Promise<void>> = {
-        e: async () => {
-          const got = await (await api(`/api/teams?brief=${encodeURIComponent(key)}`)).json()
-          editor(
-            `brief · ${key}`,
-            got.text,
-            async (text) => {
-              const out = await ctx.call('/api/teams', { op: 'brief', key, text }, 'brief saved')
-              if (out?.error) ctx.flash(`saved, but not pushed: ${out.error}`)
-            },
-            got.path,
-          )
-        },
+        // the brief is a founding document: a change to it is a pull request, never a push
+        e: () => proposeDoc(ctx, key, 'brief'),
         d: async () => {
           const desc = await prompt(`One line: what is ${t.name} for?  [now: ${String(t.description).slice(0, 40) || 'nothing yet'}]`)
           if (desc) {
@@ -381,7 +579,7 @@ export function teamScreen(ctx: Ctx, key: string, p: Row | null): Promise<void> 
         },
       }
       m.foot = [
-        ['e', 'brief', verbs.e],
+        ['e', 'propose a brief change', verbs.e],
         ['d', 'describe', verbs.d],
         ['c', 'remote', verbs.c],
         ['o', 'cover', verbs.o],
