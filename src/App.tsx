@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
-import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, type Cast, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, castResult, castStep, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Necronomicon } from './components/Necronomicon'
@@ -442,21 +442,22 @@ export default function App() {
   // Casts started here. When the row stops being busy, the result opens to read and post: the menu's
   // "Read spell" row alone is easy to miss, and the pane's detail is not re-asked when a cast ends.
   // ponytail: forgotten on reload. The menu still offers the result then.
-  const casting = useRef(new Map<string, { spell: string; since: number; busy: boolean }>())
+  const casting = useRef(new Map<string, Cast>())
   useEffect(() => {
+    if (!data) return
     for (const [url, c] of casting.current) {
-      const p = data?.sections.flatMap((s) => s.prs).find((x) => x.url === url)
-      if (!p) continue
-      if (p.busy) c.busy = true
-      if (p.busy || !c.busy) continue
+      const p = data.sections.flatMap((s) => s.prs).find((x) => x.url === url)
+      const step = castStep(c, p)
+      if (step === 'wait') continue
       casting.current.delete(url)
+      if (!p) continue
       void (async () => {
         const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
         if (!r.ok) return
         const got = (await r.json()) as Detail
         setDetail((d) => (d?.url === url ? got : d))
-        // an older result of the same spell is not this cast's; a failed cast says so on the row
-        const found = got.spells.find((s) => s.name === c.spell && s.at >= c.since - 1)
+        // a failed cast has no result and says so on the row
+        const found = castResult(got.spells, c)
         if (found) readSpell(p, found)
       })()
     }

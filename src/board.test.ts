@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 
 let n = 0
 
@@ -737,5 +737,25 @@ describe('canCastOn', () => {
     expect(canCastOn(row({ section: 'MINE' }))).toBe(true)
     expect(canCastOn(row({ review: '✓ approved' }))).toBe(true)
     expect(canCastOn(row({ busy: true }))).toBe(false)
+  })
+})
+
+describe('a cast started here', () => {
+  const cast = () => ({ spell: 'tests', since: 1000, busy: false })
+  it('ends only once its row was seen running and has stopped', () => {
+    const c = cast()
+    expect(castStep(c, pr())).toBe('wait') // never seen busy: the poll may predate the cast
+    expect(castStep(c, pr({ busy: true }))).toBe('wait')
+    expect(castStep(c, pr())).toBe('ended')
+  })
+  it('is let go when its PR leaves the board', () => {
+    expect(castStep(cast(), undefined)).toBe('gone')
+  })
+  it('takes only a result of the same spell written since the cast', () => {
+    const c = cast()
+    expect(castResult([{ name: 'tests', at: 900 }], c)).toBeUndefined() // an older run
+    expect(castResult([{ name: 'perf', at: 1005 }], c)).toBeUndefined()
+    expect(castResult([], c)).toBeUndefined() // the cast failed
+    expect(castResult([{ name: 'tests', at: 1005 }], c)).toEqual({ name: 'tests', at: 1005 })
   })
 })
