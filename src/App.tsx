@@ -811,6 +811,9 @@ export default function App() {
           onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
+          selected={current || null}
+          onCast={(p, spell) => void cast(p, spell)}
+          onBook={() => show('necronomicon')}
         />
         <div className="main">
           <div className="body">

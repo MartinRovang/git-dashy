@@ -191,7 +191,7 @@ export function Necronomicon({
                           title={canCast ? `cast on #${selected!.number}` : 'select a PR waiting for your review'}
                           onClick={() => selected && onCast(selected, current.name)}
                         >
-                          cast on {selected ? `#${selected.number}` : 'a PR'}
+                          cast on {canCast ? `#${selected!.number}` : 'a PR waiting on you'}
                         </button>
                         <button
                           className="btn"
