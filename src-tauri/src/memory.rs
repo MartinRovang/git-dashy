@@ -2229,16 +2229,32 @@ fn fresh(text: &str) -> Vec<String> {
     out
 }
 
+/// What a matching pre-review finding does for an observation: add one to its count, be used up without
+/// counting, or be left where it is.
+#[derive(Clone, Copy)]
+enum Pre {
+    Counts,
+    Spent,
+    Kept,
+}
+
 /// Add one observation to a counted file's rows: a new draft, or +1 (and this run's id) on a matching one.
 /// (whether it is new, whether a pre-review's finding added to it).
 ///
 /// ponytail: a pre-review of your own PR that found this counts as the other observation: two runs, one of
 /// which did not know the other existed. Consumed either way, so one pre-review cannot keep paying out; it
-/// adds to the count only where `self_counts`, which is your own memory and not a team's (see append_team).
+/// adds to the count only where `pre` says it counts, which is your own memory and not a team's (see append_team).
 /// ponytail: the first wording wins and the count is what carries meaning; the ids record WHICH runs are
 /// behind that count, so a later merge can tell two runs from one run twice.
-fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str, self_counts: bool) -> (bool, bool) {
-    let bonus = u32::from(consume_self(repo, &fact) && self_counts);
+fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str, pre: Pre) -> (bool, bool) {
+    let bonus = match pre {
+        Pre::Counts => u32::from(consume_self(repo, &fact)),
+        Pre::Spent => {
+            consume_self(repo, &fact);
+            0
+        }
+        Pre::Kept => 0,
+    };
     match items.iter_mut().find(|d| same(&d.fact, &fact)) {
         Some(d) => {
             d.count += 1 + bonus;
@@ -2277,7 +2293,7 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
         if settled.iter().any(|t| same(&fact, t)) {
             continue; // already approved somewhere: proposing it again says nothing new
         }
-        let (new, bonused) = observe(&mut items, repo, fact.clone(), &rid, true);
+        let (new, bonused) = observe(&mut items, repo, fact.clone(), &rid, Pre::Counts);
         if bonused {
             with_bonus.push(fact.clone());
         }
@@ -2336,7 +2352,9 @@ fn append_team(base: &Path, repo: &str, text: &str, session: bool) -> Vec<String
         .collect();
     for fact in proposed {
         if !settled.iter().any(|t| same(&fact, t)) {
-            observe(&mut items, repo, fact, &rid, false);
+            // a review spends a pre-review's finding; a session leaves it for the review that can use it
+            let pre = if session { Pre::Kept } else { Pre::Spent };
+            observe(&mut items, repo, fact, &rid, pre);
         }
     }
     // ponytail: and one of the runs is a REVIEW. Each `gitdashy remember` call is a run of its own, so one
@@ -3315,6 +3333,34 @@ mod tests {
             ["migrations run first"]
         );
         assert_eq!(lines(&shared.join("a__b.md")), ["- migrations run first"]);
+    }
+
+    #[test]
+    fn two_teammates_sessions_are_two_people_and_promote_through_the_cross_check() {
+        // by design: the review requirement is for ONE person's folder; two people finding a thing is the
+        // corroboration the pool exists for, whatever kind of run each of them made
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [s:beef] migrations run first\n").unwrap();
+        append_as("a/b", "- migrations run first", "", "session");
+        assert_eq!(
+            cross_check_by(&shared, Some("a/b"), |p| Some(vec![true; p.len()])),
+            ["migrations run first"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- migrations run first"]);
+    }
+
+    #[test]
+    fn a_session_leaves_a_pre_review_finding_for_a_review() {
+        let (_g, tmp) = setup();
+        a_team_repo(tmp.path());
+        append_self("a/b", "- the router is stubbed");
+        append_as("a/b", "- the router is stubbed", "", "session");
+        assert_eq!(self_drafts("a/b").len(), 1, "not spent by a session");
+        append("a/b", "- the router is stubbed", "");
+        assert!(self_drafts("a/b").is_empty(), "spent by the review");
     }
 
     #[test]

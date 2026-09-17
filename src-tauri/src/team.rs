@@ -530,10 +530,16 @@ pub fn pull() {
 /// the normal state, not a failure. Returning "not a git checkout" from here made the dream warn that
 /// memory was uncommitted every single time, on a machine with no team, which is a warning nobody would
 /// read twice.
+/// ponytail: union merge is (re)asserted on every push, not only when a team is started or joined. Two
+/// machines append to the same drafts, landed and fact files, and a team joined before that attribute was
+/// written would have `pull --rebase` stop on those appends; this is the path every team write already takes.
 pub fn push(msg: &str) -> String {
     dirs()
         .into_iter()
-        .map(|d| push_dir(&d, msg, "sync"))
+        .map(|d| {
+            union_attrs(&d);
+            push_dir(&d, msg, "sync")
+        })
         .find(|e| !e.is_empty())
         .unwrap_or_default()
 }
@@ -612,7 +618,7 @@ fn forge_of(url: &str, api_root: &str) -> Option<String> {
 /// ponytail: dot entries (.github, .gitignore) and top-level markdown (README, CLAUDE.md) are what any repo
 /// carries, not code; naming each one here was a list that would drift from what team repos hold.
 pub fn foreign_files(d: &Path) -> Vec<String> {
-    const TEAM: [&str; 4] = ["team.json", "memory", "reviewed.jsonl", "LICENSE"];
+    const TEAM: [&str; 3] = ["team.json", "memory", "reviewed.jsonl"];
     let mut names: Vec<String> = std::fs::read_dir(d)
         .map(|rd| {
             rd.flatten()
@@ -620,7 +626,13 @@ pub fn foreign_files(d: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    names.retain(|n| !TEAM.contains(&n.as_str()) && !n.starts_with('.') && !n.ends_with(".md"));
+    names.retain(|n| {
+        let lower = n.to_ascii_lowercase();
+        !TEAM.contains(&n.as_str())
+            && !n.starts_with('.')
+            && !lower.ends_with(".md")
+            && !lower.starts_with("license")
+    });
     names.sort();
     names
 }
@@ -2557,6 +2569,39 @@ mod tests {
         }
         let p = propose(&lone, "memory/project.md", &|_| Ok("y\n".into()), "brief: y").unwrap();
         assert!(p.note.starts_with("written, but not committed"), "{p:?}");
+        assert_eq!(
+            std::fs::read_to_string(lone.join("memory/project.md")).unwrap(),
+            "y\n",
+            "on disk all the same"
+        );
+        assert!(
+            !git(&lone, &["status", "--porcelain"]).stdout.is_empty(),
+            "and not in the history"
+        );
+    }
+
+    #[test]
+    fn a_team_joined_before_union_merge_gets_it_on_its_next_push() {
+        let _l = config::test_lock();
+        let t = tempfile::tempdir().unwrap();
+        point(t.path());
+        let d = t.path().join("teams/old-team");
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(init_history(&d));
+        assert!(!d.join(".gitattributes").exists());
+        push("memory: a sync");
+        assert!(std::fs::read_to_string(d.join(".gitattributes"))
+            .unwrap()
+            .contains("*.md merge=union"));
+        push("memory: again");
+        assert_eq!(
+            std::fs::read_to_string(d.join(".gitattributes"))
+                .unwrap()
+                .matches("merge=union")
+                .count(),
+            2,
+            "once"
+        );
     }
 
     #[test]
@@ -2582,7 +2627,14 @@ mod tests {
             std::fs::create_dir_all(t.path().join(d)).unwrap();
         }
         std::fs::create_dir_all(t.path().join(".github")).unwrap();
-        for f in ["team.json", "README.md", "CLAUDE.md", "Cargo.toml"] {
+        for f in [
+            "team.json",
+            "README.md",
+            "CLAUDE.md",
+            "NOTES.MD",
+            "LICENSE.txt",
+            "Cargo.toml",
+        ] {
             std::fs::write(t.path().join(f), "").unwrap();
         }
         assert_eq!(foreign_files(t.path()), ["Cargo.toml", "src"]);
