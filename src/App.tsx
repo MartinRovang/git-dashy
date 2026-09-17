@@ -40,8 +40,8 @@ export default function App() {
   const [showHidden, setShowHidden] = useState(false)
   // ponytail: session-only like the rest of the filter row; a setting if people want it to survive a launch
   const [only, setOnly] = useState<Only>(NOBODY)
-  // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
-  // settings unreachable without remembering a key; a narrow one still answers "which model".
+  // ponytail: the rail shuts to a 52px icon column rather than disappearing. A hidden sidebar makes the
+  // settings unreachable without remembering a key; the icons keep them one click away, with a dot for a hold.
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
   /** Ask who, then follow them. The footer button and the rail's View group both call it. */
@@ -92,6 +92,7 @@ export default function App() {
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
+  const paneBefore = useRef(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
@@ -112,6 +113,11 @@ export default function App() {
   // update as the switch so the graph lays out once and not twice.
   const show = (v: 'board' | 'graph' | 'necronomicon') => {
     setView(v)
+    // the book wants the width: shut the right pane when it opens, and give it back as it was on the way out
+    if (v === 'necronomicon' && view !== 'necronomicon') {
+      paneBefore.current = pane
+      setPane(false)
+    } else if (v !== 'necronomicon' && view === 'necronomicon') setPane(paneBefore.current)
     const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
@@ -775,7 +781,6 @@ export default function App() {
           onAuto={onAuto}
           onFollow={followSomeone}
           onFollowScope={followScope}
-          followed={followed.length}
           onFollowOwner={(repo) =>
             // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
             void (async () => {
