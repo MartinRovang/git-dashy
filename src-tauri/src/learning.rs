@@ -768,15 +768,15 @@ mod tests {
             ..Default::default()
         };
         let all = mine(
-            vec![git(2.0, "x"), git(4.0, "y")],
-            vec![old(1.0), old(3.0), log(5.0, "z")],
+            vec![git(2.0, "x"), git(2.6, "w"), git(4.0, "y")],
+            vec![old(1.0), log(2.5, "q"), old(3.0), log(5.0, "z")],
         );
         let mut ats: Vec<f64> = all.iter().map(|e| e.at).collect();
         ats.sort_by(f64::total_cmp);
         assert_eq!(
             ats,
-            [1.0, 3.0, 4.0, 5.0],
-            "git's 2 is inside the id-less stretch; 4 is after it and unlogged"
+            [1.0, 2.5, 3.0, 4.0, 5.0],
+            "git's 2 and 2.6 are inside the id-less stretch, an id'd line in it included; 4 is after it and unlogged"
         );
     }
 }

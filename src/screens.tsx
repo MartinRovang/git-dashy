@@ -80,12 +80,11 @@ export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
   )
 }
 
-export type KnowledgeTab = 'stats' | 'inspect' | 'drafts' | 'shared'
+export type KnowledgeTab = 'stats' | 'inspect' | 'drafts'
 const TABS: [KnowledgeTab, string][] = [
   ['stats', 'K'],
   ['inspect', 'g'],
   ['drafts', 'W'],
-  ['shared', 'P'],
 ]
 
 /** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
@@ -102,18 +101,16 @@ const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : 'bri
  *  ponytail: inspect reads and removes, it does not write. Facts arrive through reviews and the two-sightings
  *  gate; a person only takes them out. Out of yours at once, out of a team's by pull request. */
 export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile = { team: '', repo: '' }) {
-  const about = ctx.current?.repo || ''
   let tab = first
   let events: LEvent[] = []
   let drafts: Json[] = []
   let promoteAt = 2
-  let shared: Json[] = []
-  let inTeam = true
   let i = 0
   const failed: Partial<Record<KnowledgeTab, string>> = {}
   let files: KFile[] = []
   let file = pick
   let facts: string[] = []
+  let backers: string[][] = []
   let doc = ''
   let where = ''
   const model = ctx.getData()?.model || 'the model'
@@ -124,9 +121,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
         ? '/api/learning'
         : t === 'drafts'
           ? '/api/drafts'
-          : t === 'shared'
-            ? `/api/share?about=${encodeURIComponent(about)}`
-            : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
+          : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
     const r = await api(url)
     if (!r.ok) {
       failed[t] = await errorText(r)
@@ -138,17 +133,15 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     else if (t === 'drafts') {
       drafts = got.items
       promoteAt = got.promoteAt
-    } else if (t === 'shared') {
-      shared = got.items
-      inTeam = got.inTeam !== false
     } else {
       facts = got.facts || []
+      backers = got.backers || []
       doc = got.text || ''
       where = got.path || ''
     }
     if (t === tab) i = pageTo(i, 0, items().length)
   }
-  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
+  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'inspect' && !file.doc ? facts : [])
 
   const show = async (t: KnowledgeTab) => {
     if (t !== tab) i = 0
@@ -252,6 +245,11 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
             <div key={k} className={`opt${k === i ? ' on' : ''}`} onClick={() => { i = k; refresh() }}>
               <span className="tick">{k === i ? '›' : ''}</span>
               <span>{f}</span>
+              {backers[k]?.length ? (
+                <span className="dim" title={backers[k].join(', ')}>
+                  {backers[k].length > 1 ? `★ ${backers[k].length} people found this` : `found by ${backers[k][0]}`}
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
@@ -267,17 +265,13 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     if (tab === 'stats') {
       return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
     }
+    // drafts, the one tab left
     const it = items()[i] as Json | undefined
-    if (tab === 'drafts') {
-      if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
-      const left = promoteAt - (it.n as number)
-      const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
-      return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
-    }
-    if (!it) return <p className="empty">no facts of yours belong to a team yet{inTeam ? '' : ' — you are not in a team'}</p>
-    const backers = (it.backers as string[]) || []
-    const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
-    return factCard(it.repo, it.team ? ` → ${it.team}` : '', mark, !it.sent, it.fact)
+    if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
+    const left = promoteAt - (it.n as number)
+    const count = `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
+    const mark = it.kind === 'self' ? 'pre-review · one opinion' : it.kind === 'team' ? `in the team's drafts · ${count}` : count
+    return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
   }
 
   // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading
@@ -297,7 +291,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
             {TABS.map(([t, key]) => (
               <button key={t} role="tab" aria-pressed={tab === t} onClick={() => void show(t)}>
                 {t}
-                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
+                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : ''} <kbd className="hint">{key}</kbd>
               </button>
             ))}
           </div>
@@ -329,17 +323,21 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const foot: Foot[] = [...pager(list.length, go)]
     if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
-    if (tab === 'drafts' && it) {
+    // a draft in a team's pool: dropping it is yours to do, but accepting it into the team's knowledge by hand is
+    // a pull request; only a second independent sighting moves it there by itself
+    if (tab === 'drafts' && it && it.kind === 'team') {
+      const pooled = { repo: it.repo, fact: it.fact, team: it.team, pooled: true }
+      foot.push(
+        ['t', 'propose as a team fact (pull request)', () => void act('/api/drafts', { op: 'promote', ...pooled }, ''), 'go'],
+        ['x', 'drop', () => void act('/api/drafts', { op: 'drop', ...pooled }, 'dropped'), 'warn'],
+      )
+    } else if (tab === 'drafts' && it) {
       foot.push(
         ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
         ['x', 'drop', () => void act('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'), 'warn'],
       )
     }
     if (tab === 'drafts' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('drafts'))])
-    if (tab === 'shared' && it) {
-      if (!it.sent) foot.push(['t', 'send it', () => void act('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'), 'go'])
-      foot.push(['x', it.sent ? 'forget it everywhere' : 'forget', () => void act('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'), 'warn'])
-    }
     m.foot = foot
     repaint()
   }
@@ -348,7 +346,6 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     K: () => void show('stats'),
     g: () => void show('inspect'),
     W: () => void show('drafts'),
-    P: () => void show('shared'),
     '[': () => step(-1),
     ']': () => step(1),
     Z: () => void dreamScreen(ctx),

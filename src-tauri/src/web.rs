@@ -792,6 +792,13 @@ fn get_memory(_state: &State, query: &Query) -> Out {
         "team": team,
         "path": knowledge::tilde(&path),
         "facts": memory::facts_in(&path),
+        // who stands behind each of a team's facts, from the evidence lines: "2 people found this"
+        "backers": if team.is_empty() {
+            Vec::new()
+        } else {
+            let index = memory::pools_in(&team::dir_of(team).into_iter().collect::<Vec<_>>());
+            memory::facts_in(&path).iter().map(|f| memory::backers(&index, repo, f)).collect::<Vec<_>>()
+        },
     }))
 }
 
@@ -844,13 +851,17 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
                 std::cmp::Reverse(b.1),
             ))
     });
-    let items: Vec<Value> = items
+    let mut items: Vec<Value> = items
         .iter()
         .map(|(repo, n, fact, kind)| {
             json!({"repo": repo, "n": n, "fact": fact, "kind": kind,
                    "team": repo.as_deref().map(bind::of).unwrap_or_default()})
         })
         .collect();
+    // yours in each team's pool, after your private ones: kind "team", and the team they are in
+    for (team, repo, n, fact) in memory::team_waiting() {
+        items.push(json!({"repo": repo, "n": n, "fact": fact, "kind": "team", "team": team}));
+    }
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
 }
 
@@ -915,45 +926,6 @@ fn get_overlaps(_state: &State, _q: &Query) -> Out {
         .unwrap_or_default();
     j["result"] = Value::Array(pairs);
     Ok(j)
-}
-
-/// Who has accepted this fact, from a pools() index. Two names is two people's reviewers agreeing.
-fn backers(
-    index: &HashMap<String, Vec<(Option<String>, String)>>,
-    repo: Option<&str>,
-    fact: &str,
-) -> Vec<String> {
-    let mut out: Vec<String> = index
-        .iter()
-        .filter(|(_, items)| {
-            items
-                .iter()
-                .any(|(r, f)| r.as_deref() == repo && memory::same(f, fact))
-        })
-        .map(|(u, _)| u.clone())
-        .collect();
-    out.sort();
-    out
-}
-
-fn get_share(_state: &State, query: &Query) -> Out {
-    let about = q(query, "about");
-    let mut items = memory::in_team(about);
-    let index = memory::pools();
-    items.sort_by_key(|(repo, fact, sent)| {
-        (
-            *sent,
-            std::cmp::Reverse(backers(&index, repo.as_deref(), fact).len()),
-        )
-    });
-    let items: Vec<Value> = items
-        .iter()
-        .map(|(repo, fact, sent)| {
-            json!({"repo": repo, "fact": fact, "sent": sent, "backers": backers(&index, repo.as_deref(), fact),
-                   "team": repo.as_deref().map(bind::of).unwrap_or_else(|| bind::of(about))})
-        })
-        .collect();
-    Ok(json!({"inTeam": team::on(), "items": items}))
 }
 
 fn used_for(key: &str) -> String {
@@ -1525,6 +1497,36 @@ fn post_drafts(_state: &State, body: &Body) -> Out {
     let (repo, fact) = (checked_repo(body)?, text(body, "fact"));
     let label = repo.as_deref().unwrap_or("general");
     let dir = config::get().memory_dir;
+    let team = text(body, "team");
+    if truthy(body, "pooled") {
+        // one of your drafts in a team's pool: drop it from your folder there, or propose it to the team
+        return match text(body, "op").as_str() {
+            "drop" => {
+                if !memory::drop_team(&team, repo.as_deref(), &fact) {
+                    return Err(Fail::new(404, "that draft is not in your team drafts any more"));
+                }
+                team::push(&format!("memory: dropped a draft for {label}"));
+                Ok(json!({"ok": true}))
+            }
+            // ponytail: a person accepting a draft into a TEAM's knowledge is a hand edit of what every
+            // teammate's reviews read, so it is a pull request, not a push. Recurrence is the only thing
+            // that moves a team draft into team knowledge by itself.
+            "promote" => {
+                // one line: a newline in the body would add facts nobody proposed
+                if fact.trim().is_empty() || fact.contains(['\n', '\r']) {
+                    return Err(Fail::new(400, "a fact is one line"));
+                }
+                let d = team::dir_of(&team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
+                let file = memory::path(repo.as_deref(), Some(&d.join("memory")));
+                propose_in_team(
+                    &file,
+                    &|now| memory::with_fact(now, &fact),
+                    &format!("memory: a fact for {label}"),
+                )
+            }
+            _ => Err(Fail::new(400, "op must be promote or drop")),
+        };
+    }
     match text(body, "op").as_str() {
         "promote" => {
             memory::promote(repo.as_deref(), &fact);
@@ -1569,46 +1571,6 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
         }
         _ => Err(Fail::new(400, "op must be start or merge")),
     }
-}
-
-fn post_share(_state: &State, body: &Body) -> Out {
-    let (repo, fact, about) = (checked_repo(body)?, text(body, "fact"), text(body, "about"));
-    let label = repo.as_deref().unwrap_or("general");
-    match text(body, "op").as_str() {
-        "send" => {
-            memory::share(repo.as_deref(), &fact, &about);
-            team::push(&format!("memory: share {label}"));
-        }
-        "forget" => {
-            let theirs = memory::forget(repo.as_deref(), &fact, &about);
-            team::push_dir(
-                &config::get().memory_dir,
-                &format!("memory: forget {label}"),
-                "mine",
-            );
-            team::push(&format!("memory: withdraw {label}"));
-            // yours and your evidence are gone; the team's copy goes only when its repo approves that
-            // ponytail: 200 either way. The local half has already happened and been pushed, so a proposal that
-            // could not be made (no remote, a failed fetch) is reported beside a success, not as a failed forget
-            // that in fact half-happened.
-            if let Some(q) = theirs {
-                return Ok(
-                    match propose_in_team(
-                        &q,
-                        &remove_from_origin(&fact),
-                        &format!("memory: remove a fact from {label}"),
-                    ) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            json!({"ok": true, "error": format!("forgotten here, but the team's copy could not be proposed for removal: {}", e.1)})
-                        }
-                    },
-                );
-            }
-        }
-        _ => return Err(Fail::new(400, "op must be send or forget")),
-    }
-    Ok(json!({"ok": true}))
 }
 
 /// Bind owner/* here, then declare it in the team. Local first: the cheap, reversible half.
@@ -2272,7 +2234,6 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/drafts" => get_drafts,
         "/api/spells" => get_spells,
         "/api/overlaps" => get_overlaps,
-        "/api/share" => get_share,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
         "/api/posting" => get_posting,
@@ -2304,7 +2265,6 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/memory" => post_memory,
         "/api/drafts" => post_drafts,
         "/api/overlaps" => post_overlaps,
-        "/api/share" => post_share,
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
@@ -2840,83 +2800,8 @@ mod tests {
             404
         );
         assert!(!teams.join("strangers").exists());
-    }
 
-    #[test]
-    fn a_forget_whose_team_proposal_fails_still_says_it_forgot() {
-        let _g = config::test_lock();
-        let d = tempfile::tempdir().unwrap();
-        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
-        let t = teams.join("crew");
-        std::fs::create_dir_all(t.join("memory")).unwrap();
-        std::fs::create_dir_all(&mine).unwrap();
-        assert!(team::init_history(&t));
-        let git = |args: &[&str]| {
-            assert!(std::process::Command::new("git")
-                .args(args)
-                .current_dir(&t)
-                .status()
-                .unwrap()
-                .success())
-        };
-        std::fs::write(t.join("memory/general.md"), "- shared once\n- Loud CASE\n").unwrap();
-        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
-        std::fs::write(mine.join("general.md"), "- shared once\n- mine\n- loud case\n").unwrap();
-        config::update(|c| {
-            c.demo = false;
-            c.memory_dir = mine.clone();
-            c.teams = teams.clone();
-        });
-        let (base, token, _state) = served();
-        let forget = |fact: &str| {
-            post(
-                &format!("{base}/api/share"),
-                json!({"op": "forget", "fact": fact}),
-                &token,
-            )
-        };
-
-        // a team this machine alone has: no remote, nobody to approve, so the team's copy goes here and now
-        let (code, j) = forget("shared once");
-        assert_eq!(code, 200, "{j}");
-        assert!(j["note"].as_str().unwrap().starts_with("written"), "{j}");
-        assert_eq!(
-            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
-            "- Loud CASE\n"
-        );
-
-        // the team's copy differs in case: not the same line, so nothing of the team's is touched
-        let (code, j) = forget("loud case");
-        assert_eq!((code, j.get("note"), j.get("error")), (200, None, None), "{j}");
-        assert_eq!(
-            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
-            "- Loud CASE\n"
-        );
-
-        // a remote that cannot be reached: the proposal fails, and the forget still says what it did
-        std::fs::write(mine.join("general.md"), "- Loud CASE\n").unwrap();
-        git(&[
-            "remote",
-            "add",
-            "origin",
-            &d.path().join("gone.git").to_string_lossy(),
-        ]);
-        let (code, j) = forget("Loud CASE");
-        assert_eq!(code, 200, "{j}");
-        assert!(
-            j["error"].as_str().unwrap().contains("could not be proposed"),
-            "{j}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(mine.join("general.md")).unwrap_or_default(),
-            ""
-        );
-        assert_eq!(
-            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
-            "- Loud CASE\n"
-        );
-
-        // and a fact scope that is a founding document's file, or a path trick, is not a repo
+        // a fact scope that is a founding document's file, or a path trick, is not a repo
         for repo in ["project", "agents", "PROJECT", "Agents", "..\\x", "a/../b"] {
             let (code, _) = post(
                 &format!("{base}/api/memory"),
@@ -2925,54 +2810,97 @@ mod tests {
             );
             assert_eq!(code, 400, "{repo}");
         }
+        // the pooled drop takes the same repo, and refuses the same tricks
+        for repo in ["PROJECT", "..\\x"] {
+            let (code, _) = post(
+                &format!("{base}/api/drafts"),
+                json!({"op": "drop", "pooled": true, "team": "crew", "repo": repo, "fact": "x"}),
+                &token,
+            );
+            assert_eq!(code, 400, "{repo}");
+        }
     }
 
     #[test]
-    fn joining_a_team_repo_that_also_holds_code_says_so() {
+    fn your_team_drafts_are_waiting_and_accepting_one_by_hand_is_a_pull_request() {
         let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
-        let remote = d.path().join("shared.git");
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let origin = d.path().join("crew.git");
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
         assert!(std::process::Command::new("git")
-            .args(["init", "-q", "--bare", "-b", "main", &remote.to_string_lossy()])
+            .args(["init", "-q", "--bare", "-b", "main", &origin.to_string_lossy()])
             .status()
             .unwrap()
             .success());
-        // one machine starts the team inside a repo that carries code, and publishes it
-        config::update(|c| {
-            c.demo = false;
-            c.teams = d.path().join("a/teams");
-            c.memory_dir = d.path().join("a/mem");
-            c.bindings = d.path().join("a/bindings");
-        });
-        std::fs::create_dir_all(d.path().join("a/mem")).unwrap();
-        assert_eq!(team::start("Shared", "d", ""), "");
-        let t = team::dir_of("shared").unwrap();
-        std::fs::create_dir_all(t.join("src")).unwrap();
-        std::fs::write(t.join("src/main.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(t.join("CLAUDE.md"), "not code\n").unwrap();
-        assert_eq!(team::connect("shared", &remote.to_string_lossy()), "");
-        // another machine joins it through the route
+        assert!(team::init_history(&t));
+        assert!(std::process::Command::new("git")
+            .args(["remote", "add", "origin", &origin.to_string_lossy()])
+            .current_dir(&t)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(t.join("memory/general.md"), "- theirs\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
         let bindings = config::get().bindings;
         config::update(|c| {
-            c.teams = d.path().join("b/teams");
-            c.memory_dir = d.path().join("b/mem");
-            c.bindings = d.path().join("b/bindings");
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+            c.bindings = d.path().join("bindings");
         });
-        std::fs::create_dir_all(d.path().join("b/mem")).unwrap();
+        memory::allow_publishing("crew", true);
+        assert_eq!(bind::bind("a/b", "crew"), "");
+        memory::append("a/b", "- retry owns backoff", "");
         let (base, token, _state) = served();
-        let (code, j) = post(
-            &format!("{base}/api/teams"),
-            json!({"op": "join", "repo": remote.to_string_lossy()}),
-            &token,
+
+        let (_, j) = get(&format!("{base}/api/drafts"), Some(&token));
+        let team: Vec<&Value> = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "team")
+            .collect();
+        assert_eq!(team.len(), 1, "{j}");
+        assert_eq!(
+            (team[0]["team"].as_str(), team[0]["fact"].as_str()),
+            (Some("crew"), Some("retry owns backoff"))
+        );
+
+        let draft = |op: &str| {
+            post(
+                &format!("{base}/api/drafts"),
+                json!({"op": op, "pooled": true, "team": "crew", "repo": "a/b", "fact": "retry owns backoff"}),
+                &token,
+            )
+        };
+        // by hand into the team's knowledge: a branch on its repo, and the team's file untouched here
+        let (code, j) = draft("promote");
+        assert_eq!(code, 200, "{j}");
+        assert!(
+            j["branch"].as_str().unwrap().starts_with("gitdashy/propose-a-b-"),
+            "{j}"
+        );
+        assert!(!t.join("memory/a__b.md").exists());
+        // dropping your own draft is yours to do, once
+        assert_eq!(draft("drop").0, 200);
+        assert_eq!(draft("drop").0, 404);
+        assert!(memory::team_waiting().is_empty());
+
+        // a team file's facts come with who stands behind each
+        std::fs::write(t.join("memory/a__b.md"), "- known\n").unwrap();
+        for who in ["alice", "bob"] {
+            std::fs::create_dir_all(t.join("memory/pool").join(who)).unwrap();
+            std::fs::write(t.join("memory/pool").join(who).join("a__b.md"), "- known\n").unwrap();
+        }
+        let (_, j) = get(&format!("{base}/api/memory?team=crew&repo=a/b"), Some(&token));
+        assert_eq!(
+            (j["facts"].clone(), j["backers"].clone()),
+            (json!(["known"]), json!([["alice", "bob"]]))
         );
         config::update(|c| c.bindings = bindings);
-        assert_eq!(code, 200, "{j}");
-        let warning = j["warning"].as_str().unwrap();
-        assert!(
-            warning.contains("src") && !warning.contains("CLAUDE.md"),
-            "{warning}"
-        );
-        assert!(warning.contains("never reviewed by a model"), "{warning}");
     }
 
     #[test]

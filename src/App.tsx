@@ -767,7 +767,6 @@ export default function App() {
     if (k === 'Z') return one(() => void dreamScreen(ctx))
     if (k === 'K') return one(() => void knowledgeScreen(ctx, 'stats'))
     if (k === 'W') return one(() => void knowledgeScreen(ctx, 'drafts'))
-    if (k === 'P') return one(() => void knowledgeScreen(ctx, 'shared'))
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)

@@ -303,9 +303,10 @@ fn ask_claude(
             bail!("claude: {id:?} is not a session id");
         }
     }
-    // ponytail: a test build never starts the real CLI. One did, from a test whose model call was not stubbed:
-    // it ran `claude` on the operator's machine and left a session transcript in their ~/.claude/projects.
-    // Anything under test that reaches a model gets an error, which every caller already has to handle.
+    // ponytail: a test build never starts the real CLI. One did, from a cross-check whose pair was not
+    // worded the same: it ran `claude` on the operator's machine and left a session transcript in their
+    // ~/.claude/projects. Anything under test that reaches a model gets "not asked", which every caller
+    // already has to handle.
     if cfg!(test) {
         bail!("claude: a test never runs the claude CLI");
     }

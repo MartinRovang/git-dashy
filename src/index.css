@@ -937,6 +937,7 @@
                            background: var(--bg4); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px;
                            max-height: 46vh; overflow: auto; }
 .kpanel .inspect .empty { margin: 40px 0; text-align: center; color: var(--dim3); }
+.kpanel .inspect .facts .opt .dim { margin-left: auto; padding-left: 12px; font-size: 10.5px; color: var(--dim3); white-space: nowrap; }
 /* ponytail: the open left rail wraps its text instead of cutting it off with …; long repo names and paths break anywhere */
 .side:not(.shut) :is(.sv, .tsum, .fields .row b, .fields .pair > span, .sfoot .stat span, .fld > span:not(.sw)) {
   white-space: normal; text-overflow: clip; overflow-wrap: anywhere;
