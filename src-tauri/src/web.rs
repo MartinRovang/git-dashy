@@ -2686,6 +2686,7 @@ mod tests {
         assert!(memory::team_waiting().is_empty());
 
         // a team file's facts come with who stands behind each
+        std::fs::write(t.join("memory/a__b.md"), "- known\n").unwrap();
         for who in ["alice", "bob"] {
             std::fs::create_dir_all(t.join("memory/pool").join(who)).unwrap();
             std::fs::write(t.join("memory/pool").join(who).join("a__b.md"), "- known\n").unwrap();

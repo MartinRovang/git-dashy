@@ -98,7 +98,6 @@ const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : 'bri
  *  ponytail: inspect reads and removes, it does not write. Facts arrive through reviews and the two-sightings
  *  gate; a person only takes them out. Out of yours at once, out of a team's by pull request. */
 export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile = { team: '', repo: '' }) {
-  const about = ctx.current?.repo || ''
   let tab = first
   let events: LEvent[] = []
   let drafts: Json[] = []
