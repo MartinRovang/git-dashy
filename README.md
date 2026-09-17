@@ -132,8 +132,8 @@ button somewhere on the page.
 | `n` | the knowledge panel on **inspect**, open at this repo's facts |
 | `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
 | `P` | the knowledge panel on **shared**: your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
-| `W` | the knowledge panel on **waiting**: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
-| `K` | the knowledge panel on **learning**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are learning / inspect / waiting / shared (`K` `g` `W` `P`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
+| `W` | the knowledge panel on **drafts**: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
+| `K` | the knowledge panel on **stats**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are stats / inspect / drafts / shared (`K` `g` `W` `P`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
@@ -461,7 +461,7 @@ The Knowledge group in the rail says where memory is actually read and written r
 solo directory when you are on your own and the team's when you are in a team, `Team` is the repo or `off`, and
 `Store` appears only once the checkout sits somewhere other than its default.
 
-`knowledge panel` in the same group (or `K`) opens the panel on its **learning** tab, a chart of how fast that memory grows. Nothing in a fact records when it was
+`knowledge panel` in the same group (or `K`) opens the panel on its **stats** tab, a chart of how fast that memory grows. Nothing in a fact records when it was
 learned, so the chart reads it from git: each joined team's history, and your memory's history up to the day
 `~/.prs_learning.jsonl` began. From then on that file carries your side, one line per draft or fact gained,
 holding its time, repo and how it came — never its text. A fact from the history shows as **earlier**, because git says when
