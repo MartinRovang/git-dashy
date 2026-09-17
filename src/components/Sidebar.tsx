@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Bot, Database, Eye, BookOpen, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
 import type { PostingRule, StateData } from '../types'
 import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { every, span } from '../tokens'
@@ -18,8 +19,6 @@ type Props = {
   onFollow: () => void
   /** Follow everyone the board shows working under one `team:`/`org:` scope. */
   onFollowScope: (scope: string) => void
-  /** How many are followed, so the rail can say so when shut. */
-  followed: number
   /** `target` is a row's own name: `acme/api`, or `acme/*` for the whole owner. */
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
   /** Turn one owner's rule on for both kinds of review, or take it off both. */
@@ -32,38 +31,6 @@ type Props = {
   onDb: (op: 'set' | 'clear', target: string, db?: string) => void
   collapsed: boolean
   onCollapse: () => void
-}
-
-/** One label/value pair in a collapsed group's stack. */
-function Ln({ label, value, off }: { label: string; value: string; off?: boolean }) {
-  return (
-    <span className="ln">
-      <em>{label}</em>
-      <s className={off ? 'off' : undefined}>{value}</s>
-    </span>
-  )
-}
-
-/** A setting that holds several at once, as the badges the expanded rail uses for the same thing.
- *
- * ponytail: joined with commas these ran off the narrow rail and you saw "review, cave…". One badge
- * per value, stacked, so every active one is readable at any width.
- */
-function Pills({ label, values }: { label: string; values: string[] }) {
-  return (
-    <span className="ln">
-      <em>{label}</em>
-      {values.length ? (
-        <span className="pills">
-          {values.map((v) => (
-            <i key={v}>{v}</i>
-          ))}
-        </span>
-      ) : (
-        <s className="off">none</s>
-      )}
-    </span>
-  )
 }
 
 /** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
@@ -138,26 +105,25 @@ function Sources({
   )
 }
 
-/** A settings group: a caret and a one-line summary when open, a stacked digest when collapsed.
+/** A settings group: a caret, its icon and a one-line summary when open, just the icon when collapsed.
  *
- * ponytail: the collapsed rail shows a digest. A column of icons tells you which group to click and
- * nothing about what it holds; label/value pairs tell you the model you are reviewing with without
- * expanding anything.
+ * ponytail: `flag` puts a dot on the icon. An icon alone says nothing about what a group holds, so the
+ * collapsed rail keeps a dot for what costs someone else (a hold) or is a nudge to undo (held back).
  */
 function Group({
-  k,
+  icon: Icon,
   label,
   summary,
-  digest,
+  flag,
   open,
   onToggle,
   collapsed,
   children,
 }: {
-  k: string
+  icon: LucideIcon
   label: string
   summary: string
-  digest: React.ReactNode
+  flag?: string
   open: boolean
   onToggle: () => void
   collapsed: boolean
@@ -169,13 +135,16 @@ function Group({
           group instead of toggling a body nobody can see. */}
       <button
         className="summary"
-        title={collapsed ? `${label} — open the rail here` : undefined}
+        title={collapsed ? `${label}${flag ? ` (${flag})` : ''} — open the rail here` : undefined}
+        aria-label={flag ? `${label}, ${flag}` : label}
         aria-expanded={open && !collapsed}
         onClick={onToggle}
       >
         <span className="car">▶</span>
-        <span className="ic">{k.toUpperCase()}</span>
-        <span className="icv">{digest}</span>
+        <span className="gi">
+          <Icon size={collapsed ? 18 : 14} aria-hidden />
+          {collapsed && flag ? <i className="dot" /> : null}
+        </span>
         <span className="lb">{label}</span>
         <span className="sv">{summary}</span>
       </button>
@@ -338,7 +307,7 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, followed, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse }: Props) {
   const s = d?.settings || {}
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
@@ -348,7 +317,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const flip = (name: string) => {
     if (collapsed) {
-      // the rail is 106px: the fields have nowhere to render, so widen it and land on this group
+      // the rail is 52px: the fields have nowhere to render, so widen it and land on this group
       setOpen((o) => ({ ...o, [name]: true }))
       onCollapse()
       return
@@ -359,7 +328,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   // below are the "ask again" ones. Anything still asking is in d.asks, and the launch dialog owns it.
   const held = k.waiting || []
   const rules = d?.postingRules || []
-  /** Every target that holds a review on either axis: what the collapsed rail shows of all this. */
+  /** Every target that holds a review on either axis: the collapsed rail flags the Agent icon while any do. */
   // a rule set on that row, not every repo that inherits one: an owner holding for four repos is one hold
   const holds = rules
     .filter((r) => (['manual', 'auto'] as const).some((ran) => r[ran] === 'hold' && ruleSource(r.target, r[`${ran}Via`]) === 'own'))
@@ -377,7 +346,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
       {collapsed ? null : <div className="grip" data-grip="side" />}
       <div className="sh">
         <button className="iconbtn" title={collapsed ? 'Expand sidebar (S)' : 'Collapse sidebar (S)'} onClick={onCollapse}>
-          ≡
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           {collapsed ? null : <kbd className="hint">S</kbd>}
         </button>
       </div>
@@ -386,28 +355,15 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <div className="grpname">Reviewer</div>
 
         <Group
-          k="agent"
+          icon={Bot}
           label="Agent"
+          flag={holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : undefined}
           summary={[
             [s.model, s.depth, s.effort].filter(Boolean).join(' · '),
             holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : '',
           ]
             .filter(Boolean)
             .join(' · ')}
-          digest={
-            <>
-              <Ln label="model" value={s.model || '—'} />
-              <Ln label="depth" value={s.depth || 'default'} />
-              <Ln label="effort" value={s.effort || 'default'} off={!s.effort} />
-              <Pills label="voices" values={s.voice || []} />
-              <Pills label="hunters" values={s.hunter || []} />
-              <Ln label="auto-run" value={d?.auto ? 'on' : 'off'} off={!d?.auto} />
-              {/* the one setting here that changes what lands on someone else's PR, so it survives the
-                  collapse. Names the targets, not a count: at 106px "2 hold" is a number you have to
-                  open the rail to read. */}
-              <Pills label="holds" values={holds} />
-            </>
-          }
           open={!!open.agent}
           onToggle={() => flip('agent')}
           collapsed={collapsed}
@@ -543,10 +499,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="database"
+          icon={Database}
           label="Database"
           summary={dbRules.length ? `${dbRules.length} DB repo rule${dbRules.length === 1 ? '' : 's'}` : 'no DB repos'}
-          digest={<Pills label="db" values={dbRules.map((r) => `${r.target} → ${r.db || 'none'}`)} />}
           open={!!open.database}
           onToggle={() => flip('database')}
           collapsed={collapsed}
@@ -583,33 +538,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="view"
+          icon={Eye}
           label="View"
           summary={`${win} history · ${every(s.interval || 0)}`}
-          digest={
-            <>
-              <Ln label="history" value={win} />
-              <Ln label="refresh" value={every(s.interval || 0)} />
-              <Ln label="drafts" value={s.drafts ? 'shown' : 'hidden'} off={!s.drafts} />
-              <Ln label="key hints" value={s.keyhints === false ? 'hidden' : 'shown'} off={s.keyhints === false} />
-              {/* a count, not the names: seven badges is the whole rail, and "4 of 7" is the thing
-                  you actually want to know at this width */}
-              <Ln label="following" value={String(followed)} off={!followed} />
-              <Ln
-                label="sources"
-                value={
-                  !o.scopes.length
-                    ? 'none yet'
-                    : !(s.scopes || []).length
-                      ? 'none'
-                      : (s.scopes || []).length === o.scopes.length
-                        ? 'all'
-                        : `${(s.scopes || []).length} of ${o.scopes.length}`
-                }
-                off={!(s.scopes || []).length}
-              />
-            </>
-          }
           open={!!open.view}
           onToggle={() => flip('view')}
           collapsed={collapsed}
@@ -675,19 +606,10 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="know"
+          icon={BookOpen}
           label="Knowledge"
+          flag={held.length ? `${held.length} held back` : undefined}
           summary={[teams || 'no team', held.length ? `${held.length} held back` : ''].filter(Boolean).join(' · ')}
-          digest={
-            <>
-              <Ln label="memory" value={k.memory || 'default'} />
-              <Pills label="teams" values={teamList} />
-              {k.store ? <Ln label="store" value={k.store} /> : null}
-              {/* ponytail: a refused consent is a nudge, so it survives the collapse as a count.
-                  Everything else in this digest is a setting; this one is something to go and undo. */}
-              <Ln label="held back" value={String(held.length)} off={!held.length} />
-            </>
-          }
           open={!!open.know}
           onToggle={() => flip('know')}
           collapsed={collapsed}
@@ -737,10 +659,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
-          k="tools"
+          icon={Wrench}
           label="Tools"
           summary={rep?.job.running ? 'writing Friday report…' : rep?.latest ? `report ${rep.latest}` : 'Friday report'}
-          digest={<Ln label="report" value={rep?.job.running ? 'writing…' : rep?.latest || 'none'} off={!rep?.latest && !rep?.job.running} />}
           open={!!open.tools}
           onToggle={() => flip('tools')}
           collapsed={collapsed}
