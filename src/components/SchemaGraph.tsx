@@ -7,24 +7,10 @@ import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { build, columnNodes, search, split, type Column, type ColumnNode, type Hit, type Kind, type Ref, type Table } from '../dbschema'
+import { build, columnNodes, KINDS, ORDER, search, split, tint as tintOf, type Column, type ColumnNode, type Hit, type Kind, type Ref, type Table } from '../dbschema'
+import { SchemaPanel } from './SchemaPanel'
 import type { DbImpact } from '../types'
 
-// what a column holds, and its dot's colour; in this order round the column spiral, so like sits by like
-const KINDS: Record<Kind, [label: string, tone: string]> = {
-  pk: ['primary key', 'var(--gold)'],
-  fk: ['foreign key', 'var(--cyan)'],
-  text: ['text', 'var(--ink3)'],
-  number: ['number', 'var(--green)'],
-  time: ['time', 'var(--amber)'],
-  json: ['json', 'var(--violet)'],
-  bool: ['bool', 'var(--pink)'],
-  uuid: ['uuid', 'var(--blood)'],
-  array: ['array', 'var(--dim)'],
-  binary: ['binary', 'var(--dim)'],
-  other: ['other', 'var(--dim2)'],
-}
-const ORDER = Object.keys(KINDS) as Kind[]
 // the chosen table's tie to one of its column nodes, and to the table that column's foreign key points at
 type Tie = { t: Table; c: ColumnNode; to?: Table }
 // the same table glyph as the PR's database graph, in a unit box centred on 0
@@ -44,15 +30,13 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
   const found = useMemo(() => search(g.tables, query), [g, query])
   const svgRef = useRef<SVGSVGElement>(null)
   const jump = useRef<(id: string) => void>(() => {})
-  const goRef = useRef<(id: string) => void>(() => {})
   // a column name picked in the column galaxy: every table that has it stays lit, and the panel lists them
   const [colPick, setColPick] = useState('')
   const pickColRef = useRef<(name: string) => void>(() => {})
   pickColRef.current = (name) => setColPick((was) => (was === name ? '' : name))
   const showColumns = useRef<(table: string, cols: Column[]) => void>(() => {})
 
-  // no two schemas share a colour: hues spread round the wheel, as the board's galaxies
-  const tint = (space: string, light = 60) => `hsl(${(g.spaces.indexOf(space) * 360) / Math.max(1, g.spaces.length) + 190} 75% ${light}%)`
+  const tint = (space: string, light = 60) => tintOf(g.spaces, space, light)
 
   useEffect(() => {
     const svg = svgRef.current
@@ -385,13 +369,16 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g])
 
+  // the tables that have the column picked in the column galaxy
+  const pickedTables = useMemo(() => (colPick ? g.tables.filter((t) => t.columns.some((c) => c.name === colPick)) : []), [g, colPick])
+
   // the chosen table, and the tables the search finds, drawn over whatever hover does
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) return
     const root = select(svg)
     const q = query.trim().toLowerCase()
-    const picked = new Set(g.tables.filter((t) => t.columns.some((c) => c.name === colPick)).map((t) => t.id))
+    const picked = new Set(pickedTables.map((t) => t.id))
     root.classed('search', !!q || !!colPick)
     // the chosen table and the tables it has a foreign key to or from stay bright; the rest dim
     const chosen = g.tables.find((t) => t.id === sel)
@@ -400,7 +387,7 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
     root.selectAll<SVGGElement, Table>('g.gnode').classed('sel', (t) => t.id === sel).classed('near', (t) => near.has(t.id)).classed('hit', (t) => found.lit.has(t.id) || picked.has(t.id))
     root.selectAll<SVGGElement, ColumnNode>('g.gcol').classed('hit', (c) => c.name === colPick || (!!q && c.name.includes(q)))
     root.selectAll<SVGLineElement, Placed>('g.links line').classed('sel', (l) => l.source.id === sel || l.target.id === sel)
-  }, [sel, found, query, colPick, g])
+  }, [sel, found, query, colPick, pickedTables, g])
 
   const table = g.tables.find((t) => t.id === sel)
   const cq = colQuery.trim().toLowerCase()
@@ -412,33 +399,10 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
     showColumns.current(sel, shown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel, shownKey, g])
-  // chips for what this table has, and any still switched on
-  const present = (Object.keys(KINDS) as Kind[]).filter((k) => kinds.has(k) || table?.columns.some((c) => c.kind === k))
-  const flip = (k: Kind) =>
-    setKinds((was) => {
-      const now = new Set(was)
-      if (!now.delete(k)) now.add(k)
-      return now
-    })
-  // clusters biggest first, the unclustered last; one jumps to its busiest table
-  const size = (c: string) => g.tables.filter((t) => t.group === c).length
-  const clusters = [...new Set(g.tables.map((t) => t.group))].sort((a, b) => +a.endsWith('/') - +b.endsWith('/') || size(b) - size(a))
-  const Cluster = ({ c }: { c: string }) => {
-    const hub = c.slice(c.indexOf('/') + 1)
-    return hub ? (
-      <button className="cref mono" title={`go to ${hub}, the busiest table in this cluster`} onClick={() => go(hub)}>
-        cluster {split(hub)[1]} · {size(c)}
-      </button>
-    ) : (
-      <span className="mono dim">unclustered · {size(c)}</span>
-    )
-  }
-  const pointedBy = table ? g.tables.filter((t) => t !== table && t.refs.includes(table.id)) : []
   const go = (id: string) => {
     setSel(id)
     jump.current(id)
   }
-  goRef.current = go
   // a column hit opens its table with the column filter set to it, so the spiral and the panel show just that column
   const pick = (h: Hit) => {
     go(h.table)
@@ -533,108 +497,19 @@ export function SchemaGraph({ db }: { db: DbImpact }) {
           </g>
         </svg>
       </div>
-      <aside className="schcols">
-        {colPick && (
-          <div className="schpick">
-            <div className="sub">
-              column <b className="mono">{colPick}</b> · in {g.tables.filter((t) => t.columns.some((c) => c.name === colPick)).length} tables
-              <button className="cref mono" onClick={() => setColPick('')}>
-                clear
-              </button>
-            </div>
-            <div className="tags">
-              {g.tables
-                .filter((t) => t.columns.some((c) => c.name === colPick))
-                .map((t) => (
-                  <button className="tag" key={t.id} onClick={() => go(t.id)} style={{ borderColor: tint(t.space) }}>
-                    {t.id}
-                  </button>
-                ))}
-            </div>
-          </div>
-        )}
-        {table ? (
-          <>
-            <div className="schhead">
-              <em style={{ color: tint(table.space, 70) }}>{table.space}</em>
-              <b>{table.short}</b>
-              <span className="mono">
-                {table.columns.length} columns · {table.degree} foreign keys
-              </span>
-              <Cluster c={table.group} />
-            </div>
-            <div className="schfilter">
-              <div className="search">
-                <input placeholder="filter columns…" value={colQuery} onChange={(e) => setColQuery(e.target.value)} />
-              </div>
-              <div className="tags">
-                {present.map((k) => (
-                  <button className="tag" key={k} aria-pressed={kinds.has(k)} onClick={() => flip(k)}>
-                    <i className="kdot" style={{ background: KINDS[k][1] }} /> {KINDS[k][0]}
-                  </button>
-                ))}
-              </div>
-              {(cq || kinds.size > 0) && (
-                <div className="sub">
-                  {shown.length} of {table.columns.length}
-                  <button className="cref mono" onClick={() => (setColQuery(''), setKinds(new Set()))}>
-                    clear
-                  </button>
-                </div>
-              )}
-            </div>
-            <ul>
-              {shown.map((c) => {
-                const to = c.ref && g.tables.some((t) => t.id === c.ref) ? c.ref : ''
-                return (
-                  <li key={c.name} title={KINDS[c.kind][0]}>
-                    <span className="cn">{c.name}</span>
-                    {c.kind === 'pk' && <span className="ck pk mono">pk</span>}
-                    {to ? (
-                      <button className="cref mono" title={`go to ${to}`} onClick={() => go(to)}>
-                        → {to}
-                      </button>
-                    ) : (
-                      <span className="ct mono">{c.type}</span>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-            {pointedBy.length > 0 && (
-              <>
-                <div className="sub">referenced by</div>
-                <div className="tags">
-                  {pointedBy.map((t) => (
-                    <button className="tag" key={t.id} onClick={() => go(t.id)} style={{ borderColor: tint(t.space) }}>
-                      {t.id}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </>
-        ) : (
-          <div className="schhint">
-            <p>Click a table to see its columns.</p>
-            <div className="sub">schemas</div>
-            {g.spaces.map((s) => (
-              <div key={s}>
-                <div className="schkey">
-                  <i style={{ background: tint(s) }} /> <b>{s}</b> <span className="mono">{g.tables.filter((t) => t.space === s).length}</span>
-                </div>
-                {clusters
-                  .filter((c) => c.startsWith(`${s}/`))
-                  .map((c) => (
-                    <div className="schkey sub2" key={c}>
-                      <Cluster c={c} />
-                    </div>
-                  ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
+      <SchemaPanel
+        g={g}
+        table={table}
+        shown={shown}
+        colQuery={colQuery}
+        onColQuery={setColQuery}
+        kinds={kinds}
+        onKinds={setKinds}
+        colPick={colPick}
+        pickedTables={pickedTables}
+        onClearPick={() => setColPick('')}
+        go={go}
+      />
     </div>
   )
 }

@@ -874,6 +874,8 @@ export default function App() {
               const r = await api(`/api/dbschema?db=${encodeURIComponent(db)}`)
               if (!r.ok) return void notice(await errorText(r), db)
               const schema = await r.json()
+              // nothing to lay out: an empty graph has no size to fit, so say so instead
+              if (!schema.tables?.length) return void notice(`no CREATE TABLE found in ${db}'s .sql files`, db)
               const m = open({ title: `schema of ${db}`, sub: `${schema.tables.length} tables`, wide: true, body: () => <SchemaGraph db={schema} />, foot: [['q', 'close', () => close(m)]] })
               m.keys = { Escape: () => close(m) }
             })

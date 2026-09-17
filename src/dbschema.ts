@@ -13,6 +13,27 @@ export type Ref = SimulationLinkDatum<Table> & { source: Table | string; target:
 
 export type Kind = 'pk' | 'fk' | 'text' | 'number' | 'time' | 'json' | 'bool' | 'uuid' | 'array' | 'binary' | 'other'
 
+// what a column holds, and its colour. The order is the kinds' order everywhere: round the column galaxy, in the
+// filter chips, and for a tie when column names are folded, where a key says more than its type.
+export const KINDS: Record<Kind, [label: string, tone: string]> = {
+  pk: ['primary key', 'var(--gold)'],
+  fk: ['foreign key', 'var(--cyan)'],
+  text: ['text', 'var(--ink3)'],
+  number: ['number', 'var(--green)'],
+  time: ['time', 'var(--amber)'],
+  json: ['json', 'var(--violet)'],
+  bool: ['bool', 'var(--pink)'],
+  uuid: ['uuid', 'var(--blood)'],
+  array: ['array', 'var(--dim)'],
+  binary: ['binary', 'var(--dim)'],
+  other: ['other', 'var(--dim2)'],
+}
+export const ORDER = Object.keys(KINDS) as Kind[]
+
+/** A schema's colour: no two share one, hues spread round the wheel as the board's galaxies. */
+export const tint = (spaces: string[], space: string, light = 60) =>
+  `hsl(${(spaces.indexOf(space) * 360) / Math.max(1, spaces.length) + 190} 75% ${light}%)`
+
 // first match wins: an array of anything is an array before it is its element type
 const TYPES: [Kind, RegExp][] = [
   ['array', /\[\]|^_|\barray\b/],
@@ -159,8 +180,6 @@ export function search(tables: Table[], query: string, limit = 12): { hits: Hit[
 /** A column name in the column galaxy: every table that has one by that name, and the kind most of them are. */
 export type ColumnNode = SimulationNodeDatum & { id: string; name: string; kind: Kind; tables: string[] }
 
-// ties between kinds go to the one listed first: a key says more than its type
-const KIND_ORDER: Kind[] = ['pk', 'fk', 'text', 'number', 'time', 'json', 'bool', 'uuid', 'array', 'binary', 'other']
 
 export function columnNodes(tables: Table[]): ColumnNode[] {
   const by = new Map<string, { tables: string[]; kinds: Map<Kind, number> }>()
@@ -173,7 +192,7 @@ export function columnNodes(tables: Table[]): ColumnNode[] {
   }
   return [...by]
     .map(([name, e]) => {
-      const kind = [...e.kinds].sort((a, b) => b[1] - a[1] || KIND_ORDER.indexOf(a[0]) - KIND_ORDER.indexOf(b[0]))[0][0]
+      const kind = [...e.kinds].sort((a, b) => b[1] - a[1] || ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]))[0][0]
       return { id: `col:${name}`, name, kind, tables: e.tables }
     })
     .sort((a, b) => a.name.localeCompare(b.name))

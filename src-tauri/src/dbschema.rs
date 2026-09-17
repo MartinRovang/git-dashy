@@ -3,8 +3,9 @@
 //! No model: a shallow clone of the DB repo (~/.prs_dbschema/<owner>__<name>) and regexes over its .sql
 //! files. The output has the shape of a review's `db` section, so the pane's DbGraph draws it as is.
 //!
-//! ponytail: files are read in path order and CREATE/ALTER/DROP applied as met, not in true migration
-//! order. Good for a schema kept as one file per table; a repo of numbered migrations sorts right too.
+//! ponytail: files are read in natural path order (`V2__` before `V10__`) and CREATE/ALTER/DROP applied as
+//! met, not by a migration tool's own history. Right for a schema kept as one file per table and for numbered
+//! migrations; a repo that orders them some other way (a manifest, timestamps in a table) is read out of order.
 //! Postgres-flavoured DDL only: ORM models (SQLAlchemy, Prisma) would need their own patterns. A reference
 //! to a table renamed after it was written still names the old table.
 
@@ -69,8 +70,11 @@ const NOT_COLUMN: &[&str] = &[
     "like",
 ];
 
+/// A table or column name as one key: unquoted, lower case, and `public.users` is `users`, Postgres's default schema
+/// (the graph reads an unqualified table as `public` too).
 fn name(s: &str) -> String {
-    s.replace('"', "").to_lowercase()
+    let n = s.replace('"', "").to_lowercase();
+    n.strip_prefix("public.").map(str::to_string).unwrap_or(n)
 }
 
 /// `text[at..]` up to the paren that closes the one just before `at`, and where that ends.
@@ -298,6 +302,52 @@ fn sql_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// ever need reading at the same moment.
 static CHECKOUT: Mutex<()> = Mutex::new(());
 
+/// Runs of digits compare as numbers, the rest as text: `V2__a.sql` sorts before `V10__b.sql`.
+fn natural(s: &str) -> Vec<(u8, u128, String)> {
+    static RUNS: LazyLock<Regex> = LazyLock::new(|| re(r"\d+|\D+"));
+    RUNS.find_iter(s)
+        .map(|m| match m.as_str().parse::<u128>() {
+            Ok(n) => (0, n, String::new()),
+            Err(_) => (1, 0, m.as_str().to_string()),
+        })
+        .collect()
+}
+
+/// Every .sql file under `dir`, in natural path order, parsed.
+fn read(dir: &Path) -> Value {
+    let mut paths = Vec::new();
+    sql_files(dir, &mut paths);
+    paths.sort_by_cached_key(|p| natural(&p.to_string_lossy()));
+    let files: Vec<String> = paths
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    parse(&files)
+}
+
+/// A shallow checkout of `url` at `dir`, fresh: fetched and reset when it is there, cloned when it is not, and
+/// cloned again when a fetch fails on a checkout that is corrupt or was cut off half-way.
+fn checkout(url: &str, dir: &Path) -> Result<(), String> {
+    let d = dir.to_string_lossy().to_string();
+    let auth = github::git_auth();
+    let run = |cmd: &[&str]| {
+        let o = team::remote(cmd, Some(&auth), Some(team::CLONE_TIMEOUT));
+        if o.ok() {
+            Ok(())
+        } else {
+            Err(o.last_line())
+        }
+    };
+    if dir.join(".git").is_dir()
+        && run(&["git", "-C", &d, "fetch", "--depth", "1", "origin"]).is_ok()
+        && run(&["git", "-C", &d, "reset", "--hard", "FETCH_HEAD"]).is_ok()
+    {
+        return Ok(());
+    }
+    let _ = std::fs::remove_dir_all(dir);
+    run(&["git", "clone", "--depth", "1", url, &d])
+}
+
 /// Clone or refresh `db` (owner/name), then parse it. Err says why not.
 pub fn get(db: &str) -> Result<Value, String> {
     let k = bind::key(db);
@@ -307,33 +357,9 @@ pub fn get(db: &str) -> Result<Value, String> {
     let dir = crate::config::home()
         .join(".prs_dbschema")
         .join(k.replace('/', "__"));
-    let d = dir.to_string_lossy().to_string();
     let _held = CHECKOUT.lock().unwrap_or_else(|e| e.into_inner());
-    let auth = github::git_auth();
-    let url = format!("{}{k}.git", github::GITHUB);
-    let steps: Vec<Vec<&str>> = if dir.join(".git").is_dir() {
-        vec![
-            vec!["git", "-C", &d, "fetch", "--depth", "1", "origin"],
-            vec!["git", "-C", &d, "reset", "--hard", "FETCH_HEAD"],
-        ]
-    } else {
-        let _ = std::fs::remove_dir_all(&dir);
-        vec![vec!["git", "clone", "--depth", "1", &url, &d]]
-    };
-    for s in steps {
-        let o = team::remote(&s, Some(&auth), Some(team::CLONE_TIMEOUT));
-        if !o.ok() {
-            return Err(format!("{k}: {}", o.last_line()));
-        }
-    }
-    let mut paths = Vec::new();
-    sql_files(&dir, &mut paths);
-    paths.sort();
-    let files: Vec<String> = paths
-        .iter()
-        .filter_map(|p| std::fs::read_to_string(p).ok())
-        .collect();
-    Ok(parse(&files))
+    checkout(&format!("{}{k}.git", github::GITHUB), &dir).map_err(|e| format!("{k}: {e}"))?;
+    Ok(read(&dir))
 }
 
 #[cfg(test)]
@@ -440,5 +466,85 @@ CREATE TABLE copy AS SELECT * FROM analytics;"#
         let mut found = Vec::new();
         sql_files(d.path(), &mut found);
         assert_eq!(found, [d.path().join("schema/users.sql")]);
+    }
+
+    #[test]
+    fn public_is_the_default_schema() {
+        let v = parse(&["CREATE TABLE users (id int);
+             ALTER TABLE public.users ADD COLUMN email text;
+             CREATE TABLE auth.users (id int);
+             CREATE TABLE posts (author int REFERENCES public.users (id));"
+            .to_string()]);
+        let t = |n: &str| {
+            v["tables"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == n)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(v["tables"].as_array().unwrap().len(), 3);
+        assert_eq!(t("users")["columns"].as_array().unwrap().len(), 2);
+        // exact beats the last-part match, which would have picked auth.users (it sorts first)
+        assert_eq!(t("posts")["refs"], json!(["users"]));
+    }
+
+    #[test]
+    fn migrations_apply_in_natural_order() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("V2__create.sql"),
+            "CREATE TABLE gone (x int); CREATE TABLE kept (x int);",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("V10__drop.sql"), "DROP TABLE gone;").unwrap();
+        assert_eq!(
+            read(d.path())["tables"],
+            json!([{"name": "kept", "change": "", "refs": [], "columns": [{"name": "x", "change": "", "note": "int", "key": "", "ref": ""}]}])
+        );
+    }
+
+    /// The whole allowed path against a local repo: a clone, a fetch that sees a new commit, and a broken checkout
+    /// cloned again rather than failing every click after it.
+    #[test]
+    fn checkout_clones_refreshes_and_recovers() {
+        let git = |dir: &Path, args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-C"])
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        };
+        let origin = tempfile::tempdir().unwrap();
+        git(origin.path(), &["init", "-q"]);
+        std::fs::write(origin.path().join("a.sql"), "CREATE TABLE a (x int);").unwrap();
+        git(origin.path(), &["add", "."]);
+        git(origin.path(), &["commit", "-qm", "a"]);
+        let url = format!("file://{}", origin.path().display());
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("acme__schema");
+        let names = || {
+            read(&dir)["tables"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(checkout(&url, &dir), Ok(()));
+        assert_eq!(names(), ["a"]);
+        std::fs::write(origin.path().join("b.sql"), "CREATE TABLE b (x int);").unwrap();
+        git(origin.path(), &["add", "."]);
+        git(origin.path(), &["commit", "-qm", "b"]);
+        assert_eq!(checkout(&url, &dir), Ok(()));
+        assert_eq!(names(), ["a", "b"]);
+        std::fs::write(dir.join(".git/HEAD"), "garbage").unwrap();
+        assert_eq!(checkout(&url, &dir), Ok(()));
+        assert_eq!(names(), ["a", "b"]);
+        assert!(checkout("file:///nowhere/at/all", &home.path().join("x")).is_err());
     }
 }
