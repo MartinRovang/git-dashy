@@ -83,6 +83,10 @@ shows a **Cast ▸** entry with a dropdown of the **equipped** spells. It is hid
 - Everything else is a normal review run: model/depth/effort, memory brief, DB repo, posting/holding rules, log,
   held queue. The review HELLO line names the spell being cast.
 
+## Icons
+
+Every spell, passive and voice shows an icon wherever it is listed: in the book, the sidebar and the menu. For now these are placeholder Lucide icons, one per kind (spell, passive, voice). Real per-item icons come later.
+
 ## Errors
 
 - Casting with no PR selected: the controls are disabled, and the server does not guess.
