@@ -1,13 +1,11 @@
 // The Necronomicon: the reviewer's abilities as a book. Spells are cast once on a PR, passives (hunters) and voices
 // ride along on every review. Spells are markdown files in ~/.prs_spells; passives and voices are built in. The book
-// only equips them, and casts spells.
+// only equips them.
 //
 // ponytail: everything the pages say comes from /api/spells. This page holds none of that text.
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { modalCount } from '../modals'
-import type { Row } from '../types'
-import { canCastOn } from '../board'
 import { Check } from 'lucide-react'
 import { Glyph } from './Glyph'
 
@@ -38,15 +36,7 @@ function Tick({ on }: { on: boolean }) {
   return <span className={`ntick${on ? ' on' : ''}`}>{on ? <Check size={14} strokeWidth={3} aria-hidden /> : null}</span>
 }
 
-export function Necronomicon({
-  selected,
-  onCast,
-  setting,
-}: {
-  selected: Row | null
-  onCast: (p: Row, spell: string) => void
-  setting: (name: string, value: unknown) => Promise<void>
-}) {
+export function Necronomicon({ setting }: { setting: (name: string, value: unknown) => Promise<void> }) {
   const [book, reload] = useBook()
   const [ch, setCh] = useState(0)
 
@@ -66,7 +56,6 @@ export function Necronomicon({
   const lists = [book.spells, book.passives, book.voices]
   const [title, key, kind] = CHAPTERS[ch]
   const list = lists[ch]
-  const canCast = !!selected && canCastOn(selected)
   const flip = async (name: string) => {
     const on = list.filter((x) => x.on).map((x) => x.name)
     await setting(key, on.includes(name) ? on.filter((n) => n !== name) : [...on, name])
@@ -79,7 +68,6 @@ export function Necronomicon({
       <div className="ncover">
         <div className="nhead">
           <span className="ntitle">Necronomicon</span>
-          <span className="nsub">{selected ? `open on #${selected.number} ${selected.repo}` : 'no PR selected'}</span>
         </div>
         <div className="nspread">
           <div className="npage left">
@@ -113,16 +101,6 @@ export function Necronomicon({
                         <b>{b.name}</b>
                         <p>{b.about}</p>
                       </button>
-                      {kind === 'spell' ? (
-                        <button
-                          className="btn ncast"
-                          disabled={!canCast}
-                          title={canCast ? `cast ${b.name} on #${selected!.number}` : 'select a PR waiting for your review'}
-                          onClick={() => selected && onCast(selected, b.name)}
-                        >
-                          cast on {canCast ? `#${selected!.number}` : 'a PR waiting on you'}
-                        </button>
-                      ) : null}
                     </li>
                   ))}
                 </ul>

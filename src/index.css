@@ -330,7 +330,6 @@
   .nhead { display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; margin: 0 4px 14px; }
   .ntitle { flex-shrink: 0; font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: .12em; font-variant: small-caps;
             color: var(--gold); text-shadow: 0 1px 0 #000, 0 0 12px color-mix(in srgb, var(--gold) 35%, transparent); }
-  .nsub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--ink2); opacity: .8; }
   .nspread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-radius: 4px; overflow: hidden;
              box-shadow: 0 0 0 1px var(--bg), 0 4px 12px rgba(0,0,0,.5); }
   .npage { position: relative; min-height: 60vh; padding: 26px 34px 30px; color: var(--ink); font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
@@ -365,8 +364,6 @@
           /* black, see-through enough that the sigil still shows behind it */
           background: rgba(0,0,0,.6);
           box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-  .ncard:hover { border-color: var(--gold); }
-  .ncast { margin-top: 6px; align-self: center; }
   /* equipped is the tint and the tick; no ring, and a click leaves no focus outline (the keyboard still gets one) */
   .ncard:focus:not(:focus-visible) { outline: none; }
   .nbuilt li.on .ncard { background: linear-gradient(160deg, color-mix(in srgb, var(--gold) 18%, rgba(0,0,0,.6)), rgba(0,0,0,.6)); }

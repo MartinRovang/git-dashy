@@ -825,7 +825,7 @@ export default function App() {
           <div className="body">
             <div className="queue">
               {view === 'necronomicon' ? (
-                <Necronomicon selected={current || null} onCast={(p, spell) => void cast(p, spell)} setting={setting} />
+                <Necronomicon setting={setting} />
               ) : view === 'graph' ? (
                 <Graph
                   // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
