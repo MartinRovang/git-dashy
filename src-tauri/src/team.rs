@@ -1571,7 +1571,7 @@ Where it lands is the flag you pass:
 | | goes to |
 |---|---|
 | `gitdashy remember \"...\"` | this repo: the team's drafts when the repo is bound to a team, yours when not |
-| `--general` | the whole project: every repo the team covers (in a repo bound to no team, it stays with that repo) |
+| `--general` | the whole project: every repo the team covers (in a repo bound to no team, it stays with that repo; outside any repo, your own general file) |
 | `--private` | yours, not the team's: a half-formed thought you are not ready to show |
 | `--private --general` | how *you* work: a habit or preference true in any repo, read in every session. Never a project's rule |
 
@@ -2081,6 +2081,19 @@ mod tests {
             }
             assert!(text.contains("Never a project's rule"), "{name}");
         }
+        // and the same table in both, row for row: a destination changed in one copy only is a session told
+        // two different things depending on which file it read
+        let table = |text: &str| {
+            let at = text
+                .find("Where it lands is the flag you pass:")
+                .expect("the table's lead-in");
+            let end = text[at..]
+                .find("where it is wrong.")
+                .expect("the table's closing line")
+                + at;
+            text[at..end].to_string()
+        };
+        assert_eq!(table(AGENTS_TEMPLATE), table(corpus));
     }
 
     #[test]
