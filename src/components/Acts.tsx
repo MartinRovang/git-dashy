@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
 import { isReviewed } from '../board'
+import { clean } from '../dbgraph'
 
 export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
@@ -32,6 +33,7 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
       'pre',
     ])
   if (d?.review) out.push(['v', '', 'Read the full review', d.review.model, false, 'view'])
+  if (d?.review?.db && clean(d.review.db).tables.length) out.push(['B', '', 'View the database graph', 'tables it touches', false, 'db'])
   out.push(['2', '', 'View the code', 'diff and marks', false, 'code'])
   out.push(['o', '', 'Open in browser', 'github', false, 'open'])
   out.push(['y', '', 'Copy the URL', 'clipboard', false, 'copy'])

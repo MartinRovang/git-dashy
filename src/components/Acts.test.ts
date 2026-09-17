@@ -112,4 +112,11 @@ describe('acts: what one PR offers', () => {
     const d = { url: 'https://x/1', review: { model: 'opus' } } as unknown as Detail
     expect(keys(row(), d)).toContain('view')
   })
+
+  it('offers the database graph only when the detail has a table to draw', () => {
+    const d = (db: unknown) => ({ url: 'https://x/1', review: { db } }) as unknown as Detail
+    expect(keys(row())).not.toContain('db')
+    expect(keys(row(), d({ tables: [], risks: [{ text: 'x' }] }))).not.toContain('db')
+    expect(keys(row(), d({ tables: [{ name: 'users', change: 'altered' }] }))).toContain('db')
+  })
 })

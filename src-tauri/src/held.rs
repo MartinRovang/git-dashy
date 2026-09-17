@@ -41,6 +41,9 @@ pub struct Held {
     /// not under whatever the repo is bound to by then.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub team: String,
+    /// The DB repo the review was allowed to read, "" for none. Resumed under, like `team`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub db: String,
     /// The discussion so far, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thread: Vec<Turn>,
@@ -169,7 +172,7 @@ mod tests {
     use crate::types::{Login, Repository};
 
     fn fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
-        let g = crate::autorev::test_lock();
+        let g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.held_dir = d.path().join("held"));
         (g, d)

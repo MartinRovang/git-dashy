@@ -3,12 +3,15 @@ import { api, copyText, errorText, post } from './api'
 import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
+import { Necronomicon, NextLearn } from './components/Necronomicon'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { ReviewTalk } from './components/ReviewTalk'
 import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
+import { DbGraph } from './components/DbGraph'
+import { clean } from './dbgraph'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
@@ -37,8 +40,8 @@ export default function App() {
   const [showHidden, setShowHidden] = useState(false)
   // ponytail: session-only like the rest of the filter row; a setting if people want it to survive a launch
   const [only, setOnly] = useState<Only>(NOBODY)
-  // ponytail: the rail shuts to a 106px digest rather than disappearing. A hidden sidebar makes the
-  // settings unreachable without remembering a key; a narrow one still answers "which model".
+  // ponytail: the rail shuts to a 52px icon column rather than disappearing. A hidden sidebar makes the
+  // settings unreachable without remembering a key; the icons keep them one click away, with a dot for a hold.
   const [railShut, setRailShut] = useState(false)
   const [help, setHelp] = useState(false)
   /** Ask who, then follow them. The footer button and the rail's View group both call it. */
@@ -89,6 +92,7 @@ export default function App() {
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({})
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
+  const paneBefore = useRef(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [diff, setDiff] = useState<Code | null>(null)
@@ -103,12 +107,17 @@ export default function App() {
   const [refetchFrom, setRefetchFrom] = useState<number | null>(null)
   // f was pressed: the ticks count that answers it (Infinity until the POST says), and the ⟳ spins till then
   const [pressed, setPressed] = useState<number | null>(null)
-  const [view, setView] = useState<'board' | 'graph'>('board')
+  const [view, setView] = useState<'board' | 'graph' | 'necronomicon'>('board')
   // the filter row lives in the queue, so the graph would draw a filtered subset with no way to see
   // or clear it. What gets cleared is forView()'s to say, and tested there; applied in the same
   // update as the switch so the graph lays out once and not twice.
-  const show = (v: 'board' | 'graph') => {
+  const show = (v: 'board' | 'graph' | 'necronomicon') => {
     setView(v)
+    // the book wants the width: shut the right pane when it opens, and give it back as it was on the way out
+    if (v === 'necronomicon' && view !== 'necronomicon') {
+      paneBefore.current = pane
+      setPane(false)
+    } else if (v !== 'necronomicon' && view === 'necronomicon') setPane(paneBefore.current)
     const f = forView(v, { query, failing, drafts: onlyDrafts, hidden: showHidden, bucket })
     setQuery(f.query)
     setFailing(f.failing)
@@ -205,6 +214,8 @@ export default function App() {
   // the top of the new queue, and marking that read is a claim you looked at it.
   useEffect(() => {
     if (current && chosen) markRead([current])
+    // markRead is a new function every render: listing it would run this after every render, not on a pick
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, chosen])
 
   useEffect(() => {
@@ -455,6 +466,7 @@ export default function App() {
             }
           />
         ),
+        foot: [['Esc', 'close', () => close(m)]],
       })
       m.keys = { Escape: () => close(m), y: copy }
       return
@@ -599,6 +611,13 @@ export default function App() {
         if (detail?.url === p.url && detail.review)
           viewer(`review of #${p.number}`, detail.review.text, `${detail.review.model} ${detail.review.tag}`)
       },
+      db: () => {
+        // same rule as view: the detail, and so the db, belongs to the selected PR
+        if (detail?.url !== p.url || !detail.review?.db || !clean(detail.review.db).tables.length) return
+        const db = detail.review.db
+        const m = open({ title: `database of #${p.number}`, sub: p.repo, wide: true, body: () => <DbGraph db={db} number={p.number} />, foot: [['q', 'close', () => close(m)]] })
+        m.keys = { Escape: () => close(m) }
+      },
       code: () => {
         setSel(p.uid)
         openCode()
@@ -697,11 +716,12 @@ export default function App() {
     if (k === 'b' && p) return one(() => void bindScreen(p))
     if (k === 'Y' && p?.waiting) return one(() => void waitingScreen(p))
     if ((k === '2' || k === 'Tab') && p) return one(openCode)
-    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : 'board'))
+    if (k === 'G') return one(() => show(view === 'board' ? 'graph' : view === 'graph' ? 'necronomicon' : 'board'))
     if (k === 'T') return one(() => void teamsScreen(ctx, p))
     if (k === 'L' || k === 'C') return one(() => void setPath(ctx, k))
     if (k === 'u') return one(onUpdate)
     if (k === 'v') return one(() => doAct('view'))
+    if (k === 'B') return one(() => doAct('db'))
     if (k === 'r' && p) return one(() => void review(p))
     if (k === 'R' && p) return one(() => reviewWith(p))
     if (k === 'Enter') return one(() => setPane((v) => !v))
@@ -761,7 +781,6 @@ export default function App() {
           onAuto={onAuto}
           onFollow={followSomeone}
           onFollowScope={followScope}
-          followed={followed.length}
           onFollowOwner={(repo) =>
             // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
             void (async () => {
@@ -788,6 +807,13 @@ export default function App() {
             )
           }
           onAskAgain={onAskAgain}
+          onDb={(op, target, db) =>
+            void call(
+              '/api/dbrepo',
+              { op, target, db },
+              op === 'clear' ? `${target}: DB repo rule removed` : `${target}: DB repo ${db || 'none'}`,
+            )
+          }
           onReport={(op) => void call('/api/report', { op }, op === 'start' ? 'writing the Friday report…' : undefined)}
           collapsed={railShut}
           onCollapse={() => setRailShut((v) => !v)}
@@ -795,7 +821,9 @@ export default function App() {
         <div className="main">
           <div className="body">
             <div className="queue">
-              {view === 'graph' ? (
+              {view === 'necronomicon' ? (
+                <Necronomicon />
+              ) : view === 'graph' ? (
                 <Graph
                   // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
                   // filter with nothing on screen to see or clear it — the reason show() wipes the rest
@@ -884,6 +912,7 @@ export default function App() {
           + follow
         </button>
         <div style={{ flex: 1 }} />
+        {data?.knowledge.learn ? <NextLearn at={data.knowledge.learn.next} running={data.knowledge.learn.running} onOpen={() => show('necronomicon')} /> : null}
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>

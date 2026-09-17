@@ -71,6 +71,8 @@ pub fn fetched(scope: &str) -> bool {
         .any(|s| s == scope)
 }
 pub const SCOPE_TEAM: &str = "PRS_API_TEAM";
+/// The DB repo a review may also read, "" for none. See dbrepo.rs.
+pub const SCOPE_DB: &str = "PRS_API_DB";
 pub const SECTIONS: &[(&str, &str)] = &[
     ("MINE", "is:open author:{me}"),
     ("REVIEW REQUESTED", "is:open review-requested:{me}"),
@@ -123,7 +125,7 @@ pub fn repo_of(path: &str) -> String {
 /// prompt can say that widens it, and nothing to keep in step with the --allowedTools pattern.
 /// ponytail: "" means unscoped, which is a person at a terminal. Their own `gitdashy api /user/repos`
 /// is not the threat and refusing it would only teach them to work around this.
-pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
+pub fn scoped(path: &str, repo: &str, team: &str, db: &str) -> Result<String, String> {
     if repo.is_empty() {
         return Ok(path.to_string());
     }
@@ -172,6 +174,14 @@ pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
             return Ok(p);
         }
     }
+    // and the DB repo a person pointed this repo at: the same exact-key check, against one name
+    if !db.is_empty() {
+        let other = repo_of(head);
+        if !other.is_empty() && crate::bind::key(&other) == other.to_lowercase() && other.to_lowercase() == db
+        {
+            return Ok(p);
+        }
+    }
     // ponytail: search stays on the repo under review even when reads are wider. Several repo: qualifiers
     // would have to OR for that to be safe, and leaning a boundary on GitHub's query semantics is what
     // the refusal loop below already declines to do. A sibling is read by path, not searched.
@@ -185,11 +195,14 @@ pub fn scoped(path: &str, repo: &str, team: &str) -> Result<String, String> {
             "a review may only search code, in {repo}: {head} is not /search/code"
         ));
     }
-    let bound = if team.is_empty() {
+    let mut bound = if team.is_empty() {
         String::new()
     } else {
         format!(" and the repos bound to {team}")
     };
+    if !db.is_empty() {
+        bound += &format!(" and its DB repo {db}");
+    }
     Err(format!(
         "a review may only read {repo}{bound}, and {head} is outside it"
     ))
@@ -388,6 +401,11 @@ pub fn gql(query: &str, timeout_secs: u64) -> Result<serde_json::Value, Error> {
 }
 
 static ME: Mutex<String> = Mutex::new(String::new());
+
+/// Your login if a fetch has already asked for it, "" before. Never goes to the network.
+pub fn me_cached() -> String {
+    ME.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// Your login, cached for the process.
 /// ponytail: `@me` is gh/UI sugar the API does not resolve, so the search needs the name.
@@ -699,6 +717,63 @@ pub fn collaborators(repo: &str) -> Vec<String> {
         .map(|c| c.get("login").and_then(Value::as_str).map(String::from))
         .collect();
     logins.unwrap_or_default()
+}
+
+static MY_REPOS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// `owner/name` of every repo you own, collaborate on or reach through an org, most recently pushed first.
+/// [] when they cannot be listed (offline, no token).
+/// ponytail: cached for the process once a listing succeeds, and capped at 1000; a repo made after launch
+/// shows after a restart. Refetch on a timer if that bites.
+pub fn my_repos() -> Vec<String> {
+    if config::get().demo {
+        return [
+            "acme/api",
+            "acme/web",
+            "acme/db",
+            "acme/infra",
+            "tools/cli",
+            "tools/docs",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    }
+    let mut cache = MY_REPOS.lock().unwrap_or_else(|e| e.into_inner());
+    if !cache.is_empty() {
+        return cache.clone();
+    }
+    let mut repos = Vec::new();
+    let mut after = String::new();
+    for _ in 0..10 {
+        let cursor = if after.is_empty() {
+            String::new()
+        } else {
+            format!(", after: {}", json!(after))
+        };
+        let query = format!(
+            "{{ viewer {{ repositories(first: 100{cursor}, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], \
+             ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], orderBy: {{field: PUSHED_AT, direction: DESC}}) \
+             {{ nodes {{ nameWithOwner }} pageInfo {{ hasNextPage endCursor }} }} }} }}"
+        );
+        let Ok(data) = gql(&query, 30) else {
+            return repos;
+        };
+        let page = &data["viewer"]["repositories"];
+        repos.extend(
+            page["nodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n["nameWithOwner"].as_str().map(String::from)),
+        );
+        match page["pageInfo"]["endCursor"].as_str() {
+            Some(c) if page["pageInfo"]["hasNextPage"].as_bool() == Some(true) => after = c.to_string(),
+            _ => break,
+        }
+    }
+    *cache = repos.clone();
+    repos
 }
 
 /// Ask login to review PR number; the error text, or "" on success.
@@ -1081,22 +1156,37 @@ pub fn comment(repo: &str, number: u64, body: &str) -> Result<(), Error> {
     .map(|_| ())
 }
 
-/// xdg-open / open / start, waited on off-thread so no zombie is left per open.
+/// The desktop's own opener, through the plugin this app already ships with.
+///
+/// ponytail: no longer a command line of our own. The Windows arm was `cmd /c start "" <url>`, and
+/// cmd re-parses what it is handed: an `&` in a URL ended the command and started another one. The
+/// plugin hands the string to ShellExecuteW instead, so on Windows there is no command line to parse
+/// at all; on Linux it still tries xdg-open first, then gio, gnome-open and kde-open.
+///
+/// ponytail: still off this thread. The macOS path waits for `open` to return, and every caller here
+/// is a row's keypress, a popup's button or the launch of the GUI — none of them may block on a
+/// browser. The plugin reaps whatever it starts, so nothing is left behind either (#124).
 pub fn open_in_browser(url: &str) {
-    let mut cmd = if cfg!(target_os = "macos") {
-        Command::new("open")
-    } else if cfg!(target_os = "windows") {
-        let mut c = Command::new("cmd");
-        c.args(["/c", "start", ""]);
-        c
-    } else {
-        Command::new("xdg-open")
-    };
-    if let Ok(mut child) = cmd.arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-    }
+    let url = url.to_string();
+    std::thread::spawn(move || {
+        if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+            log::warn!("could not open {url}: {e}");
+        }
+    });
+}
+
+/// A file this app wrote, opened with whatever the desktop uses for it.
+///
+/// ponytail: the path half of the same door. Both land in the same launcher, but this one stats the
+/// file first, so a report that has been deleted says so in one line instead of arriving at the
+/// desktop as a path to nothing.
+pub fn open_file(path: &std::path::Path) {
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        if let Err(e) = tauri_plugin_opener::open_path(&path, None::<&str>) {
+            log::warn!("could not open {}: {e}", path.display());
+        }
+    });
 }
 
 const CLIPBOARDS: &[&[&str]] = &[
@@ -1283,9 +1373,9 @@ mod tests {
                 "/repos/acme/api/contents/x.py?ref=feat",
             ),
         ] {
-            assert_eq!(scoped(path, "acme/api", "").unwrap(), want);
+            assert_eq!(scoped(path, "acme/api", "", "").unwrap(), want);
         }
-        assert_eq!(scoped("/user/repos", "", "").unwrap(), "/user/repos");
+        assert_eq!(scoped("/user/repos", "", "", "").unwrap(), "/user/repos");
     }
 
     #[test]
@@ -1299,19 +1389,45 @@ mod tests {
             "/search/repositories?q=acme",
             "/gists",
         ] {
-            let err = scoped(path, "acme/api", "").unwrap_err();
+            let err = scoped(path, "acme/api", "", "").unwrap_err();
             assert!(err.contains("acme/api"), "{err}");
         }
-        assert!(scoped("/search/repositories?q=acme", "acme/api", "")
+        assert!(scoped("/search/repositories?q=acme", "acme/api", "", "")
             .unwrap_err()
             .contains("not /search/code"));
         let err = scoped(
             "/repos/acme/shared-lib/contents/x.py",
             "acme/api",
             "acme/platform",
+            "",
         )
         .unwrap_err();
         assert!(err.contains("bound to acme/platform") && err.contains("outside it"));
+    }
+
+    #[test]
+    fn scoped_lets_the_db_repo_through_and_nothing_beside_it() {
+        assert!(scoped(
+            "/repos/acme/schema/contents/001.sql",
+            "acme/api",
+            "",
+            "acme/schema"
+        )
+        .is_ok());
+        assert!(scoped("/repos/Acme/Schema/git/trees/main", "acme/api", "", "acme/schema").is_ok());
+        // the bare repo, which the prompt tells the model to start with
+        assert!(scoped("/repos/acme/schema", "acme/api", "", "acme/schema").is_ok());
+        assert!(scoped("/repos/acme/other", "acme/api", "", "acme/schema")
+            .unwrap_err()
+            .contains("its DB repo acme/schema"));
+        for path in [
+            "/repos/acme/schema-secrets/contents/x",
+            "/repos/acme/schema.git/contents/x",
+            "/repos/acme/other/contents/x",
+        ] {
+            assert!(scoped(path, "acme/api", "", "acme/schema").is_err(), "{path}");
+        }
+        assert!(scoped("/repos/acme/schema/contents/x", "acme/api", "", "").is_err());
     }
 
     #[test]
@@ -1326,14 +1442,14 @@ mod tests {
             "/repos/acme/api%2f..%2fother",
             "/repos/acme/api/..%5c..%5cuser",
         ] {
-            assert!(scoped(path, "acme/api", "acme-platform")
+            assert!(scoped(path, "acme/api", "acme-platform", "")
                 .unwrap_err()
                 .contains(".."));
         }
     }
 
     fn q(path: &str) -> String {
-        let got = scoped(path, "acme/api", "").unwrap();
+        let got = scoped(path, "acme/api", "", "").unwrap();
         parse_qsl(got.split_once('?').unwrap().1)
             .into_iter()
             .find(|(k, _)| k == "q")
@@ -1355,14 +1471,16 @@ mod tests {
             "/search/code?q=x+org:victim",
             "/search/code?q=x+owner:victim",
         ] {
-            assert!(scoped(hostile, "acme/api", "").unwrap_err().contains("acme/api"));
+            assert!(scoped(hostile, "acme/api", "", "")
+                .unwrap_err()
+                .contains("acme/api"));
         }
         for empty in ["/search/code?q=", "/search/code", "/search/code?q=repo:acme/api"] {
-            assert!(scoped(empty, "acme/api", "")
+            assert!(scoped(empty, "acme/api", "", "")
                 .unwrap_err()
                 .contains("something to search for"));
         }
-        let got = scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api", "").unwrap();
+        let got = scoped("/search/code?q=parseToken&per_page=5&page=2", "acme/api", "", "").unwrap();
         assert!(got.contains("per_page=5") && got.contains("page=2") && got.contains("repo%3Aacme%2Fapi"));
         assert_eq!(
             got,

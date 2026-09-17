@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, diff, github, held, install, knowledge, log as review_log, memory, report, review,
-    story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, necro,
+    report, review, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -169,6 +169,7 @@ pub fn payload(state: &State) -> Value {
                 "reviewAt": review_at,
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
+                "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.
@@ -183,6 +184,8 @@ pub fn payload(state: &State) -> Value {
     let scopes = github::scope_options(&cfg.scopes, &sections, &names, &repos, &owners);
     json!({
         "version": config::VERSION,
+        // your login, so the board can set your own PRs apart; "" until the first fetch has asked
+        "me": if cfg.demo { "alice".to_string() } else { github::me_cached() },
         "sections": out,
         "fetchedAt": fetched_at,
         "interval": cfg.interval,
@@ -198,6 +201,7 @@ pub fn payload(state: &State) -> Value {
         // every posting rule on this machine, so the rail can show the whole picture rather than
         // one repo's answer with no way to see what else is set
         "postingRules": posting_rules_json(&board_repos(&sections)),
+        "dbRules": dbrepo::rules().listed().into_iter().map(|(t, db)| json!({"target": t, "db": db})).collect::<Vec<_>>(),
         "pending": pending,
         "model": cfg.model,
         "running": busy.len(),
@@ -208,6 +212,7 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": config::THEMES,
                     "scopes": scopes},
         "knowledge": {
+            "learn": {"next": necro::next(), "running": job("learn")["running"]},
             "report": {
                 "job": job("report"),
                 "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
@@ -234,6 +239,18 @@ fn pre_json((at, moved): (f64, bool)) -> Value {
     } else {
         Value::Null
     }
+}
+
+/// The review found the PR changes the database: a table added, altered or dropped, or a risk. A PR that only
+/// reads and writes rows is ordinary code and gets no mark.
+fn changes_db(r: &LogEntry) -> bool {
+    let Some(db) = &r.db else { return false };
+    let changed = db["tables"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|t| matches!(t["change"].as_str(), Some("added" | "altered" | "dropped")));
+    changed || db["risks"].as_array().is_some_and(|a| !a.is_empty())
 }
 
 /// The newest review of this PR: the row's own on a REVIEWED row, else the log's.
@@ -289,6 +306,7 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
             "tag": review_log::tag(rev),
             "at": rev.at,
             "findings": entry_findings(rev),
+            "db": rev.db,
             "text": if rev.pr.url.is_empty() { rev.body.clone() } else { review_log::detail(rev) },
         })),
     })
@@ -807,6 +825,41 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
         })
         .collect();
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
+}
+
+/// The Necronomicon: its ranked points, the learn job, and what memory is still learning.
+fn get_necronomicon(_state: &State, _q: &Query) -> Out {
+    let learning: Vec<Value> = memory::waiting()
+        .into_iter()
+        .map(|(repo, n, fact, kind)| json!({"repo": repo, "n": n, "fact": fact, "kind": kind}))
+        .collect();
+    let mut out = necro::view();
+    out["job"] = job("learn");
+    out["promoteAt"] = json!(memory::PROMOTE_AT);
+    out["learning"] = json!(learning);
+    Ok(out)
+}
+
+/// `learn` starts a learn now; `up`/`down` raise or derank one point.
+fn post_necronomicon(_state: &State, body: &Body) -> Out {
+    let op = text(body, "op");
+    if op == "learn" {
+        start_learn();
+        return Ok(json!({"ok": true}));
+    }
+    if op == "up" || op == "down" {
+        if !necro::rank(&text(body, "scope"), &text(body, "text"), op == "up") {
+            return Err(Fail::new(404, "no such point; learn may have rewritten it"));
+        }
+        return Ok(json!({"ok": true}));
+    }
+    Err(Fail::new(400, "op must be learn, up or down"))
+}
+
+/// Learn in the background; a second start while one runs does nothing.
+fn start_learn() {
+    let model = config::get().model;
+    start_job("learn", move || necro::learn(&model));
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
@@ -1645,6 +1698,17 @@ fn post_bind(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Point a repo or an owner (`acme/*`) at its DB repo, or take that rule away. See dbrepo.rs.
+fn post_dbrepo(_state: &State, body: &Body) -> Out {
+    let target = text(body, "target");
+    fail_if(match text(body, "op").as_str() {
+        "set" => dbrepo::set(&target, &text(body, "db")),
+        "clear" => dbrepo::clear(&target),
+        _ => return Err(Fail::new(400, "op must be set or clear")),
+    })?;
+    Ok(json!({"ok": true}))
+}
+
 /// Set what happens to a repo's or an owner's reviews, or release one that is waiting.
 fn post_posting(state: &State, body: &Body) -> Out {
     // ponytail: `owner` carries the owner NAME, like /api/auto, not a flag meaning "read `repo` through
@@ -1751,7 +1815,7 @@ fn post_report(_state: &State, body: &Body) -> Out {
         }
         "open" => {
             let path = report::latest().ok_or_else(|| Fail::new(404, "no report yet"))?;
-            github::open_in_browser(&path.to_string_lossy());
+            github::open_file(&path);
             Ok(json!({"ok": true}))
         }
         _ => Err(Fail::new(400, "op must be start or open")),
@@ -2135,6 +2199,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/memory" => get_memory,
         "/api/memory/files" => get_memory_files,
         "/api/drafts" => get_drafts,
+        "/api/necronomicon" => get_necronomicon,
         "/api/overlaps" => get_overlaps,
         "/api/share" => get_share,
         "/api/teams" => get_teams,
@@ -2144,6 +2209,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/dream" => get_dream,
         "/api/collaborators" => get_collaborators,
         "/api/story" => get_story,
+        "/api/repos" => |_, _| Ok(json!({"repos": github::my_repos()})),
         "/api/stories" => |_, _| Ok(json!({"follow": story::followed()})),
         "/api/changelog" => |_, _| {
             update::recent()
@@ -2170,7 +2236,9 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
+        "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
+        "/api/necronomicon" => post_necronomicon,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
@@ -2428,6 +2496,25 @@ pub fn new_token() -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_row_is_marked_for_schema_changes_and_risks_not_for_reads() {
+        let with = |db: serde_json::Value| crate::types::LogEntry {
+            db: Some(db),
+            ..Default::default()
+        };
+        let table = |change: &str| serde_json::json!({"tables": [{"name": "t", "change": change}]});
+        for change in ["added", "altered", "dropped"] {
+            assert!(super::changes_db(&with(table(change))), "{change}");
+        }
+        assert!(!super::changes_db(&with(table("read"))));
+        assert!(!super::changes_db(&with(table("written"))));
+        assert!(super::changes_db(&with(
+            serde_json::json!({"risks": [{"text": "x"}]})
+        )));
+        assert!(!super::changes_db(&with(serde_json::json!("junk"))));
+        assert!(!super::changes_db(&Default::default()));
+    }
+
+    #[test]
     fn csp_lets_the_player_frame_load() {
         // the embed in src/components/FloatingVideo.tsx; vite dev sends no CSP, so only this catches a block
         let embed = include_str!("../../src/components/FloatingVideo.tsx");
@@ -2437,9 +2524,6 @@ mod tests {
 
     use super::*;
     use crate::types::{Hunk, Line, Login, Repository, Section};
-
-    /// Config is global and tests run in parallel: the ones that touch it take this.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn pr() -> Pr {
         Pr {
@@ -2538,7 +2622,7 @@ mod tests {
 
     #[test]
     fn inspect_reads_removes_yours_and_only_ever_proposes_a_change_to_a_team() {
-        let _g = autorev::test_lock();
+        let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
         let origin = d.path().join("crew.git");
@@ -2689,7 +2773,7 @@ mod tests {
 
     #[test]
     fn a_forget_whose_team_proposal_fails_still_says_it_forgot() {
-        let _g = autorev::test_lock();
+        let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
         let t = teams.join("crew");
@@ -2726,7 +2810,7 @@ mod tests {
 
     #[test]
     fn a_pr_on_a_teams_repo_is_never_reviewed_by_a_model() {
-        let _g = autorev::test_lock();
+        let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let t = d.path().join("teams/crew");
         std::fs::create_dir_all(&t).unwrap();
@@ -2769,7 +2853,7 @@ mod tests {
 
     #[test]
     fn the_learning_route_needs_the_token_and_sends_events_without_their_text() {
-        let _g = autorev::test_lock();
+        let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             // the talk tests leave demo on under this lock, and demo records and reads nothing
@@ -2800,6 +2884,7 @@ mod tests {
 
     #[test]
     fn debug_route_needs_the_token_and_carries_the_paths() {
+        let _g = crate::config::test_lock(); // the paths it carries come from the global config
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/debug"), None).0, 401);
         let (code, d) = get(&format!("{base}/api/debug"), Some(&token));
@@ -2829,6 +2914,9 @@ mod tests {
 
     #[test]
     fn no_token_is_refused_and_a_good_one_gets_the_payload() {
+        // ponytail: served() answers out of the global config, so a test rewriting it next door is
+        // what this payload is built from otherwise. Same lock as everything else that reads it.
+        let _g = crate::config::test_lock();
         let (base, token, state) = served();
         assert_eq!(get(&format!("{base}/api/state"), None).0, 401);
         assert_eq!(get(&format!("{base}/api/state?token=wrong"), None).0, 401);
@@ -2924,6 +3012,7 @@ mod tests {
 
     #[test]
     fn busy_follows_in_flight_and_the_review_rides_along() {
+        let _g = crate::config::test_lock(); // as above: the payload is read through the config
         let (base, token, state) = served();
         state.lock().running.insert("u".into());
         state.lock().reviews.insert("u".into(), "3 findings".into());
@@ -2951,7 +3040,7 @@ mod tests {
     /// A body with no `repo` must still be the switch, or turning auto on would arm nothing.
     #[test]
     fn the_auto_route_arms_a_repo_without_touching_the_switch() {
-        let _g = autorev::test_lock(); // config.autorev is process-global; one lock for every test that moves it
+        let _g = crate::config::test_lock(); // config.autorev is process-global; one lock for every test that moves it
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.autorev = d.path().join("autorev"));
         let (base, token, state) = served();
@@ -3058,11 +3147,62 @@ mod tests {
         );
     }
 
+    /// The rail's Database group through HTTP: set, clear, and a bad op or target refused, each read back off the payload.
+    #[test]
+    fn db_repo_rules_through_the_route() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| c.dbrepo = d.path().join("dbrepo"));
+        let (base, token, _state) = served();
+        let rules = || get(&format!("{base}/api/state"), Some(&token)).1["dbRules"].clone();
+        let url = format!("{base}/api/dbrepo");
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/*", "db": "acme/schema"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "set", "target": "acme/docs", "db": ""}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            rules(),
+            json!([{"target": "acme/*", "db": "acme/schema"}, {"target": "acme/docs", "db": ""}])
+        );
+        assert_eq!(
+            post(&url, json!({"op": "clear", "target": "acme/docs"}), &token).0,
+            200
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
+        assert_eq!(
+            post(&url, json!({"op": "drop", "target": "acme/*"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "a/b/c", "db": "x/y"}), &token).0,
+            400
+        );
+        assert_eq!(
+            post(&url, json!({"op": "set", "target": "acme/*"}), "wrong").0,
+            401
+        );
+        assert_eq!(rules(), json!([{"target": "acme/*", "db": "acme/schema"}]));
+    }
+
     /// The rail reads the answer off the selected PR's detail, so the page never resolves the rule
     /// itself, and the payload lists every rule that exists.
     #[test]
     fn the_payload_lists_every_posting_target_resolved() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -3127,7 +3267,7 @@ mod tests {
     /// its word and the owner's rule stays as the fallback, marked per repo.
     #[test]
     fn the_owner_switch_through_the_route_changes_what_the_payload_lists() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -3166,7 +3306,7 @@ mod tests {
 
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.autorev = d.path().join("autorev");
@@ -3303,7 +3443,7 @@ mod tests {
     /// accept puts it where the post reads from.
     #[test]
     fn a_held_review_can_be_discussed_revised_and_the_revision_accepted() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3411,7 +3551,7 @@ mod tests {
     /// an accepted revision rewrites the markdown without making it look newer than it is.
     #[test]
     fn a_pre_review_can_be_discussed_and_an_accepted_revision_keeps_its_old_time() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3500,7 +3640,7 @@ mod tests {
     #[cfg(unix)]
     fn a_pre_review_accept_that_cannot_write_the_markdown_keeps_the_revision() {
         use std::os::unix::fs::PermissionsExt;
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3554,7 +3694,7 @@ mod tests {
 
     #[test]
     fn a_pre_review_with_no_saved_conversation_says_to_run_it_again() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.self_dir = d.path().join("self"));
         let (base, token, _state) = served();
@@ -3576,7 +3716,7 @@ mod tests {
 
     #[test]
     fn instructions_past_the_cap_are_refused_before_anything_starts() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let (base, token, state) = served();
         let long = "x".repeat(ASK_MAX + 1);
         let (code, body) = post(
@@ -3595,7 +3735,7 @@ mod tests {
     /// nothing went up.
     #[test]
     fn a_release_that_cannot_start_is_a_409() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3653,7 +3793,7 @@ mod tests {
     /// Every other fixture here is lowercase, so no test caught it.
     #[test]
     fn a_mixed_case_repo_still_marks_its_row_as_waiting() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3688,7 +3828,7 @@ mod tests {
     /// The warning on the waiting screen: only two heads we can both read and that differ.
     #[test]
     fn the_waiting_screen_says_when_the_head_has_moved() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3740,7 +3880,7 @@ mod tests {
     /// with nothing waiting, the menu calling it Reviewed, and auto skipping the PR for good.
     #[test]
     fn discarding_a_held_review_leaves_the_row_clean() {
-        let _g = autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| {
             c.demo = true;
@@ -3816,7 +3956,7 @@ mod tests {
     /// `merge` folds to 2 and promotes is the one wrong answer here that writes to the team pool.
     #[test]
     fn the_fold_panel_counts_what_merge_would_actually_do() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         config::update(|c| c.memory_dir = dir.path().to_path_buf());
         let queue = memory::queue_path(None);
@@ -3869,7 +4009,7 @@ mod tests {
 
     #[test]
     fn settings_change_the_theme_and_persist() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         config::update(|c| {
@@ -3992,7 +4132,7 @@ mod tests {
 
     #[test]
     fn a_report_route_answers_only_start_and_open_and_open_needs_a_report() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         config::update(|c| c.reports = dir.path().to_path_buf());
         let (base, token, _state) = served();
@@ -4011,7 +4151,7 @@ mod tests {
 
     #[test]
     fn closing_the_changelog_clears_it_and_records_the_version() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         config::update(|c| c.settings = Some(file.clone()));
@@ -4132,7 +4272,7 @@ mod tests {
         // The apply used to pull and push every joined team around a write that cannot reach one.
         // push_dir runs `git add -A`, so a teammate's unrelated working-tree state was committed under
         // "memory: dream cleanup" — a commit nobody asked for, in a repo the dream never wrote to.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         crate::config::update(|c| {
@@ -4193,7 +4333,7 @@ mod tests {
     fn the_again_op_clears_the_answer_and_hands_back_the_ask() {
         // Every other test calls memory::ask_*_again directly, so a typo in this match or a missing
         // refresh of state.asks would pass. This is the route the knowledge-card row actually takes.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         crate::config::update(|c| {

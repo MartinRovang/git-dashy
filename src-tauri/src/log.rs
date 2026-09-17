@@ -265,6 +265,7 @@ pub fn log_review(pr: &Pr, model: &str, v: &Verdict, at: Option<&str>) -> std::i
         findings: findings(v),
         kind: v.kind.clone(),
         breaking: v.breaking,
+        db: v.db.clone(),
     };
     // ponytail: into the log of the team this repo is BOUND to, and yours when it is bound to none. The
     // shared review log is how a teammate's review appears in your list; sending it to a team the repo
@@ -379,11 +380,9 @@ mod tests {
     use serde_json::json;
     use std::sync::MutexGuard;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     /// Point every path at a fresh temp dir; hold the guard for the test's life.
     fn isolated() -> (MutexGuard<'static, ()>, tempfile::TempDir) {
-        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = crate::config::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         config::update(|c| {

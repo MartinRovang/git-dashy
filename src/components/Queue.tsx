@@ -37,8 +37,10 @@ function mineNote(prs: Row[]): string {
   return [work ? `${work} need work` : '', wait ? `${wait} waiting` : ''].filter(Boolean).join(' · ')
 }
 
-function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, onMenu }: {
+function PrRow({ p, me, child, sel, unread, expanded, onExpand, onSelect, onOpen, onMenu }: {
   p: Row
+  /** Your login: your own PRs' author is dimmed, so others' stand out. */
+  me?: string
   child?: boolean
   sel: string
   unread: boolean
@@ -114,10 +116,15 @@ function PrRow({ p, child, sel, unread, expanded, onExpand, onSelect, onOpen, on
           {child ? '└ ' : ''}
           {p.isDraft ? <span style={{ color: 'var(--amber)' }}>draft</span> : null}
           {p.isDraft ? ' ' : ''}
+          {p.db ? (
+            <span style={{ color: 'var(--amber)' }} title="changes the database: see DATABASE in the pane" aria-label="changes the database">
+              ⚠{' '}
+            </span>
+          ) : null}
           {p.title}
         </b>
       </div>
-      <div className="who">
+      <div className={`who${me && p.author?.toLowerCase() === me.toLowerCase() ? ' mine' : ''}`}>
         <div className="av" style={{ background: avatar(p.author || '?') }}>
           {(p.author || '?')[0].toUpperCase()}
         </div>
@@ -266,6 +273,7 @@ export function Queue(p: Props) {
                       ) : null}
                       <PrRow
                         p={row}
+                        me={d?.me}
                         sel={p.sel}
                         unread={!isRead(p.read, row)}
                         expanded={p.expanded}
@@ -279,6 +287,7 @@ export function Queue(p: Props) {
                             <PrRow
                               key={o.uid}
                               p={o}
+                              me={d?.me}
                               child
                               sel={p.sel}
                               unread={false}

@@ -900,17 +900,13 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// The git repo `path` sits in, or None: asked from the nearest directory that exists.
+///
+/// ponytail: the walk and the question live in mirror::toplevel_checked, which is the other half of
+/// this pair. A git that cannot be answered reads as None here on purpose: the only thing this feeds
+/// is the ignore rule wire_repo writes, and mirror::sync asks the strict version again before it
+/// writes anything into that path.
 fn toplevel(path: &Path) -> Option<PathBuf> {
-    let mut base = path.to_path_buf();
-    while !base.is_dir() {
-        match base.parent() {
-            Some(p) if p != base => base = p.to_path_buf(),
-            _ => break,
-        }
-    }
-    git(&base, &["rev-parse", "--show-toplevel"])
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    crate::mirror::toplevel_checked(path).ok().flatten()
 }
 
 /// The directory holding info/exclude. ponytail: NOT <root>/.git: in a linked worktree or a
@@ -2105,14 +2101,6 @@ pub fn setup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Tests that touch the global config or CLAUDE_CONFIG_DIR take this.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     fn s(v: &str) -> String {
         v.to_string()
@@ -2123,7 +2111,7 @@ mod tests {
         // They started here because a withheld agents.md was invisible, and a note is the wrong shape:
         // it states a problem you cannot act on from where you read it. memory::pending_answers drives
         // rows you can click. Saying it twice would be worse than saying it once in the wrong place.
-        let _g = lock();
+        let _g = crate::config::test_lock();
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
         crate::config::update(|c| {
@@ -2203,7 +2191,7 @@ mod tests {
 
     #[test]
     fn registry_round_trip_newest_wins_and_old_lines_survive() {
-        let _g = lock();
+        let _g = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         let reg = t.path().join("mirrors");
         config::update(|c| c.registry = reg.clone());
@@ -2376,7 +2364,7 @@ mod tests {
 
     #[test]
     fn full_apply_then_full_remove_on_a_temp_config_dir() {
-        let _g = lock();
+        let _g = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         let cfg = t.path().join("claude");
         fs::create_dir_all(&cfg).unwrap();

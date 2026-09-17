@@ -209,8 +209,6 @@ pub fn unclaim() {
 mod tests {
     use super::*;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn beat_file(dir: &Path) -> PathBuf {
         config::update(|c| c.settings = Some(dir.join("settings.json")));
         dir.join(BEAT)
@@ -230,7 +228,7 @@ mod tests {
 
     #[test]
     fn a_beat_this_process_just_wrote_reads_as_alive() {
-        let _g = TEST_LOCK.lock().unwrap();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         let p = beat_file(d.path());
         beat(300);
@@ -244,7 +242,7 @@ mod tests {
 
     #[test]
     fn no_beat_at_all_is_not_alive() {
-        let _g = TEST_LOCK.lock().unwrap();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         beat_file(d.path());
         assert!(!alive());
@@ -313,7 +311,7 @@ mod tests {
 
     #[test]
     fn demo_mode_writes_no_beat_anywhere_and_takes_no_lock() {
-        let _g = TEST_LOCK.lock().unwrap();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         config::update(|c| c.settings = None);
         beat(300);
@@ -361,7 +359,7 @@ mod tests {
 
     #[test]
     fn the_pull_lock_has_one_holder_and_unclaiming_nothing_is_fine() {
-        let _g = TEST_LOCK.lock().unwrap();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         beat_file(d.path());
         unclaim(); // nothing held: not an error

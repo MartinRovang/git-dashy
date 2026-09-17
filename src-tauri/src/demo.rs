@@ -105,6 +105,22 @@ fn fixtures() -> &'static Fixtures {
                         finding("note", "api/auth.py:40", "policy.check now runs on the parsed user; the old order is gone"),
                         finding("nit", "api/handlers.py:12", "the retry helper is unused after this change"),
                     ],
+                    db: Some(serde_json::json!({
+                        "tables": [
+                            {"name": "sessions", "change": "altered", "refs": ["users"], "columns": [
+                                {"name": "policy_version", "change": "added", "note": "int NOT NULL, no default"},
+                                {"name": "token_hash", "change": "read", "note": "text"},
+                            ]},
+                            {"name": "users", "change": "read", "columns": [
+                                {"name": "role", "change": "read", "note": "text"},
+                            ]},
+                            {"name": "legacy_tokens", "change": "dropped", "columns": []},
+                        ],
+                        "risks": [
+                            {"kind": "lock", "loc": "migrations/0042_policy.sql:3", "text": "NOT NULL without default rewrites sessions and fails on existing rows"},
+                            {"kind": "mismatch", "loc": "api/auth.py:57", "text": "still selects legacy_tokens, which the migration drops"},
+                        ],
+                    })),
                     ..Default::default()
                 },
             ),
@@ -172,6 +188,7 @@ pub fn install() {
         c.registry = root.join("mirrors");
         c.bindings = root.join("bindings");
         c.autorev = root.join("autorev");
+        c.dbrepo = root.join("dbrepo");
     });
     crate::memory::append("", "run make lint before flagging style", "");
     crate::memory::append("acme/api", "uses tabs\nuses tabs\nold CI on jenkins, ignore", "");
@@ -193,6 +210,7 @@ pub fn install() {
             findings: findings(v),
             kind: v.kind.clone(),
             breaking: v.breaking,
+            db: v.db.clone(),
         };
         text.push_str(&serde_json::to_string(&entry).unwrap_or_default());
         text.push('\n');
@@ -448,6 +466,10 @@ mod tests {
 
     #[test]
     fn install_seeds_the_log_in_a_temp_dir() {
+        // ponytail: take the lock first: this one swaps the whole global config and puts it back, so
+        // without it every other test reading the config could be running in demo mode for as long as
+        // this takes — which is most of what #134 was.
+        let _g = crate::config::test_lock();
         let before = config::get();
         install();
         let c = config::get();

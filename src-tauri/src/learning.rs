@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn an_event_is_recorded_only_where_a_log_is_named() {
-        let _g = crate::autorev::test_lock();
+        let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
         // a test build names no log: nothing is written anywhere
         config::update(|c| {
