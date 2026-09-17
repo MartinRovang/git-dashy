@@ -472,8 +472,11 @@ export default function App() {
       await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
     }
     const copy = async () => setFlash(await copyText(found.text, found.name))
-    m.foot = [['p', 'post as comment', () => void postIt()], ['y', 'copy', () => void copy()], ...(m.foot || [])]
-    m.keys = { ...m.keys, p: () => void postIt(), y: () => void copy() }
+    // ponytail: this opens on its own when a cast ends, so a key meant for the board a beat earlier
+    // (p pre-review, y copy URL) would land here instead. Its keys wake after a moment.
+    const opened = Date.now()
+    const awake = (f: () => void) => () => void (Date.now() - opened > 600 && f())
+    m.foot = [['p', 'post as comment', awake(() => void postIt())], ['y', 'copy', awake(() => void copy())], ...(m.foot || [])]
   }
 
   async function preReview(p: Row) {
