@@ -95,6 +95,18 @@ gitdashy remember "the viewer owns mask state; the store only mirrors it"
 gitdashy remember --general "logic that can live in the API does"
 ```
 
+Where it lands is the flag you pass:
+
+| | goes to |
+|---|---|
+| `gitdashy remember "..."` | this repo: the team's drafts when the repo is bound to a team, yours when not |
+| `--general` | the whole project: every repo the team covers (in a repo bound to no team, it stays with that repo; outside any repo, your own general file) |
+| `--private` | yours, not the team's: a half-formed thought you are not ready to show |
+| `--private --general` | how *you* work: a habit or preference true in any repo, read in every session. Never a project's rule |
+
+When unsure, file it without a flag. A project rule filed as your own habit follows you into every
+repo, where it is wrong.
+
 It becomes a draft, not a fact: something else has to arrive at the same thing
 independently before it counts. Do not file what this task did, one bug, or anything git
 already records. The test is whether it helps someone opening this repo cold in three

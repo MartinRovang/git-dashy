@@ -42,9 +42,9 @@ export function useReviewTalk(source: Source, onFlash: (s: string) => void, onTe
   //
   // ponytail: NOT one `alive` ref flipped in the effect's cleanup. The outgoing cleanup sets it false and
   // the incoming effect sets it true again in the same commit, so the old request finds it true and lands
-  // anyway -- that guards unmount and nothing else, which is the bug wearing a fix. It is the key because
-  // every `load` closure already knows its own, which covers the interval and act()'s reload too; a flag
-  // scoped to one effect run would leave both of those unguarded.
+  // anyway -- that guards unmount and nothing else. It is the key because every `load` closure already
+  // knows its own, which covers the interval and act()'s reload too; a flag scoped to one effect run
+  // would leave both of those unguarded.
   const on = useRef(key)
   const load = async () => {
     const mine = key

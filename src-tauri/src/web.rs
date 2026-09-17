@@ -671,7 +671,7 @@ fn get_pr(state: &State, query: &Query) -> Out {
 
 /// How much code around a mark the viewer asked for: one of the ring's own values, or the default.
 ///
-/// ponytail: checked against CONTEXTS, not merely parsed. `diff::narrow` adds this to a line index, so a
+/// ponytail: checked against CONTEXTS. `diff::narrow` adds this to a line index, so a
 /// usize off the query string overflows that sum -- a panic in a debug build, and in release a wrap that
 /// quietly picks the wrong lines. Every other value this server takes is checked against the list it came
 /// from; this one was parsed and trusted because the page only ever sends the ring back.
@@ -2412,7 +2412,7 @@ fn send_with(req: Request, code: u16, body: Vec<u8>, ctype: &str, cache: Option<
         .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")))
         // ponytail: `--browser` puts the token in the page URL, and the CSP lets the two font origins be
         // reached. Today's browsers default to strict-origin-when-cross-origin, which would already keep
-        // a query string off the wire -- this makes that ours to guarantee rather than theirs to change.
+        // a query string off the wire; setting it explicitly keeps it that way if browser defaults change.
         .with_header(ok(Header::from_bytes("Referrer-Policy", "no-referrer")))
         .with_header(ok(Header::from_bytes("Content-Security-Policy", CSP)));
     if let Some(c) = cache {
@@ -2723,7 +2723,7 @@ mod tests {
         assert_eq!(post(&url, json!({"pad": "x".repeat(1024)}), &token).0, 200);
         let (code, body) = post(&url, json!({"pad": "x".repeat(BODY_MAX)}), &token);
         assert_eq!((code, body["error"].as_str()), (413, Some("body too large")));
-        // and the server is still answering afterwards: the cap ends one request, not the accept loop
+        // and the server keeps accepting after a 413
         assert_eq!(get(&format!("{base}/api/state"), Some(&token)).0, 200);
     }
 
