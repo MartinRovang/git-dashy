@@ -366,6 +366,25 @@ export function canCastOn(p: Row): boolean {
   return !p.busy && !p.humanOnly
 }
 
+/** A spell cast from this app, waiting for its row to finish. `busy` is whether a poll has shown the row running. */
+export type Cast = { spell: string; since: number; busy: boolean }
+
+/** Where a cast stands on this poll: `gone` when its PR left the board, `ended` once the row was seen busy and
+ *  is not any more, else `wait`. Marks the cast busy when the row is.
+ *
+ *  ponytail: a cast that fails inside one poll is never seen busy and waits until its row next runs or leaves. */
+export function castStep(c: Cast, row: Pr | undefined): 'wait' | 'gone' | 'ended' {
+  if (!row) return 'gone'
+  if (row.busy) c.busy = true
+  return c.busy && !row.busy ? 'ended' : 'wait'
+}
+
+/** This cast's result among the PR's spells. An older result of the same spell is not it; a second of slack for
+ *  the file's mtime against the page's clock. */
+export function castResult<S extends { name: string; at: number }>(spells: S[], c: Cast): S | undefined {
+  return spells.find((s) => s.name === c.spell && s.at >= c.since - 1)
+}
+
 export function selected(rows: Row[], sel: string): Row | null {
   return pick(rows, sel).row
 }
