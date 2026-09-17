@@ -3,7 +3,7 @@ import { api, copyText, errorText, post } from './api'
 import { ALL, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
 import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
-import { Necronomicon, NextLearn } from './components/Necronomicon'
+import { Necronomicon } from './components/Necronomicon'
 import { Shortcuts } from './components/Shortcuts'
 import { CodeViewer } from './components/CodeViewer'
 import { ReviewTalk } from './components/ReviewTalk'
@@ -426,6 +426,12 @@ export default function App() {
     await call('/api/review', { url: p.url }, `review started on #${p.number}`)
   }
 
+  async function cast(p: Row, spell: string) {
+    if (!p || p.busy || p.section !== 'REVIEW REQUESTED' || isReviewed(p)) return
+    if (!(await confirm(`Cast ${spell} on #${p.number}? It runs a review and posts its verdict.`))) return
+    await call('/api/review', { url: p.url, spell }, `${spell} cast on #${p.number}`)
+  }
+
   async function preReview(p: Row) {
     if (!p || p.busy || p.section !== 'MINE') return
     if (p.pre && !p.pre.moved) {
@@ -810,7 +816,7 @@ export default function App() {
           <div className="body">
             <div className="queue">
               {view === 'necronomicon' ? (
-                <Necronomicon />
+                <Necronomicon selected={current || null} onCast={(p, spell) => void cast(p, spell)} setting={setting} />
               ) : view === 'graph' ? (
                 <Graph
                   // the whole board: the tabs live in the queue, so a bucket narrowing the graph is a
@@ -900,7 +906,6 @@ export default function App() {
           + follow
         </button>
         <div style={{ flex: 1 }} />
-        {data?.knowledge.learn ? <NextLearn at={data.knowledge.learn.next} running={data.knowledge.learn.running} onOpen={() => show('necronomicon')} /> : null}
         <div className="sync">
           {refetching ? <span className="spinner" /> : <i style={{ background: data?.error ? 'var(--red)' : 'var(--green)' }} />}
           <span>

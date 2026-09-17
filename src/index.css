@@ -331,30 +331,6 @@
   .ntitle { flex-shrink: 0; font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: .12em; font-variant: small-caps;
             color: var(--gold); text-shadow: 0 1px 0 #000, 0 0 12px color-mix(in srgb, var(--gold) 35%, transparent); }
   .nsub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--ink2); opacity: .8; }
-  .nnext { margin-right: 14px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font: inherit; font-family: var(--mono); color: var(--violet);
-           background: none; border: 0; padding: 0; cursor: pointer; }
-  .nnext.due { font-weight: 700; }
-  .nnext svg { width: 11px; height: 11px; fill: currentColor; }
-  .nhead input { margin-left: auto; font-family: var(--serif); font-size: 13px; color: var(--ink); background: color-mix(in srgb, var(--bg) 70%, transparent);
-                 border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); border-radius: 4px; padding: 5px 10px; width: 200px; min-width: 110px; flex-shrink: 1; }
-  .nhead input::placeholder { color: var(--dim); }
-  .nlearn-btn { flex-shrink: 0; white-space: nowrap; font-family: var(--serif); font-size: 14px; font-weight: 700; letter-spacing: .06em; color: var(--bg); cursor: pointer;
-                background: linear-gradient(color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); border: 1px solid color-mix(in srgb, var(--gold) 60%, #000); border-radius: 4px; padding: 5px 14px; }
-  /* due: it glows, a light sweeps across it, and it hops a little, glad to be pressed */
-  .nlearn-btn.due { position: relative; overflow: hidden; animation: nglow 1.8s ease-in-out infinite, nhop 1.8s ease-in-out infinite; }
-  .nlearn-btn.due::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.7) 50%, transparent 70%);
-                           transform: translateX(-120%); animation: nsweep 2.4s ease-in-out infinite; }
-  @keyframes nglow { 0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--gold) 50%, transparent); }
-                     50% { box-shadow: 0 0 14px 3px var(--gold), 0 0 28px 6px color-mix(in srgb, var(--violet) 55%, transparent); } }
-  @keyframes nhop { 0%, 60%, 100% { transform: translateY(0) scale(1); } 70% { transform: translateY(-3px) scale(1.05); } 80% { transform: translateY(0) scale(1); } }
-  @keyframes nsweep { 0%, 40% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
-  @media (prefers-reduced-motion: reduce) { .nlearn-btn.due, .nlearn-btn.due::after { animation: none; } .nlearn-btn.due { box-shadow: 0 0 12px 2px var(--gold); } }
-  .nlearn-btn { display: inline-flex; align-items: center; gap: 6px; }
-  .nlearn-btn .spinner { width: 13px; height: 13px; border-color: color-mix(in srgb, var(--bg) 25%, transparent); border-top-color: var(--bg); }
-  .nskull { width: 15px; height: 15px; fill: currentColor; }
-  .nlearn-btn.wait { color: var(--ink2); background: var(--bg4); border-color: var(--edge); transition: color .2s, background .2s, border-color .2s; }
-  .nlearn-btn.wait:hover { color: var(--bg); background: linear-gradient(color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); border-color: color-mix(in srgb, var(--gold) 60%, #000); }
-  .nlearn-btn:disabled { cursor: default; opacity: .7; }
   .nspread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-radius: 4px; overflow: hidden;
              box-shadow: 0 0 0 1px var(--bg), 0 4px 12px rgba(0,0,0,.5); }
   .npage { position: relative; min-height: 60vh; padding: 26px 34px 30px; color: var(--ink); font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
@@ -362,10 +338,6 @@
   .npage::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--ink); opacity: .07;
                    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.2'%3E%3Ccircle cx='100' cy='100' r='94'/%3E%3Ccircle cx='100' cy='100' r='82'/%3E%3Ccircle cx='100' cy='100' r='30'/%3E%3Cpath d='M100 18L148 166L22 75H178L52 166Z'/%3E%3Cpath d='M100 6v12M100 182v12M6 100h12M182 100h12M33 33l9 9M158 158l9 9M167 33l-9 9M42 158l-9 9'/%3E%3Cpath d='M94 88l6-10 6 10M88 112h24M100 112v10'/%3E%3C/g%3E%3C/svg%3E") center 45% / min(70%, 420px) no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.2'%3E%3Ccircle cx='100' cy='100' r='94'/%3E%3Ccircle cx='100' cy='100' r='82'/%3E%3Ccircle cx='100' cy='100' r='30'/%3E%3Cpath d='M100 18L148 166L22 75H178L52 166Z'/%3E%3Cpath d='M100 6v12M100 182v12M6 100h12M182 100h12M33 33l9 9M158 158l9 9M167 33l-9 9M42 158l-9 9'/%3E%3Cpath d='M94 88l6-10 6 10M88 112h24M100 112v10'/%3E%3C/g%3E%3C/svg%3E") center 45% / min(70%, 420px) no-repeat; }
   .npage > * { position: relative; }
-  /* while Learn runs the sigil burns: gold, breathing */
-  .necro.learning .npage::before { background: var(--gold); animation: nsigil 2.4s ease-in-out infinite; }
-  @keyframes nsigil { 0%, 100% { opacity: .12; } 50% { opacity: .5; } }
-  @media (prefers-reduced-motion: reduce) { .necro.learning .npage::before { animation: none; opacity: .35; } }
   .npage.left { box-shadow: inset -28px 0 30px -22px rgba(0,0,0,.55); }
   .npage.right { box-shadow: inset 28px 0 30px -22px rgba(0,0,0,.55); }
   @media (max-width: 700px) { .nhead { flex-wrap: wrap; } }
@@ -376,32 +348,30 @@
   .npage h3 { margin: 26px 0 2px; font-size: 16px; font-variant: small-caps; letter-spacing: .06em; color: var(--gold); }
   .npage ol { margin: 0; padding-left: 24px; }
   .npage ol li::marker { color: var(--blood); font-weight: 700; }
-  .npoint { margin: 0 0 8px; }
-  .npoint .ntext { margin-right: 6px; }
-  .npoint.faded { color: var(--dim); font-style: italic; }
-  .npoint.depths { color: var(--dim2); font-style: italic; text-decoration: line-through color-mix(in srgb, var(--dim2) 60%, transparent); }
-  .nmeta { display: inline-flex; gap: 4px; align-items: baseline; font-size: 12px; color: var(--dim); white-space: nowrap; }
-  .nmeta button { font: inherit; font-size: 12px; line-height: 1; color: var(--dim); background: none; border: 1px solid transparent; border-radius: 3px;
-                  padding: 1px 4px; cursor: pointer; opacity: .45; }
-  .npoint:hover .nmeta button { opacity: 1; border-color: var(--edge); }
-  .nmeta button:hover { color: var(--blood); }
-  .nnote { margin: 0 0 8px; font-size: 12px; font-style: italic; color: var(--dim); }
   .nblank { font-style: italic; color: var(--dim); }
-  .nwhispers { margin: 0; padding: 0; list-style: none; font-size: 13px; }
-  .nwhispers li { margin: 0 0 7px; padding-left: 10px; border-left: 2px solid var(--rule); color: var(--ink2); }
-  .nwho { display: block; font-size: 11px; font-variant: small-caps; letter-spacing: .05em; color: var(--blood); }
   .nindex { margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
   .nindex li { display: flex; align-items: baseline; gap: 6px; margin: 0 0 3px; }
   .nindex button { font: inherit; color: var(--ink2); background: none; border: 0; padding: 0; cursor: pointer; }
   .nindex button:hover, .nindex li.on button { color: var(--blood); }
   .nindex li.on button { font-weight: 700; }
-  .nindex li.nindex-whispers { margin-top: 8px; font-style: italic; }
   .nleader { flex: 1; border-bottom: 1px dotted var(--dim2); transform: translateY(-4px); }
+  .nglyph { flex: none; vertical-align: -2px; color: var(--gold); }
+  .nbuilt { margin: 0; padding: 0; list-style: none; }
+  .nbuilt li { margin: 0 0 18px; }
+  .nbuilt-h { display: flex; align-items: center; gap: 10px; }
+  .nbuilt-h b { font-size: 16px; font-variant: small-caps; letter-spacing: .05em; color: var(--blood); }
+  .nbuilt-h .fld { width: auto; margin: 0 0 0 auto; }
+  .nbuilt p { margin: 4px 0; }
+  .nprompt { margin: 0; white-space: pre-wrap; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .nspell label { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; font-size: 12px; font-style: italic; color: var(--dim); }
+  .nspell input, .nspell textarea { font: inherit; font-style: normal; font-size: 14px; color: var(--ink); resize: vertical;
+                                    background: color-mix(in srgb, var(--bg) 70%, transparent);
+                                    border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); border-radius: 4px; padding: 6px 10px; }
+  .nspell-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .nspell-acts .fld { width: auto; margin: 0; }
+  .nglyph.sprite { object-fit: contain; }
+  .nbuilt-h .nglyph { flex: none; }
   .npage.right { display: flex; flex-direction: column; }
-  .nturn { margin-top: auto; padding-top: 22px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-style: italic; color: var(--dim); }
-  .nturn button { font-size: 18px; line-height: 1; color: var(--blood); background: none; border: 1px solid var(--rule); border-radius: 50%; width: 30px; height: 30px; cursor: pointer; }
-  .nturn button:disabled { opacity: .25; cursor: default; }
-  .npager { margin-top: 0; padding-top: 12px; }
   /* the book fills the view and each page scrolls inside it, so turning a page never resizes the book */
   @media (min-width: 901px) {
     .necro { display: flex; flex-direction: column; }
@@ -411,8 +381,6 @@
     .npage.right { overflow: hidden; }
     .npage.right section { flex: 1; min-height: 0; overflow: auto; }
   }
-  .ndig { display: block; margin: 26px auto 0; font-family: var(--serif); font-size: 14px; font-style: italic; color: var(--blood); cursor: pointer;
-          background: none; border: 1px dashed var(--rule); border-radius: 4px; padding: 5px 14px; }
   .graph { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
   .graph svg { flex: 1; min-height: 0; width: 100%; cursor: grab; }
   .graph svg:active { cursor: grabbing; }
