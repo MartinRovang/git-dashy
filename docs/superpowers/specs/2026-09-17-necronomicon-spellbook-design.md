@@ -12,7 +12,8 @@ is reworking the memory system, so the book gets a new job: the reviewer's abili
 - **Spell**: a one-time, in-depth investigation of one topic, cast on one PR. Where a passive adds a
   section to every review, a spell goes deep on its topic for this PR only: it reads beyond the diff (callers,
   migrations, config, tests) and reports what it found. Spells are written by the user. A few starter spells ship
-  (e.g. `migration-audit`, `auth-check`, `test-gaps`).
+  (e.g. `migration-audit`, `auth-check`, `test-gaps`). A spell can be **equipped**. Every spell can be cast
+  from the book, but only equipped spells show in the quick places: the sidebar and the PR right-click menu.
 - **Passive**: today's hunters (`config::HUNTERS`: ponytail, security, tests, perf, humanizer). Built in, on or
   off, added to every review.
 - **Voice**: today's voices (`config::VOICES`: review, caveman, bot). Built in, on or off.
@@ -24,7 +25,7 @@ Passives and voices stay built in: the book toggles them, it does not edit them.
 Same name, same book look, same chapter and leaf navigation (arrow keys, leaves). Three chapters:
 
 1. **Spells**: the left page lists spells and the right page shows the selected one. You can edit its name and
-   instructions, then save, delete, or **cast on the selected PR** (disabled when no PR is selected).
+   instructions, **equip/unequip** it, then save, delete, or **cast on the selected PR** (disabled when no PR is selected).
    A "new spell" entry starts an empty one.
 2. **Passives**: each hunter with its description, the exact prompt text it adds, and an equip switch.
 3. **Voices**: the same layout for voices.
@@ -40,15 +41,16 @@ Removed: memory points, rank up/down, Learn button, `NextLearn` footer countdown
 A new **Necronomicon** group (Lucide `Skull` icon; Knowledge already uses `BookOpen`), for quick use only:
 
 - voice chips and passive chips (moved out of the Agent group, same toggle behaviour as before)
-- a spells list: pressing a spell casts it on the selected PR
+- the equipped spells: pressing one casts it on the selected PR
 - an "open the book" link that switches the view to the Necronomicon
 
 When shut, the sidebar shows only the group's icon, like the other groups.
 
 ## Casting from a PR
 
-The PR options menu (`setMenuAt` / `ActsMenu`) gets `Cast ▸ <spell>` entries. All three entry points (sidebar,
-book, PR menu) do the same call.
+Right-clicking a PR row (and the pane's options button, which opens the same menu via `setMenuAt` / `ActsMenu`)
+shows a **Cast ▸** entry with a dropdown of the **equipped** spells. It is hidden when nothing is equipped, and its last item is
+"open the book…". All three entry points (sidebar, book, menu) do the same call.
 
 ## Server (Rust, `src-tauri/src`)
 
@@ -58,11 +60,13 @@ book, PR menu) do the same call.
 - Names must match `^[a-z0-9-]{1,40}$`. Any other name is refused, so a name cannot leave the folder.
 - `list() -> Vec<(name, text)>` is sorted by name. If the folder does not exist, it is created with the starter
   spells first. An existing but empty folder stays empty: the user deleted them.
-- `save(name, text)`, `delete(name)`.
+- `save(name, text)`, `delete(name)`. Deleting an equipped spell also removes it from the `spells` setting.
+- Equipped spells are a config setting `spells: Vec<String>`, handled like `hunter`: it is saved with the settings,
+  posted through the existing settings call, and `config::normalise` drops names that have no file.
 
 ### Endpoints (`web.rs`)
 
-- `GET /api/spells` returns `{ spells: [{name, text}], passives: [{name, about, prompt, on}], voices: [{name, about, prompt, on}] }`.
+- `GET /api/spells` returns `{ spells: [{name, text, on}], passives: [{name, about, prompt, on}], voices: [{name, about, prompt, on}] }`.
   `prompt` is the `HUNTER` / `VOICE` table text from `review.rs`, `about` is a one-line description added next to it, and `on`
   comes from config.
 - `POST /api/spells` takes `{op: "save" | "delete", name, text?}`. A bad name gets a 400 with the reason.
@@ -88,7 +92,7 @@ book, PR menu) do the same call.
 ## Tests
 
 - Rust `spells.rs`: name check refuses `../x`, `A`, `""`, and 41 chars; save then list returns it;
-  delete removes it; a missing folder gets starters and an empty folder does not.
+  delete removes it and unequips it; a missing folder gets starters and an empty folder does not.
 - Rust `review.rs`: `prompt()` with a spell contains the cast block and the spell section comes first in the
   contract. Without a spell, the output is unchanged (existing tests still pass).
 - TS: none today for the book. Add one only if the chapter model moves into a plain function.
