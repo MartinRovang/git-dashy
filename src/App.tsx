@@ -435,7 +435,44 @@ export default function App() {
   async function cast(p: Row, spell: string) {
     if (!p || !canCastOn(p)) return
     if (!(await confirm(`Cast ${spell} on #${p.number}? It checks only that topic. Nothing is posted until you post it.`))) return
-    await call('/api/review', { url: p.url, spell }, `casting ${spell} on #${p.number}`)
+    const since = Date.now() / 1000
+    if (await call('/api/review', { url: p.url, spell }, `casting ${spell} on #${p.number}`)) casting.current.set(p.url, { spell, since, busy: false })
+  }
+
+  // Casts started here. When the row stops being busy, the result opens to read and post: the menu's
+  // "Read spell" row alone is easy to miss, and the pane's detail is not re-asked when a cast ends.
+  // ponytail: forgotten on reload. The menu still offers the result then.
+  const casting = useRef(new Map<string, { spell: string; since: number; busy: boolean }>())
+  useEffect(() => {
+    for (const [url, c] of casting.current) {
+      const p = data?.sections.flatMap((s) => s.prs).find((x) => x.url === url)
+      if (!p) continue
+      if (p.busy) c.busy = true
+      if (p.busy || !c.busy) continue
+      casting.current.delete(url)
+      void (async () => {
+        const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
+        if (!r.ok) return
+        const got = (await r.json()) as Detail
+        setDetail((d) => (d?.url === url ? got : d))
+        // an older result of the same spell is not this cast's; a failed cast says so on the row
+        const found = got.spells.find((s) => s.name === c.spell && s.at >= c.since - 1)
+        if (found) readSpell(p, found)
+      })()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
+
+  function readSpell(p: { url: string; number: number }, found: Detail['spells'][number]) {
+    const m = viewer(`${found.name} on #${p.number}`, found.text, `cast ${new Date(found.at * 1000).toLocaleString()} · private until you post it`)
+    const postIt = async () => {
+      const warn = found.quotes ? ' It repeats lines of the spell word for word, so they would be public.' : ''
+      if (!(await confirm(`Post ${found.name} on #${p.number} as a comment?${warn}`))) return
+      close(m)
+      await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
+    }
+    m.foot = [['p', 'post as comment', () => void postIt()], ...(m.foot || [])]
+    m.keys = { ...m.keys, p: () => void postIt() }
   }
 
   async function preReview(p: Row) {
@@ -605,15 +642,7 @@ export default function App() {
     // a spell's result, offered per spell by acts(): read it, then post it if it is worth posting
     const found = name.startsWith('spell:') && detail?.url === p.url ? detail.spells.find((s) => `spell:${s.name}` === name) : null
     if (found) {
-      const m = viewer(`${found.name} on #${p.number}`, found.text, `cast ${new Date(found.at * 1000).toLocaleString()} · private until you post it`)
-      const postIt = async () => {
-        const warn = found.quotes ? ' It repeats lines of the spell word for word, so they would be public.' : ''
-        if (!(await confirm(`Post ${found.name} on #${p.number} as a comment?${warn}`))) return
-        close(m)
-        await call('/api/spell', { url: p.url, name: found.name }, `${found.name} posted on #${p.number}`)
-      }
-      m.foot = [['p', 'post as comment', () => void postIt()], ...(m.foot || [])]
-      m.keys = { ...m.keys, p: () => void postIt() }
+      readSpell(p, found)
       return
     }
     const fns: Record<string, () => void> = {
