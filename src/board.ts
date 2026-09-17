@@ -360,6 +360,11 @@ export function isReviewed(p: Pr): boolean {
   return !p.waiting && !!tone(p.review)
 }
 
+/** A spell is a review, so it starts where a review with instructions could. */
+export function canCastOn(p: Row): boolean {
+  return p.section === 'REVIEW REQUESTED' && !p.busy && !isReviewed(p)
+}
+
 export function selected(rows: Row[], sel: string): Row | null {
   return pick(rows, sel).row
 }

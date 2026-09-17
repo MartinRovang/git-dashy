@@ -623,6 +623,7 @@ export default function App() {
       waiting: () => void waitingScreen(p),
       memory: () => void memoryEditor(ctx, p.repo),
       hide: () => toggleHide(p),
+      book: () => show('necronomicon'),
     }
     fns[name]?.()
   }
@@ -935,7 +936,9 @@ export default function App() {
           d={detail?.url === menuAt.p.url ? detail : null}
           hidden={isRead(hidden, menuAt.p)}
           at={menuAt.at}
+          spells={data?.settings.spells || []}
           onAct={doAct}
+          onCast={(p, spell) => void cast(p, spell)}
           onClose={() => setMenuAt(null)}
         />
       ) : null}

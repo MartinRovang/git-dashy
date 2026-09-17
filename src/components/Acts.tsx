@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Detail, Row } from '../types'
-import { isReviewed } from '../board'
+import { canCastOn, isReviewed } from '../board'
 import { clean } from '../dbgraph'
+import { Glyph } from './Glyph'
 
 export type Act = [key: string, cls: string, label: string, note: string, off: boolean, act: string]
 
@@ -53,18 +54,24 @@ export function ActsMenu({
   d,
   hidden,
   at,
+  spells,
   onAct,
+  onCast,
   onClose,
 }: {
   p: Row
   d: Detail | null
   hidden: boolean
   at: Anchor
+  /** The equipped spells; the menu offers them under one row that opens in place. */
+  spells: string[]
   onAct: (name: string, target: Row) => void
+  onCast: (target: Row, spell: string) => void
   onClose: () => void
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Anchor>(at)
+  const [casting, setCasting] = useState(false)
 
   // ponytail: a resize used to close the menu, which throws it away for a window nudge. The clamp
   // runs on [at], so a resize changed nothing on its own — it re-clamps now instead.
@@ -79,7 +86,8 @@ export function ActsMenu({
     })
   }, [at])
 
-  useLayoutEffect(clamp, [clamp])
+  // the spell list opening makes the menu taller, so it re-clamps then too
+  useLayoutEffect(clamp, [clamp, casting])
 
   useEffect(() => {
     const away = (e: PointerEvent) => {
@@ -123,6 +131,46 @@ export function ActsMenu({
           <em>{note}</em>
         </button>
       ))}
+      {spells.length ? (
+        <>
+          <button role="menuitem" aria-expanded={casting} className="ai" disabled={!canCastOn(p)} onClick={() => setCasting((v) => !v)}>
+            <kbd className="hint">✦</kbd>
+            <b>Cast a spell {casting ? '▾' : '▸'}</b>
+            <em>equipped</em>
+          </button>
+          {casting
+            ? spells.map((name) => (
+                <button
+                  key={`cast:${name}`}
+                  role="menuitem"
+                  className="ai sub"
+                  onClick={() => {
+                    onClose()
+                    onCast(p, name)
+                  }}
+                >
+                  <kbd className="hint" />
+                  <b>
+                    <Glyph kind="spell" name={name} /> {name}
+                  </b>
+                  <em />
+                </button>
+              ))
+            : null}
+        </>
+      ) : null}
+      <button
+        role="menuitem"
+        className="ai"
+        onClick={() => {
+          onClose()
+          onAct('book', p)
+        }}
+      >
+        <kbd className="hint" />
+        <b>Open the book…</b>
+        <em>spells, passives, voices</em>
+      </button>
     </div>
   )
 }

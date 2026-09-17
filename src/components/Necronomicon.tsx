@@ -6,26 +6,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, errorText, post } from '../api'
 import { modalCount } from '../modals'
 import type { Row } from '../types'
-import { isReviewed } from '../board'
-import { MessageSquare, Crosshair, Sparkles, type LucideIcon } from 'lucide-react'
-
-// ponytail: passives with a drawing in public/sprites show it; everything else has one placeholder icon per kind
-// until it gets a drawing of its own. Only this function changes when one arrives.
-export const ICON: Record<'spell' | 'passive' | 'voice', LucideIcon> = { spell: Sparkles, passive: Crosshair, voice: MessageSquare }
-const SPRITES = ['ponytail', 'security', 'tests', 'perf', 'humanizer']
-export function Glyph({ kind, name, size = 14 }: { kind: keyof typeof ICON; name: string; size?: number }) {
-  if (kind === 'passive' && SPRITES.includes(name)) return <img className="nglyph sprite" src={`/sprites/${name}.png`} width={size} height={size} alt="" />
-  const I = ICON[kind]
-  return <I className="nglyph" size={size} aria-hidden />
-}
+import { canCastOn } from '../board'
+import { Glyph } from './Glyph'
 
 type Built = { name: string; about: string; prompt: string; on: boolean }
 export type Book = { spells: { name: string; text: string; on: boolean }[]; passives: Built[]; voices: Built[] }
-
-/** A spell is a review, so it starts where a review with instructions could. */
-export function canCastOn(p: Row): boolean {
-  return p.section === 'REVIEW REQUESTED' && !p.busy && !isReviewed(p)
-}
 
 const CHAPTERS = ['Spells', 'Passives', 'Voices'] as const
 

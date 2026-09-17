@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Detail, Row } from '../types'
 import { acts } from './Acts'
+import { canCastOn } from '../board'
 
 function row(over: Partial<Row> = {}): Row {
   return {
@@ -109,5 +110,13 @@ describe('acts: what one PR offers', () => {
     expect(keys(row())).not.toContain('db')
     expect(keys(row(), d({ tables: [], risks: [{ text: 'x' }] }))).not.toContain('db')
     expect(keys(row(), d({ tables: [{ name: 'users', change: 'altered' }] }))).toContain('db')
+  })
+})
+
+describe('canCastOn', () => {
+  it('casts only where a review with instructions could start', () => {
+    expect(canCastOn(row())).toBe(true)
+    expect(canCastOn(row({ busy: true }))).toBe(false)
+    expect(canCastOn(row({ section: 'MINE' }))).toBe(false)
   })
 })
