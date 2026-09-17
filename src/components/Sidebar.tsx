@@ -5,7 +5,7 @@ import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board
 import { Glyph } from './Glyph'
 import { useBook } from './Necronomicon'
 import { every, span } from '../tokens'
-import { Chips, Row, Select } from './Controls'
+import { Row, Select } from './Controls'
 import { close, open, repaint } from '../modals'
 import { api } from '../api'
 import { fuzzy, step } from '../stories'
@@ -506,14 +506,23 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           onToggle={() => flip('necro')}
           collapsed={collapsed}
         >
-          <div className="sub">
-            <kbd className="hint">x</kbd> voices <em>active</em>
-          </div>
-          <Chips values={s.voice || []} options={o.voice} onToggle={(v) => setting('voice', toggle(s.voice || [], v))} />
-          <div className="sub">
-            <kbd className="hint">h</kbd> passives <em>active</em>
-          </div>
-          <Chips values={s.hunter || []} options={o.hunter} onToggle={(v) => setting('hunter', toggle(s.hunter || [], v))} />
+          {/* ponytail: what is on, read-only. Equipping lives in the book, so the rail and the book cannot disagree about how. */}
+          {([['voices', 'voice', s.voice || []], ['passives', 'passive', s.hunter || []]] as const).map(([label, kind, on]) => (
+            <div key={label}>
+              <div className="sub">{label}</div>
+              {on.length ? (
+                <div className="tags">
+                  {on.map((name) => (
+                    <span className="tag still" key={name}>
+                      <Glyph kind={kind} name={name} /> {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="rules none">none equipped</div>
+              )}
+            </div>
+          ))}
           <div className="sub">
             spells <em>{selected && canCastOn(selected) ? `cast on #${selected.number}` : 'pick a PR waiting on you'}</em>
           </div>
