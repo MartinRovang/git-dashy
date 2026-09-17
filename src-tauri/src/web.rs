@@ -747,6 +747,13 @@ fn get_memory(_state: &State, query: &Query) -> Out {
         "team": team,
         "path": knowledge::tilde(&path),
         "facts": memory::facts_in(&path),
+        // who stands behind each of a team's facts, from the evidence lines: "2 people found this"
+        "backers": if team.is_empty() {
+            Vec::new()
+        } else {
+            let index = memory::pools();
+            memory::facts_in(&path).iter().map(|f| memory::backers(&index, repo, f)).collect::<Vec<_>>()
+        },
     }))
 }
 
@@ -828,45 +835,6 @@ fn get_overlaps(_state: &State, _q: &Query) -> Out {
         .unwrap_or_default();
     j["result"] = Value::Array(pairs);
     Ok(j)
-}
-
-/// Who has accepted this fact, from a pools() index. Two names is two people's reviewers agreeing.
-fn backers(
-    index: &HashMap<String, Vec<(Option<String>, String)>>,
-    repo: Option<&str>,
-    fact: &str,
-) -> Vec<String> {
-    let mut out: Vec<String> = index
-        .iter()
-        .filter(|(_, items)| {
-            items
-                .iter()
-                .any(|(r, f)| r.as_deref() == repo && memory::same(f, fact))
-        })
-        .map(|(u, _)| u.clone())
-        .collect();
-    out.sort();
-    out
-}
-
-fn get_share(_state: &State, query: &Query) -> Out {
-    let about = q(query, "about");
-    let mut items = memory::in_team(about);
-    let index = memory::pools();
-    items.sort_by_key(|(repo, fact, sent)| {
-        (
-            *sent,
-            std::cmp::Reverse(backers(&index, repo.as_deref(), fact).len()),
-        )
-    });
-    let items: Vec<Value> = items
-        .iter()
-        .map(|(repo, fact, sent)| {
-            json!({"repo": repo, "fact": fact, "sent": sent, "backers": backers(&index, repo.as_deref(), fact),
-                   "team": repo.as_deref().map(bind::of).unwrap_or_else(|| bind::of(about))})
-        })
-        .collect();
-    Ok(json!({"inTeam": team::on(), "items": items}))
 }
 
 fn used_for(key: &str) -> String {
@@ -1389,6 +1357,20 @@ fn post_memory(_state: &State, body: &Body) -> Out {
                 &format!("memory: remove a fact from {label}"),
             )
         }
+        // one of YOUR facts, offered to the team that covers it: a pull request, and yours stays yours
+        "share" => {
+            let about = text(body, "about");
+            let target = memory::share_target(repo.as_deref(), &about)
+                .ok_or_else(|| Fail::new(409, "no team takes facts about this: bind the repo, or open a row in the team's repo for a general fact"))?;
+            if memory::team_has(&target, &fact) {
+                return Err(Fail::new(409, "the team already knows that"));
+            }
+            propose_in_team(
+                &target,
+                &memory::team_with(&target, &fact),
+                &format!("memory: a fact for {label}"),
+            )
+        }
         "propose" => {
             let doc = text(body, "doc");
             let path = doc_path(&team, &doc)?;
@@ -1398,7 +1380,7 @@ fn post_memory(_state: &State, body: &Body) -> Out {
                 &format!("{doc}: proposed change for team {team}"),
             )
         }
-        _ => Err(Fail::new(400, "op must be remove or propose")),
+        _ => Err(Fail::new(400, "op must be remove, share or propose")),
     }
 }
 
@@ -1482,36 +1464,6 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
         }
         _ => Err(Fail::new(400, "op must be start or merge")),
     }
-}
-
-fn post_share(_state: &State, body: &Body) -> Out {
-    let (repo, fact, about) = (repo_of(body), text(body, "fact"), text(body, "about"));
-    let label = repo.as_deref().unwrap_or("general");
-    match text(body, "op").as_str() {
-        "send" => {
-            memory::share(repo.as_deref(), &fact, &about);
-            team::push(&format!("memory: share {label}"));
-        }
-        "forget" => {
-            let theirs = memory::forget(repo.as_deref(), &fact, &about);
-            team::push_dir(
-                &config::get().memory_dir,
-                &format!("memory: forget {label}"),
-                "mine",
-            );
-            team::push(&format!("memory: withdraw {label}"));
-            // yours and your evidence are gone; the team's copy goes only when its repo approves that
-            if let Some(q) = theirs {
-                return propose_in_team(
-                    &q,
-                    &memory::team_without(&q, &fact),
-                    &format!("memory: remove a fact from {label}"),
-                );
-            }
-        }
-        _ => return Err(Fail::new(400, "op must be send or forget")),
-    }
-    Ok(json!({"ok": true}))
 }
 
 /// Bind owner/* here, then declare it in the team. Local first: the cheap, reversible half.
@@ -2138,7 +2090,6 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/memory/files" => get_memory_files,
         "/api/drafts" => get_drafts,
         "/api/overlaps" => get_overlaps,
-        "/api/share" => get_share,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
         "/api/posting" => get_posting,
@@ -2168,7 +2119,6 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/memory" => post_memory,
         "/api/drafts" => post_drafts,
         "/api/overlaps" => post_overlaps,
-        "/api/share" => post_share,
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
@@ -2748,6 +2698,42 @@ mod tests {
         assert_eq!(draft("drop").0, 200);
         assert_eq!(draft("drop").0, 404);
         assert!(memory::team_waiting().is_empty());
+
+        // one of YOUR facts offered to the team: a pull request, and never twice what the team already has
+        std::fs::write(mine.join("a__b.md"), "- mine only\n").unwrap();
+        std::fs::write(t.join("memory/a__b.md"), "- known\n").unwrap();
+        let share = |fact: &str| {
+            post(
+                &format!("{base}/api/memory"),
+                json!({"op": "share", "repo": "a/b", "fact": fact}),
+                &token,
+            )
+        };
+        let (code, j) = share("mine only");
+        assert_eq!(code, 200, "{j}");
+        assert!(j["branch"].as_str().unwrap().starts_with("gitdashy/propose-a-b-"));
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/a__b.md")).unwrap(),
+            "- known\n"
+        );
+        assert_eq!(share("Known").0, 409);
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "share", "repo": "c/d", "fact": "unbound"}),
+            &token,
+        );
+        assert_eq!(code, 409, "a repo bound to no team has nowhere to go");
+
+        // a team file's facts come with who stands behind each
+        for who in ["alice", "bob"] {
+            std::fs::create_dir_all(t.join("memory/pool").join(who)).unwrap();
+            std::fs::write(t.join("memory/pool").join(who).join("a__b.md"), "- known\n").unwrap();
+        }
+        let (_, j) = get(&format!("{base}/api/memory?team=crew&repo=a/b"), Some(&token));
+        assert_eq!(
+            (j["facts"].clone(), j["backers"].clone()),
+            (json!(["known"]), json!([["alice", "bob"]]))
+        );
         config::update(|c| c.bindings = bindings);
     }
 

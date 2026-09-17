@@ -131,9 +131,8 @@ button somewhere on the page.
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
 | `n` | the knowledge panel on **inspect**, open at this repo's facts |
 | `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
-| `P` | the knowledge panel on **shared**: your facts for repos bound to a team, and which of them the team has — `x` forgets one everywhere, `t` sends one that never went |
 | `W` | the knowledge panel on **drafts**: what a review proposed and no second review has confirmed — `t` makes one a fact, `x` drops it, `s` scans for drafts that are one fact worded twice (the model reads the candidates first; `esc` skips it) |
-| `K` | the knowledge panel on **stats**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are stats / inspect / drafts / shared (`K` `g` `W` `P`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
+| `K` | the knowledge panel on **stats**: how fast the memory learns, as a chart — facts gained (by how: seen twice, by hand, from a teammate, or earlier), drafts proposed (by where from), team arrivals (by whose); filter by team, repo and person, per day or week. The panel's tabs are stats / inspect / drafts (`K` `g` `W`, or `[` `]` to step), with `Z` dream as an action in it (a dream has the model propose a tidier version of your memory files, reading the teams' too so yours do not repeat theirs; you see before and after, nothing is written until you accept, and team files are never rewritten); `knowledge panel` in the rail's Knowledge group opens it too |
 | `Y` | on a row waiting to post: inspect the held review — discuss it with the agent, then post it or drop it |
 | `F` | follow someone: a pill in the footer for what they have been working on, from the PRs they opened or updated (see Following people) |
 | `b` | bind the selected repo to a team — `1-8` picks one, `o` binds the whole owner, `x` unbinds |
@@ -338,11 +337,11 @@ your own machine rarely produces:
 
 Neither is read by a review, a session, the mirror or the dream — they are evidence, and the only thing
 they decide is whether two people saw the same thing. Two people's pools agreeing is four independent
-reviews across two humans, and `P` still says so with `★ 2 people found this`.
+reviews across two humans, and inspect says so beside a team's fact with `★ 2 people found this`.
 
-**`P` is the way back out.** It lists your facts for repos bound to a team and says which the team has;
-`x` removes one from your memory, from theirs, and from the evidence. Nobody chose to publish it, so
-nobody has to know it was published in order to take it back.
+**Inspect is the way in and out by hand.** On one of your own facts `s` proposes it to the team that covers
+the repo, as a pull request; on a team's fact `x` proposes removing it, the same way. Your own copy is
+yours either way.
 
 A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
 private however many teams you are in.

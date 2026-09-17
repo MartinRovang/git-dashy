@@ -77,12 +77,11 @@ export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
   )
 }
 
-export type KnowledgeTab = 'stats' | 'inspect' | 'drafts' | 'shared'
+export type KnowledgeTab = 'stats' | 'inspect' | 'drafts'
 const TABS: [KnowledgeTab, string][] = [
   ['stats', 'K'],
   ['inspect', 'g'],
   ['drafts', 'W'],
-  ['shared', 'P'],
 ]
 
 /** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
@@ -104,13 +103,12 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
   let events: LEvent[] = []
   let drafts: Json[] = []
   let promoteAt = 2
-  let shared: Json[] = []
-  let inTeam = true
   let i = 0
   const failed: Partial<Record<KnowledgeTab, string>> = {}
   let files: KFile[] = []
   let file = pick
   let facts: string[] = []
+  let backers: string[][] = []
   let doc = ''
   let where = ''
   const model = ctx.getData()?.model || 'the model'
@@ -121,9 +119,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
         ? '/api/learning'
         : t === 'drafts'
           ? '/api/drafts'
-          : t === 'shared'
-            ? `/api/share?about=${encodeURIComponent(about)}`
-            : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
+          : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
     const r = await api(url)
     if (!r.ok) {
       failed[t] = await errorText(r)
@@ -135,17 +131,15 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     else if (t === 'drafts') {
       drafts = got.items
       promoteAt = got.promoteAt
-    } else if (t === 'shared') {
-      shared = got.items
-      inTeam = got.inTeam !== false
     } else {
       facts = got.facts || []
+      backers = got.backers || []
       doc = got.text || ''
       where = got.path || ''
     }
     if (t === tab) i = pageTo(i, 0, items().length)
   }
-  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'shared' ? shared : tab === 'inspect' && !file.doc ? facts : [])
+  const items = (): unknown[] => (tab === 'drafts' ? drafts : tab === 'inspect' && !file.doc ? facts : [])
 
   const show = async (t: KnowledgeTab) => {
     if (t !== tab) i = 0
@@ -181,6 +175,13 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     if (theirs) proposed(ctx, out)
     await load('inspect')
     refresh()
+  }
+
+  const share = async () => {
+    const fact = facts[i]
+    if (fact === undefined) return
+    if (!(await confirm(`Propose this fact to the team that covers ${fileName(file)}? It opens a pull request on the team's repo; it joins what every teammate's reviews read only once a person with rights on that repo approves it. It stays in your memory either way.\n\n${fact}`, { yes: 'open pull request', no: 'keep it mine' }))) return
+    proposed(ctx, await ctx.call('/api/memory', { op: 'share', repo: file.repo || 'general', fact, about }))
   }
 
   const factCard = (repo: unknown, team: string, mark: string, warn: boolean, fact: unknown) => (
@@ -236,7 +237,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
           ? `A founding document: what team ${file.team} wrote, read by every teammate's reviews and sessions. A change to it is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
           : file.team
             ? `Team ${file.team}'s facts, learned by its reviews. Removing one opens a pull request on the team's repo; it stays until a person with rights on that repo approves it.`
-            : 'Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once.'}
+            : "Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once; proposing one to the team opens a pull request on the team's repo."}
       </p>
       {failed.inspect ? (
         <p className="empty">✗ {failed.inspect}</p>
@@ -248,6 +249,11 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
             <div key={k} className={`opt${k === i ? ' on' : ''}`} onClick={() => { i = k; refresh() }}>
               <span className="tick">{k === i ? '›' : ''}</span>
               <span>{f}</span>
+              {backers[k]?.length ? (
+                <span className="dim" title={backers[k].join(', ')}>
+                  {backers[k].length > 1 ? `★ ${backers[k].length} people found this` : `found by ${backers[k][0]}`}
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
@@ -271,10 +277,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
       const mark = it.kind === 'self' ? 'pre-review · one opinion' : it.kind === 'team' ? `in the team's drafts · ${count}` : count
       return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
     }
-    if (!it) return <p className="empty">no facts of yours belong to a team yet{inTeam ? '' : ' — you are not in a team'}</p>
-    const backers = (it.backers as string[]) || []
-    const mark = backers.length > 1 ? `★ ${backers.length} people found this` : it.sent ? 'the team has this' : 'not sent yet'
-    return factCard(it.repo, it.team ? ` → ${it.team}` : '', mark, !it.sent, it.fact)
+    return null
   }
 
   // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading
@@ -294,7 +297,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
             {TABS.map(([t, key]) => (
               <button key={t} role="tab" aria-pressed={tab === t} onClick={() => void show(t)}>
                 {t}
-                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : t === 'shared' && shared.length ? ` ${shared.length}` : ''} <kbd className="hint">{key}</kbd>
+                {t === 'drafts' && drafts.length ? ` ${drafts.length}` : ''} <kbd className="hint">{key}</kbd>
               </button>
             ))}
           </div>
@@ -326,6 +329,9 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const foot: Foot[] = [...pager(list.length, go)]
     if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
+    // one of YOUR facts, offered to the team that covers it: the deliberate way a private fact reaches a team
+    if (tab === 'inspect' && !file.doc && !file.team && facts[i] !== undefined && files.some((f) => f.team))
+      foot.push(['s', 'propose to the team (pull request)', () => void share(), 'go'])
     // a draft in a team's pool: dropping it is yours to do, but accepting it into the team's knowledge by hand is
     // a pull request; only a second independent sighting moves it there by itself
     if (tab === 'drafts' && it && it.kind === 'team') {
@@ -341,10 +347,6 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
       )
     }
     if (tab === 'drafts' && list.length > 1) foot.push(['s', 'scan for repeats', () => overlapScreen(ctx, () => void show('drafts'))])
-    if (tab === 'shared' && it) {
-      if (!it.sent) foot.push(['t', 'send it', () => void act('/api/share', { op: 'send', repo: it.repo, fact: it.fact, about }, 'sent'), 'go'])
-      foot.push(['x', it.sent ? 'forget it everywhere' : 'forget', () => void act('/api/share', { op: 'forget', repo: it.repo, fact: it.fact, about }, 'forgotten'), 'warn'])
-    }
     m.foot = foot
     repaint()
   }
@@ -353,7 +355,6 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     K: () => void show('stats'),
     g: () => void show('inspect'),
     W: () => void show('drafts'),
-    P: () => void show('shared'),
     '[': () => step(-1),
     ']': () => step(1),
     Z: () => void dreamScreen(ctx),

@@ -2169,79 +2169,6 @@ fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
     promoted
 }
 
-/// (repo, fact, shared): your facts about repos bound to a team, and whether the team has each.
-///
-/// ponytail: what `P` lists now that sharing is automatic. It replaced shareable(), which answered "what
-/// has NOT gone": after auto-sharing almost always nothing, so the screen said "nothing of yours the
-/// team is missing" and its withdraw key became unreachable, which is the one key that matters more once
-/// nobody chose to publish. Deleted rather than kept beside this: two queries over the same files, one
-/// of them with no caller, is the pair that drifts and the one nobody notices drifting.
-/// ponytail: unshared rows still exist and are worth the `t` key: facts promoted before this version
-/// never went, and a write can fail. Sorting them first puts the actionable ones under the cursor.
-pub fn in_team(about: &str) -> Vec<(Option<String>, String, bool)> {
-    // ponytail: NOT sorted here. share_screen sorts by the same key plus corroboration, and two sorts
-    // over one list is the pair where the second silently decides and the first is decoration.
-    mine_for_teams(about)
-        .into_iter()
-        .map(|(repo, fact)| {
-            let shared = project(repo.as_deref(), about)
-                .map(|base| {
-                    facts(&path(repo.as_deref(), Some(&base)))
-                        .iter()
-                        .any(|t| same(&fact, t))
-                })
-                .unwrap_or(false);
-            (repo, fact, shared)
-        })
-        .collect()
-}
-
-/// [(repo, fact)] every fact of yours about a repo the team can see.
-fn mine_for_teams(about: &str) -> Vec<(Option<String>, String)> {
-    let mut out = Vec::new();
-    for name in sorted_names(&config::get().memory_dir) {
-        if !name.ends_with(".md") || name == PROJECT {
-            continue;
-        }
-        let repo = repo_of(&name);
-        let r = repo.as_deref().unwrap_or("");
-        if team_visible(r, about) && project(repo.as_deref(), about).is_some() {
-            out.extend(
-                facts(&path(repo.as_deref(), None))
-                    .into_iter()
-                    .map(|f| (repo.clone(), f)),
-            );
-        }
-    }
-    out
-}
-
-/// Put one of your facts into the BOUND team's memory. The file written, or None.
-///
-/// ponytail: `about` names the project for a GENERAL fact: the repo you were looking at when you sent
-/// it. A repo fact is unaffected: its own binding says where it goes.
-pub fn share(repo: Option<&str>, fact: &str, about: &str) -> Option<PathBuf> {
-    let _g = guard();
-    let base = project(repo, about)?;
-    let dest = path(repo, Some(&base));
-    // ponytail: not twice. Sharing a fact the team already holds appended a second copy: reachable from
-    // `t` on a row the automatic path had already sent, which after auto-sharing is most of them.
-    if !facts(&dest).iter().any(|t| is(fact, t)) {
-        append_line(&dest, fact);
-    }
-    // ponytail: the evidence line STAYS. It used to be withdrawn here ("it is memory now") and that was
-    // right while sharing was the last step. It is not the last step now: forget() asks backers() whether
-    // anyone else is behind a fact before it deletes the team's copy, so a fact sent with `t` left no
-    // trace of you, and a teammate's `x` on the same line then removed the copy you were behind. It also
-    // never earned "★ 2 people found this". pool keeps it for exactly these two reasons; this matches.
-    if let Some(p) = pool_path(&whoami(), repo.unwrap_or(""), about) {
-        if !facts(&p).iter().any(|t| is(fact, t)) {
-            append_line(&p, fact);
-        }
-    }
-    Some(dest)
-}
-
 /// The lines of a facts file with `fact` taken out, as the text to write back ("" when none is left).
 fn without(p: &Path, fact: &str, line_fact: impl Fn(&str) -> String) -> String {
     let text = read_file(p);
@@ -2255,30 +2182,6 @@ fn without(p: &Path, fact: &str, line_fact: impl Fn(&str) -> String) -> String {
     } else {
         left.join("\n") + "\n"
     }
-}
-
-/// Drop one fact from your own memory and your evidence for it. The team's copy is not touched here: the
-/// file that would lose it is returned, for the caller to propose that removal to the team.
-///
-/// ponytail: the team's copy by proposal, not by write. A removal from a team's file changes every
-/// teammate's reviews, so it is a pull request a person with rights on that repo approves, never a push.
-/// It used to be rewritten here, which let one `x` delete a fact for everyone.
-/// ponytail: EXACT match on the team's side, like the pool. `same` would take a neighbouring fact with
-/// it, and this is the one file where a wrong removal costs everyone.
-/// ponytail: and ONLY when nobody else is still behind it. Your evidence goes first, then the team's
-/// copy is proposed for removal only if no other contributor remains, otherwise one person's `x` would
-/// ask to delete a fact a colleague independently reached.
-pub fn forget(repo: Option<&str>, fact: &str, about: &str) -> Option<PathBuf> {
-    let _g = guard();
-    if let Some(p) = pool_path(&whoami(), repo.unwrap_or(""), about) {
-        rewrite(&p, &without(&p, fact, plain));
-    }
-    forget_mine(repo, fact);
-    if !backers(&pools(), repo, fact).is_empty() {
-        return None;
-    }
-    let q = path(repo, Some(&project(repo, about)?));
-    facts_in(&q).iter().any(|f| is(f, fact)).then_some(q)
 }
 
 /// Take one fact out of your own memory, leaving every other copy alone.
@@ -2304,6 +2207,28 @@ pub fn facts_in(p: &Path) -> Vec<String> {
         .map(plain)
         .filter(|f| !f.is_empty())
         .collect()
+}
+
+/// The team file one of YOUR facts would join if you proposed it: the bound team's general or repo file.
+/// None when no team takes facts about it (a repo bound to nothing, or a general fact with no project).
+pub fn share_target(repo: Option<&str>, about: &str) -> Option<PathBuf> {
+    let base = project(repo, about).filter(|_| team_visible(repo.unwrap_or(""), about))?;
+    Some(path(repo, Some(&base)))
+}
+
+/// A team file's text with one fact added: what proposing one of yours to the team asks for.
+pub fn team_with(p: &Path, fact: &str) -> String {
+    let now = read_file(p);
+    if now.is_empty() {
+        format!("- {fact}\n")
+    } else {
+        format!("{now}\n- {fact}\n")
+    }
+}
+
+/// Whether a team file already states this fact, however it is worded.
+pub fn team_has(p: &Path, fact: &str) -> bool {
+    facts(p).iter().any(|t| same(fact, t))
 }
 
 /// A team file's text with one fact taken out, exactly matched: what a removal proposes.
@@ -2763,38 +2688,6 @@ mod tests {
     }
 
     #[test]
-    fn forget_takes_yours_and_names_the_team_file_to_propose_but_never_writes_it() {
-        // A removal from a team's file is a pull request somebody with rights on it approves. forget()
-        // used to rewrite that file itself, so one `x` deleted a fact for every teammate.
-        let (_g, tmp) = setup();
-        let shared = a_team(tmp.path(), "org-t");
-        let mine = config::get().memory_dir;
-        std::fs::write(mine.join("general.md"), "- one fact\n- two\n").unwrap();
-        std::fs::write(shared.join("general.md"), "- one fact\n- two\n").unwrap();
-        let pool = shared.join(POOL);
-        std::fs::create_dir_all(pool.join(whoami())).unwrap();
-        std::fs::create_dir_all(pool.join("martin")).unwrap();
-        std::fs::write(pool.join(whoami()).join("general.md"), "- one fact\n- two\n").unwrap();
-        std::fs::write(pool.join("martin").join("general.md"), "- two\n").unwrap();
-
-        assert_eq!(forget(None, "one fact", ""), Some(shared.join("general.md")));
-        assert_eq!(lines(&mine.join("general.md")), ["- two"]);
-        assert_eq!(lines(&pool.join(whoami()).join("general.md")), ["- two"]);
-        assert_eq!(
-            lines(&shared.join("general.md")),
-            ["- one fact", "- two"],
-            "proposed, not written"
-        );
-        assert_eq!(team_without(&shared.join("general.md"), "one fact"), "- two\n");
-
-        // a colleague still backs it: nothing to propose, their evidence and the team copy stay
-        assert_eq!(forget(None, "two", ""), None);
-        assert_eq!(lines(&shared.join("general.md")), ["- one fact", "- two"]);
-        // and a fact the team never had names no file
-        assert_eq!(forget(None, "only ever mine", ""), None);
-    }
-
-    #[test]
     fn remove_mine_takes_one_fact_and_says_whether_it_did() {
         let (_g, _t) = setup();
         let p = path(Some("a/b"), None);
@@ -3209,7 +3102,7 @@ mod tests {
     }
 
     #[test]
-    fn forget_removes_exactly_one_line_and_deletes_an_empty_file() {
+    fn removing_takes_exactly_one_line_and_deletes_an_empty_file() {
         let (_g, _t) = setup();
         let p = path(Some("a/b"), None);
         std::fs::write(
@@ -3217,10 +3110,29 @@ mod tests {
             "- CI reports skipping for format-check\n- CI reports skipping for type-check\n",
         )
         .unwrap();
-        forget(Some("a/b"), "CI reports skipping for format-check", "");
+        assert!(remove_mine(Some("a/b"), "CI reports skipping for format-check"));
         assert_eq!(lines(&p), vec!["- CI reports skipping for type-check"]);
-        forget(Some("a/b"), "ci  reports skipping for type-check", "");
+        assert!(remove_mine(Some("a/b"), "ci  reports skipping for type-check"));
         assert!(!p.exists());
+    }
+
+    #[test]
+    fn a_fact_of_yours_can_be_proposed_only_to_a_team_that_covers_it() {
+        let (_g, tmp) = setup();
+        assert_eq!(share_target(Some("a/b"), ""), None, "no team");
+        let (shared, _me) = a_team_repo(tmp.path());
+        let target = share_target(Some("a/b"), "").unwrap();
+        assert_eq!(target, shared.join("a__b.md"));
+        assert_eq!(
+            share_target(Some("c/d"), ""),
+            None,
+            "a repo bound to nothing keeps its name to itself"
+        );
+        assert_eq!(team_with(&target, "one"), "- one\n");
+        std::fs::write(&target, "- one\n").unwrap();
+        assert_eq!(team_with(&target, "two"), "- one\n- two\n");
+        assert!(team_has(&target, "One"));
+        assert!(!team_has(&target, "two"));
     }
 
     #[test]

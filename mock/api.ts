@@ -91,7 +91,6 @@ const S = {
   reviewAt: {} as Record<string, string>,
   binding: {} as Record<string, string>,
   drafts: [] as { repo: string | null; n: number; kind: string; fact: string }[],
-  shares: [] as { repo: string | null; fact: string; sent: boolean; backers: string[] }[],
   teams: [{ key: 'acme', name: 'Acme Guild', description: 'everything under acme/*', checkout: '~/.prs_teams/acme', remote: 'github.com/acme/guild' }],
   settings: {
     theme: 'pencil',
@@ -257,11 +256,6 @@ function seed() {
     { repo: null, n: 2, kind: 'review', fact: 'always rebase, never merge main' },
     // yours in team acme's draft pool: a teammate's review finding the same moves it into the team's knowledge
     { repo: 'acme/api', n: 1, kind: 'team', fact: 'the webhook client retries with backoff, callers never sleep' },
-  ]
-  S.shares = [
-    { repo: 'acme/api', fact: 'run make lint before flagging style', sent: true, backers: ['alice'] },
-    { repo: 'acme/api', fact: 'uses tabs', sent: false, backers: ['alice', 'bob'] },
-    { repo: null, fact: 'prefer small PRs', sent: false, backers: [] },
   ]
   S.asks = [{ kind: 'publishing', key: 'acme', name: 'Acme Guild', waiting: '2 drafts · 1 fact' }]
   // both cases of the posting panel: acme is one setting for all its repos, tools is set per repo
@@ -610,14 +604,12 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const file = `${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`
       const text = memoryText[team ? `${team}:${repo}` : repo] || ''
       const facts = text.split('\n').filter((l) => /^\s*[-•]/.test(l)).map((l) => l.replace(/^\s*[-•\s]+/, '').trim()).filter(Boolean)
-      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts })
+      // who stands behind each team fact: the mock has alice and bob agreeing on the first one
+      const backers = team ? facts.map((_, k) => (k === 0 ? ['alice', 'bob'] : ['alice'])) : []
+      return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts, backers })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
     if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.kind === 'team' ? 'acme' : d.repo ? teamOf(d.repo) : '' })) })
-    if (path === '/api/share') {
-      const items = S.shares.map((s) => ({ ...s, team: s.repo ? teamOf(s.repo) : teamOf(query.get('about') || '') }))
-      return json(200, { inTeam: true, items })
-    }
     if (path === '/api/overlaps') {
       return json(200, jobShape(S.overlaps))
     }
@@ -740,7 +732,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const team = str(body, 'team')
       const op = str(body, 'op')
       const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
-      if (op === 'propose') return json(200, pr)
+      if (op === 'propose' || op === 'share') return json(200, pr)
       if (op !== 'remove') return json(400, { error: 'op must be remove or propose' })
       if (team) return json(200, pr) // a team's file changes only when its pull request is approved
       const fact = str(body, 'fact')
@@ -781,20 +773,6 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         return json(200, { ok: true, count: 1 })
       }
       return json(400, { error: 'op must be start or merge' })
-    }
-    if (path === '/api/share') {
-      const repo = repoOf(body)
-      const fact = str(body, 'fact')
-      const item = S.shares.find((s) => s.repo === repo && s.fact === fact)
-      if (str(body, 'op') === 'send') {
-        if (item) item.sent = true
-        return json(200, { ok: true })
-      }
-      if (str(body, 'op') === 'forget') {
-        S.shares = S.shares.filter((s) => !(s.repo === repo && s.fact === fact))
-        return json(200, { ok: true })
-      }
-      return json(400, { error: 'op must be send or forget' })
     }
     if (path === '/api/teams') {
       const op = str(body, 'op')

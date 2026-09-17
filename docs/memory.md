@@ -43,13 +43,12 @@ It gives two rules:
   claim, folded by the token matcher of §3.1. A model is asked about near-misses
   that matcher *refused*, across two people, and never about a fold it already
   made (§4b-3).
-- **A hand promotion needs one keypress and no recurrence.** `W` → `t` accepts a
-  single draft, and `P` → `t` sends a fact the team has not got. Someone who has
-  read the line is the second opinion the counter stands in for, so the count does
-  not apply to them. Both need the repo bound; `W` → `t` also needs the team's
-  consent, because it goes through the same `_pool()` the automatic path does.
-  **`P` → `t` does not, and sends to a team that answered no.** Consent is about
-  what leaves without anyone sending it; `t` is somebody sending it.
+- **A hand promotion needs one keypress and no recurrence — into your memory.**
+  `W` → `t` accepts one of your private drafts as your fact. Someone who has read
+  the line is the second opinion the counter stands in for. **Into a team it is a
+  pull request, never a push:** `W` → `t` on a team draft, and inspect → `s` on one
+  of your own facts, each open a pull request on the team's repo that a person with
+  rights on it approves (as of 2.28).
 
 The binding and the consent are each one keypress, once per repo and once per team.
 Nothing prompts about an individual fact. §3.3 has the detail.
@@ -199,23 +198,12 @@ The gate itself is the one
 §3.2 describes. §4b-3 has the full account, including what a *no* to consent does
 and where a model gets asked.
 
-**`P` shows your facts and lets you take one back.** It lists your facts for
-repos bound to a team, one at a time (a fact is a sentence you must read to judge;
-a column of clipped sentences is how something wrong gets waved through), and says
-of each whether the team has it:
-
-- `t` sends one that never went — a fact older than consent, promoted while the
-  repo was bound to nothing, or held back because this team answered no to
-  automatic publishing. `t` overrides that no, for this one fact, because you are
-  the one sending it. A fact the team already has does not offer the key.
-- `x` forgets it from your memory, from the evidence pool, and from the team's
-  file unless a teammate independently reached it too — §4b-3 says why theirs
-  survives yours.
-- `esc` leaves it alone.
-
-Facts two people have independently accepted sort first and are marked
-**★ N people found this**, so the strongest evidence is what you see, not what
-you have to go looking for.
+**The `P` screen is gone (2.28).** It listed your facts for team-bound repos so you
+could see what had been copied to the team and take it back. Nothing is copied any
+more: team knowledge arrives in the team's file directly, from the team's draft
+pool. Inspect (`g`) covers what was left: a team's facts show **★ N people found
+this** from the evidence pool, `x` on one proposes removing it, and `s` on one of
+your own facts proposes it to the team — both as pull requests.
 
 **Evidence and drafts are both in the team, neither is context.** `pool/<user>/`
 records who stands behind each team fact; `drafts/<user>/` holds what a bound repo's
@@ -243,7 +231,8 @@ name leave your machine, though its facts still become yours.
 |---|---|
 | a proposed fact | on arrival, if already known in `mine` or `team` |
 | a draft | when it reaches the threshold (it becomes a fact) |
-| a fact of yours | `x` in the `P` screen — yours and your pool line always; the team's only when no other backer remains |
+| a fact of yours | `x` in inspect — gone from your memory at once |
+| a team's fact | `x` in inspect — a pull request removing it from the team's file |
 | any fact, merged or dropped | `Z` dream, after you approve the diff |
 | a mirror file | when its source is empty or gone — a mirror never outlives its source |
 
@@ -583,17 +572,15 @@ The launch prompt read a timeout as a keypress for four versions, so it recorded
 team on the first launch after auto-sharing shipped and then, by design, never asked again. Nothing
 published anywhere for two days and no surface said why.
 
-**So `forget()` now withdraws from the team as well.** Nobody chose to publish it, so nobody should have
-to know it was published in order to remove it. `P` lists your facts for bound repos and says which the
-team has; `x` removes one from your memory, from theirs, and from the evidence pool — but it leaves the team's
-copy alone while another contributor is still behind it, since nothing would put it back for them. The team's copy is
-matched exactly rather than by similarity — it is the one file where a wrong removal costs everyone.
+**Removing from the team is a pull request (2.28).** `forget()` and the `P` screen that called it are gone:
+inspect's `x` on a team's fact opens a pull request that takes the line out, matched exactly rather than by
+similarity, since it is the one file where a wrong removal costs everyone.
 
 **A general fact belongs to a project, not to you.** `general.md` used to mean "true for me everywhere",
 which is why it had nowhere to go the moment you joined a second team: `_the_one_team()` refuses to guess,
 so eight general facts sat unpoolable and unshareable with nothing on screen saying why. It means "true
 across THIS PROJECT" now, and the project is the team of the repo you were in when you observed it —
-`gitdashy remember --general` keeps the directory's origin, and `P` uses the row you are on. The
+`gitdashy remember --general` keeps the directory's origin, and inspect's `s` uses the row you are on. The
 team-level `general.md` that receives it already existed and was already read for every bound repo; the
 only thing missing was a way to get a fact into it. An unbound context still selects nothing: context
 narrows the answer, it never invents one.
@@ -667,8 +654,7 @@ way a second run of the same model is not.
 | review proposes facts | a bound repo whose team agreed: `drafts/<you>/` in the team, promotions into the team's file and your pool line. Otherwise: your drafts, promotions into `mine` | team repo, or private repo |
 | `gitdashy remember` | the same as a review; `--private` always your drafts and `mine` | team repo, or private repo |
 | `W` on a team draft → `x` / `t` | `x` drops your line; `t` opens a pull request adding the fact to the team's file | team repo, or a PR |
-| `P` → `t` | the team memory file; the pool line stays | team repo |
-| `P` → `x` | removes from `mine` and from the pool; when no other backer remains, opens a pull request removing it from the team's file | private + team repo, and a PR |
+| inspect → `s` on your fact | a pull request adding it to the covering team's file; yours stays | a PR |
 | `n` / `g` inspect → `x` | yours: removes the fact from `mine`. A team's: opens a pull request removing it; nothing is typed in | private repo, or a PR |
 | inspect → `e` on a brief or `agents.md` | a pull request on the team's repo, approved by a person; gitdashy never reviews PRs on a team's repo | a PR |
 | `Z` dream | `mine` only, after you approve — the team's are read, never written | private repo |
@@ -778,7 +764,7 @@ can walk back.
 | name | value | meaning |
 |---|---|---|
 | `PROMOTE_AT` | 2 | independent reviews before a draft becomes yours |
-| corroboration | 2 people | pools agreeing before `P` marks it ★ (display only) |
+| corroboration | 2 people | pools agreeing before inspect marks a team fact ★ (display only) |
 | `NEAR` | 0.88 | difflib ratio over **tokens** at which two wordings are the same fact |
 | `CLONE` | 300s | cap on any command that talks to a remote |
 
