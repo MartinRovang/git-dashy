@@ -47,7 +47,7 @@ It gives two rules:
   `W` → `t` accepts one of your private drafts as your fact. Someone who has read
   the line is the second opinion the counter stands in for. **Into a team it is a
   pull request, never a push:** `W` → `t` on a team draft opens a pull request on
-  the team's repo that a person with rights on it approves (as of 2.28).
+  the team's repo that a person with rights on it approves (as of 2.32).
 
 The binding and the consent are each one keypress, once per repo and once per team.
 Nothing prompts about an individual fact. §3.3 has the detail.
@@ -174,7 +174,7 @@ so the reviewer must arrive at the fact again *blind*.
 
 ### 3.3 Promotion — into the team, also automatic
 
-**As of 2.28, a repo bound to a team drafts into the team, not into you.** When the
+**As of 2.32, a repo bound to a team drafts into the team, not into you.** When the
 gates below hold, `append` writes a review's draft to
 `<team>/memory/drafts/<you>/<repo>.md` rather than to your private queue, and a draft
 that reaches `PROMOTE_AT` distinct review ids there, from your reviews or a teammate's,
@@ -197,7 +197,7 @@ The gate itself is the one
 §3.2 describes. §4b-3 has the full account, including what a *no* to consent does
 and where a model gets asked.
 
-**The `P` screen is gone (2.28).** It listed your facts for team-bound repos so you
+**The `P` screen is gone (2.32).** It listed your facts for team-bound repos so you
 could see what had been copied to the team and take it back. Nothing is copied any
 more: team knowledge arrives in the team's file directly, from the team's draft
 pool. Inspect (`g`) covers what was left: a team's facts show **★ N people found
@@ -319,7 +319,7 @@ arrive in time order. With several logs it never is.)
 
 **A general fact is a team's only when it was seen in that team's repo.** It names no repo, so the repo
 you were standing in decides: bound to a team, the team's; bound to nothing, or no repo at all, yours. Being
-in exactly one team used to be a last resort that sent it there anyway; that is gone (2.30), so a private
+in exactly one team used to be a last resort that sent it there anyway; that is gone (2.32), so a private
 project's lesson never reaches a team. Private general facts are yours: how you work, read in every session.
 
 **A team is a git repo — or just a directory — that pools what reviews learn.** Whoever can reach it is
@@ -528,10 +528,10 @@ at `(1)`, and not one specific fact ever promoted by recurrence.** Two people re
 land on the same facts, and that is stronger independence than same-machine recurrence — different
 person, different PR, different moment.
 
-So drafts are pooled the way accepted facts already are. As of 2.28 the draft pool is not a mirror of
+So drafts are pooled the way accepted facts already are. As of 2.32 the draft pool is not a mirror of
 your private queue: a review of a bound repo writes there directly, and `sweep()` / `cross_check()` compare
 your folder with everyone else's in the same team. Every candidate pair is judged by the model, however
-alike the wording: a shortcut that agreed close wordings without asking was tried in 2.28's branch and taken
+alike the wording: a shortcut that agreed close wordings without asking was tried while this was built and taken
 out, for the reason §4b-2 gives. An agreed pair whose ids reach `PROMOTE_AT` moves the fact into the team's file,
 removes your line, and a teammate's machine removes theirs when it finds the team already knows it:
 
@@ -574,7 +574,7 @@ The launch prompt read a timeout as a keypress for four versions, so it recorded
 team on the first launch after auto-sharing shipped and then, by design, never asked again. Nothing
 published anywhere for two days and no surface said why.
 
-**Removing from the team is a pull request (2.28).** `forget()` and the `P` screen that called it are gone:
+**Removing from the team is a pull request (2.32).** `forget()` and the `P` screen that called it are gone:
 inspect's `x` on a team's fact opens a pull request that takes the line out, matched exactly rather than by
 similarity, since it is the one file where a wrong removal costs everyone.
 

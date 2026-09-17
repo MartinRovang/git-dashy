@@ -210,8 +210,8 @@ pub fn append_self(repo: &str, text: &str) -> Vec<String> {
         }
     }
     history_();
-    for _ in &fresh {
-        crate::learning::record("draft", repo, "pre-review");
+    for f in &fresh {
+        crate::learning::record("draft", repo, "pre-review", f);
     }
     rewrite_counted(&self_path(repo), &items);
     fresh
@@ -1070,9 +1070,15 @@ fn write_team_drafts(p: &Path, items: &[Draft]) {
 /// ponytail: straight into the team, not into your memory first. A fact two independent reviews of a
 /// team repo found is the team's; copying it into your own file as well is how one fact came to live in
 /// two places that then had to be kept in step (and forgotten in step).
-fn to_team(base: &Path, repo: Option<&str>, fact: &str) {
+fn to_team(base: &Path, repo: Option<&str>, fact: &str, also: &[&str]) {
     let dest = path(repo, Some(base));
-    if !facts(&dest).iter().any(|t| same(fact, t)) {
+    // ponytail: `also` is the other wording a cross-check agreed on. Two machines can land the same pair in one
+    // refresh, each in its own wording; the one that pulls second finds the other's line and adds none.
+    let held = facts(&dest);
+    if !held
+        .iter()
+        .any(|t| same(fact, t) || also.iter().any(|w| is(w, t)))
+    {
         append_line(&dest, fact);
     }
     let evidence = base.join(POOL).join(whoami()).join(slug_of(repo));
@@ -1226,7 +1232,7 @@ fn sweep_by(judge: impl Fn(&[(String, String)]) -> Option<Vec<bool>>) -> Vec<Str
 pub fn cross_check(repo: &str, model: &str) -> Vec<String> {
     let r = opt(repo);
     match team_home(r, "") {
-        Some(base) => cross_check_in(&base, r, model),
+        Some(base) => cross_check_by(&base, r, |pairs| judge(pairs, model)),
         None => vec![],
     }
 }
@@ -1296,7 +1302,7 @@ fn land_agreed(base: &Path, repo: Option<&str>, agreed: &[&Pair]) -> Vec<String>
             && items.iter().any(|d| d.fact == a.fact)
             && !moved.contains(&a.fact)
         {
-            to_team(base, repo, &a.fact);
+            to_team(base, repo, &a.fact, &[&b.fact]);
             // the teammate's wording, so their machine can take their draft out (see candidates)
             let record = base.join(LANDED).join(slug_of(repo));
             if !facts(&record).iter().any(|w| is(w, &b.fact)) {
@@ -1310,11 +1316,6 @@ fn land_agreed(base: &Path, repo: Option<&str>, agreed: &[&Pair]) -> Vec<String>
         write_team_drafts(&file, &items);
     }
     moved
-}
-
-/// cross_check for one team's pool, with the model as the judge.
-fn cross_check_in(base: &Path, repo: Option<&str>, model: &str) -> Vec<String> {
-    cross_check_by(base, repo, |pairs| judge(pairs, model))
 }
 
 /// cross_check for one team's pool: the cheap pass finds candidates loosely (CROSS), and `judge` makes the
@@ -1748,8 +1749,13 @@ fn team_for(repo: Option<&str>, about: &str) -> String {
 
 /// {user: [(repo, fact)]} across everyone's pool. {} when you are not in a team.
 pub fn pools() -> HashMap<String, Vec<(Option<String>, String)>> {
+    pools_in(&team::dirs())
+}
+
+/// pools() for these team checkouts only: what one team's inspect needs, without walking every team.
+pub fn pools_in(dirs: &[PathBuf]) -> HashMap<String, Vec<(Option<String>, String)>> {
     let mut out: HashMap<String, Vec<(Option<String>, String)>> = HashMap::new();
-    for base in team::dirs() {
+    for base in dirs {
         // ponytail: every joined team: corroboration is per fact, not per team
         let root = base.join("memory").join(POOL);
         for user in sorted_names(&root) {
@@ -2203,20 +2209,22 @@ fn fresh(text: &str) -> Vec<String> {
 }
 
 /// Add one observation to a counted file's rows: a new draft, or +1 (and this run's id) on a matching one.
+/// (whether it is new, whether a pre-review's finding added to it).
 ///
 /// ponytail: a pre-review of your own PR that found this counts as the other observation: two runs, one of
-/// which did not know the other existed. Consumed, so one pre-review cannot keep paying out.
+/// which did not know the other existed. Consumed either way, so one pre-review cannot keep paying out; it
+/// adds to the count only where `self_counts`, which is your own memory and not a team's (see append_team).
 /// ponytail: the first wording wins and the count is what carries meaning; the ids record WHICH runs are
-/// behind that count, so a later merge can tell two runs from one run twice. True when it is new.
-fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str) -> bool {
-    let bonus = if consume_self(repo, &fact) { 1 } else { 0 };
+/// behind that count, so a later merge can tell two runs from one run twice.
+fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str, self_counts: bool) -> (bool, bool) {
+    let bonus = u32::from(consume_self(repo, &fact) && self_counts);
     match items.iter_mut().find(|d| same(&d.fact, &fact)) {
         Some(d) => {
             d.count += 1 + bonus;
             if !d.ids.iter().any(|i| i == rid) {
                 d.ids.push(rid.to_string());
             }
-            false
+            (false, bonus == 1)
         }
         None => {
             items.push(Draft {
@@ -2224,7 +2232,7 @@ fn observe(items: &mut Vec<Draft>, repo: &str, fact: String, rid: &str) -> bool 
                 ids: vec![rid.to_string()],
                 fact,
             });
-            true
+            (true, bonus == 1)
         }
     }
 }
@@ -2242,16 +2250,19 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
         return vec![];
     }
     let (mut items, settled, rid) = (rows(r), known(repo), rid());
+    // facts a pre-review carried over the gate: the chart says so rather than "seen twice"
+    let mut with_bonus: Vec<String> = Vec::new();
     for fact in proposed {
-        if let Some(t) = settled.iter().find(|t| same(&fact, t)) {
-            crate::necro::remind(t); // nothing new for memory, but the Necronomicon ranks by how often a fact comes up
+        if settled.iter().any(|t| same(&fact, t)) {
             continue; // already approved somewhere: proposing it again says nothing new
         }
-        if observe(&mut items, repo, fact, &rid) {
-            // a draft that promotes at once (a pre-review bonus) is recorded as the fact it becomes
-            if items.last().is_some_and(|d| d.count < PROMOTE_AT) {
-                crate::learning::record("draft", repo, source);
-            }
+        let (new, bonused) = observe(&mut items, repo, fact.clone(), &rid, true);
+        if bonused {
+            with_bonus.push(fact.clone());
+        }
+        // a draft that promotes at once (a pre-review bonus) is recorded as the fact it becomes
+        if new && items.last().is_some_and(|d| d.count < PROMOTE_AT) {
+            crate::learning::record("draft", repo, source, &fact);
         }
     }
     let promoted: Vec<String> = items
@@ -2263,7 +2274,12 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
     // write fails; this one costs a duplicate draft on a crash, which the next round collapses anyway.
     for t in &promoted {
         append_line(&path(r, None), t);
-        crate::learning::record("fact", repo, "seen twice");
+        let how = if with_bonus.iter().any(|b| same(b, t)) {
+            "pre-review"
+        } else {
+            "seen twice"
+        };
+        crate::learning::record("fact", repo, how, t);
     }
     let left: Vec<Draft> = items.into_iter().filter(|d| d.count < PROMOTE_AT).collect();
     write_drafts(r, &left);
@@ -2276,6 +2292,9 @@ pub fn append_private(repo: &str, text: &str, source: &str) -> Vec<String> {
 /// team does not have is exactly what this pool exists to let the team find out.
 /// ponytail: no learning event is recorded. The team's git history is the chart's record of team drafts
 /// and team facts; an event here as well would count each one twice.
+/// ponytail: DISTINCT RUN IDS reach the gate here, and a pre-review adds nothing. The count once decided it,
+/// so your pre-review plus one review of your own PR (one run id, the same model on the same diff) wrote
+/// straight into what every teammate's reviews read. It is the rule cross-checks already use.
 fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
     let _g = guard();
     let r = opt(repo);
@@ -2292,18 +2311,19 @@ fn append_team(base: &Path, repo: &str, text: &str) -> Vec<String> {
         .collect();
     for fact in proposed {
         if !settled.iter().any(|t| same(&fact, t)) {
-            observe(&mut items, repo, fact, &rid);
+            observe(&mut items, repo, fact, &rid, false);
         }
     }
+    let runs = |d: &Draft| d.ids.iter().collect::<HashSet<_>>().len() as u32;
     let promoted: Vec<String> = items
         .iter()
-        .filter(|d| d.count >= PROMOTE_AT)
+        .filter(|d| runs(d) >= PROMOTE_AT)
         .map(|d| d.fact.clone())
         .collect();
     for t in &promoted {
-        to_team(base, r, t);
+        to_team(base, r, t, &[]);
     }
-    let left: Vec<Draft> = items.into_iter().filter(|d| d.count < PROMOTE_AT).collect();
+    let left: Vec<Draft> = items.into_iter().filter(|d| runs(d) < PROMOTE_AT).collect();
     write_team_drafts(&file, &left);
     promoted
 }
@@ -2505,7 +2525,7 @@ fn promote_locked(repo: Option<&str>, fact: &str, source: &str) -> PathBuf {
     drop_locked(repo, fact);
     if !already_known(repo.unwrap_or(""), fact) {
         append_line(&path(repo, None), fact);
-        crate::learning::record("fact", repo.unwrap_or(""), source);
+        crate::learning::record("fact", repo.unwrap_or(""), source, fact);
     }
     path(repo, None)
 }
@@ -2928,6 +2948,32 @@ mod tests {
     }
 
     #[test]
+    fn a_fact_a_pre_review_carried_over_the_gate_is_charted_as_that() {
+        let (_g, tmp) = setup();
+        config::update(|c| c.learning = tmp.path().join("learning.jsonl"));
+        append_self("a/b", "- the router is stubbed");
+        append("a/b", "- the router is stubbed", "");
+        append("a/b", "- uses tabs", "");
+        append("a/b", "- uses tabs", "");
+        let facts: Vec<(String, String)> = crate::learning::recorded()
+            .into_iter()
+            .filter(|e| e.kind == "fact")
+            .map(|e| (e.source, e.id))
+            .collect();
+        config::update(|c| c.learning = PathBuf::new());
+        assert_eq!(
+            facts,
+            [
+                (
+                    "pre-review".to_string(),
+                    crate::learning::fact_id("the router is stubbed")
+                ),
+                ("seen twice".to_string(), crate::learning::fact_id("uses tabs"))
+            ]
+        );
+    }
+
+    #[test]
     fn remove_mine_takes_one_fact_and_says_whether_it_did() {
         let (_g, _t) = setup();
         let p = path(Some("a/b"), None);
@@ -3183,6 +3229,60 @@ mod tests {
         std::fs::write(&mine, "- (1) [r:aaaa,r:bbbb] retry owns backoff\n").unwrap();
         assert!(cross_check_by(&shared, Some("a/b"), yes).is_empty());
         assert!(!shared.join("a__b.md").exists());
+    }
+
+    #[test]
+    fn in_a_team_a_pre_review_adds_no_count_and_distinct_runs_decide() {
+        let (_g, tmp) = setup();
+        let (shared, me) = a_team_repo(tmp.path());
+        let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
+        // your pre-review, then one review of your own PR: one run id, so a draft, not the team's fact
+        append_self("a/b", "- the router is stubbed");
+        assert!(append("a/b", "- the router is stubbed", "").is_empty());
+        assert!(!shared.join("a__b.md").exists());
+        assert_eq!(
+            (counted(&mine)[0].count, counted(&mine)[0].ids.len()),
+            (1, 1),
+            "no bonus on the count either"
+        );
+        assert!(
+            self_drafts("a/b").is_empty(),
+            "the pre-review's finding is spent all the same"
+        );
+        // a count of 2 behind one run, as an older store can hold, is still one run
+        let mut rows = counted(&mine);
+        rows.push(Draft {
+            count: 2,
+            ids: vec!["aaaa".into()],
+            fact: "an old count".into(),
+        });
+        write_team_drafts(&mine, &rows);
+        // a second, independent review is the second run
+        assert_eq!(
+            append("a/b", "- the router is stubbed", ""),
+            ["the router is stubbed"]
+        );
+        assert_eq!(lines(&shared.join("a__b.md")), ["- the router is stubbed"]);
+    }
+
+    #[test]
+    fn a_pair_two_machines_landed_at_once_is_one_line_in_the_team() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [r:beef] the retry client owns backoff\n").unwrap();
+        append("a/b", "- retry owns backoff", "");
+        // their machine landed the same pair first, in their wording, and this machine has pulled it
+        std::fs::write(shared.join("a__b.md"), "- the retry client owns backoff\n").unwrap();
+        let yes = |p: &[(String, String)]| Some(vec![true; p.len()]);
+        // the wordings differ, so it is still judged and agreed: yours leaves the drafts, and the team keeps one line
+        assert_eq!(cross_check_by(&shared, Some("a/b"), yes), ["retry owns backoff"]);
+        assert_eq!(
+            lines(&shared.join("a__b.md")),
+            ["- the retry client owns backoff"],
+            "no second line"
+        );
     }
 
     #[test]

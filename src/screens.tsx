@@ -265,15 +265,13 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     if (tab === 'stats') {
       return events.length ? <LearningChart events={events} /> : <p className="empty">nothing learned yet: the chart fills in as reviews propose and confirm facts</p>
     }
+    // drafts, the one tab left
     const it = items()[i] as Json | undefined
-    if (tab === 'drafts') {
-      if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
-      const left = promoteAt - (it.n as number)
-      const count = `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
-      const mark = it.kind === 'self' ? 'pre-review · one opinion' : it.kind === 'team' ? `in the team's drafts · ${count}` : count
-      return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
-    }
-    return null
+    if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
+    const left = promoteAt - (it.n as number)
+    const count = `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
+    const mark = it.kind === 'self' ? 'pre-review · one opinion' : it.kind === 'team' ? `in the team's drafts · ${count}` : count
+    return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
   }
 
   // every tab up front: the tabs show their counts, and the panel never opens on an empty tab that is still loading

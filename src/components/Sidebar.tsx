@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Bot, Database, Eye, BookOpen, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
-import type { PostingRule, StateData } from '../types'
-import { counts, postingTree, ruleSource, hasOwnRule } from '../board'
+import { Bot, Database, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
+import type { PostingRule, Row as Pr, StateData } from '../types'
+import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board'
+import { Glyph } from './Glyph'
 import { every, span } from '../tokens'
-import { Chips, Row, Select } from './Controls'
+import { Row, Select } from './Controls'
 import { close, open, repaint } from '../modals'
 import { api } from '../api'
 import { fuzzy, step } from '../stories'
@@ -31,6 +32,9 @@ type Props = {
   onDb: (op: 'set' | 'clear', target: string, db?: string) => void
   collapsed: boolean
   onCollapse: () => void
+  selected: Pr | null
+  onCast: (p: Pr, spell: string) => void
+  onBook: () => void
 }
 
 /** Where the board's TEAM and MERGED rows may come from: your teams, and the orgs you can see.
@@ -307,8 +311,10 @@ function PostControls({
   )
 }
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook }: Props) {
   const s = d?.settings || {}
+  // the server already drops a spell whose file was deleted
+  const equipped = s.spells || []
   const o = d?.options || { model: [], depth: [], effort: [], voice: [], hunter: [], subs: [], window: [], interval: [], theme: [], scopes: [] }
   const k = d?.knowledge || { memory: '', store: '', teams: [], teamError: '', notes: [], waiting: [] }
   const rep = k.report
@@ -377,14 +383,6 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           <Row k="e" label="effort">
             <Select value={s.effort || ''} options={o.effort} show={(v) => v || 'default'} onChange={(v) => setting('effort', v)} />
           </Row>
-          <div className="sub">
-            <kbd className="hint">x</kbd> voices <em>active</em>
-          </div>
-          <Chips values={s.voice || []} options={o.voice} onToggle={(v) => setting('voice', toggle(s.voice || [], v))} />
-          <div className="sub">
-            <kbd className="hint">h</kbd> hunters <em>active</em>
-          </div>
-          <Chips values={s.hunter || []} options={o.hunter} onToggle={(v) => setting('hunter', toggle(s.hunter || [], v))} />
           {/* ponytail: auto lives with the agent now, which is what it configures. The top bar keeps
               its switch too — it is the one setting you flip mid-session without opening anything. */}
           <button className="fld" aria-pressed={!!d?.auto} onClick={onAuto}>
@@ -496,6 +494,56 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           ) : (
             <div className="rules none">no repos on the board yet; reviews post when written</div>
           )}
+        </Group>
+
+        <Group
+          icon={Skull}
+          label="Necronomicon"
+          summary={[`${(s.voice || []).length} voice${(s.voice || []).length === 1 ? '' : 's'}`, `${(s.hunter || []).length} passive${(s.hunter || []).length === 1 ? '' : 's'}`, `${equipped.length} spell${equipped.length === 1 ? '' : 's'}`].join(' · ')}
+          open={!!open.necro}
+          onToggle={() => flip('necro')}
+          collapsed={collapsed}
+        >
+          {/* ponytail: what is on, read-only. Equipping lives in the book, so the rail and the book cannot disagree about how. */}
+          {([['voices', 'voice', s.voice || []], ['passives', 'passive', s.hunter || []]] as const).map(([label, kind, on]) => (
+            <div key={label}>
+              <div className="sub">{label}</div>
+              {on.length ? (
+                <div className="tags">
+                  {on.map((name) => (
+                    <span className="tag still" key={name}>
+                      <Glyph kind={kind} name={name} /> {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="rules none">none equipped</div>
+              )}
+            </div>
+          ))}
+          <div className="sub">
+            spells <em>{selected && canCastOn(selected) ? `cast on #${selected.number}` : 'pick a PR'}</em>
+          </div>
+          {equipped.length ? (
+            <div className="tags">
+              {equipped.map((name) => (
+                <button
+                  className="tag"
+                  key={name}
+                  disabled={!selected || !canCastOn(selected)}
+                  title={selected ? `cast ${name} on #${selected.number}` : 'select a PR'}
+                  onClick={() => selected && onCast(selected, name)}
+                >
+                  <Glyph kind="spell" name={name} /> {name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rules none">no spells equipped</div>
+          )}
+          <button className="btn dbconf" onClick={onBook}>
+            open the book
+          </button>
         </Group>
 
         <Group

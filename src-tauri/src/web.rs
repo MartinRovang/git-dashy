@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, necro,
-    report, review, story, team, textdiff, update,
+    autorev, bind, config, dbrepo, diff, github, held, install, knowledge, log as review_log, memory, report,
+    review, spells, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -55,7 +55,10 @@ type Query = HashMap<String, String>;
 
 /// Everything the settings can change, in the shape config::save writes.
 pub fn snapshot() -> Value {
-    serde_json::to_value(config::snapshot(&config::get())).unwrap_or_default()
+    let mut c = config::get();
+    // a spell whose file was deleted stays saved but is not shown, so no surface offers a cast that 400s
+    c.spells.retain(|n| spells::get(n).is_some());
+    serde_json::to_value(config::snapshot(&c)).unwrap_or_default()
 }
 
 fn team_error() -> String {
@@ -212,7 +215,6 @@ pub fn payload(state: &State) -> Value {
                     "interval": config::INTERVALS, "theme": config::THEMES,
                     "scopes": scopes},
         "knowledge": {
-            "learn": {"next": necro::next(), "running": job("learn")["running"]},
             "report": {
                 "job": job("report"),
                 "latest": report::latest().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())),
@@ -299,6 +301,14 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
         "checks": d.as_ref().map(|d| d.checks.clone()).unwrap_or_default(),
         "brief": {"whose": whose, "empty": text.is_empty()},
         "pre": pre_json(pre),
+        "spells": review::spell_results(pr.repo(), pr.number)
+            .into_iter()
+            // quotes: it repeats the spell word for word, so posting it would make the spell public
+            .map(|(name, text, at)| {
+                let quotes = spells::get(&name).is_some_and(|s| review::quotes(&text, &s));
+                json!({"name": name, "text": text, "at": at, "quotes": quotes})
+            })
+            .collect::<Vec<_>>(),
         "review": rev.as_ref().map(|rev| json!({
             "verdict": config::status(&rev.verdict).unwrap_or(""),
             "summary": rev.summary,
@@ -691,6 +701,23 @@ fn get_prereview(state: &State, query: &Query) -> Out {
     Ok(json!({"path": path, "text": text, "moved": moved, "talk": talk}))
 }
 
+/// Post a spell's result on its PR as a plain comment: no verdict, just what it found.
+fn post_spell(state: &State, body: &Body) -> Out {
+    let (pr, _) = need_pr(state, &text(body, "url"))?;
+    let name = text(body, "name");
+    let Some((_, found, _)) = review::spell_results(pr.repo(), pr.number)
+        .into_iter()
+        .find(|(n, _, _)| *n == name)
+    else {
+        return Err(Fail(404, format!("no {name} result on this PR")));
+    };
+    if !config::get().demo {
+        github::comment(pr.repo(), pr.number, &format!("**{name}**\n\n{found}"))
+            .map_err(|e| Fail(502, format!("{e:#}")))?;
+    }
+    Ok(json!({"ok": true}))
+}
+
 /// Talk about your own PR's pre-review, the way a held review is discussed. Nothing here is posted.
 fn post_prereview(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
@@ -769,7 +796,7 @@ fn get_memory(_state: &State, query: &Query) -> Out {
         "backers": if team.is_empty() {
             Vec::new()
         } else {
-            let index = memory::pools();
+            let index = memory::pools_in(&team::dir_of(team).into_iter().collect::<Vec<_>>());
             memory::facts_in(&path).iter().map(|f| memory::backers(&index, repo, f)).collect::<Vec<_>>()
         },
     }))
@@ -838,39 +865,28 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
 }
 
-/// The Necronomicon: its ranked points, the learn job, and what memory is still learning.
-fn get_necronomicon(_state: &State, _q: &Query) -> Out {
-    let learning: Vec<Value> = memory::waiting()
+/// The book: the spells on disk, and the built-in passives and voices with a line on what each does.
+fn get_spells(_state: &State, _q: &Query) -> Out {
+    let c = config::get();
+    let about = |n: &str| review::table(review::ABOUT, n).unwrap_or("");
+    let built = |names: &[&str], on: &[String]| -> Vec<Value> {
+        names
+            .iter()
+            .map(|n| json!({"name": n, "about": about(n), "on": on.iter().any(|x| x == n)}))
+            .collect()
+    };
+    let spells: Vec<Value> = spells::list()
         .into_iter()
-        .map(|(repo, n, fact, kind)| json!({"repo": repo, "n": n, "fact": fact, "kind": kind}))
+        .map(|(name, text)| {
+            let on = c.spells.contains(&name);
+            json!({"name": name, "about": spells::about(&text), "on": on})
+        })
         .collect();
-    let mut out = necro::view();
-    out["job"] = job("learn");
-    out["promoteAt"] = json!(memory::PROMOTE_AT);
-    out["learning"] = json!(learning);
-    Ok(out)
-}
-
-/// `learn` starts a learn now; `up`/`down` raise or derank one point.
-fn post_necronomicon(_state: &State, body: &Body) -> Out {
-    let op = text(body, "op");
-    if op == "learn" {
-        start_learn();
-        return Ok(json!({"ok": true}));
-    }
-    if op == "up" || op == "down" {
-        if !necro::rank(&text(body, "scope"), &text(body, "text"), op == "up") {
-            return Err(Fail::new(404, "no such point; learn may have rewritten it"));
-        }
-        return Ok(json!({"ok": true}));
-    }
-    Err(Fail::new(400, "op must be learn, up or down"))
-}
-
-/// Learn in the background; a second start while one runs does nothing.
-fn start_learn() {
-    let model = config::get().model;
-    start_job("learn", move || necro::learn(&model));
+    Ok(json!({
+        "spells": spells,
+        "passives": built(config::HUNTERS, &c.hunter),
+        "voices": built(config::VOICES, &c.voice),
+    }))
 }
 
 /// One overlap pair, re-read live: None once either side is no longer a draft.
@@ -1228,6 +1244,19 @@ fn truthy(body: &Body, key: &str) -> bool {
 }
 
 /// `body.get("repo") or None`.
+/// The body's repo when it can only name a memory file of facts. 400 for a path trick (`\\`, `..`) or a name
+/// that is a founding document's file: those go through their own route, which refuses an empty proposal.
+fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
+    let repo = repo_of(body);
+    if let Some(r) = repo.as_deref() {
+        let slug = memory::slug(r);
+        if r.contains('\\') || r.contains("..") || slug == memory::PROJECT || slug == memory::AGENTS {
+            return Err(Fail::new(400, "not a repo"));
+        }
+    }
+    Ok(repo)
+}
+
 fn repo_of(body: &Body) -> Option<String> {
     Some(text(body, "repo")).filter(|r| !r.is_empty())
 }
@@ -1328,10 +1357,26 @@ fn post_review(state: &State, body: &Body) -> Out {
     // pre-review reads the diff and posts nothing; review posts the verdict. Same row, same spinner.
     // ponytail: the start IS the check. It claims the url under the state lock and says whether it got
     // it, so a double-click cannot start two reviews of one PR between the check and the spawn.
-    if team::is_team_repo(pr.repo()) {
+    if team::in_repos(&team::team_repos(), pr.repo()) {
         return Err(Fail(403, team::HUMAN_ONLY.into()));
     }
+    let spell = text(body, "spell");
     let ask = text(body, "ask");
+    if !spell.is_empty() {
+        if !ask.is_empty() || truthy(body, "self") {
+            return Err(Fail::new(400, "a spell is cast on its own"));
+        }
+        let Some(t) = spells::get(&spell) else {
+            return Err(Fail(400, format!("no spell {spell}")));
+        };
+        if t.chars().count() > ASK_MAX {
+            return Err(Fail(400, format!("spell {spell} is too long: ~/.prs_spells/{spell}.md must stay under {ASK_MAX} characters")));
+        }
+        if !state.start_spell(&pr, &spell, &t) {
+            return Err(Fail::new(409, "already running"));
+        }
+        return Ok(json!({"ok": true}));
+    }
     if ask.chars().count() > ASK_MAX {
         return Err(Fail::new(400, "instructions are too long"));
     }
@@ -1407,7 +1452,7 @@ fn post_copy(state: &State, body: &Body) -> Out {
 /// pull request on the team's repo, because every teammate reads it.
 fn post_memory(_state: &State, body: &Body) -> Out {
     let (team, fact) = (text(body, "team"), text(body, "fact"));
-    let repo = repo_of(body).filter(|r| r != "general");
+    let repo = checked_repo(body)?.filter(|r| r != "general");
     let label = repo.as_deref().unwrap_or("general").to_string();
     match text(body, "op").as_str() {
         "remove" if team.is_empty() => {
@@ -1447,7 +1492,7 @@ fn post_memory(_state: &State, body: &Body) -> Out {
 }
 
 fn post_drafts(_state: &State, body: &Body) -> Out {
-    let (repo, fact) = (repo_of(body), text(body, "fact"));
+    let (repo, fact) = (checked_repo(body)?, text(body, "fact"));
     let label = repo.as_deref().unwrap_or("general");
     let dir = config::get().memory_dir;
     let team = text(body, "team");
@@ -1511,7 +1556,7 @@ fn post_overlaps(_state: &State, body: &Body) -> Out {
             Ok(json!({"ok": true}))
         }
         "merge" => {
-            let repo = repo_of(body);
+            let repo = checked_repo(body)?;
             let label = repo.as_deref().unwrap_or("general").to_string();
             let n = memory::merge(repo.as_deref(), &text(body, "keep"), &text(body, "drop"));
             team::push_dir(
@@ -1577,13 +1622,24 @@ fn post_teams(state: &State, body: &Body) -> Out {
             .collect();
         fresh.sort();
         let err = team_error();
-        let warning = if err.is_empty() {
-            String::new()
-        } else {
+        let foreign = fresh
+            .first()
+            .and_then(|k| team::dir_of(k))
+            .map(|d| team::foreign_files(&d))
+            .unwrap_or_default();
+        let warning = if !err.is_empty() {
             format!(
                 "joined, but could not publish: {}",
                 err.chars().take(70).collect::<String>()
             )
+        } else if !foreign.is_empty() {
+            // a team's repo is its memory's alone: no pull request on it is ever reviewed by a model
+            format!(
+                "joined, but this repo also holds {}: gitdashy never reviews a pull request on a team's repo, so give the memory a repo of its own",
+                foreign.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            )
+        } else {
+            String::new()
         };
         return Ok(
             json!({"ok": true, "key": fresh.first().cloned().unwrap_or_default(), "warning": warning}),
@@ -2048,6 +2104,19 @@ fn post_settings(state: &State, body: &Body) -> Out {
             }
         }
     }
+    if let Some(v) = body.get("spells") {
+        let Some(names) = v.as_array().and_then(|a| {
+            a.iter()
+                .map(|x| x.as_str().map(String::from))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return Err(Fail::new(400, "spells must be a list of names"));
+        };
+        if let Some(bad) = names.iter().find(|n| spells::get(n).is_none()) {
+            return Err(Fail(400, format!("no spell {bad}")));
+        }
+        c.spells = names;
+    }
     if let Some(v) = body.get("subs") {
         let Some(got) = pick(v, config::SUBS) else {
             return Err(Fail(
@@ -2161,7 +2230,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/memory" => get_memory,
         "/api/memory/files" => get_memory_files,
         "/api/drafts" => get_drafts,
-        "/api/necronomicon" => get_necronomicon,
+        "/api/spells" => get_spells,
         "/api/overlaps" => get_overlaps,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
@@ -2185,6 +2254,7 @@ fn post_route(path: &str) -> Option<Post> {
     Some(match path {
         "/api/review" => post_review,
         "/api/prereview" => post_prereview,
+        "/api/spell" => post_spell,
         "/api/auto" => post_auto,
         "/api/settings" => post_settings,
         "/api/refresh" => post_refresh,
@@ -2198,7 +2268,6 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/posting" => post_posting,
         "/api/dbrepo" => post_dbrepo,
         "/api/dream" => post_dream,
-        "/api/necronomicon" => post_necronomicon,
         "/api/report" => post_report,
         "/api/request-review" => post_request_review,
         "/api/consent" => post_consent,
@@ -2729,6 +2798,16 @@ mod tests {
             404
         );
         assert!(!teams.join("strangers").exists());
+
+        // a fact scope that is a founding document's file, or a path trick, is not a repo
+        for repo in ["project", "agents", "..\\x", "a/../b"] {
+            let (code, _) = post(
+                &format!("{base}/api/memory"),
+                json!({"op": "remove", "repo": repo, "fact": "x"}),
+                &token,
+            );
+            assert_eq!(code, 400, "{repo}");
+        }
     }
 
     #[test]
@@ -2868,7 +2947,7 @@ mod tests {
             c.teams = d.path().join("no-teams");
         });
         // a repo no other test names: memory.rs tests record events too, and theirs can land in this log
-        crate::learning::record("draft", "learning-route/probe", "review");
+        crate::learning::record("draft", "learning-route/probe", "review", "a probe");
         let (base, token, _state) = served();
         assert_eq!(get(&format!("{base}/api/learning"), None).0, 401);
         let (code, j) = get(&format!("{base}/api/learning"), Some(&token));
@@ -3552,6 +3631,45 @@ mod tests {
         assert!(body["error"].as_str().unwrap().contains("needs the claude CLI"));
     }
 
+    /// A spell's result reaches the detail with its time and whether it quotes the spell, and posting one that
+    /// does not exist is a 404.
+    #[test]
+    fn a_spell_result_is_shown_and_posted() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.self_dir = d.path().join("self");
+            c.spells_dir = d.path().to_path_buf();
+        });
+        std::fs::write(
+            d.path().join("auth-check.md"),
+            "trace every request path to its auth check",
+        )
+        .unwrap();
+        let (base, token, _state) = served();
+        let result = review::spell_path(pr().repo(), pr().number, "auth-check");
+        std::fs::create_dir_all(result.parent().unwrap()).unwrap();
+        std::fs::write(&result, "I will trace every request path to its auth check").unwrap();
+        let (code, d) = get(&format!("{base}/api/pr?url={}", pr().url), Some(&token));
+        assert_eq!(code, 200);
+        let s = &d["spells"][0];
+        assert_eq!(
+            (s["name"].as_str(), s["quotes"].as_bool()),
+            (Some("auth-check"), Some(true))
+        );
+        assert!(s["at"].as_f64().unwrap() > 0.0);
+        let url = format!("{base}/api/spell");
+        assert_eq!(
+            post(&url, json!({"url": pr().url, "name": "auth-check"}), &token).0,
+            200
+        );
+        assert_eq!(
+            post(&url, json!({"url": pr().url, "name": "test-gaps"}), &token).0,
+            404
+        );
+    }
+
     /// A pre-review discussed the same way, in demo mode: the conversation lives beside the markdown, and
     /// an accepted revision rewrites the markdown without making it look newer than it is.
     #[test]
@@ -3732,6 +3850,32 @@ mod tests {
         assert_eq!(
             (code, body["error"].as_str()),
             (400, Some("instructions are too long"))
+        );
+        assert!(!state.busy(&pr().url), "no review was started");
+    }
+
+    #[test]
+    fn a_spell_is_cast_alone_and_refused_when_its_file_is_too_long() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("huge.md"), "x".repeat(ASK_MAX + 1)).unwrap();
+        config::update(|c| c.spells_dir = d.path().to_path_buf());
+        let (base, token, state) = served();
+        let url = format!("{base}/api/review");
+        let (code, body) = post(
+            &url,
+            json!({"url": pr().url, "spell": "huge", "self": true}),
+            &token,
+        );
+        assert_eq!(
+            (code, body["error"].as_str()),
+            (400, Some("a spell is cast on its own"))
+        );
+        let (code, body) = post(&url, json!({"url": pr().url, "spell": "huge"}), &token);
+        assert_eq!(code, 400);
+        assert!(
+            body["error"].as_str().unwrap().contains("huge.md"),
+            "the error names the file"
         );
         assert!(!state.busy(&pr().url), "no review was started");
     }
@@ -4051,6 +4195,8 @@ mod tests {
             json!({"scopes": vec!["org:x"; 51]}),
             json!({"scopes": [format!("org:{}", "x".repeat(97))]}),
             json!({"read": {"u": 1}}),
+            json!({"spells": ["no-such-spell"]}),
+            json!({"spells": "auth-check"}),
             json!({"hidden": {"u": 1}}),
             json!({"read": {"x".repeat(513): "t"}}),
             json!({"read": (0..5001).map(|i| (i.to_string(), json!("t"))).collect::<Map<_, _>>()}),

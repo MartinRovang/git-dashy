@@ -360,6 +360,12 @@ export function isReviewed(p: Pr): boolean {
   return !p.waiting && !!tone(p.review)
 }
 
+/** A spell looks at one topic and posts nothing, so it runs on any PR nothing else is running on, except a
+ *  team's memory repo: a spell is a model review, and those are approved by a person. */
+export function canCastOn(p: Row): boolean {
+  return !p.busy && !p.humanOnly
+}
+
 export function selected(rows: Row[], sel: string): Row | null {
   return pick(rows, sel).row
 }
