@@ -24,6 +24,7 @@ pub mod necro;
 pub mod report;
 pub mod review;
 pub mod shell;
+pub mod spells;
 pub mod state;
 pub mod story;
 pub mod team;

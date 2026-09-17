@@ -151,6 +151,8 @@ pub struct Config {
     pub autorev: PathBuf,
     /// Which repo holds each repo's database. See dbrepo.rs.
     pub dbrepo: PathBuf,
+    /// One .md per spell, named after it. See spells.rs.
+    pub spells_dir: PathBuf,
     /// Mirrors `gitdashy init` registered.
     pub registry: PathBuf,
     pub corpus_home: PathBuf,
@@ -213,6 +215,7 @@ impl Default for Config {
             bindings: env_path("PRS_BINDINGS", ".prs_bindings"),
             autorev: env_path("PRS_AUTOREVIEW", ".prs_autoreview"),
             dbrepo: env_path("PRS_DBREPO", ".prs_dbrepo"),
+            spells_dir: env_path("PRS_SPELLS", ".prs_spells"),
             registry: home().join(".prs_mirrors"),
             corpus_home: home().join(".agent-corpus"),
             demo: false,
