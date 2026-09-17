@@ -1,6 +1,6 @@
 // The data half of the review screens: read a held review or a pre-review, poll while the agent works, and
 // act on it. ReviewTalk renders what this returns and fetches nothing itself.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, errorText, post } from './api'
 import type { Talk } from './types'
 
@@ -36,14 +36,25 @@ export function useReviewTalk(source: Source, onFlash: (s: string) => void, onTe
   const held = source.kind === 'held'
   const key = held ? `${source.repo}#${source.number}` : source.url
 
+  // `alive` is the open screen's, not this call's: a fetch still in the air when the screen switches PRs
+  // used to land afterwards and write the OLD review over the new one, since nothing cancelled it. The
+  // board's own poll has always guarded its setState this way (usePoll.ts); this one did not.
+  const alive = useRef(true)
   const load = async () => {
     const got = await fetchView(source)
+    if (!alive.current) return
     if (typeof got === 'string') return setFailed(got)
     setView(got)
     onText?.(got.text)
   }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => void load(), [key])
+  useEffect(() => {
+    alive.current = true
+    void load()
+    return () => {
+      alive.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
   const busy = !!view?.talk?.busy
   useEffect(() => {
     if (!busy) return
