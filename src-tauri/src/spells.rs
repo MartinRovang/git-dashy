@@ -52,8 +52,8 @@ Write the smallest test that would catch it: its name, its setup and its asserti
 ];
 
 /// The prompt a cast runs with; the spell itself goes in the system prompt, where instructions are trusted.
-pub const CAST: &str = "Investigate one topic on pull request {repo}#{number}, and nothing else: no general \
-review and no verdict. The topic is in your instructions. Go past the diff wherever it needs: callers, migrations, \
+pub const CAST: &str = "Investigate only the topic in your instructions on pull request {repo}#{number}. \
+Do not review anything else or give a verdict. Go past the diff wherever it needs: callers, migrations, \
 config, tests.
 
 Answer in markdown only: one line per finding, each with file:line, and say plainly when you found nothing.";

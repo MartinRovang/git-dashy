@@ -1058,7 +1058,12 @@ fn effort_of(h: &held::Held) -> String {
 /// model that quotes them anyway. Checked line by line, so one quoted sentence of a longer message counts,
 /// and only lines long enough that matching them is not an accident ("auth" appears in any review of auth).
 pub fn quotes_instructions(v: &Verdict, ask: &str) -> bool {
-    let said = format!("{}\n{}", v.summary, v.body).to_lowercase();
+    quotes(&format!("{}\n{}", v.summary, v.body), ask)
+}
+
+/// `said` repeats a 24+ char line of `ask` word for word. See quotes_instructions.
+pub fn quotes(said: &str, ask: &str) -> bool {
+    let said = said.to_lowercase();
     ask.lines()
         .map(|l| l.trim().to_lowercase())
         .filter(|l| l.chars().count() >= 24)
@@ -1252,35 +1257,37 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
 /// Where a spell's result is kept: `<self_dir>/spells/<repo stem>__<n>__<spell>.md`. A spell name has no `_`, so
 /// the parts never run together.
 pub fn spell_path(repo: &str, n: u64, name: &str) -> PathBuf {
-    let slug = memory::slug(repo);
-    let stem = slug.strip_suffix(".md").unwrap_or(&slug);
-    config::get()
-        .self_dir
-        .join("spells")
-        .join(format!("{stem}__{n}__{name}.md"))
+    spells_dir().join(format!("{}{name}.md", spell_prefix(repo, n)))
 }
 
-/// (spell, result) for every spell cast on this PR, sorted by spell.
-pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String)> {
-    let dir = spell_path(repo, n, "x");
-    let prefix = dir
-        .file_name()
-        .and_then(|f| f.to_str())
-        .and_then(|f| f.strip_suffix("x.md"))
-        .unwrap_or_default()
-        .to_string();
-    let mut out: Vec<(String, String)> = std::fs::read_dir(dir.parent().unwrap_or(Path::new("")))
+fn spells_dir() -> PathBuf {
+    config::get().self_dir.join("spells")
+}
+
+fn spell_prefix(repo: &str, n: u64) -> String {
+    let slug = memory::slug(repo);
+    format!("{}__{n}__", slug.strip_suffix(".md").unwrap_or(&slug))
+}
+
+/// (spell, result, when it was cast) for every spell cast on this PR, sorted by spell. The time is there so a
+/// result from before a push reads as old.
+pub fn spell_results(repo: &str, n: u64) -> Vec<(String, String, f64)> {
+    let prefix = spell_prefix(repo, n);
+    let mut out: Vec<(String, String, f64)> = std::fs::read_dir(spells_dir())
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|e| {
             let file = e.file_name().into_string().ok()?;
             let name = file.strip_prefix(&prefix)?.strip_suffix(".md")?.to_string();
+            if !crate::spells::name_ok(&name) {
+                return None;
+            }
             let text = std::fs::read_to_string(e.path()).ok()?;
-            crate::spells::name_ok(&name).then_some((name, text))
+            Some((name, text, mtime(&e.path())))
         })
         .collect();
-    out.sort();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
@@ -2305,10 +2312,16 @@ Hope that helps! {not json}"#;
             std::fs::write(p, text).unwrap();
         }
         assert_eq!(
-            spell_results("acme/api", 1),
+            spell_results("acme/api", 1)
+                .into_iter()
+                .map(|(n, t, at)| {
+                    assert!(at > 0.0, "it says when it was cast");
+                    (n, t)
+                })
+                .collect::<Vec<_>>(),
             vec![
-                ("auth-check".into(), "a".into()),
-                ("test-gaps".into(), "t".into())
+                ("auth-check".to_string(), "a".to_string()),
+                ("test-gaps".to_string(), "t".to_string())
             ]
         );
         assert!(spell_results("acme/web", 1).is_empty());

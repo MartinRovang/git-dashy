@@ -190,7 +190,7 @@ export type Detail = {
   brief: { whose: string; empty: boolean }
   pre: Pre
   /** every spell cast on this PR and what it found, kept on this machine */
-  spells: { name: string; text: string }[]
+  spells: { name: string; text: string; at: number; quotes: boolean }[]
   review: Review | null
 }
 

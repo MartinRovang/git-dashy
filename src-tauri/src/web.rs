@@ -300,7 +300,11 @@ pub fn detail(state: &State, pr: &Pr, section: &str) -> Value {
         "pre": pre_json(pre),
         "spells": review::spell_results(pr.repo(), pr.number)
             .into_iter()
-            .map(|(name, text)| json!({"name": name, "text": text}))
+            // quotes: it repeats the spell word for word, so posting it would make the spell public
+            .map(|(name, text, at)| {
+                let quotes = spells::get(&name).is_some_and(|s| review::quotes(&text, &s));
+                json!({"name": name, "text": text, "at": at, "quotes": quotes})
+            })
             .collect::<Vec<_>>(),
         "review": rev.as_ref().map(|rev| json!({
             "verdict": config::status(&rev.verdict).unwrap_or(""),
@@ -694,14 +698,13 @@ fn get_prereview(state: &State, query: &Query) -> Out {
     Ok(json!({"path": path, "text": text, "moved": moved, "talk": talk}))
 }
 
-/// Talk about your own PR's pre-review, the way a held review is discussed. Nothing here is posted.
 /// Post a spell's result on its PR as a plain comment: no verdict, just what it found.
 fn post_spell(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
     let name = text(body, "name");
-    let Some((_, found)) = review::spell_results(pr.repo(), pr.number)
+    let Some((_, found, _)) = review::spell_results(pr.repo(), pr.number)
         .into_iter()
-        .find(|(n, _)| *n == name)
+        .find(|(n, _, _)| *n == name)
     else {
         return Err(Fail(404, format!("no {name} result on this PR")));
     };
@@ -712,6 +715,7 @@ fn post_spell(state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// Talk about your own PR's pre-review, the way a held review is discussed. Nothing here is posted.
 fn post_prereview(state: &State, body: &Body) -> Out {
     let (pr, _) = need_pr(state, &text(body, "url"))?;
     let op = text(body, "op");
@@ -3170,6 +3174,45 @@ mod tests {
         let (code, body) = act(json!({"op": "discuss", "repo": repo, "number": n, "text": "hi"}));
         assert_eq!(code, 409);
         assert!(body["error"].as_str().unwrap().contains("needs the claude CLI"));
+    }
+
+    /// A spell's result reaches the detail with its time and whether it quotes the spell, and posting one that
+    /// does not exist is a 404.
+    #[test]
+    fn a_spell_result_is_shown_and_posted() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.demo = true;
+            c.self_dir = d.path().join("self");
+            c.spells_dir = d.path().to_path_buf();
+        });
+        std::fs::write(
+            d.path().join("auth-check.md"),
+            "trace every request path to its auth check",
+        )
+        .unwrap();
+        let (base, token, _state) = served();
+        let result = review::spell_path(pr().repo(), pr().number, "auth-check");
+        std::fs::create_dir_all(result.parent().unwrap()).unwrap();
+        std::fs::write(&result, "I will trace every request path to its auth check").unwrap();
+        let (code, d) = get(&format!("{base}/api/pr?url={}", pr().url), Some(&token));
+        assert_eq!(code, 200);
+        let s = &d["spells"][0];
+        assert_eq!(
+            (s["name"].as_str(), s["quotes"].as_bool()),
+            (Some("auth-check"), Some(true))
+        );
+        assert!(s["at"].as_f64().unwrap() > 0.0);
+        let url = format!("{base}/api/spell");
+        assert_eq!(
+            post(&url, json!({"url": pr().url, "name": "auth-check"}), &token).0,
+            200
+        );
+        assert_eq!(
+            post(&url, json!({"url": pr().url, "name": "test-gaps"}), &token).0,
+            404
+        );
     }
 
     /// A pre-review discussed the same way, in demo mode: the conversation lives beside the markdown, and

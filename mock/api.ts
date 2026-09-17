@@ -133,9 +133,9 @@ const S = {
   /** Owners switched to each repo on its own; their rule stays as the fallback. */
   perRepo: {} as Record<string, boolean>,
   held: {} as Record<string, MockTalk & { verdict: string; summary: string; body: string; at: number; moved?: boolean }>,
-  /** Pre-reviews by PR url: their text, and the conversation beside it. */
   casting: {} as Record<string, boolean>,
   spellResults: {} as Record<string, Record<string, string>>,
+  /** Pre-reviews by PR url: their text, and the conversation beside it. */
   pres: {} as Record<string, MockTalk & { verdict: string; text: string }>,
   refreshes: 0,
   ticks: 0,
@@ -388,7 +388,7 @@ function detail(url: string) {
     ],
     brief: { whose: teamOf(r.repo), empty: false },
     pre: r.pre,
-    spells: Object.entries(S.spellResults[url] || {}).map(([name, text]) => ({ name, text })),
+    spells: Object.entries(S.spellResults[url] || {}).map(([name, text]) => ({ name, text, at: secs(), quotes: false })),
     review: info
       ? {
           verdict: S.reviewText[url],
@@ -720,7 +720,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
 
   if (method === 'POST') {
     if (path === '/api/review') return postReview(body)
-    if (path === '/api/spell') return json(S.spellResults[str(body, 'url')]?.[str(body, 'name')] ? 200 : 404, { ok: true })
+    if (path === '/api/spell') return S.spellResults[str(body, 'url')]?.[str(body, 'name')] ? json(200, { ok: true }) : json(404, { error: 'no such result' })
     if (path === '/api/stories') {
       S.follow = ((body as { follow?: { login: string }[] }).follow || []).map((f) => ({ login: f.login }))
       return json(200, { follow: S.follow })
