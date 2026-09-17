@@ -243,6 +243,11 @@ A second review arriving at the same thing (matched loosely, so rewording still 
 `~/.prs_memory/<owner>__<repo>.md`, where later reviews read it. That promotion is automatic: being wrong
 in your own memory costs only you, and you will meet the line again.
 
+**A repo bound to a team drafts into the team instead.** When the team has agreed to receive drafts, a
+review's draft goes to your folder of the team's draft pool, and a second independent sighting, by you or
+a teammate, moves it into the team's knowledge (see *The team's draft pool* below). Nothing about that
+repo is drafted into your private memory unless you ask for it with `gitdashy remember --private`.
+
 **Drafts are never fed back into a prompt.** If they were, a reviewer would meet its own earlier guess as
 evidence and agree with itself, and the count would measure repetition instead of durability. The signal
 is rediscovery, so the reviewer has to arrive at it again blind.
@@ -360,6 +365,31 @@ still holds work it has not pushed.
 
 The whole model — every store, promotion rule and discard rule — is written up in
 [`docs/memory.md`](docs/memory.md).
+
+### The team's draft pool
+
+The team's knowledge is two kinds of file in its repo: `memory/general.md`, true of every repo the team
+covers, and `memory/<owner>__<repo>.md`, true of one. Reviews of a bound repo read both, beside your own.
+
+What is not knowledge yet waits in the draft pool, one folder per person:
+
+```
+<team>/memory/drafts/pontus/acme__api.md    - (1) [r:7a2c] retry owns backoff
+<team>/memory/drafts/martin/acme__api.md    - (1) [r:91cf] retry owns backoff
+                                                  ↓ two independent reviews: 2/2
+<team>/memory/acme__api.md                  - retry owns backoff
+```
+
+The folders are checked against each other on every refresh and after every review. Two drafts worded the
+same are a match outright; loosely similar ones are put to the model, which answers only *same claim* or
+*not*. A match counts **distinct review ids**, so two reviews by one person count as much as one each by
+two people, and a single review can never confirm itself. On a match the fact moves into the team's file
+and out of the drafts: your machine takes out your line, and your teammate's takes out theirs the next time
+it sees the team already knows it.
+
+Drafts are never read into a prompt, yours or anyone's. `W` lists yours in each team beside your private
+ones: `x` drops one, and `t` proposes it as a team fact by pull request, since accepting something into
+what every teammate's reviews read is a hand edit. Only recurrence moves a draft there by itself.
 
 ### What the team is building
 
@@ -573,10 +603,15 @@ It becomes a draft, not a fact — the same gate a review's claim passes. `--rep
 directory's origin. So a fact that a review proposed once and a session independently arrived at is
 confirmed by their agreement, and neither surface can confirm itself, since drafts are never read back.
 
-Once confirmed it becomes yours, and — if you are in a team and they can already see that repo, either
-from the shared log or because they hold memory for it — it also joins the evidence pool, so `P` can tell
-you when someone else found the same thing. A repo the team has never seen keeps its name to itself; the
-fact still becomes yours. Re-run it whenever you
+In a repo bound to a team that takes drafts, it goes where a review's would: your folder of the team's
+draft pool, so a teammate's review can match it, and once confirmed it is the team's. `--private` keeps
+it in your own drafts instead, and once confirmed it is yours alone:
+
+```sh
+gitdashy remember --private "I keep forgetting the migration flag"
+```
+
+A repo bound to no team keeps its name to itself; the fact becomes yours. Re-run it whenever you
 want a fresh copy — a session-start hook is a good home for it, with `--no-pull` so a slow network
 cannot blow the hook's timeout. That mirrors whatever the last dashboard refresh pulled; the shipped hook
 then starts a pulling one in the background, so the file is current by the next read even when no

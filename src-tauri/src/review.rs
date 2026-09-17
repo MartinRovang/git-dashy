@@ -1316,7 +1316,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     if hold {
         // ponytail: BOTH pushes, the same two the posted path makes. memory::append writes into the
         // team checkouts as well as your own, so committing only yours left a tracked file modified
-        // there — and pool_drafts' own ponytail records what that costs: the next tick's
+        // there — and write_team_drafts' own ponytail records what that costs: the next tick's
         // `pull --rebase` fails with "Please commit or stash them". The window here is until a
         // release, which may be never, and push_dir's ponytail is the recorded finding about an
         // unrelated push sweeping the change in under the wrong message.

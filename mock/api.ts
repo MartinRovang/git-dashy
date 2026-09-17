@@ -255,6 +255,8 @@ function seed() {
   S.drafts = [
     { repo: 'acme/api', n: 1, kind: 'self', fact: 'old CI on jenkins, ignore' },
     { repo: null, n: 2, kind: 'review', fact: 'always rebase, never merge main' },
+    // yours in team acme's draft pool: a teammate's review finding the same moves it into the team's knowledge
+    { repo: 'acme/api', n: 1, kind: 'team', fact: 'the webhook client retries with backoff, callers never sleep' },
   ]
   S.shares = [
     { repo: 'acme/api', fact: 'run make lint before flagging style', sent: true, backers: ['alice'] },
@@ -611,7 +613,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
-    if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.repo ? teamOf(d.repo) : '' })) })
+    if (path === '/api/drafts') return json(200, { promoteAt: PROMOTE_AT, items: S.drafts.map((d) => ({ ...d, team: d.kind === 'team' ? 'acme' : d.repo ? teamOf(d.repo) : '' })) })
     if (path === '/api/share') {
       const items = S.shares.map((s) => ({ ...s, team: s.repo ? teamOf(s.repo) : teamOf(query.get('about') || '') }))
       return json(200, { inTeam: true, items })
@@ -754,6 +756,8 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const fact = str(body, 'fact')
       const i = S.drafts.findIndex((d) => d.repo === repo && d.fact === fact)
       const op = str(body, 'op')
+      // a team draft accepted by hand is a pull request; it stays a draft until that is approved
+      if (op === 'promote' && body.pooled) return json(200, { ok: true, url: 'https://github.com/acme/guild-memory/pull/88', branch: 'gitdashy/propose-acme-api-mock', note: '' })
       if (op === 'promote' || op === 'drop') {
         if (i >= 0) S.drafts.splice(i, 1)
         return json(200, { ok: true })

@@ -176,8 +176,16 @@ so the reviewer must arrive at the fact again *blind*.
 
 ### 3.3 Promotion — into the team, also automatic
 
-A fact that becomes yours joins the team's file in the same call, with no
-keypress. Two things gate it, and neither is a decision made per fact:
+**As of 2.28, a repo bound to a team drafts into the team, not into you.** When the
+gates below hold, `append` writes a review's draft to
+`<team>/memory/drafts/<you>/<repo>.md` rather than to your private queue, and a draft
+that reaches `PROMOTE_AT` distinct review ids there, from your reviews or a teammate's,
+is appended to the team's `memory/<repo>.md` (or `general.md`) with your evidence line
+in `pool/<you>/`. It is never also written to your own memory. A private draft
+(`gitdashy remember --private`, or a team that has not agreed) promotes into your memory
+and stays there: private promotions are no longer copied to the team.
+
+Two things gate the team route, and neither is a decision made per fact:
 
 | gate | what it is |
 |---|---|
@@ -209,11 +217,9 @@ Facts two people have independently accepted sort first and are marked
 **★ N people found this**, so the strongest evidence is what you see, not what
 you have to go looking for.
 
-**Corroboration without publishing drafts.** The pool holds only facts that
-already passed someone's own recurrence test — two of *their* reviews agreed. Two
-people's pools agreeing is four independent reviews across two humans. Raw drafts
-never leave your machine; what is shared is what you already accepted, and even
-that is evidence only, never context.
+**Evidence and drafts are both in the team, neither is context.** `pool/<user>/`
+records who stands behind each team fact; `drafts/<user>/` holds what a bound repo's
+reviews proposed and nobody has confirmed. Neither is ever read into a prompt.
 
 **When does a fact pool?** On promotion, and only if the repo belongs to the team
 — `team_visible()`, which asks the binding:
@@ -532,7 +538,11 @@ at `(1)`, and not one specific fact ever promoted by recurrence.** Two people re
 land on the same facts, and that is stronger independence than same-machine recurrence — different
 person, different PR, different moment.
 
-So drafts are pooled the way accepted facts already are:
+So drafts are pooled the way accepted facts already are. As of 2.28 the draft pool is not a mirror of
+your private queue: a review of a bound repo writes there directly, and `sweep()` / `cross_check()` compare
+your folder with everyone else's in the same team. A pair worded the same (`same()`) is agreed without a
+model; the rest are judged. An agreed pair whose ids reach `PROMOTE_AT` moves the fact into the team's file,
+removes your line, and a teammate's machine removes theirs when it finds the team already knows it:
 
 ```
 <team>/memory/pool/<user>/<repo>.md      facts that person accepted     (evidence, never read)
@@ -654,8 +664,9 @@ way a second run of the same model is not.
 
 | event | writes | pushes |
 |---|---|---|
-| review proposes facts | drafts, promotions into `mine`, and the pool | private + team repo |
-| `gitdashy remember` | the same drafts, and the pool on promotion | private + team repo |
+| review proposes facts | a bound repo whose team agreed: `drafts/<you>/` in the team, promotions into the team's file and your pool line. Otherwise: your drafts, promotions into `mine` | team repo, or private repo |
+| `gitdashy remember` | the same as a review; `--private` always your drafts and `mine` | team repo, or private repo |
+| `W` on a team draft → `x` / `t` | `x` drops your line; `t` opens a pull request adding the fact to the team's file | team repo, or a PR |
 | `P` → `t` | the team memory file; the pool line stays | team repo |
 | `P` → `x` | removes from `mine` and from the pool; when no other backer remains, opens a pull request removing it from the team's file | private + team repo, and a PR |
 | `n` / `g` inspect → `x` | yours: removes the fact from `mine`. A team's: opens a pull request removing it; nothing is typed in | private repo, or a PR |

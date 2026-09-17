@@ -267,7 +267,8 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     if (tab === 'waiting') {
       if (!it) return <p className="empty">nothing waiting — every observation so far is either a fact or gone</p>
       const left = promoteAt - (it.n as number)
-      const mark = it.kind === 'self' ? 'pre-review · one opinion' : `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
+      const count = `seen ${it.n}×` + (left > 0 ? ` · ${left} more to go` : ' · confirmed')
+      const mark = it.kind === 'self' ? 'pre-review · one opinion' : it.kind === 'team' ? `in the team's drafts · ${count}` : count
       return factCard(it.repo, it.team ? ` · team ${it.team}` : '', mark, true, it.fact)
     }
     if (!it) return <p className="empty">no facts of yours belong to a team yet{inTeam ? '' : ' — you are not in a team'}</p>
@@ -325,7 +326,15 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const foot: Foot[] = [...pager(list.length, go)]
     if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
-    if (tab === 'waiting' && it) {
+    // a draft in a team's pool: dropping it is yours to do, but accepting it into the team's knowledge by hand is
+    // a pull request; only a second independent sighting moves it there by itself
+    if (tab === 'waiting' && it && it.kind === 'team') {
+      const pooled = { repo: it.repo, fact: it.fact, team: it.team, pooled: true }
+      foot.push(
+        ['t', 'propose as a team fact (pull request)', () => void act('/api/drafts', { op: 'promote', ...pooled }, ''), 'go'],
+        ['x', 'drop', () => void act('/api/drafts', { op: 'drop', ...pooled }, 'dropped'), 'warn'],
+      )
+    } else if (tab === 'waiting' && it) {
       foot.push(
         ['t', 'make it a fact', () => void act('/api/drafts', { op: 'promote', repo: it.repo, fact: it.fact }, 'accepted'), 'go'],
         ['x', 'drop', () => void act('/api/drafts', { op: 'drop', repo: it.repo, fact: it.fact }, 'dropped'), 'warn'],

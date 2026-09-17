@@ -777,13 +777,17 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
                 std::cmp::Reverse(b.1),
             ))
     });
-    let items: Vec<Value> = items
+    let mut items: Vec<Value> = items
         .iter()
         .map(|(repo, n, fact, kind)| {
             json!({"repo": repo, "n": n, "fact": fact, "kind": kind,
                    "team": repo.as_deref().map(bind::of).unwrap_or_default()})
         })
         .collect();
+    // yours in each team's pool, after your private ones: kind "team", and the team they are in
+    for (team, repo, n, fact) in memory::team_waiting() {
+        items.push(json!({"repo": repo, "n": n, "fact": fact, "kind": "team", "team": team}));
+    }
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
 }
 
@@ -1402,6 +1406,38 @@ fn post_drafts(_state: &State, body: &Body) -> Out {
     let (repo, fact) = (repo_of(body), text(body, "fact"));
     let label = repo.as_deref().unwrap_or("general");
     let dir = config::get().memory_dir;
+    let team = text(body, "team");
+    if truthy(body, "pooled") {
+        // one of your drafts in a team's pool: drop it from your folder there, or propose it to the team
+        return match text(body, "op").as_str() {
+            "drop" => {
+                if !memory::drop_team(&team, repo.as_deref(), &fact) {
+                    return Err(Fail::new(404, "that draft is not in your team drafts any more"));
+                }
+                team::push(&format!("memory: dropped a draft for {label}"));
+                Ok(json!({"ok": true}))
+            }
+            // ponytail: a person accepting a draft into a TEAM's knowledge is a hand edit of what every
+            // teammate's reviews read, so it is a pull request, not a push. Recurrence is the only thing
+            // that moves a team draft into team knowledge by itself.
+            "promote" => {
+                let d = team::dir_of(&team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
+                let file = memory::path(repo.as_deref(), Some(&d.join("memory")));
+                let now = std::fs::read_to_string(&file).unwrap_or_default();
+                let sep = if now.is_empty() || now.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
+                propose_in_team(
+                    &file,
+                    &format!("{now}{sep}- {fact}\n"),
+                    &format!("memory: a fact for {label}"),
+                )
+            }
+            _ => Err(Fail::new(400, "op must be promote or drop")),
+        };
+    }
     match text(body, "op").as_str() {
         "promote" => {
             memory::promote(repo.as_deref(), &fact);
@@ -2643,6 +2679,76 @@ mod tests {
             404
         );
         assert!(!teams.join("strangers").exists());
+    }
+
+    #[test]
+    fn your_team_drafts_are_waiting_and_accepting_one_by_hand_is_a_pull_request() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let origin = d.path().join("crew.git");
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main", &origin.to_string_lossy()])
+            .status()
+            .unwrap()
+            .success());
+        assert!(team::init_history(&t));
+        assert!(std::process::Command::new("git")
+            .args(["remote", "add", "origin", &origin.to_string_lossy()])
+            .current_dir(&t)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(t.join("memory/general.md"), "- theirs\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
+        let bindings = config::get().bindings;
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+            c.bindings = d.path().join("bindings");
+        });
+        memory::allow_publishing("crew", true);
+        assert_eq!(bind::bind("a/b", "crew"), "");
+        memory::append("a/b", "- retry owns backoff", "");
+        let (base, token, _state) = served();
+
+        let (_, j) = get(&format!("{base}/api/drafts"), Some(&token));
+        let team: Vec<&Value> = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "team")
+            .collect();
+        assert_eq!(team.len(), 1, "{j}");
+        assert_eq!(
+            (team[0]["team"].as_str(), team[0]["fact"].as_str()),
+            (Some("crew"), Some("retry owns backoff"))
+        );
+
+        let draft = |op: &str| {
+            post(
+                &format!("{base}/api/drafts"),
+                json!({"op": op, "pooled": true, "team": "crew", "repo": "a/b", "fact": "retry owns backoff"}),
+                &token,
+            )
+        };
+        // by hand into the team's knowledge: a branch on its repo, and the team's file untouched here
+        let (code, j) = draft("promote");
+        assert_eq!(code, 200, "{j}");
+        assert!(
+            j["branch"].as_str().unwrap().starts_with("gitdashy/propose-a-b-"),
+            "{j}"
+        );
+        assert!(!t.join("memory/a__b.md").exists());
+        // dropping your own draft is yours to do, once
+        assert_eq!(draft("drop").0, 200);
+        assert_eq!(draft("drop").0, 404);
+        assert!(memory::team_waiting().is_empty());
+        config::update(|c| c.bindings = bindings);
     }
 
     #[test]

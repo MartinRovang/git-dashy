@@ -101,6 +101,9 @@ pub enum Command {
         repo: Option<String>,
         #[arg(long)]
         general: bool,
+        /// keep it in your own drafts even in a team's repo
+        #[arg(long)]
+        private: bool,
         /// ponytail: the fact is everything that is not a flag or a flag's value.
         #[arg(num_args = 0..)]
         fact: Vec<String>,
@@ -527,7 +530,7 @@ fn init(into: Option<String>, loader: Option<String>, repo: Option<String>, forg
 }
 
 /// File a fact a coding session learned, into the same drafts a review writes to.
-fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
+fn remember(repo: Option<String>, general: bool, private: bool, fact: Vec<String>) -> i32 {
     let fact = fact.join(" ").trim().to_string();
     if fact.is_empty() {
         return fail("gitdashy: remember needs a fact to remember");
@@ -560,7 +563,14 @@ fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
         println!("gitdashy: {where_} already knows that");
         return 0;
     }
-    let promoted = memory::append_as(&repo, &fact, &about, "session");
+    // ponytail: in a team's repo a session drafts into the team's pool by default, like a review, so a
+    // teammate's review can match it. --private keeps a thought yours, wherever you are standing.
+    let pooled = !private && memory::team_home((!repo.is_empty()).then_some(repo.as_str()), &about).is_some();
+    let promoted = if private {
+        memory::append_private(&repo, &fact, "session")
+    } else {
+        memory::append_as(&repo, &fact, &about, "session")
+    };
     team::push_dir(
         &config::get().memory_dir,
         &format!("memory: remembered for {where_}"),
@@ -569,10 +579,16 @@ fn remember(repo: Option<String>, general: bool, fact: Vec<String>) -> i32 {
     team::push(&format!("memory: evidence for {where_}")); // ponytail: a promotion writes the pool, which lives over there
     if let Some(first) = promoted.first() {
         // ponytail: the counter counts observations; it does not know which surface each came from
-        println!("gitdashy: {where_} — confirmed by a second independent observation: {first}");
+        let whose = if pooled {
+            "the team knows it now"
+        } else {
+            "confirmed"
+        };
+        println!("gitdashy: {where_} — {whose}, by a second independent observation: {first}");
         return 0;
     }
-    println!("gitdashy: {where_} — drafted; one more independent observation confirms it");
+    let whose = if pooled { " in the team's drafts" } else { "" };
+    println!("gitdashy: {where_} — drafted{whose}; one more independent observation confirms it");
     0
 }
 
@@ -1526,7 +1542,12 @@ pub fn run(args: Vec<String>) -> i32 {
             no_pull,
             general,
         }) => sync_memory(into, repo, no_pull, general),
-        Some(Command::Remember { repo, general, fact }) => remember(repo, general, fact),
+        Some(Command::Remember {
+            repo,
+            general,
+            private,
+            fact,
+        }) => remember(repo, general, private, fact),
         Some(Command::Install {
             full,
             corpus,
@@ -1754,8 +1775,9 @@ mod tests {
                 ..
             })
         ));
-        let Some(Command::Remember { repo, general, fact }) =
-            parse(&["remember", "--repo", "other/thing", "migrations", "run", "first"]).command
+        let Some(Command::Remember {
+            repo, general, fact, ..
+        }) = parse(&["remember", "--repo", "other/thing", "migrations", "run", "first"]).command
         else {
             panic!()
         };

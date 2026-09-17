@@ -303,6 +303,13 @@ fn ask_claude(
             bail!("claude: {id:?} is not a session id");
         }
     }
+    // ponytail: a test build never starts the real CLI. One did, from a cross-check whose pair was not
+    // worded the same: it ran `claude` on the operator's machine and left a session transcript in their
+    // ~/.claude/projects. Anything under test that reaches a model gets "not asked", which every caller
+    // already has to handle.
+    if cfg!(test) {
+        bail!("claude: a test never runs the claude CLI");
+    }
     let mut cmd = Command::new("claude");
     cmd.args(claude_args(name, system, tools, effort, session));
     // ponytail: same reason as a review, see review::review: a fresh, empty cwd.
@@ -521,6 +528,12 @@ mod tests {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_test_never_runs_the_claude_cli() {
+        let got = ask("p", "opus", "", "", 1, &[]);
+        assert!(got.is_err_and(|e| e.to_string().contains("a test never runs the claude CLI")));
     }
 
     #[test]

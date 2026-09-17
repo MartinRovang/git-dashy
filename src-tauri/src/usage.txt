@@ -2,7 +2,7 @@ gitdashy 2.0.0 — desktop dashboard of open PRs: mine, review-requested, assign
 
 Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
-       gitdashy remember [--repo owner/name | --general] FACT
+       gitdashy remember [--repo owner/name | --general] [--private] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
        gitdashy setup
        gitdashy self-check [--model NAME]
@@ -39,8 +39,10 @@ sync-memory copies this repo's review memory into PATH as a read-only mirror, so
   timeout: it mirrors whatever the last refresh pulled.
 
 remember files a fact you learned while working, into the same drafts a review writes to — so a fact a
-  review and a coding session found independently is confirmed by their agreement. --repo defaults to this
-  directory's origin; --general is for something true of every repo.
+  review and a coding session found independently is confirmed by their agreement. In a repo bound to a
+  team that takes drafts, that is your folder of the team's draft pool, and confirmed means the team knows
+  it; --private keeps it in your own drafts instead. --repo defaults to this directory's origin; --general
+  is for something true of every repo.
 
 self-review runs the reviewer over one of your OWN PRs and posts nothing — a pass before you ask a
   person, not a substitute for one. The review is written to ~/.prs_reviews/ and its findings wait in a
