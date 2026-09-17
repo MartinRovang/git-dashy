@@ -408,12 +408,15 @@ export default function App() {
     [],
   )
 
+  /** A team's memory repo is approved by a person: say so, and start nothing. The server refuses too. */
+  function humanOnly(p: Row) {
+    if (p.humanOnly) setFlash(`#${p.number} is on a team's memory repo: human review only`)
+    return !!p.humanOnly
+  }
+
   async function review(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
-    if (p.humanOnly) {
-      setFlash(`#${p.number} is on a team's memory repo: human review only`)
-      return
-    }
+    if (humanOnly(p)) return
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return
@@ -424,10 +427,7 @@ export default function App() {
 
   async function preReview(p: Row) {
     if (!p || p.busy || p.section !== 'MINE') return
-    if (p.humanOnly) {
-      setFlash(`#${p.number} is on a team's memory repo: human review only`)
-      return
-    }
+    if (humanOnly(p)) return
     if (p.pre && !p.pre.moved) {
       const r = await api(`/api/prereview?url=${encodeURIComponent(p.url)}`)
       if (!r.ok) {
@@ -483,10 +483,7 @@ export default function App() {
   /** Review with a message for the agent: what to look at, what to leave alone. Private to this machine. */
   function reviewWith(p: Row) {
     if (!p || p.busy || p.section !== 'REVIEW REQUESTED') return
-    if (p.humanOnly) {
-      setFlash(`#${p.number} is on a team's memory repo: human review only`)
-      return
-    }
+    if (humanOnly(p)) return
     if (isReviewed(p)) {
       setFlash(`#${p.number} is already reviewed`)
       return

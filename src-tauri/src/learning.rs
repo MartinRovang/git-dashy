@@ -98,12 +98,23 @@ fn repo_of(file: &str) -> Option<String> {
 /// A commit's subject that is housekeeping, not learning: its diff moves lines that were already known.
 ///
 /// ponytail: skipped whole. A dream rewrites a file and a restore puts one back, which as a diff is dozens of
-/// facts "added" in one minute; a fold turns two drafts into one; a forget and a withdraw only remove.
+/// facts "added" in one minute; a fold turns two drafts into one; a forget and a withdraw only remove; a
+/// memory moved to a new directory arrives all at once.
+/// ponytail: by the PREFIX the app writes, not a word anywhere in the subject. The subject names the repo, so
+/// a substring test dropped every event for a repo called acme/dream-app, x/briefing or y/restore-svc.
+const HOUSEKEEPING: [&str; 8] = [
+    "restore ",
+    "memory: dream cleanup",
+    "memory: folded ",
+    "memory: forget ",
+    "memory: withdraw ",
+    "memory: the project brief",
+    "memory: the brief for ",
+    "gitdashy: memory from ",
+];
+
 fn housekeeping(subject: &str) -> bool {
-    let s = subject.to_lowercase();
-    ["restore", "dream", "folded", "forget", "withdraw", "brief"]
-        .iter()
-        .any(|w| s.contains(w))
+    HOUSEKEEPING.iter().any(|p| subject.starts_with(p))
 }
 
 /// (fact, count) for each draft line of a diff side; a fact line without a count counts 1.
@@ -212,72 +223,73 @@ fn classify(
 const COMMIT: char = '\u{1}';
 
 /// Parse `git log --reverse -p --unified=0 --format=%x01%at%x02%an%x02%s` into events.
+/// The file a diff is on while its lines are read, and the commit it belongs to.
+#[derive(Default)]
+struct Pending {
+    at: f64,
+    author: String,
+    subject: String,
+    skip: bool,
+    path: String,
+    removed: Vec<String>,
+    added: Vec<String>,
+}
+
+impl Pending {
+    /// What the file read so far says was learned, and a clean slate for the next one.
+    fn take(&mut self, team_key: &str) -> Vec<Event> {
+        let out = if self.path.is_empty() || self.skip {
+            Vec::new()
+        } else {
+            classify(
+                &self.path,
+                team_key,
+                self.at,
+                &self.author,
+                &self.subject,
+                &self.removed,
+                &self.added,
+            )
+        };
+        self.path.clear();
+        self.removed.clear();
+        self.added.clear();
+        out
+    }
+}
+
 pub fn parse_log(text: &str, team_key: &str) -> Vec<Event> {
     let mut out = Vec::new();
-    let (mut at, mut author, mut subject) = (0.0, String::new(), String::new());
-    let (mut path, mut removed, mut added) = (String::new(), Vec::new(), Vec::new());
-    let mut skip = false;
-    let flush = |out: &mut Vec<Event>,
-                 path: &mut String,
-                 removed: &mut Vec<String>,
-                 added: &mut Vec<String>,
-                 skip: bool,
-                 at: f64,
-                 author: &str,
-                 subject: &str| {
-        if !path.is_empty() && !skip {
-            out.extend(classify(path, team_key, at, author, subject, removed, added));
-        }
-        path.clear();
-        removed.clear();
-        added.clear();
-    };
+    let mut p = Pending::default();
     for line in text.lines() {
         if let Some(head) = line.strip_prefix(COMMIT) {
-            flush(
-                &mut out,
-                &mut path,
-                &mut removed,
-                &mut added,
-                skip,
-                at,
-                &author,
-                &subject,
-            );
+            out.extend(p.take(team_key));
             let mut f = head.splitn(3, '\u{2}');
-            at = f.next().and_then(|t| t.trim().parse().ok()).unwrap_or(0.0);
-            author = f.next().unwrap_or("").to_string();
-            subject = f.next().unwrap_or("").to_string();
-            skip = housekeeping(&subject);
-        } else if let Some(rest) = line.strip_prefix("diff --git a/") {
-            flush(
-                &mut out,
-                &mut path,
-                &mut removed,
-                &mut added,
-                skip,
-                at,
-                &author,
-                &subject,
-            );
-            path = rest.split(" b/").next().unwrap_or("").to_string();
+            p.at = f.next().and_then(|t| t.trim().parse().ok()).unwrap_or(0.0);
+            p.author = f.next().unwrap_or("").to_string();
+            p.subject = f.next().unwrap_or("").to_string();
+            p.skip = housekeeping(&p.subject);
+        } else if let Some(rest) = line.strip_prefix("diff --git ") {
+            // ponytail: EVERY diff header ends the file before it. Git quotes a path it thinks unusual
+            // (`diff --git "a/memory/pool/p\303\245l/x.md" ...`); matching only `diff --git a/` left that header
+            // unseen, and its lines were credited to the file before. from_git turns quoting off too.
+            out.extend(p.take(team_key));
+            p.path = match rest.strip_prefix("\"a/") {
+                Some(quoted) => quoted.split('"').next().unwrap_or(""),
+                None => rest
+                    .strip_prefix("a/")
+                    .and_then(|r| r.split(" b/").next())
+                    .unwrap_or(""),
+            }
+            .to_string();
         } else if line.starts_with("+++") || line.starts_with("---") {
         } else if let Some(l) = line.strip_prefix('+') {
-            added.push(l.to_string());
+            p.added.push(l.to_string());
         } else if let Some(l) = line.strip_prefix('-') {
-            removed.push(l.to_string());
+            p.removed.push(l.to_string());
         }
     }
-    flush(
-        &mut out,
-        &mut path,
-        &mut removed,
-        &mut added,
-        skip,
-        at,
-        &author,
-        &subject,
-    );
+    out.extend(p.take(team_key));
     first_seen(out)
 }
 
@@ -291,14 +303,13 @@ pub fn first_seen(events: Vec<Event>) -> Vec<Event> {
     events
         .into_iter()
         .filter(|e| {
-            e.kind == "confirm"
-                || seen.insert((
-                    e.kind.clone(),
-                    e.team.clone(),
-                    e.who.clone(),
-                    e.repo.clone(),
-                    e.fact.clone(),
-                ))
+            seen.insert((
+                e.kind.clone(),
+                e.team.clone(),
+                e.who.clone(),
+                e.repo.clone(),
+                e.fact.clone(),
+            ))
         })
         .collect()
 }
@@ -311,6 +322,8 @@ fn from_git(dir: &Path, team_key: &str) -> Vec<Event> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
+        // ponytail: paths as they are, so a teammate named pål is not a quoted header
+        .args(["-c", "core.quotePath=false"])
         .args([
             "log",
             "--reverse",
@@ -319,7 +332,11 @@ fn from_git(dir: &Path, team_key: &str) -> Vec<Event> {
             "--unified=0",
             "--no-color",
             "--format=%x01%at%x02%an%x02%s",
+            "--",
         ])
+        // ponytail: only what can hold a fact. A team checkout also carries reviewed.jsonl, which grows with every
+        // review, and the panel reads this each time it opens
+        .arg(if team_key.is_empty() { "*.md" } else { "memory/" })
         .output();
     match out {
         Ok(o) if o.status.success() => parse_log(&String::from_utf8_lossy(&o.stdout), team_key),
@@ -416,6 +433,82 @@ mod tests {
             ("pre-review", "session")
         );
         assert_eq!(e[1].repo, "", "general");
+    }
+
+    #[test]
+    fn a_repo_named_like_housekeeping_is_still_learned_from() {
+        let text = log(&[
+            (
+                "memory: acme/dream-app#3",
+                "acme__dream-app.md",
+                "+- migrations run first",
+            ),
+            ("memory: x/briefing#1", "x__briefing.md", "+- the brief is cached"),
+            ("memory: dream cleanup", "general.md", "+- rewritten by a dream"),
+        ]);
+        let got: Vec<(String, String)> = parse_log(&text, "")
+            .into_iter()
+            .map(|e| (e.kind, e.repo))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("fact".to_string(), "acme/dream-app".to_string()),
+                ("fact".to_string(), "x/briefing".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_quoted_diff_header_ends_the_file_before_it() {
+        // git quotes a path with a non-ASCII byte; its lines must not be credited to the file above it
+        let text = "\u{1}1000\u{2}martin\u{2}memory: what my reviews have proposed\n\n\
+            diff --git a/memory/general.md b/memory/general.md\n+- one\n\
+            diff --git \"a/memory/pool/p\\303\\245l/x__y.md\" \"b/memory/pool/p\\303\\245l/x__y.md\"\n+- only in the quoted file\n";
+        let got: Vec<(String, String)> = parse_log(text, "crew")
+            .into_iter()
+            .map(|e| (e.repo, e.fact))
+            .collect();
+        assert!(
+            got.contains(&("x/y".to_string(), "only in the quoted file".to_string())),
+            "{got:?}"
+        );
+        assert!(
+            !got.contains(&(String::new(), "only in the quoted file".to_string())),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn events_come_from_a_real_repo() {
+        let d = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .args(["-c", "user.name=pontus", "-c", "user.email=p@x"])
+                .args(args)
+                .current_dir(d.path())
+                .status()
+                .unwrap()
+                .success())
+        };
+        git(&["init", "-q"]);
+        std::fs::write(d.path().join("general.md"), "- one\n").unwrap();
+        std::fs::write(d.path().join("reviewed.jsonl"), "{\"not\": \"a fact\"}\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "memory: acme/api#1"]);
+        std::fs::write(d.path().join("general.md"), "- one\n- two\n").unwrap();
+        git(&["commit", "-qam", "memory: acme/api#2"]);
+        let got: Vec<(String, String)> = from_git(d.path(), "")
+            .into_iter()
+            .map(|e| (e.kind, e.fact))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("fact".to_string(), "one".to_string()),
+                ("fact".to_string(), "two".to_string())
+            ]
+        );
     }
 
     #[test]

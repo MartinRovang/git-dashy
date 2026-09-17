@@ -71,7 +71,10 @@ export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
     got.text,
     async (text) => {
       if (!(await confirm(`This opens a pull request on team ${team}'s repo. Nothing changes until a person with rights on that repo approves it.`, { yes: 'open pull request', no: 'keep editing' }))) return false
-      proposed(ctx, await ctx.call('/api/memory', { op: 'propose', team, doc, text }))
+      const out = await ctx.call('/api/memory', { op: 'propose', team, doc, text })
+      // refused (no remote, a failed fetch): the editor stays open, so the text is not lost
+      if (!out) return false
+      proposed(ctx, out)
     },
     got.path,
   )
@@ -166,6 +169,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const out = await ctx.call(path, body, ok)
     // a forget can leave the team's copy to remove: that is a pull request, and it says so
     if (out?.branch) proposed(ctx, out)
+    else if (out?.error) notice(String(out.error))
     await load(tab)
     refresh()
   }

@@ -2222,9 +2222,27 @@ pub fn facts_in(p: &Path) -> Vec<String> {
         .collect()
 }
 
-/// A team file's text with one fact taken out, exactly matched: what a removal proposes.
-pub fn team_without(p: &Path, fact: &str) -> String {
-    without(p, fact, plain)
+/// `text` with the one line stating `fact` taken out, every other line (blank ones included) as it was: what
+/// a removal from a team's file proposes. None when no line states it.
+///
+/// ponytail: EXACT, and one line. `is` normalises, so a near-duplicate a teammate wrote would have gone with it,
+/// and `without` drops blank lines, so every removal rewrote the whole file and the person approving it could
+/// not see the one change. This is the one file where a wrong removal costs everyone.
+pub fn without_fact(text: &str, fact: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with(['-', '•']) && plain(l) == fact)?;
+    let left: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != at)
+        .map(|(_, l)| *l)
+        .collect();
+    if left.iter().all(|l| l.trim().is_empty()) {
+        return Some(String::new());
+    }
+    Some(left.join("\n") + "\n")
 }
 
 /// "a__b.md" -> Some("a/b"); "general.md" -> None. The inverse of slug().
@@ -2669,7 +2687,17 @@ mod tests {
             ["- one fact", "- two"],
             "proposed, not written"
         );
-        assert_eq!(team_without(&shared.join("general.md"), "one fact"), "- two\n");
+        assert_eq!(
+            without_fact("# team\n\n- one fact\n- two\n", "one fact"),
+            Some("# team\n\n- two\n".to_string()),
+            "one line out, the rest as it was"
+        );
+        assert_eq!(
+            without_fact("- One fact\n", "one fact"),
+            None,
+            "exact, not normalised"
+        );
+        assert_eq!(without_fact("- one fact\n", "one fact"), Some(String::new()));
 
         // a colleague still backs it: nothing to propose, their evidence and the team copy stay
         assert_eq!(forget(None, "two", ""), None);

@@ -639,14 +639,25 @@ pub const PROPOSAL_BODY: &str =
 is read by every teammate's reviews. Changes to it are approved by a person with rights on this repository. \
 gitdashy never reviews pull requests on a team's repository, automatically or on request.";
 
-/// Offer `text` as the new content of `rel` (a path inside the checkout `d`, like "memory/project.md") on a
-/// branch of its own, and open a pull request for it when origin is on GitHub. Empty `text` removes the file.
+/// Offer a change to `rel` (a path inside the checkout `d`, like "memory/project.md") on a branch of its own,
+/// and open a pull request for it when origin is on GitHub. `edit` gets the file as ORIGIN has it ("" when it
+/// does not) and returns the new text, or why there is nothing to propose; an empty text removes the file.
+///
+/// ponytail: origin's copy, not the checkout's. A removal built from the working tree proposed the whole file
+/// as this machine last saw it, so a checkout behind origin (a pull that failed, or a push since) opened a
+/// "remove a fact" pull request that also took out every line teammates had added. The edit runs after the
+/// fetch, on the blob the commit is built on.
 ///
 /// ponytail: plumbing, not a checkout. The team's working tree is what every review reads and what the
 /// refresh thread pulls into; switching its branch even for a moment would put an unapproved change in
 /// front of reviews. The commit is built in a throwaway index on top of origin's branch, and only that
 /// branch is pushed.
-pub fn propose(d: &Path, rel: &str, text: &str, title: &str) -> Result<Proposal, String> {
+pub fn propose(
+    d: &Path,
+    rel: &str,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+    title: &str,
+) -> Result<Proposal, String> {
     if !is_repo(d) || !has_remote(d) {
         return Err("the team has no remote to propose a change to".into());
     }
@@ -661,7 +672,7 @@ pub fn propose(d: &Path, rel: &str, text: &str, title: &str) -> Result<Proposal,
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let out = {
         let _g = lock();
-        propose_locked(d, rel, text, title, &tmp)
+        propose_locked(d, rel, edit, title, &tmp)
     };
     let _ = std::fs::remove_dir_all(&tmp);
     let branch = out?;
@@ -721,7 +732,13 @@ fn base_branch(d: &Path) -> Option<String> {
 }
 
 /// propose()'s git, under the lock: fetch, build the commit off origin's branch, push it. The branch pushed.
-fn propose_locked(d: &Path, rel: &str, text: &str, title: &str, tmp: &Path) -> Result<String, String> {
+fn propose_locked(
+    d: &Path,
+    rel: &str,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+    title: &str,
+    tmp: &Path,
+) -> Result<String, String> {
     let fail = |what: &str, r: &Out| format!("{what}: {}", r.last_line());
     let r = git(d, &["fetch", "-q", "origin"]);
     if !r.ok() {
@@ -744,11 +761,13 @@ fn propose_locked(d: &Path, rel: &str, text: &str, title: &str, tmp: &Path) -> R
     if !r.ok() {
         return Err(fail("could not read the team's branch", &r));
     }
+    let now = run(&["show", &format!("{base_ref}:{rel}")]);
+    let text = edit(if now.ok() { &now.stdout } else { "" })?;
     let r = if text.is_empty() {
         run(&["update-index", "--force-remove", rel])
     } else {
         let file = tmp.join("content");
-        std::fs::write(&file, text).map_err(|e| e.to_string())?;
+        std::fs::write(&file, &text).map_err(|e| e.to_string())?;
         let blob = run(&["hash-object", "-w", &file.to_string_lossy()]);
         if !blob.ok() {
             return Err(fail("could not store the change", &blob));
@@ -2310,9 +2329,18 @@ mod tests {
         std::fs::write(d.join("memory/general.md"), "- one\n- two\n").unwrap();
         assert_eq!(push_dir(&d, "first", "sync"), "");
         let head = sh(&d, &["rev-parse", "HEAD"]);
+        // ponytail: whatever branch init made. CI has no global git config, so it is not main there, and this
+        // test named origin/main and failed on the runner while passing on a machine with init.defaultBranch.
+        let branch = sh(&d, &["symbolic-ref", "--short", "HEAD"]).trim().to_string();
 
         // a path origin is no forge: the branch is pushed and the note says to open the pull request by hand
-        let p = propose(&d, "memory/project.md", "a better brief\n", "brief: sharper").unwrap();
+        let p = propose(
+            &d,
+            "memory/project.md",
+            &|_| Ok("a better brief\n".into()),
+            "brief: sharper",
+        )
+        .unwrap();
         assert_eq!(p.url, "");
         assert!(p.branch.starts_with("gitdashy/propose-project-"), "{p:?}");
         assert!(p.note.contains(&p.branch), "{p:?}");
@@ -2321,7 +2349,10 @@ mod tests {
             "a better brief\n"
         );
         // the proposal sits on its own branch: main, the checkout and its HEAD are what they were
-        assert_eq!(sh(&d, &["show", "origin/main:memory/project.md"]), "the brief\n");
+        assert_eq!(
+            sh(&d, &["show", &format!("origin/{branch}:memory/project.md")]),
+            "the brief\n"
+        );
         assert_eq!(
             std::fs::read_to_string(d.join("memory/project.md")).unwrap(),
             "the brief\n"
@@ -2330,12 +2361,24 @@ mod tests {
         assert_eq!(sh(&d, &["status", "--porcelain"]), "");
 
         // a removal is a change to a facts file; an empty text proposes deleting it
-        let r = propose(&d, "memory/general.md", "- two\n", "memory: remove a fact").unwrap();
+        let r = propose(
+            &d,
+            "memory/general.md",
+            &|_| Ok("- two\n".into()),
+            "memory: remove a fact",
+        )
+        .unwrap();
         assert_eq!(
             sh(&d, &["show", &format!("origin/{}:memory/general.md", r.branch)]),
             "- two\n"
         );
-        let gone = propose(&d, "memory/general.md", "", "memory: remove the last fact").unwrap();
+        let gone = propose(
+            &d,
+            "memory/general.md",
+            &|_| Ok(String::new()),
+            "memory: remove the last fact",
+        )
+        .unwrap();
         assert!(!git(
             &d,
             &[
@@ -2346,16 +2389,72 @@ mod tests {
         )
         .ok());
 
+        // the edit is made to ORIGIN's copy: a teammate pushed a line this checkout has not pulled, and a
+        // removal keeps it
+        let mate = t.path().join("mate");
+        sh(
+            t.path(),
+            &[
+                "clone",
+                "-q",
+                "-b",
+                &branch,
+                &remote_.to_string_lossy(),
+                &mate.to_string_lossy(),
+            ],
+        );
+        std::fs::write(
+            mate.join("memory/general.md"),
+            "- one\n- two\n- three, from a teammate\n",
+        )
+        .unwrap();
+        assert!(git_as(&mate, &["commit", "-qam", "a teammate's fact"]).ok());
+        sh(&mate, &["push", "-q", "origin", &branch]);
+        let behind = propose(
+            &d,
+            "memory/general.md",
+            &|now| {
+                assert!(
+                    now.contains("three, from a teammate"),
+                    "the edit sees origin's copy: {now:?}"
+                );
+                Ok(now.replace("- one\n", ""))
+            },
+            "memory: remove a fact",
+        )
+        .unwrap();
+        assert_eq!(
+            sh(
+                &d,
+                &["show", &format!("origin/{}:memory/general.md", behind.branch)]
+            ),
+            "- two\n- three, from a teammate\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("memory/general.md")).unwrap(),
+            "- one\n- two\n"
+        );
+        // and an edit that finds nothing to change says why, and pushes nothing
+        assert_eq!(
+            propose(
+                &d,
+                "memory/general.md",
+                &|_| Err("that fact is not there".into()),
+                "x"
+            ),
+            Err("that fact is not there".into())
+        );
+
         // what origin already says is not a proposal
         assert_eq!(
-            propose(&d, "memory/project.md", "the brief\n", "same"),
+            propose(&d, "memory/project.md", &|_| Ok("the brief\n".into()), "same"),
             Err("nothing to propose: the team's repo already reads that way".into())
         );
         // nor is anything without a remote
         let lone = t.path().join("lone");
         std::fs::create_dir_all(&lone).unwrap();
         assert!(init_history(&lone));
-        assert!(propose(&lone, "memory/project.md", "x", "x").is_err());
+        assert!(propose(&lone, "memory/project.md", &|_| Ok("x".into()), "x").is_err());
     }
 
     #[test]

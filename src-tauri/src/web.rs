@@ -750,8 +750,13 @@ fn get_memory(_state: &State, query: &Query) -> Out {
     }))
 }
 
-/// Offer a new text for a file in a team's checkout as a pull request. {url, branch, note}.
-fn propose_in_team(file: &std::path::Path, text: &str, title: &str) -> Out {
+/// Offer a change to a file in a team's checkout as a pull request, `edit` applied to origin's copy of it.
+/// {url, branch, note}.
+fn propose_in_team(
+    file: &std::path::Path,
+    edit: &dyn Fn(&str) -> Result<String, String>,
+    title: &str,
+) -> Out {
     let checkout = file
         .parent()
         .and_then(|m| m.parent())
@@ -759,8 +764,25 @@ fn propose_in_team(file: &std::path::Path, text: &str, title: &str) -> Out {
     let rel = file
         .strip_prefix(checkout)
         .map_err(|_| Fail::new(400, "not a file in a team's checkout"))?;
-    let p = team::propose(checkout, &rel.to_string_lossy(), text, title).map_err(|e| Fail(409, e))?;
+    let p = team::propose(checkout, &rel.to_string_lossy(), edit, title).map_err(|e| Fail(409, e))?;
     Ok(json!({"ok": true, "url": p.url, "branch": p.branch, "note": p.note}))
+}
+
+/// The edit a removal from a team's file proposes: one line out of origin's copy, or why not.
+fn remove_from_origin(fact: &str) -> impl Fn(&str) -> Result<String, String> + '_ {
+    move |now| {
+        memory::without_fact(now, fact)
+            .ok_or_else(|| "that fact is not in the team's file on origin any more".to_string())
+    }
+}
+
+/// A founding document's proposed text. 400 for an empty one: an empty proposal would delete the file.
+fn founding_text(body: &Body) -> Result<String, Fail> {
+    let t = text(body, "text");
+    if t.trim().is_empty() {
+        return Err(Fail::new(400, "a founding document cannot be proposed empty"));
+    }
+    Ok(t)
 }
 
 fn get_drafts(_state: &State, _q: &Query) -> Out {
@@ -1381,16 +1403,17 @@ fn post_memory(_state: &State, body: &Body) -> Out {
             }
             propose_in_team(
                 &path,
-                &memory::team_without(&path, &fact),
+                &remove_from_origin(&fact),
                 &format!("memory: remove a fact from {label}"),
             )
         }
         "propose" => {
             let doc = text(body, "doc");
             let path = doc_path(&team, &doc)?;
+            let new = founding_text(body)?;
             propose_in_team(
                 &path,
-                &text(body, "text"),
+                &move |_| Ok(new.clone()),
                 &format!("{doc}: proposed change for team {team}"),
             )
         }
@@ -1465,11 +1488,21 @@ fn post_share(_state: &State, body: &Body) -> Out {
             );
             team::push(&format!("memory: withdraw {label}"));
             // yours and your evidence are gone; the team's copy goes only when its repo approves that
+            // ponytail: 200 either way. The local half has already happened and been pushed, so a proposal that
+            // could not be made (no remote, a failed fetch) is reported beside a success, not as a failed forget
+            // that in fact half-happened.
             if let Some(q) = theirs {
-                return propose_in_team(
-                    &q,
-                    &memory::team_without(&q, &fact),
-                    &format!("memory: remove a fact from {label}"),
+                return Ok(
+                    match propose_in_team(
+                        &q,
+                        &remove_from_origin(&fact),
+                        &format!("memory: remove a fact from {label}"),
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            json!({"ok": true, "error": format!("forgotten here, but the team's copy could not be proposed for removal: {}", e.1)})
+                        }
+                    },
                 );
             }
         }
@@ -1568,9 +1601,10 @@ fn post_teams(state: &State, body: &Body) -> Out {
         "brief" => {
             // ponytail: proposed, not pushed. The brief reaches every teammate's reviews and sessions, so a
             // change to it is a pull request a person with rights on the team's repo approves.
+            let new = founding_text(body)?;
             propose_in_team(
                 &brief_path(&key)?,
-                &text(body, "text"),
+                &move |_| Ok(new.clone()),
                 &format!("brief: proposed change for team {key}"),
             )
         }
@@ -2620,6 +2654,14 @@ mod tests {
             "the brief\n"
         );
 
+        // an empty founding document would be a proposal to delete it
+        let (code, _) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "propose", "team": "crew", "doc": "agents", "text": "  \n"}),
+            &token,
+        );
+        assert_eq!(code, 400);
+
         // there is no way left to type a fact in, nor to propose a file that is not a founding document
         let (code, _) = post(
             &format!("{base}/api/memory"),
@@ -2643,6 +2685,43 @@ mod tests {
             404
         );
         assert!(!teams.join("strangers").exists());
+    }
+
+    #[test]
+    fn a_forget_whose_team_proposal_fails_still_says_it_forgot() {
+        let _g = autorev::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let (mine, teams) = (d.path().join("mine"), d.path().join("teams"));
+        let t = teams.join("crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        std::fs::create_dir_all(&mine).unwrap();
+        assert!(team::init_history(&t)); // a team with no remote: nothing can be proposed to it
+        std::fs::write(t.join("memory/general.md"), "- shared once\n").unwrap();
+        std::fs::write(mine.join("general.md"), "- shared once\n- mine\n").unwrap();
+        config::update(|c| {
+            c.demo = false;
+            c.memory_dir = mine.clone();
+            c.teams = teams.clone();
+        });
+        let (base, token, _state) = served();
+        let (code, j) = post(
+            &format!("{base}/api/share"),
+            json!({"op": "forget", "fact": "shared once"}),
+            &token,
+        );
+        assert_eq!(code, 200, "{j}");
+        assert!(
+            j["error"].as_str().unwrap().contains("could not be proposed"),
+            "{j}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(mine.join("general.md")).unwrap(),
+            "- mine\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.join("memory/general.md")).unwrap(),
+            "- shared once\n"
+        );
     }
 
     #[test]

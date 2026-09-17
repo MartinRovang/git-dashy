@@ -47,9 +47,7 @@ export function bucketOf(at: number, bucket: 'day' | 'week'): number {
 /** How an event is broken down within its measure: a fact by how it was gained, a draft by where it came from,
  *  an arrival by whose it is. */
 export function partOf(e: LEvent): string {
-  if (e.kind === 'arrival') return e.who || 'someone'
-  if (e.kind === 'fact') return e.source || 'earlier'
-  return e.source || 'earlier'
+  return e.kind === 'arrival' ? e.who || 'someone' : e.source || 'earlier'
 }
 
 /** Whether an event is in the view, measure aside. */
