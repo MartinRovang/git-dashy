@@ -598,7 +598,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         humanizer: 'Hunts AI-sounding prose.',
       }
       const built = (names: string[], setting: string) =>
-        names.map((n) => ({ name: n, about: about[n] || '', prompt: `Append a section **${n}** … (mock prompt)`, on: on(S.settings[setting], n) }))
+        names.map((n) => ({ name: n, about: about[n] || '', on: on(S.settings[setting], n) }))
       return json(200, {
         spells: S.spells.map((s) => ({ ...s, on: on(S.settings.spells, s.name) })),
         passives: built(HUNTERS, 'hunter'),

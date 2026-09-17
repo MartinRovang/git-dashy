@@ -1,7 +1,7 @@
 // The Necronomicon: the reviewer's abilities as a book. Spells are cast once on a PR, passives (hunters) and voices
 // ride along on every review. Spells are yours to write; passives and voices are built in and only switched.
 //
-// ponytail: everything the pages say about passives and voices comes from /api/spells. This page holds no prompt text.
+// ponytail: everything the pages say about passives and voices comes from /api/spells. This page holds none of that text.
 import { useCallback, useEffect, useState } from 'react'
 import { api, errorText, post } from '../api'
 import { modalCount } from '../modals'
@@ -10,7 +10,7 @@ import { canCastOn } from '../board'
 import { Check } from 'lucide-react'
 import { Glyph } from './Glyph'
 
-type Built = { name: string; about: string; prompt: string; on: boolean }
+type Built = { name: string; about: string; on: boolean }
 export type Book = { spells: { name: string; text: string; on: boolean }[]; passives: Built[]; voices: Built[] }
 
 const CHAPTERS = ['Spells', 'Passives', 'Voices'] as const
@@ -103,12 +103,6 @@ export function Necronomicon({
             <b>{b.name}</b>
             <p>{b.about}</p>
           </button>
-          {b.prompt ? (
-            <details>
-              <summary>what it adds to the prompt</summary>
-              <pre className="nprompt">{b.prompt}</pre>
-            </details>
-          ) : null}
         </li>
       ))}
     </ul>

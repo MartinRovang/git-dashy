@@ -735,7 +735,7 @@ fn get_drafts(_state: &State, _q: &Query) -> Out {
     Ok(json!({"promoteAt": memory::PROMOTE_AT, "items": items}))
 }
 
-/// The book: the spells on disk, and the built-in passives and voices with what they add to a review.
+/// The book: the spells on disk, and the built-in passives and voices with a line on what each does.
 fn get_spells(_state: &State, _q: &Query) -> Out {
     let c = config::get();
     let about = |n: &str| {
@@ -745,17 +745,10 @@ fn get_spells(_state: &State, _q: &Query) -> Out {
             .map(|(_, v)| *v)
             .unwrap_or("")
     };
-    let built = |table: &[(&str, &str)], names: &[&str], on: &[String]| -> Vec<Value> {
+    let built = |names: &[&str], on: &[String]| -> Vec<Value> {
         names
             .iter()
-            .map(|n| {
-                let prompt = table
-                    .iter()
-                    .find(|(k, _)| k == n)
-                    .map(|(_, v)| v.trim())
-                    .unwrap_or("");
-                json!({"name": n, "about": about(n), "prompt": prompt, "on": on.iter().any(|x| x == n)})
-            })
+            .map(|n| json!({"name": n, "about": about(n), "on": on.iter().any(|x| x == n)}))
             .collect()
     };
     let spells: Vec<Value> = spells::list()
@@ -767,8 +760,8 @@ fn get_spells(_state: &State, _q: &Query) -> Out {
         .collect();
     Ok(json!({
         "spells": spells,
-        "passives": built(review::HUNTER, config::HUNTERS, &c.hunter),
-        "voices": built(review::VOICE, config::VOICES, &c.voice),
+        "passives": built(config::HUNTERS, &c.hunter),
+        "voices": built(config::VOICES, &c.voice),
     }))
 }
 
