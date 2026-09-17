@@ -51,7 +51,7 @@ pub struct Out {
 }
 
 impl Out {
-    fn ok(&self) -> bool {
+    pub(crate) fn ok(&self) -> bool {
         self.code == 0
     }
     fn text(&self) -> String {
@@ -61,7 +61,7 @@ impl Out {
             self.stderr.trim().to_string()
         }
     }
-    fn last_line(&self) -> String {
+    pub(crate) fn last_line(&self) -> String {
         self.text().lines().last().unwrap_or("").to_string()
     }
 }
@@ -82,7 +82,7 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 ///
 /// ponytail: a URL to a private repo makes git ask for a password. Inside curses that prompt is invisible
 /// and blocks the whole dashboard forever, so prompts are off and the call is bounded: fail, don't hang.
-fn remote(cmd: &[&str], extra_env: Option<&HashMap<String, String>>, timeout: Option<u64>) -> Out {
+pub(crate) fn remote(cmd: &[&str], extra_env: Option<&HashMap<String, String>>, timeout: Option<u64>) -> Out {
     let timeout = timeout.unwrap_or(CLONE_TIMEOUT);
     let mut c = Command::new(cmd[0]);
     c.args(&cmd[1..]);

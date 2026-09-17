@@ -11,12 +11,13 @@ import { Story } from './components/Story'
 import { follow, people, unfollow, type Followed, followAll, FOLLOW_MAX } from './stories'
 import { Pane } from './components/Pane'
 import { DbGraph } from './components/DbGraph'
+import { SchemaGraph } from './components/SchemaGraph'
 import { clean } from './dbgraph'
 import { ActsMenu, type Anchor } from './components/Acts'
 import { Queue } from './components/Queue'
 import { Sidebar } from './components/Sidebar'
 import { Countdown, TopBar } from './components/TopBar'
-import { close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
+import { busy, close, confirm, findLogin, modalCount, ModalHost, notice, open, picker, prompt, viewer } from './modals'
 import type { Foot } from './modals'
 import type { Ctx } from './screens'
 import { askConsents, dreamScreen, knowledgeScreen, escMenu, whatsNew, setPath, teamsScreen, updateScreen } from './screens'
@@ -874,6 +875,17 @@ export default function App() {
           selected={current || null}
           onCast={(p, spell) => void cast(p, spell)}
           onBook={() => show('necronomicon')}
+          onSchema={(db) =>
+            void busy(db, `cloning ${db} and reading its schema…`, async () => {
+              const r = await api(`/api/dbschema?db=${encodeURIComponent(db)}`)
+              if (!r.ok) return void notice(await errorText(r), db)
+              const schema = await r.json()
+              // nothing to lay out: an empty graph has no size to fit, so say so instead
+              if (!schema.tables?.length) return void notice(`no CREATE TABLE found in ${db}'s .sql files`, db)
+              const m = open({ title: `schema of ${db}`, sub: `${schema.tables.length} tables`, wide: true, body: () => <SchemaGraph db={schema} />, foot: [['q', 'close', () => close(m)]] })
+              m.keys = { Escape: () => close(m) }
+            })
+          }
         />
         <div className="main">
           <div className="body">

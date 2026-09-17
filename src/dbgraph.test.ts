@@ -28,7 +28,7 @@ describe('db graph', () => {
       risks: [null, { kind: 5, loc: 12, text: null }],
     } as never
     const c = clean(junk)
-    expect(c.tables).toEqual([{ name: 'a', change: 'altered', refs: [], columns: [{ name: '3', change: 'added', note: '' }] }])
+    expect(c.tables).toEqual([{ name: 'a', change: 'altered', refs: [], columns: [{ name: '3', change: 'added', note: '', key: '', ref: '' }] }])
     expect(c.risks).toEqual([{ kind: '5', loc: '12', text: '' }])
     // the table named twice is one node, and its column hangs off it once
     expect(build(junk, 1).nodes.map((n) => n.id)).toEqual(['pr', 't:a', 't:a.3'])
