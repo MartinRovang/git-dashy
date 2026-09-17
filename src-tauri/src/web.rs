@@ -437,7 +437,7 @@ fn job_of(name: &str) -> Option<Arc<Mutex<Job>>> {
 pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static) {
     let mut all = jobs();
     if let Some(j) = all.get(name) {
-        if j.lock().map(|j| j.running).unwrap_or(false) {
+        if j.lock().unwrap_or_else(|e| e.into_inner()).running {
             return;
         }
     }
@@ -669,8 +669,22 @@ fn get_pr(state: &State, query: &Query) -> Out {
     Ok(detail(state, &pr, &section))
 }
 
+/// How much code around a mark the viewer asked for: one of the ring's own values, or the default.
+///
+/// ponytail: checked against CONTEXTS. `diff::narrow` adds this to a line index, so a
+/// usize off the query string overflows that sum -- a panic in a debug build, and in release a wrap that
+/// quietly picks the wrong lines. Every other value this server takes is checked against the list it came
+/// from; this one was parsed and trusted because the page only ever sends the ring back.
+fn context_of(query: &Query) -> usize {
+    q(query, "context")
+        .parse()
+        .ok()
+        .filter(|n| diff::CONTEXTS.contains(n))
+        .unwrap_or(diff::CONTEXTS[0])
+}
+
 fn get_diff(state: &State, query: &Query) -> Out {
-    let context = q(query, "context").parse().unwrap_or(diff::CONTEXTS[0]);
+    let context = context_of(query);
     let (pr, _) = need_pr(state, q(query, "url"))?;
     let scope = if q(query, "scope").is_empty() {
         "marks"
@@ -2041,6 +2055,7 @@ fn post_settings(state: &State, body: &Body) -> Out {
     let _held = config::SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = config::get();
     let mut wake = false;
+    let mut window_changed = false;
     if let Some(v) = body.get("interval") {
         let n = match v {
             Value::Number(n) => n.as_f64().map(|f| f as i64),
@@ -2146,7 +2161,10 @@ fn post_settings(state: &State, body: &Body) -> Out {
         match got {
             Some(w) if config::WINDOWS.contains(&w) => {
                 c.window = w;
-                wake |= !c.scopes.is_empty(); // TEAM searches within the window, so it has to refetch
+                // TEAM searches within the window, so it has to refetch -- but only if a scope is still
+                // on once this request is done. Deciding here read the scopes the request was about to
+                // replace, so a body setting `window` and clearing `scopes` woke a fetch for nothing.
+                window_changed = true;
             }
             _ => {
                 return Err(Fail::new(
@@ -2181,6 +2199,7 @@ fn post_settings(state: &State, body: &Body) -> Out {
         wake |= got.iter().any(|s| !github::fetched(s));
         c.scopes = got;
     }
+    wake |= window_changed && !c.scopes.is_empty();
     // ponytail: capped, not pruned here; the page keeps only the newest marks before it sends
     let marks = |key: &str| -> Result<Option<HashMap<String, String>>, Fail> {
         let Some(v) = body.get(key) else { return Ok(None) };
@@ -2383,6 +2402,13 @@ const CSP: &str = "default-src 'self'; script-src 'self'; connect-src 'self'; im
      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; \
      frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
+/// The most a POST body may be, before it is read rather than after.
+///
+/// ponytail: the biggest honest body is a settings post carrying `read` and `hidden`, and post_settings
+/// caps those at 5000 entries of a 512-char url and a 64-char time -- about 3 MB each. 16 MB leaves that
+/// room several times over and still puts a number on what was `read_to_end` with no limit at all.
+const BODY_MAX: usize = 16 * 1024 * 1024;
+
 /// Every reply the server makes. `cache` is None for anything with data in it.
 ///
 /// ponytail: one responder, because send and send_bytes had drifted into the same four headers written
@@ -2394,6 +2420,10 @@ fn send_with(req: Request, code: u16, body: Vec<u8>, ctype: &str, cache: Option<
         .with_header(ok(Header::from_bytes("Content-Type", ctype)))
         // ponytail: the page talks to its own origin only; nothing here is meant to be embedded.
         .with_header(ok(Header::from_bytes("X-Frame-Options", "DENY")))
+        // ponytail: `--browser` puts the token in the page URL, and the CSP lets the two font origins be
+        // reached. Today's browsers default to strict-origin-when-cross-origin, which would already keep
+        // a query string off the wire; setting it explicitly keeps it that way if browser defaults change.
+        .with_header(ok(Header::from_bytes("Referrer-Policy", "no-referrer")))
         .with_header(ok(Header::from_bytes("Content-Security-Policy", CSP)));
     if let Some(c) = cache {
         resp = resp.with_header(ok(Header::from_bytes("Cache-Control", c)));
@@ -2491,10 +2521,21 @@ fn handle(state: &State, token: &str, mut req: Request) {
             let Some(f) = post_route(path) else {
                 return send_json(req, 404, json!({"error": "not found"}));
             };
+            // an honest Content-Length is refused without reading a byte of it; a body that lies, or
+            // declares nothing at all, is caught by the cap on the read below
+            if header(&req, "Content-Length")
+                .parse::<u64>()
+                .is_ok_and(|n| n > BODY_MAX as u64)
+            {
+                return send_json(req, 413, json!({"error": "body too large"}));
+            }
             let mut raw = Vec::new();
-            let body: Option<Body> = req
-                .as_reader()
-                .read_to_end(&mut raw)
+            // one byte past the cap, so a body that hits it is known to be over rather than exactly at it
+            let read = req.as_reader().take(BODY_MAX as u64 + 1).read_to_end(&mut raw);
+            if raw.len() > BODY_MAX {
+                return send_json(req, 413, json!({"error": "body too large"}));
+            }
+            let body: Option<Body> = read
                 .ok()
                 .and_then(|_| {
                     if raw.is_empty() {
@@ -2659,6 +2700,41 @@ mod tests {
             );
         }
         assert_eq!(post(&format!("{base}/api/story/seen"), json!({}), "").0, 401);
+    }
+
+    #[test]
+    fn the_context_a_query_asks_for_is_one_the_ring_offers() {
+        let of = |raw: &str| context_of(&parse_query(raw));
+        for &c in diff::CONTEXTS {
+            assert_eq!(of(&format!("context={c}")), c);
+        }
+        // ponytail: the whole point. narrow() computes `i + context`, so usize::MAX off the wire
+        // overflowed that sum -- a panic here in debug, wrong lines in release.
+        for bad in [
+            "",
+            "context=",
+            "context=9",
+            "context=-1",
+            "context=x",
+            &format!("context={}", usize::MAX),
+        ] {
+            assert_eq!(of(bad), diff::CONTEXTS[0], "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_post_body_past_the_cap_is_refused_before_it_is_parsed() {
+        let (base, token, _state) = served();
+        // ponytail: /api/notices, not /api/settings. The cap is about the read, not about any one route,
+        // and post_settings writes the config -- whose DEFAULT path is the real ~/.prs_settings.json, so a
+        // test posting there without config::test_lock() and a temp path saves over the settings of
+        // whoever is running the suite. This route clears a Vec on the test's own State and touches no disk.
+        let url = format!("{base}/api/notices");
+        assert_eq!(post(&url, json!({"pad": "x".repeat(1024)}), &token).0, 200);
+        let (code, body) = post(&url, json!({"pad": "x".repeat(BODY_MAX)}), &token);
+        assert_eq!((code, body["error"].as_str()), (413, Some("body too large")));
+        // and the server keeps accepting after a 413
+        assert_eq!(get(&format!("{base}/api/state"), Some(&token)).0, 200);
     }
 
     #[test]
@@ -2991,6 +3067,67 @@ mod tests {
     }
 
     #[test]
+    fn clearing_every_scope_with_the_window_does_not_wake_a_fetch() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.settings = Some(d.path().join("settings.json"));
+            c.scopes = vec!["org:acme".into()];
+            c.window = Some(168);
+        });
+        let (base, token, state) = served();
+        // ponytail: both keys in ONE body. The window's refetch used to be decided against the scopes the
+        // same request was about to replace, so this woke a fetch for a board with nothing left to search.
+        let (code, body) = post(
+            &format!("{base}/api/settings"),
+            json!({"window": 24, "scopes": []}),
+            &token,
+        );
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(config::get().scopes, Vec::<String>::new());
+        assert!(!state.lock().wake.is_set(), "no scope is left to search");
+
+        // and the other way: a window change with a scope still on is exactly what has to refetch
+        config::update(|c| c.scopes = vec!["org:acme".into()]);
+        let (base, token, state) = served();
+        let (code, body) = post(&format!("{base}/api/settings"), json!({"window": 720}), &token);
+        assert_eq!(code, 200, "{body}");
+        assert!(state.lock().wake.is_set());
+    }
+
+    #[test]
+    fn a_poisoned_job_lock_still_reads_as_running() {
+        let name = "poisoned-probe";
+        let go = std::sync::Arc::new(Mutex::new(false));
+        // a job that will not finish until this test lets it, so `running` is still true below
+        let wait = go.clone();
+        start_job(name, move || {
+            while !*wait.lock().unwrap_or_else(|e| e.into_inner()) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(json!({}))
+        });
+        let first = job_of(name).expect("the job is registered");
+        // poison its mutex: a panic while the lock is held is the only way one gets poisoned
+        let p = first.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = p.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert!(first.is_poisoned());
+        // ponytail: `.map(..).unwrap_or(false)` read a poisoned lock as "not running" and started a SECOND
+        // job for this name on top of the one still going -- which shows up as the registry's entry being
+        // REPLACED. Asserting on the new closure instead would race it: it can finish before we look.
+        start_job(name, || Ok(json!({})));
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &job_of(name).unwrap()),
+            "a second job replaced the one still running under {name}"
+        );
+        *go.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+
+    #[test]
     fn debug_route_needs_the_token_and_carries_the_paths() {
         let _g = crate::config::test_lock(); // the paths it carries come from the global config
         let (base, token, _state) = served();
@@ -3115,6 +3252,8 @@ mod tests {
             assert!(csp.contains("script-src 'self';"), "{csp}");
             assert!(csp.contains("https://fonts.gstatic.com"), "{csp}");
             assert!(!csp.contains('\n'), "one header line, not three: {csp:?}");
+            // --browser puts the token in the page url; it must not ride out to the font origins above
+            assert_eq!(r.headers()["referrer-policy"].to_str().unwrap(), "no-referrer");
         }
     }
 
