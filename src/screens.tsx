@@ -177,13 +177,6 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     refresh()
   }
 
-  const share = async () => {
-    const fact = facts[i]
-    if (fact === undefined) return
-    if (!(await confirm(`Propose this fact to the team that covers ${fileName(file)}? It opens a pull request on the team's repo; it joins what every teammate's reviews read only once a person with rights on that repo approves it. It stays in your memory either way.\n\n${fact}`, { yes: 'open pull request', no: 'keep it mine' }))) return
-    proposed(ctx, await ctx.call('/api/memory', { op: 'share', repo: file.repo || 'general', fact, about }))
-  }
-
   const factCard = (repo: unknown, team: string, mark: string, warn: boolean, fact: unknown) => (
     <>
       <div className="kv">
@@ -237,7 +230,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
           ? `A founding document: what team ${file.team} wrote, read by every teammate's reviews and sessions. A change to it is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
           : file.team
             ? `Team ${file.team}'s facts, learned by its reviews. Removing one opens a pull request on the team's repo; it stays until a person with rights on that repo approves it.`
-            : "Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once; proposing one to the team opens a pull request on the team's repo."}
+            : "Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once."}
       </p>
       {failed.inspect ? (
         <p className="empty">✗ {failed.inspect}</p>
@@ -329,9 +322,6 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const foot: Foot[] = [...pager(list.length, go)]
     if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
-    // one of YOUR facts, offered to the team that covers it: the deliberate way a private fact reaches a team
-    if (tab === 'inspect' && !file.doc && !file.team && facts[i] !== undefined && files.some((f) => f.team))
-      foot.push(['s', 'propose to the team (pull request)', () => void share(), 'go'])
     // a draft in a team's pool: dropping it is yours to do, but accepting it into the team's knowledge by hand is
     // a pull request; only a second independent sighting moves it there by itself
     if (tab === 'drafts' && it && it.kind === 'team') {

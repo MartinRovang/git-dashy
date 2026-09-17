@@ -732,7 +732,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const team = str(body, 'team')
       const op = str(body, 'op')
       const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
-      if (op === 'propose' || op === 'share') return json(200, pr)
+      if (op === 'propose') return json(200, pr)
       if (op !== 'remove') return json(400, { error: 'op must be remove or propose' })
       if (team) return json(200, pr) // a team's file changes only when its pull request is approved
       const fact = str(body, 'fact')

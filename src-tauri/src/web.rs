@@ -1357,20 +1357,6 @@ fn post_memory(_state: &State, body: &Body) -> Out {
                 &format!("memory: remove a fact from {label}"),
             )
         }
-        // one of YOUR facts, offered to the team that covers it: a pull request, and yours stays yours
-        "share" => {
-            let about = text(body, "about");
-            let target = memory::share_target(repo.as_deref(), &about)
-                .ok_or_else(|| Fail::new(409, "no team takes facts about this: bind the repo, or open a row in the team's repo for a general fact"))?;
-            if memory::team_has(&target, &fact) {
-                return Err(Fail::new(409, "the team already knows that"));
-            }
-            propose_in_team(
-                &target,
-                &memory::team_with(&target, &fact),
-                &format!("memory: a fact for {label}"),
-            )
-        }
         "propose" => {
             let doc = text(body, "doc");
             let path = doc_path(&team, &doc)?;
@@ -1380,7 +1366,7 @@ fn post_memory(_state: &State, body: &Body) -> Out {
                 &format!("{doc}: proposed change for team {team}"),
             )
         }
-        _ => Err(Fail::new(400, "op must be remove, share or propose")),
+        _ => Err(Fail::new(400, "op must be remove or propose")),
     }
 }
 
@@ -2698,31 +2684,6 @@ mod tests {
         assert_eq!(draft("drop").0, 200);
         assert_eq!(draft("drop").0, 404);
         assert!(memory::team_waiting().is_empty());
-
-        // one of YOUR facts offered to the team: a pull request, and never twice what the team already has
-        std::fs::write(mine.join("a__b.md"), "- mine only\n").unwrap();
-        std::fs::write(t.join("memory/a__b.md"), "- known\n").unwrap();
-        let share = |fact: &str| {
-            post(
-                &format!("{base}/api/memory"),
-                json!({"op": "share", "repo": "a/b", "fact": fact}),
-                &token,
-            )
-        };
-        let (code, j) = share("mine only");
-        assert_eq!(code, 200, "{j}");
-        assert!(j["branch"].as_str().unwrap().starts_with("gitdashy/propose-a-b-"));
-        assert_eq!(
-            std::fs::read_to_string(t.join("memory/a__b.md")).unwrap(),
-            "- known\n"
-        );
-        assert_eq!(share("Known").0, 409);
-        let (code, _) = post(
-            &format!("{base}/api/memory"),
-            json!({"op": "share", "repo": "c/d", "fact": "unbound"}),
-            &token,
-        );
-        assert_eq!(code, 409, "a repo bound to no team has nowhere to go");
 
         // a team file's facts come with who stands behind each
         for who in ["alice", "bob"] {

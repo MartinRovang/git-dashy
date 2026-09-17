@@ -46,9 +46,8 @@ It gives two rules:
 - **A hand promotion needs one keypress and no recurrence — into your memory.**
   `W` → `t` accepts one of your private drafts as your fact. Someone who has read
   the line is the second opinion the counter stands in for. **Into a team it is a
-  pull request, never a push:** `W` → `t` on a team draft, and inspect → `s` on one
-  of your own facts, each open a pull request on the team's repo that a person with
-  rights on it approves (as of 2.28).
+  pull request, never a push:** `W` → `t` on a team draft opens a pull request on
+  the team's repo that a person with rights on it approves (as of 2.28).
 
 The binding and the consent are each one keypress, once per repo and once per team.
 Nothing prompts about an individual fact. §3.3 has the detail.
@@ -202,8 +201,7 @@ and where a model gets asked.
 could see what had been copied to the team and take it back. Nothing is copied any
 more: team knowledge arrives in the team's file directly, from the team's draft
 pool. Inspect (`g`) covers what was left: a team's facts show **★ N people found
-this** from the evidence pool, `x` on one proposes removing it, and `s` on one of
-your own facts proposes it to the team — both as pull requests.
+this** from the evidence pool, and `x` on one proposes removing it as a pull request.
 
 **Evidence and drafts are both in the team, neither is context.** `pool/<user>/`
 records who stands behind each team fact; `drafts/<user>/` holds what a bound repo's
@@ -529,8 +527,9 @@ person, different PR, different moment.
 
 So drafts are pooled the way accepted facts already are. As of 2.28 the draft pool is not a mirror of
 your private queue: a review of a bound repo writes there directly, and `sweep()` / `cross_check()` compare
-your folder with everyone else's in the same team. A pair worded the same (`same()`) is agreed without a
-model; the rest are judged. An agreed pair whose ids reach `PROMOTE_AT` moves the fact into the team's file,
+your folder with everyone else's in the same team. Every candidate pair is judged by the model, however
+alike the wording: a shortcut that agreed close wordings without asking was tried in 2.28's branch and taken
+out, for the reason §4b-2 gives. An agreed pair whose ids reach `PROMOTE_AT` moves the fact into the team's file,
 removes your line, and a teammate's machine removes theirs when it finds the team already knows it:
 
 ```
@@ -580,7 +579,7 @@ similarity, since it is the one file where a wrong removal costs everyone.
 which is why it had nowhere to go the moment you joined a second team: `_the_one_team()` refuses to guess,
 so eight general facts sat unpoolable and unshareable with nothing on screen saying why. It means "true
 across THIS PROJECT" now, and the project is the team of the repo you were in when you observed it —
-`gitdashy remember --general` keeps the directory's origin, and inspect's `s` uses the row you are on. The
+`gitdashy remember --general` keeps the directory's origin. The
 team-level `general.md` that receives it already existed and was already read for every bound repo; the
 only thing missing was a way to get a fact into it. An unbound context still selects nothing: context
 narrows the answer, it never invents one.
@@ -654,7 +653,6 @@ way a second run of the same model is not.
 | review proposes facts | a bound repo whose team agreed: `drafts/<you>/` in the team, promotions into the team's file and your pool line. Otherwise: your drafts, promotions into `mine` | team repo, or private repo |
 | `gitdashy remember` | the same as a review; `--private` always your drafts and `mine` | team repo, or private repo |
 | `W` on a team draft → `x` / `t` | `x` drops your line; `t` opens a pull request adding the fact to the team's file | team repo, or a PR |
-| inspect → `s` on your fact | a pull request adding it to the covering team's file; yours stays | a PR |
 | `n` / `g` inspect → `x` | yours: removes the fact from `mine`. A team's: opens a pull request removing it; nothing is typed in | private repo, or a PR |
 | inspect → `e` on a brief or `agents.md` | a pull request on the team's repo, approved by a person; gitdashy never reviews PRs on a team's repo | a PR |
 | `Z` dream | `mine` only, after you approve — the team's are read, never written | private repo |

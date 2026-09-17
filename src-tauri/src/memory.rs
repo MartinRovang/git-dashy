@@ -1212,43 +1212,57 @@ fn land_agreed(base: &Path, repo: Option<&str>, agreed: &[&Pair]) -> Vec<String>
     moved
 }
 
-/// cross_check for one team's pool.
-///
-/// The cheap pass finds candidates loosely (CROSS). A pair worded the same (`same`, the matcher that folds
-/// a draft into itself) is agreed without asking; the rest go to the model, which makes the call.
-/// ponytail: the lock is taken to READ and taken again to WRITE, and is not held across judge(). It was,
-/// and judge() waits up to JUDGE_TIMEOUT on a model, so a sweep on the tick thread held the lock for five
-/// minutes while the UI thread's `x`, `t` and `P` all blocked on it.
+/// cross_check for one team's pool, with the model as the judge.
 fn cross_check_in(base: &Path, repo: Option<&str>, model: &str) -> Vec<String> {
+    cross_check_by(base, repo, |pairs| judge(pairs, model))
+}
+
+/// cross_check for one team's pool: the cheap pass finds candidates loosely (CROSS), and `judge` makes the
+/// call on every one of them. What it agreed and what reaches PROMOTE_AT moves.
+///
+/// ponytail: EVERY pair is judged, however alike the wording. Word matching cannot decide whether two
+/// sentences are one claim (§4b-2: subject and object swapped share every token, and a near-identical
+/// sentence can say the opposite), and across people a false match writes into what every teammate's
+/// reviews read. A shortcut that agreed close wordings without asking was tried and taken back out.
+/// ponytail: the judge is a parameter so the landing can be tested without a model; production passes judge().
+/// ponytail: the lock is taken to READ and taken again to WRITE, and is not held across the judge. It was,
+/// and judge() waits up to JUDGE_TIMEOUT on a model, so a sweep on the tick thread held the lock for five
+/// minutes while the UI thread's keys all blocked on it.
+fn cross_check_by(
+    base: &Path,
+    repo: Option<&str>,
+    judge: impl FnOnce(&[(String, String)]) -> Option<Vec<bool>>,
+) -> Vec<String> {
     let pairs = candidates(base, repo);
     if pairs.is_empty() {
         return vec![];
     }
-    let (sure, ask): (Vec<&Pair>, Vec<&Pair>) = pairs.iter().partition(|(a, b)| same(&a.fact, &b.fact));
-    let asked: Vec<(String, String)> = ask
+    let asked: Vec<(String, String)> = pairs
         .iter()
         .map(|(a, b)| (a.fact.clone(), b.fact.clone()))
         .collect();
-    // ponytail: asked ONCE. Calling judge() again to work out what to settle would buy the same answer
-    // a second time, at the same cost, on every sweep. Not asked (None) promotes nothing it would have
-    // judged and settles nothing, so it is asked again next time.
-    let answer = judge(&asked, model);
-    let mut agreed = sure.clone();
-    if let Some(yes) = &answer {
-        agreed.extend(ask.iter().zip(yes).filter(|(_, y)| **y).map(|(p, _)| *p));
-    }
+    // ponytail: asked ONCE. Calling the judge again to work out what to settle would buy the same answer a
+    // second time, at the same cost, on every sweep.
+    let Some(yes) = judge(&asked) else {
+        return vec![]; // ponytail: not asked. Promote nothing, settle nothing, ask again next time.
+    };
+    let agreed: Vec<&Pair> = pairs
+        .iter()
+        .zip(&yes)
+        .filter(|(_, y)| **y)
+        .map(|(p, _)| p)
+        .collect();
     let moved = land_agreed(base, repo, &agreed);
     // ponytail: settled by what did NOT MOVE, not by what the model rejected. A pair it AGREED on whose
     // ids cannot reach PROMOTE_AT (two drafts written before ids existed both parse as ()) is neither
     // promoted nor recorded, so it was asked again on every tick, forever.
-    if answer.is_some() {
-        settle(
-            &ask.iter()
-                .filter(|(a, _)| !moved.contains(&a.fact))
-                .map(|(a, b)| pair_key(&a.fact, &b.fact))
-                .collect(),
-        );
-    }
+    settle(
+        &pairs
+            .iter()
+            .filter(|(a, _)| !moved.contains(&a.fact))
+            .map(|(a, b)| pair_key(&a.fact, &b.fact))
+            .collect(),
+    );
     moved
 }
 
@@ -2209,28 +2223,6 @@ pub fn facts_in(p: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The team file one of YOUR facts would join if you proposed it: the bound team's general or repo file.
-/// None when no team takes facts about it (a repo bound to nothing, or a general fact with no project).
-pub fn share_target(repo: Option<&str>, about: &str) -> Option<PathBuf> {
-    let base = project(repo, about).filter(|_| team_visible(repo.unwrap_or(""), about))?;
-    Some(path(repo, Some(&base)))
-}
-
-/// A team file's text with one fact added: what proposing one of yours to the team asks for.
-pub fn team_with(p: &Path, fact: &str) -> String {
-    let now = read_file(p);
-    if now.is_empty() {
-        format!("- {fact}\n")
-    } else {
-        format!("{now}\n- {fact}\n")
-    }
-}
-
-/// Whether a team file already states this fact, however it is worded.
-pub fn team_has(p: &Path, fact: &str) -> bool {
-    facts(p).iter().any(|t| same(fact, t))
-}
-
 /// A team file's text with one fact taken out, exactly matched: what a removal proposes.
 pub fn team_without(p: &Path, fact: &str) -> String {
     without(p, fact, plain)
@@ -2766,32 +2758,71 @@ mod tests {
         let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
         std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
         let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
-
-        // their review and mine, one each, worded the same: 2/2, agreed without asking a model (and a draft
-        // each that shares no words with the other side, so nothing here is put to a model at all)
         std::fs::write(
             &theirs,
-            "- (1) [r:beef] retry owns backoff\n- (1) [r:beef] migrations run first\n",
+            "- (1) [r:beef] the retry client owns backoff\n- (1) [r:beef] retry owns backoff\n",
         )
         .unwrap();
         append("a/b", "- retry owns backoff\n- only I saw this", "");
-        assert_eq!(cross_check("a/b", "no model is asked"), ["retry owns backoff"]);
+        let base = shared.as_path();
+        let r = Some("a/b");
+
+        // every candidate goes to the judge, close wording or not; a judge that cannot be asked moves nothing
+        let mut seen = Vec::new();
+        assert!(cross_check_by(base, r, |p| {
+            seen = p.to_vec();
+            None
+        })
+        .is_empty());
+        // the identical wording is asked about too: across people nothing is a match without the judge
+        assert_eq!(
+            seen,
+            [
+                (
+                    "retry owns backoff".to_string(),
+                    "the retry client owns backoff".to_string()
+                ),
+                ("retry owns backoff".to_string(), "retry owns backoff".to_string())
+            ]
+        );
+        assert!(!shared.join("a__b.md").exists());
+        // and a no moves nothing either
+        assert!(cross_check_by(base, r, |p| Some(vec![false; p.len()])).is_empty());
+        std::fs::remove_file(tmp.path().join("mine").join(SETTLED)).unwrap();
+
+        // the judge agrees: their review and mine, one each, is 2/2; the fact moves into the team and out of mine
+        assert_eq!(
+            cross_check_by(base, r, |p| Some(vec![true; p.len()])),
+            ["retry owns backoff"]
+        );
         assert_eq!(lines(&shared.join("a__b.md")), ["- retry owns backoff"]);
         assert_eq!(
-            lines(&mine),
-            ["- (1) [r:".to_string() + &counted(&mine)[0].ids[0] + "] only I saw this"]
+            counted(&mine).iter().map(|d| d.fact.as_str()).collect::<Vec<_>>(),
+            ["only I saw this"]
         );
-        // their line is theirs to take out; the next cross-check on their machine finds the team knows it
+        // their line is theirs to take out
         assert_eq!(counted(&theirs).len(), 2);
 
-        // a draft of mine the team already knows, because their machine moved it: taken out of mine
+        // a draft of mine the team already knows, because their machine moved it: taken out of mine, unasked
         std::fs::write(
             shared.join("a__b.md"),
             "- retry owns backoff\n- only I saw this\n",
         )
         .unwrap();
-        cross_check("a/b", "no model is asked");
+        assert!(cross_check_by(base, r, |_| panic!("nothing is left to ask about")).is_empty());
         assert!(!mine.exists());
+    }
+
+    #[test]
+    fn a_pair_the_judge_turned_down_is_not_asked_again() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        let theirs = shared.join(DRAFT_POOL).join("teammate-x").join("a__b.md");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, "- (1) [r:beef] retries never back off\n").unwrap();
+        append("a/b", "- retries back off", "");
+        assert!(cross_check_by(&shared, Some("a/b"), |p| Some(vec![false; p.len()])).is_empty());
+        assert!(cross_check_by(&shared, Some("a/b"), |_| panic!("already settled")).is_empty());
     }
 
     #[test]
@@ -2803,19 +2834,21 @@ mod tests {
         append("a/b", "- retry owns backoff", "");
         let mine = shared.join(DRAFT_POOL).join(&me).join("a__b.md");
         let rid = counted(&mine)[0].ids[0].clone();
+        let yes = |p: &[(String, String)]| Some(vec![true; p.len()]);
         // the same review id on both sides is one run, however it got there; no ids is origin unknown
         for line in [
             format!("- (1) [r:{rid}] retry owns backoff\n"),
             "- (1) retry owns backoff\n".to_string(),
         ] {
             std::fs::write(&theirs, &line).unwrap();
-            assert!(cross_check("a/b", "no model is asked").is_empty(), "{line}");
+            let _ = std::fs::remove_file(tmp.path().join("mine").join(SETTLED));
+            assert!(cross_check_by(&shared, Some("a/b"), yes).is_empty(), "{line}");
             assert!(!shared.join("a__b.md").exists());
         }
         // and your own folder is never a teammate's: a line of yours carrying two ids still pairs with nothing
         std::fs::remove_file(&theirs).unwrap();
         std::fs::write(&mine, "- (1) [r:aaaa,r:bbbb] retry owns backoff\n").unwrap();
-        assert!(cross_check("a/b", "no model is asked").is_empty());
+        assert!(cross_check_by(&shared, Some("a/b"), yes).is_empty());
         assert!(!shared.join("a__b.md").exists());
     }
 
@@ -3114,25 +3147,6 @@ mod tests {
         assert_eq!(lines(&p), vec!["- CI reports skipping for type-check"]);
         assert!(remove_mine(Some("a/b"), "ci  reports skipping for type-check"));
         assert!(!p.exists());
-    }
-
-    #[test]
-    fn a_fact_of_yours_can_be_proposed_only_to_a_team_that_covers_it() {
-        let (_g, tmp) = setup();
-        assert_eq!(share_target(Some("a/b"), ""), None, "no team");
-        let (shared, _me) = a_team_repo(tmp.path());
-        let target = share_target(Some("a/b"), "").unwrap();
-        assert_eq!(target, shared.join("a__b.md"));
-        assert_eq!(
-            share_target(Some("c/d"), ""),
-            None,
-            "a repo bound to nothing keeps its name to itself"
-        );
-        assert_eq!(team_with(&target, "one"), "- one\n");
-        std::fs::write(&target, "- one\n").unwrap();
-        assert_eq!(team_with(&target, "two"), "- one\n- two\n");
-        assert!(team_has(&target, "One"));
-        assert!(!team_has(&target, "two"));
     }
 
     #[test]

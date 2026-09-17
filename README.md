@@ -339,9 +339,8 @@ Neither is read by a review, a session, the mirror or the dream — they are evi
 they decide is whether two people saw the same thing. Two people's pools agreeing is four independent
 reviews across two humans, and inspect says so beside a team's fact with `★ 2 people found this`.
 
-**Inspect is the way in and out by hand.** On one of your own facts `s` proposes it to the team that covers
-the repo, as a pull request; on a team's fact `x` proposes removing it, the same way. Your own copy is
-yours either way.
+**Inspect is how you watch it and take things out.** `x` on one of your facts removes it; on a team's fact
+it proposes removing it, as a pull request. Everything that arrives, arrives on its own.
 
 A repo bound to nothing publishes nothing — no facts, no drafts, no evidence — so a side project stays
 private however many teams you are in.
@@ -379,9 +378,9 @@ What is not knowledge yet waits in the draft pool, one folder per person:
 <team>/memory/acme__api.md                  - retry owns backoff
 ```
 
-The folders are checked against each other on every refresh and after every review. Two drafts worded the
-same are a match outright; loosely similar ones are put to the model, which answers only *same claim* or
-*not*. A match counts **distinct review ids**, so two reviews by one person count as much as one each by
+The folders are checked against each other on every refresh and after every review. Word overlap only
+finds candidates; every candidate pair, however alike the wording, is put to the model, which answers only
+*same claim* or *not*: two near-identical sentences can say opposite things. A match counts **distinct review ids**, so two reviews by one person count as much as one each by
 two people, and a single review can never confirm itself. On a match the fact moves into the team's file
 and out of the drafts: your machine takes out your line, and your teammate's takes out theirs the next time
 it sees the team already knows it.
