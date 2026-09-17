@@ -7,6 +7,7 @@ import { api, errorText, post } from '../api'
 import { modalCount } from '../modals'
 import type { Row } from '../types'
 import { canCastOn } from '../board'
+import { Check } from 'lucide-react'
 import { Glyph } from './Glyph'
 
 type Built = { name: string; about: string; prompt: string; on: boolean }
@@ -25,6 +26,11 @@ export function useBook(): [Book | null, () => Promise<void>] {
     void (async () => await load())()
   }, [load])
   return [book, load]
+}
+
+/** The equip mark: an empty box, or a ticked one. */
+function Tick({ on }: { on: boolean }) {
+  return <span className={`ntick${on ? ' on' : ''}`}>{on ? <Check size={14} strokeWidth={3} aria-hidden /> : null}</span>
 }
 
 export function Necronomicon({
@@ -90,17 +96,19 @@ export function Necronomicon({
   const built = (list: Built[], key: 'hunter' | 'voice') => (
     <ul className="nbuilt">
       {list.map((b) => (
-        <li key={b.name}>
-          <div className="nbuilt-h">
-            <Glyph kind={key === 'hunter' ? 'passive' : 'voice'} name={b.name} size={48} />
+        <li key={b.name} className={b.on ? 'on' : ''}>
+          <button className="ncard" aria-pressed={b.on} title={b.on ? 'equipped: click to take it off' : 'click to equip'} onClick={() => void flip(key, list, b.name)}>
+            <Tick on={b.on} />
+            <Glyph kind={key === 'hunter' ? 'passive' : 'voice'} name={b.name} size={96} />
             <b>{b.name}</b>
-            <button className="fld" aria-pressed={b.on} onClick={() => void flip(key, list, b.name)}>
-              <span>{b.on ? 'equipped' : 'unequipped'}</span>
-              <span className="sw" />
-            </button>
-          </div>
-          <p>{b.about}</p>
-          {b.prompt ? <pre className="nprompt">{b.prompt}</pre> : null}
+            <p>{b.about}</p>
+          </button>
+          {b.prompt ? (
+            <details>
+              <summary>what it adds to the prompt</summary>
+              <pre className="nprompt">{b.prompt}</pre>
+            </details>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -128,20 +136,29 @@ export function Necronomicon({
             {ch === 0 ? (
               <>
                 <h3>Spells</h3>
-                <ol className="nindex">
+                <ul className="nspells">
                   {book.spells.map((s) => (
-                    <li key={s.name} className={s.name === pick ? 'on' : ''}>
-                      <button onClick={() => open(s.name)}>
-                        <Glyph kind="spell" name={s.name} /> {s.name}
+                    <li key={s.name}>
+                      <button className={s.name === pick ? 'on' : ''} onClick={() => open(s.name)}>
+                        <Glyph kind="spell" name={s.name} size={40} />
+                        <b>{s.name}</b>
                       </button>
-                      <span className="nleader" />
-                      <span>{s.on ? '✦' : ''}</span>
+                      <button
+                        className="ntick-btn"
+                        aria-pressed={s.on}
+                        title={s.on ? 'equipped: click to take it off' : 'equip it'}
+                        onClick={() => void flip('spells', book.spells, s.name)}
+                      >
+                        <Tick on={s.on} />
+                      </button>
                     </li>
                   ))}
-                  <li className={pick === '' ? 'on' : ''}>
-                    <button onClick={() => open('')}>+ new spell</button>
+                  <li>
+                    <button className={`new${pick === '' ? ' on' : ''}`} onClick={() => open('')}>
+                      <b>+ new spell</b>
+                    </button>
                   </li>
-                </ol>
+                </ul>
               </>
             ) : null}
           </div>
@@ -166,9 +183,8 @@ export function Necronomicon({
                     <button className="btn" onClick={() => void save()}>save</button>
                     {current ? (
                       <>
-                        <button className="fld" aria-pressed={current.on} onClick={() => void flip('spells', book.spells, current.name)}>
-                          <span>{current.on ? 'equipped' : 'unequipped'}</span>
-                          <span className="sw" />
+                        <button className="nequip" aria-pressed={current.on} onClick={() => void flip('spells', book.spells, current.name)}>
+                          <Tick on={current.on} /> {current.on ? 'equipped' : 'equip'}
                         </button>
                         <button
                           className="btn go"
