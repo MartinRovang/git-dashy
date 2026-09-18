@@ -942,17 +942,16 @@ export default function App() {
               />
               )}
             </div>
-            {pane ? (
-              <Pane
-                p={current}
-                detail={detail}
-                subs={data?.settings.subs || 'all'}
-                saved={data?.settings.pane}
-                onCode={openCode}
-                onOptions={(at) => current && setMenuAt({ p: current, at })}
-                onClose={() => setPane(false)}
-              />
-            ) : null}
+            <Pane
+              hidden={!pane}
+              p={current}
+              detail={detail}
+              subs={data?.settings.subs || 'all'}
+              saved={data?.settings.pane}
+              onCode={openCode}
+              onOptions={(at) => current && setMenuAt({ p: current, at })}
+              onClose={() => setPane(false)}
+            />
           </div>
         </div>
       </div>
