@@ -114,6 +114,10 @@ export type Settings = {
   hinted?: boolean
   /** Show the key hint on every button and settings row. */
   keyhints?: boolean
+  /** the PR pane's layout: section names per list */
+  pane?: { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
+  /** the left sidebar's layout, same shape */
+  side?: { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
   subs?: string
   theme?: string
   notify?: boolean

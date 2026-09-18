@@ -137,6 +137,10 @@ pub struct Config {
     /// Show the key hint on every button and settings row. On by default; the sheet and the rail's
     /// View group both switch it.
     pub keyhints: bool,
+    /// The PR pane's layout: "order", "off", "shut" and "out" each list section names. Config for the same reason as `hinted`.
+    pub pane: HashMap<String, Vec<String>>,
+    /// The left sidebar's layout, same shape as `pane`.
+    pub side: HashMap<String, Vec<String>>,
     /// The version whose release notes were last shown; "" before the first launch that recorded one.
     pub seen: String,
     /// Runtime picks land here. `None` (demo) means never write.
@@ -211,6 +215,8 @@ impl Default for Config {
             hidden: HashMap::new(),
             hinted: false,
             keyhints: true,
+            pane: HashMap::new(),
+            side: HashMap::new(),
             seen: String::new(),
             settings: Some(env_path("PRS_SETTINGS", ".prs_settings.json")),
             self_dir: home().join(".prs_reviews"),
@@ -261,6 +267,10 @@ pub struct Saved {
     pub hinted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyhints: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<HashMap<String, Vec<String>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<HashMap<String, Vec<String>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seen: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -438,6 +448,12 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.keyhints {
         c.keyhints = v;
     }
+    if let Some(v) = saved.pane {
+        c.pane = v;
+    }
+    if let Some(v) = saved.side {
+        c.side = v;
+    }
     if let Some(v) = saved.seen {
         c.seen = v;
     }
@@ -508,6 +524,8 @@ pub fn snapshot(c: &Config) -> Saved {
         hidden: Some(c.hidden.clone()),
         hinted: Some(c.hinted),
         keyhints: Some(c.keyhints),
+        pane: Some(c.pane.clone()),
+        side: Some(c.side.clone()),
         seen: Some(c.seen.clone()),
         depth: Some(c.depth.clone()),
         effort: Some(c.effort.clone()),

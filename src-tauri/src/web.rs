@@ -2231,6 +2231,28 @@ fn post_settings(state: &State, body: &Body) -> Out {
     if body.contains_key("keyhints") {
         c.keyhints = truthy(body, "keyhints");
     }
+    // the two panels' layouts: a map of list name to section names
+    let layout = |key: &str| -> Result<Option<HashMap<String, Vec<String>>>, Fail> {
+        let Some(v) = body.get(key) else { return Ok(None) };
+        let names = |l: &Value| -> Option<Vec<String>> {
+            l.as_array()
+                .filter(|a| a.len() <= 20)?
+                .iter()
+                .map(|x| x.as_str().filter(|s| s.len() <= 20).map(String::from))
+                .collect()
+        };
+        v.as_object()
+            .filter(|m| m.len() <= 10)
+            .and_then(|m| m.iter().map(|(k, l)| Some((k.clone(), names(l)?))).collect())
+            .map(Some)
+            .ok_or_else(|| Fail::new(400, format!("{key} must map a name to a list of section names")))
+    };
+    if let Some(got) = layout("pane")? {
+        c.pane = got;
+    }
+    if let Some(got) = layout("side")? {
+        c.side = got;
+    }
     if body.contains_key("notify") {
         c.notify = truthy(body, "notify");
     }
@@ -4462,6 +4484,21 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["keyhints"], json!(false));
+        // the PR pane's layout is remembered the same way
+        post(
+            &format!("{base}/api/settings"),
+            json!({"pane": {"off": ["checks"]}}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["pane"]["off"], json!(["checks"]));
+        post(
+            &format!("{base}/api/settings"),
+            json!({"side": {"order": ["view", "agent"]}}),
+            &token,
+        );
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["side"]["order"], json!(["view", "agent"]));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bot, Database, Share2, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react'
+import { Bot, Database, Share2, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, ListFilter, type LucideIcon } from 'lucide-react'
 import type { PostingRule, Row as Pr, StateData } from '../types'
 import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board'
 import { Glyph } from './Glyph'
@@ -8,6 +8,7 @@ import { Row, Select } from './Controls'
 import { close, open, repaint } from '../modals'
 import { api } from '../api'
 import { fuzzy, step } from '../stories'
+import { Out, SecFilter, useSections } from '../sections'
 
 type Props = {
   data: StateData | null
@@ -123,6 +124,7 @@ function Group({
   open,
   onToggle,
   collapsed,
+  x,
   children,
 }: {
   icon: LucideIcon
@@ -132,18 +134,28 @@ function Group({
   open: boolean
   onToggle: () => void
   collapsed: boolean
+  /** its place in the rail: switched off, dragged, popped out (see useSections) */
+  x: ReturnType<ReturnType<typeof useSections>['sec']>
   children: React.ReactNode
 }) {
+  if (x.off) return null
   return (
-    <div className={`sgrp${open && !collapsed ? ' open' : ''}`}>
+    <div className={`sgrp${open && !collapsed && !x.out ? ' open' : ''}${x.cls}`} style={x.style} {...x.wrap}>
       {/* ponytail: on the narrow rail the fields cannot render, so the click opens the rail ONTO this
           group instead of toggling a body nobody can see. */}
       <button
         className="summary"
-        title={collapsed ? `${label}${flag ? ` (${flag})` : ''} — open the rail here` : undefined}
+        title={
+          x.out
+            ? `${label} is popped out: click to put it back`
+            : collapsed
+              ? `${label}${flag ? ` (${flag})` : ''} — open the rail here`
+              : 'click to open, drag to reorder, drag out of the rail to pop it out'
+        }
         aria-label={flag ? `${label}, ${flag}` : label}
         aria-expanded={open && !collapsed}
-        onClick={onToggle}
+        {...x.head}
+        onClick={x.out ? x.dock : onToggle}
       >
         <span className="car">▶</span>
         <span className="gi">
@@ -153,7 +165,13 @@ function Group({
         <span className="lb">{label}</span>
         <span className="sv">{summary}</span>
       </button>
-      {open && !collapsed ? <div className="fields">{children}</div> : null}
+      {x.out ? (
+        <Out id={`side-${label}`} label={label} onDock={x.dock}>
+          <div className="fields">{children}</div>
+        </Out>
+      ) : open && !collapsed ? (
+        <div className="fields">{children}</div>
+      ) : null}
     </div>
   )
 }
@@ -312,6 +330,15 @@ function PostControls({
   )
 }
 
+const GROUPS: [string, string][] = [
+  ['agent', 'Agent'],
+  ['necro', 'Necronomicon'],
+  ['database', 'Database'],
+  ['view', 'View'],
+  ['know', 'Knowledge'],
+  ['tools', 'Tools'],
+]
+
 export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
   const s = d?.settings || {}
   // the server already drops a spell whose file was deleted
@@ -345,6 +372,8 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
   const teamList = k.teams.map((t) => t.key + (t.arrived ? ` +${t.arrived}` : ''))
   const teams = teamList.join(', ')
   const win = s.window == null ? 'all' : span(s.window)
+  const [filtering, setFiltering] = useState(false)
+  const { lay, sec, switchOff } = useSections('side', GROUPS.map(([n]) => n), s.side, '.side')
 
   return (
     <div className={`side${collapsed ? ' shut' : ''}`}>
@@ -352,12 +381,18 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           width you tune, so dragging it is the one gesture that would fight the collapse. */}
       {collapsed ? null : <div className="grip" data-grip="side" />}
       <div className="sh">
+        {collapsed ? null : (
+          <button className="iconbtn" title="Choose which groups the sidebar shows" aria-pressed={filtering} onClick={() => setFiltering(!filtering)}>
+            <ListFilter size={16} />
+          </button>
+        )}
         <button className="iconbtn" title={collapsed ? 'Expand sidebar (S)' : 'Collapse sidebar (S)'} onClick={onCollapse}>
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           {collapsed ? null : <kbd className="hint">S</kbd>}
         </button>
       </div>
 
+      {filtering && !collapsed ? <SecFilter secs={GROUPS} off={lay.off} onFlip={switchOff} /> : null}
       <div className="snav scroll">
         <div className="grpname">Reviewer</div>
 
@@ -374,6 +409,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.agent}
           onToggle={() => flip('agent')}
           collapsed={collapsed}
+          x={sec('agent')}
         >
           <Row k="m" label="model">
             <Select value={s.model || ''} options={o.model} show={(v) => v} onChange={(v) => setting('model', v)} />
@@ -504,6 +540,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.necro}
           onToggle={() => flip('necro')}
           collapsed={collapsed}
+          x={sec('necro')}
         >
           {/* ponytail: what is on, read-only. Equipping lives in the book, so the rail and the book cannot disagree about how. */}
           {([['voices', 'voice', s.voice || []], ['passives', 'passive', s.hunter || []]] as const).map(([label, kind, on]) => (
@@ -554,6 +591,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.database}
           onToggle={() => flip('database')}
           collapsed={collapsed}
+          x={sec('database')}
         >
           {/* the repo a repo's schema and migrations live in: its reviews read it and say what a PR does to the
               database. A repo's own rule beats its owner's; "none" leaves one repo out of an owner rule. */}
@@ -598,6 +636,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.view}
           onToggle={() => flip('view')}
           collapsed={collapsed}
+          x={sec('view')}
         >
           <Row k="s" label="summaries">
             <Select value={s.subs || ''} options={o.subs} show={(v) => v} onChange={(v) => setting('subs', v)} />
@@ -667,6 +706,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.know}
           onToggle={() => flip('know')}
           collapsed={collapsed}
+          x={sec('know')}
         >
           <Row k="L" label="memory">
             <b className="link" title={k.memory} onClick={() => onPath('L')}>
@@ -712,6 +752,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           open={!!open.tools}
           onToggle={() => flip('tools')}
           collapsed={collapsed}
+          x={sec('tools')}
         >
           <div className="sub">
             Friday report <em>7 days</em>
