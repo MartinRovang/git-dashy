@@ -56,6 +56,7 @@ export function Pane({
   onCode,
   onOptions,
   onClose,
+  hidden,
 }: {
   p: Row | null
   detail: Detail | null
@@ -65,13 +66,15 @@ export function Pane({
   onCode: () => void
   onOptions: (at: { x: number; y: number }) => void
   onClose: () => void
+  /** closed: kept mounted so its popped-out sections stay open */
+  hidden?: boolean
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
   const [filtering, setFiltering] = useState(false)
   const { lay, order, sec, switchOff } = useSections('pane', SECS.map(([n]) => n), saved, '.pane')
   if (!p)
     return (
-      <div className="pane">
+      <div className="pane" style={hidden ? { display: 'none' } : undefined}>
         <div className="bar" />
         <div className="in scroll">
           <div className="prose">No PR selected.</div>
@@ -220,7 +223,7 @@ export function Pane({
   const label = Object.fromEntries(SECS)
   const shown = order.filter((k) => body[k] && !lay.off?.includes(k))
   return (
-    <div className="pane">
+    <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
       <div className="bar">
         <span className="lab">SELECTED</span>

@@ -1,4 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { post } from './api'
 import { useFloatBox } from './float'
 import type { Layout } from './types'
@@ -92,14 +93,14 @@ export function SecFilter({ secs, off, onFlip }: { secs: [string, string][]; off
   )
 }
 
-/** A section popped out into its own window; ⤓ puts it back. */
+/** A section popped out into its own window; ⤓ puts it back. On body, so it outlives its panel being hidden. */
 export function Out({ id, label, onDock, children }: { id: string; label: string; onDock: () => void; children: ReactNode }) {
   const { box, el, drag, grip, style } = useFloatBox(
     `dashy-sec-${id}`,
     () => ({ x: Math.max(8, Math.round(window.innerWidth / 2 - 210)), y: 90, w: 420, h: 360, max: false }),
     '.ib',
   )
-  return (
+  return createPortal(
     <div ref={el} className={`fw${box.max ? ' max' : ''}`} style={style} role="dialog" aria-label={label}>
       <div className="bar" title="drag to move, double-click to maximize" {...drag}>
         <span className="lab">{label}</span>
@@ -112,6 +113,7 @@ export function Out({ id, label, onDock, children }: { id: string; label: string
         {children}
       </div>
       <div className="fgrip" {...grip} />
-    </div>
+    </div>,
+    document.body,
   )
 }
