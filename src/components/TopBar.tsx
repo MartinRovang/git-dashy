@@ -95,9 +95,11 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
           <kbd className="hint">u</kbd> ↑ update to v{d.update}
         </div>
       ) : null}
-      <div className={`pill${running ? ' busy' : ''}`}>
-        <span>{running ? `${running} agent${running > 1 ? 's' : ''} running` : 'agents idle'}</span>
-      </div>
+      {running ? (
+        <div className="pill busy">
+          <span>{`${running} agent${running > 1 ? 's' : ''} running`}</span>
+        </div>
+      ) : null}
       {d?.error ? (
         <div className="pill err" title={d.error}>
           ✗ refresh failed: {d.error.slice(0, 40)}
