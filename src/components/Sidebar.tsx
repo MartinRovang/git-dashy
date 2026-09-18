@@ -154,7 +154,8 @@ function Group({
         }
         aria-label={flag ? `${label}, ${flag}` : label}
         aria-expanded={open && !collapsed}
-        {...x.head}
+        // the 52px rail is a click target, not a drag handle: a small slip there would pop a group out
+        {...(collapsed ? {} : x.head)}
         onClick={x.out ? x.dock : onToggle}
       >
         <span className="car">▶</span>

@@ -108,16 +108,19 @@ export type PostingRule = {
 export type Ask = { kind: string; key: string; name: string; waiting?: string; text?: string; path?: string }
 
 /** config::snapshot, only the keys the UI reads. */
+/** A panel's layout: each list names sections. A setting, since the GUI's localStorage starts empty every launch. */
+export type Layout = { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
+
 export type Settings = {
   window?: number | null
   drafts?: boolean
   hinted?: boolean
   /** Show the key hint on every button and settings row. */
   keyhints?: boolean
-  /** the PR pane's layout: section names per list */
-  pane?: { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
-  /** the left sidebar's layout, same shape */
-  side?: { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
+  /** the PR pane's layout */
+  pane?: Layout
+  /** the left sidebar's layout */
+  side?: Layout
   subs?: string
   theme?: string
   notify?: boolean

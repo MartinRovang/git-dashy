@@ -4499,6 +4499,16 @@ mod tests {
         );
         let d = get(&format!("{base}/api/state"), Some(&token)).1;
         assert_eq!(d["settings"]["side"]["order"], json!(["view", "agent"]));
+        // a malformed layout is refused whole and leaves the saved one alone
+        let long: Vec<String> = (0..21).map(|i| i.to_string()).collect();
+        for bad in [json!(["x"]), json!({"off": "x"}), json!({"off": long})] {
+            assert_eq!(
+                post(&format!("{base}/api/settings"), json!({"side": bad}), &token).0,
+                400
+            );
+        }
+        let d = get(&format!("{base}/api/state"), Some(&token)).1;
+        assert_eq!(d["settings"]["side"]["order"], json!(["view", "agent"]));
     }
 
     #[test]

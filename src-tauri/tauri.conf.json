@@ -14,7 +14,8 @@
         "title": "gitdashy",
         "width": 1100,
         "height": 800,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

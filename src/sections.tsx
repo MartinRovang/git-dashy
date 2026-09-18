@@ -1,16 +1,18 @@
 import { useState, type DragEvent, type ReactNode } from 'react'
 import { post } from './api'
 import { useFloatBox } from './float'
+import type { Layout } from './types'
+import { arrange, flip, moved, outside, same } from './layout'
 
-/** A panel's layout: each list names sections. Saved as a setting, since the GUI's localStorage starts empty every launch. */
-export type Layout = { order?: string[]; off?: string[]; shut?: string[]; out?: string[] }
-
-const flip = (l: string[] = [], v: string) => (l.includes(v) ? l.filter((x) => x !== v) : [...l, v])
+// one save in flight per setting: `serve` runs each request on its own thread, so two quick edits
+// could otherwise land in either order and leave the older layout on disk
+const queue: Record<string, Promise<unknown>> = {}
 
 /** Sections you can switch off, fold, drag up and down, and drag out of `panel` into a window of their own.
  *
  * ponytail: native HTML drag. A webview that reports no drop point (0,0) cannot pop out; add a button
- * back if that bites. Edits are kept locally and posted quietly, so a drag does not wait on a reload.
+ * back if that bites. Escape past the panel's edge also pops out: dragend reads the same for a cancel
+ * and a drop on nothing. Edits are kept locally and posted quietly, so a drag does not wait on a reload.
  */
 export function useSections(setting: 'pane' | 'side', names: string[], saved: Layout | undefined, panel: string) {
   const [mine, setMine] = useState<Layout | null>(null)
@@ -18,18 +20,21 @@ export function useSections(setting: 'pane' | 'side', names: string[], saved: La
   // where the dragged section would land: above or below this one, drawn as a line
   const [at, setAt] = useState<{ k: string; after: boolean } | null>(null)
   const lay = mine || saved || {}
+  // once the server holds what we sent, follow the server again, so a change made elsewhere shows up.
+  // Set during render, React's pattern for state that follows a prop; an effect would render twice.
+  if (mine && same(mine, saved)) setMine(null)
   const put = (next: Layout) => {
     setMine(next)
-    void post('/api/settings', { [setting]: next })
+    queue[setting] = (queue[setting] || Promise.resolve()).then(() =>
+      // a refused save drops the local copy, so the panel shows what is actually saved
+      post('/api/settings', { [setting]: next }).then(
+        (r) => r.ok || setMine(null),
+        () => setMine(null),
+      ),
+    )
   }
-  // a section the saved order does not name yet (a new one) goes last, in `names` order
-  const order = [...(lay.order || []).filter((k) => names.includes(k)), ...names.filter((n) => !lay.order?.includes(n))]
-  const move = (from: string, to: string, after: boolean) => {
-    if (from === to) return
-    const rest = order.filter((k) => k !== from)
-    rest.splice(rest.indexOf(to) + (after ? 1 : 0), 0, from)
-    put({ ...lay, order: rest })
-  }
+  const order = arrange(lay.order, names)
+  const move = (from: string, to: string, after: boolean) => put({ ...lay, order: moved(order, from, to, after) })
   const sec = (k: string) => {
     const out = !!lay.out?.includes(k)
     return {
@@ -64,8 +69,7 @@ export function useSections(setting: 'pane' | 'side', names: string[], saved: La
           setDragged(null)
           setAt(null)
           const r = document.querySelector(panel)?.getBoundingClientRect()
-          const outside = r && (e.clientX || e.clientY) && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
-          if (outside && !out) put({ ...lay, out: [...(lay.out || []), k] })
+          if (r && outside(r, e.clientX, e.clientY) && !out) put({ ...lay, out: [...(lay.out || []), k] })
         },
       },
       fold: () => put({ ...lay, shut: flip(lay.shut, k) }),

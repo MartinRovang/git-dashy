@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ListFilter } from 'lucide-react'
-import type { DbImpact, Detail, Row } from '../types'
-import { Out, SecFilter, useSections, type Layout } from '../sections'
+import type { DbImpact, Detail, Layout, Row } from '../types'
+import { Out, SecFilter, useSections } from '../sections'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
 import { clean } from '../dbgraph'
@@ -105,6 +105,7 @@ export function Pane({
       </span>
     ))
   const pre = d?.pre || p.pre
+  const shape = rev?.db ? clean(rev.db) : null
   // each section's body, or null when this PR has nothing for it
   const body: Record<string, { extra?: ReactNode; content: ReactNode } | null> = {
     about: {
@@ -200,7 +201,7 @@ export function Pane({
         }
       : null,
     database:
-      rev?.db && (clean(rev.db).tables.length || clean(rev.db).risks.length) ? { content: <Db db={rev.db} number={p.number} /> } : null,
+      rev?.db && shape && (shape.tables.length || shape.risks.length) ? { content: <Db db={rev.db} number={p.number} /> } : null,
     pre: pre
       ? {
           extra: (
@@ -261,7 +262,11 @@ export function Pane({
               <div
                 className="phd"
                 {...x.head}
+                role="button"
+                tabIndex={0}
+                aria-expanded={!x.shut && !x.out}
                 onClick={x.out ? x.dock : x.fold}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), (x.out ? x.dock : x.fold)())}
                 title={x.out ? 'popped out: click to put it back' : 'click to fold, drag to reorder, drag out of the pane to pop it out'}
               >
                 <span className="car">▶</span>
