@@ -4622,6 +4622,7 @@ mod tests {
                 path: "x.py".into(),
                 n: 2,
                 file: 0,
+                on_line: true,
             },
             Mark {
                 kind: "nit".into(),
@@ -4630,6 +4631,7 @@ mod tests {
                 path: "y.py".into(),
                 n: 1,
                 file: usize::MAX,
+                on_line: false,
             },
         ];
         let kinds: Vec<&str> = code_rows(&files, &marks)

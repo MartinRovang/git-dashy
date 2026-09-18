@@ -100,6 +100,21 @@ pub struct Finding {
     pub text: String,
 }
 
+/// One finding resolved onto the diff, ready to post as an inline review comment on the PR.
+///
+/// ponytail: resolved when the review runs and carried on the verdict, not worked out again at post
+/// time. A held review is posted whenever it is released — a week later, off the diff someone read —
+/// and line numbers only mean anything against the head they were anchored to. Re-resolving at post
+/// time would quietly move the comments onto whatever the PR says now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Inline {
+    /// The repo's own path for the file, from the diff. Never the path the reviewer cited.
+    pub path: String,
+    /// Line number in the new file; always the RIGHT side, because a mark never lands on a deletion.
+    pub line: u32,
+    pub body: String,
+}
+
 /// One line of the review log (~/.prs_reviewed.jsonl and each team's).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LogEntry {
@@ -181,6 +196,9 @@ pub struct Verdict {
     pub depth: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
+    /// Findings anchored onto the diff, for posting beside the body. See `Inline`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inline: Vec<Inline>,
 }
 
 /// One dashboard section: MINE, REVIEW REQUESTED, ASSIGNED, REVIEWED.
@@ -247,6 +265,11 @@ pub struct Mark {
     pub n: u32,
     /// Index into the files list.
     pub file: usize,
+    /// Whether `n` is a line this diff actually carries, and so one GitHub will take a comment on.
+    /// `file` alone is only "the diff touches a file of this name": a review that cites a line
+    /// outside the hunks still lands in the pane, and must not be posted.
+    #[serde(default)]
+    pub on_line: bool,
 }
 
 /// One unconfirmed observation: how often it recurred, which review runs said it, the fact.

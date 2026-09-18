@@ -123,6 +123,10 @@ pub struct Config {
     pub sub: String,
     pub window: Option<u64>,
     pub drafts: bool,
+    /// Post each finding as a comment on the line it is about, beside the body. Off by default: it
+    /// changes what lands on someone else's PR, and on a repo that requires conversation resolution
+    /// every nit becomes a thread that gates the merge button.
+    pub inline: bool,
     /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
     pub scopes: Vec<String>,
     /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
@@ -210,6 +214,7 @@ impl Default for Config {
             sub: "all".into(),
             window: Some(24),
             drafts: false,
+            inline: std::env::var("PRS_INLINE").map(|v| v != "0").unwrap_or(false),
             scopes: Vec::new(),
             read: HashMap::new(),
             hidden: HashMap::new(),
@@ -257,6 +262,8 @@ pub struct Saved {
     pub window: Option<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,6 +440,11 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.drafts {
         c.drafts = v;
     }
+    // ponytail: the env var wins, same as PRS_NOTIFY. `--inline` is how a run is opted in, and a
+    // saved `false` from the last session must not switch it back off under the flag.
+    if let (Some(v), false) = (saved.inline, env("PRS_INLINE")) {
+        c.inline = v;
+    }
     if let Some(v) = saved.scopes {
         c.scopes = v;
     }
@@ -519,6 +531,7 @@ pub fn snapshot(c: &Config) -> Saved {
         subs: Some(c.sub.clone()),
         window: Some(c.window),
         drafts: Some(c.drafts),
+        inline: Some(c.inline),
         scopes: Some(c.scopes.clone()),
         read: Some(c.read.clone()),
         hidden: Some(c.hidden.clone()),
@@ -638,13 +651,43 @@ mod tests {
         assert_eq!(snapshot(&c).spells, Some(vec!["auth-check".to_string()]));
     }
 
+    /// PRS_INLINE outranks the saved value, the way PRS_NOTIFY does. Inline comments post on other
+    /// people's PRs, so the environment has to be able to hold the switch down whatever the settings
+    /// file picked up from an earlier `--inline` run.
+    #[test]
+    fn the_environment_outranks_a_saved_inline_setting() {
+        let saved = |json: &str| serde_json::from_str::<Saved>(json).unwrap();
+        let none = |_: &str| false;
+        let set = |_: &str| true;
+
+        let mut c = Config::default();
+        apply(&mut c, saved(r#"{"inline":true}"#), &none);
+        assert!(c.inline, "with nothing in the environment the file decides");
+
+        // the env var is set (to whatever): the file must not switch it back
+        let mut c = Config {
+            inline: false,
+            ..Default::default()
+        };
+        apply(&mut c, saved(r#"{"inline":true}"#), &set);
+        assert!(!c.inline, "PRS_INLINE decides, not the saved file");
+
+        // and a file that says nothing leaves the default alone
+        let mut c = Config {
+            inline: true,
+            ..Default::default()
+        };
+        apply(&mut c, saved("{}"), &none);
+        assert!(c.inline);
+    }
+
     /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
     /// file leaves out must keep the default rather than being cleared.
     #[test]
     fn a_saved_file_reaches_every_setting() {
         let none = |_: &str| false;
         let json = r#"{
-            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
+            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"inline":true,"scopes":["org:acme"],"read":{"u":"t"},
             "hinted":true,"keyhints":false,"seen":"2.1.0","depth":"high","effort":"max","notify":true,
             "theme":"nord","voice":["caveman"],"hunter":["security"],"spells":["auth-check"]
         }"#;
@@ -655,6 +698,7 @@ mod tests {
         assert_eq!(c.interval, 600);
         assert_eq!(c.sub, "open");
         assert_eq!(c.window, Some(168));
+        assert!(c.inline);
         assert!(c.drafts);
         assert_eq!(c.scopes, ["org:acme"]);
         assert_eq!(c.read.get("u").map(String::as_str), Some("t"));

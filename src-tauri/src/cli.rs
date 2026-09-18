@@ -70,6 +70,9 @@ pub struct Cli {
     pub hunter: Option<Vec<String>>,
     #[arg(long)]
     pub instructions: Option<String>,
+    /// Post each finding as a comment on the line it is about, beside the review body.
+    #[arg(long)]
+    pub inline: bool,
     #[arg(long)]
     pub demo: bool,
     #[arg(long, global = true)]
@@ -1443,6 +1446,12 @@ fn dashboard(cli: Cli) -> i32 {
     config::update(|c| {
         if let Some(i) = cli.instructions {
             c.instructions = i;
+        }
+        // ponytail: the flag only ever turns it ON. It is a bare bool, so absence is "not asked for"
+        // and not "asked for off" — writing it through unconditionally would switch the setting off
+        // on every launch that omitted the flag.
+        if cli.inline {
+            c.inline = true;
         }
         if let Some(i) = cli.interval {
             c.interval = i;
