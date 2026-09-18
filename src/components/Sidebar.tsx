@@ -125,6 +125,7 @@ function Group({
   onToggle,
   collapsed,
   x,
+  loading,
   children,
 }: {
   icon: LucideIcon
@@ -136,6 +137,8 @@ function Group({
   collapsed: boolean
   /** its place in the rail: switched off, dragged, popped out (see useSections) */
   x: ReturnType<ReturnType<typeof useSections>['sec']>
+  /** no data yet: a bar where the summary will be, not a summary of empty defaults */
+  loading: boolean
   children: React.ReactNode
 }) {
   if (x.off) return null
@@ -164,7 +167,7 @@ function Group({
           {collapsed && flag ? <i className="dot" /> : null}
         </span>
         <span className="lb">{label}</span>
-        <span className="sv">{summary}</span>
+        <span className="sv">{loading ? <i className="sk" /> : summary}</span>
       </button>
       {x.out ? (
         <Out id={`side-${label}`} label={label} onDock={x.dock}>
@@ -398,6 +401,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         <div className="grpname">Reviewer</div>
 
         <Group
+          loading={!d}
           icon={Bot}
           label="Agent"
           flag={holds.length ? `${holds.length} hold${holds.length === 1 ? 's' : ''} a review` : undefined}
@@ -535,6 +539,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
+          loading={!d}
           icon={Skull}
           label="Necronomicon"
           summary={[`${(s.voice || []).length} voice${(s.voice || []).length === 1 ? '' : 's'}`, `${(s.hunter || []).length} passive${(s.hunter || []).length === 1 ? '' : 's'}`, `${equipped.length} spell${equipped.length === 1 ? '' : 's'}`].join(' · ')}
@@ -586,6 +591,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
+          loading={!d}
           icon={Database}
           label="Database"
           summary={dbRules.length ? `${dbRules.length} DB repo rule${dbRules.length === 1 ? '' : 's'}` : 'no DB repos'}
@@ -631,6 +637,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
+          loading={!d}
           icon={Eye}
           label="View"
           summary={`${win} history · ${every(s.interval || 0)}`}
@@ -700,6 +707,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
+          loading={!d}
           icon={BookOpen}
           label="Knowledge"
           flag={held.length ? `${held.length} held back` : undefined}
@@ -747,6 +755,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
         </Group>
 
         <Group
+          loading={!d}
           icon={Wrench}
           label="Tools"
           summary={rep?.job.running ? 'writing Friday report…' : rep?.latest ? `report ${rep.latest}` : 'Friday report'}
@@ -790,7 +799,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
           <div key={l} className={`stat${n ? '' : ' zero'}`} title={`${n} ${l}`}>
             <i style={{ background: n ? c : 'var(--dim3)' }} />
             <span>{l}</span>
-            <b>{n}</b>
+            <b>{d ? n : <i className="sk" style={{ width: '1.5em' }} />}</b>
           </div>
         ))}
       </div>

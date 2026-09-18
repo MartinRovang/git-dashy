@@ -57,6 +57,7 @@ export function Pane({
   onOptions,
   onClose,
   hidden,
+  loading,
 }: {
   p: Row | null
   detail: Detail | null
@@ -68,6 +69,8 @@ export function Pane({
   onClose: () => void
   /** closed: kept mounted so its popped-out sections stay open */
   hidden?: boolean
+  /** no data yet: bars, not "No PR selected" */
+  loading?: boolean
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
   const [filtering, setFiltering] = useState(false)
@@ -77,7 +80,15 @@ export function Pane({
       <div className="pane" style={hidden ? { display: 'none' } : undefined}>
         <div className="bar" />
         <div className="in scroll">
-          <div className="prose">No PR selected.</div>
+          {loading ? (
+            <div className="skel" aria-busy="true">
+              {[60, 90, 75, 40].map((w, i) => (
+                <i key={i} style={{ width: `${w}%` }} />
+              ))}
+            </div>
+          ) : (
+            <div className="prose">No PR selected.</div>
+          )}
         </div>
       </div>
     )

@@ -306,7 +306,15 @@ export function Queue(p: Props) {
             </div>
           )
         })}
-        {p.secs.length ? null : <div className="none">nothing fetched yet</div>}
+        {p.secs.length ? null : d ? (
+          <div className="none">nothing fetched yet</div>
+        ) : (
+          <div className="skel" aria-busy="true" style={{ padding: '14px 18px' }}>
+            {[70, 55, 80, 60, 75, 50].map((w, i) => (
+              <i key={i} style={{ width: `${w}%`, height: 22 }} />
+            ))}
+          </div>
+        )}
       </div>
     </>
   )
