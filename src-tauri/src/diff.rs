@@ -32,6 +32,19 @@ pub fn landed(m: &Mark) -> bool {
     m.file != NO_FILE
 }
 
+/// The mark as GitHub wants it: the diff's own path for the file, and the line. None when the mark
+/// is not on a line this diff carries.
+///
+/// ponytail: `files[m.file].path`, never `m.path`. The mark's path is what the REVIEWER cited, which
+/// `same_file` matches by suffix — `auto.py` for `gitdashy/core/auto.py`. GitHub takes the repo's
+/// path and nothing else, so sending the citation back is a rejected comment on almost every finding.
+pub fn postable(m: &Mark, files: &[DiffFile]) -> Option<(String, u32)> {
+    if !m.on_line {
+        return None;
+    }
+    files.get(m.file).map(|f| (f.path.clone(), m.n))
+}
+
 // ponytail: None is "the fetch failed", "" is "it succeeded and the diff was empty". One map says both,
 // and retry() is then the difference between them: a parallel FAILED set was a second place to forget.
 // The lock is not decoration: fetch() runs on a worker thread while f calls retry() on the UI one.
@@ -252,13 +265,14 @@ pub fn anchor(files: &mut [DiffFile], findings: &[Finding]) -> Vec<Mark> {
     for f in findings {
         let (path, n) = where_(&f.loc);
         let hit = files.iter().position(|d| same_file(&path, &d.path));
-        let mark = Mark {
+        let mut mark = Mark {
             kind: f.kind.clone(),
             loc: f.loc.clone(),
             text: f.text.clone(),
             path,
             n,
             file: hit.unwrap_or(NO_FILE),
+            on_line: false,
         };
         if let Some(i) = hit.filter(|_| n > 0) {
             if let Some(l) = files[i]
@@ -268,6 +282,10 @@ pub fn anchor(files: &mut [DiffFile], findings: &[Finding]) -> Vec<Mark> {
                 .find(|l| l.n == Some(n) && l.del.is_none())
             {
                 l.marks.push(mark.kind.clone());
+                // ponytail: the one place that knows the line EXISTS. `landed()` only says the diff
+                // touches a file of that name, and a review cites a line outside the hunks often
+                // enough; posting one is a 422 that takes the whole review down with it.
+                mark.on_line = true;
             }
         }
         marks.push(mark);
@@ -434,6 +452,73 @@ diff --git a/CHANGELOG.md b/CHANGELOG.md
         assert_eq!(line.marks, ["blocking"]);
         assert_eq!(worst(line), "blocking");
         assert_eq!(marks[0].path, "auto.py"); // a basename matches a full path, because a review cites either
+    }
+
+    #[test]
+    fn postable_sends_the_repos_path_not_the_one_the_review_cited() {
+        let mut files = parse(DIFF);
+        let marks = anchor(
+            &mut files,
+            &[finding("blocking", "auto.py:139", "verdict dropped")],
+        );
+        // the review cited a basename; GitHub takes the path the diff carries and nothing else
+        assert_eq!(marks[0].path, "auto.py");
+        assert_eq!(
+            postable(&marks[0], &files),
+            Some(("gitdashy/auto.py".into(), 139))
+        );
+    }
+
+    #[test]
+    fn a_finding_on_a_line_the_diff_does_not_carry_is_never_posted() {
+        let mut files = parse(DIFF);
+        let marks = anchor(&mut files, &[finding("note", "auto.py:999", "off the diff")]);
+        // it landed on the file, so the pane still lists it...
+        assert!(landed(&marks[0]));
+        // ...but 999 is in no hunk, and posting it would reject the whole review
+        assert!(!marks[0].on_line);
+        assert_eq!(postable(&marks[0], &files), None);
+    }
+
+    #[test]
+    fn a_finding_about_a_file_outside_the_diff_is_never_posted() {
+        let mut files = parse(DIFF);
+        let marks = anchor(&mut files, &[finding("nit", "README.md:3", "elsewhere")]);
+        assert!(!landed(&marks[0]));
+        assert_eq!(postable(&marks[0], &files), None);
+    }
+
+    #[test]
+    fn a_finding_on_an_unchanged_line_inside_a_hunk_still_posts() {
+        let mut files = parse(DIFF);
+        // 142 is a context line: part of the diff, so GitHub takes a comment on it
+        let marks = anchor(
+            &mut files,
+            &[finding("note", "auto.py:142", "persist runs anyway")],
+        );
+        assert_eq!(
+            postable(&marks[0], &files),
+            Some(("gitdashy/auto.py".into(), 142))
+        );
+    }
+
+    #[test]
+    fn a_finding_that_names_a_deleted_line_posts_on_the_new_side() {
+        let mut files = parse(DIFF);
+        // 138 is a deletion AND an addition; anchoring skips the deletion, so a comment is only ever
+        // asked for on the right-hand side and `side` never has to be sent
+        let marks = anchor(&mut files, &[finding("note", "auto.py:138", "still discarded")]);
+        let line = files[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .find(|l| l.n == Some(138) && !l.marks.is_empty())
+            .expect("a marked line 138");
+        assert_eq!(line.sign, "+");
+        assert_eq!(
+            postable(&marks[0], &files),
+            Some(("gitdashy/auto.py".into(), 138))
+        );
     }
 
     #[test]

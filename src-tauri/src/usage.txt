@@ -1,6 +1,6 @@
 gitdashy 2.0.0 — desktop dashboard of open PRs: mine, review-requested, assigned.
 
-Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--demo] [--debug] [--version] [--help]
+Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effort LEVEL] [--depth LEVEL] [--voice A,B] [--hunter A,B] [--instructions FILE] [--inline] [--demo] [--debug] [--version] [--help]
        gitdashy sync-memory --into PATH [--repo owner/name] [--no-pull] [--general]
        gitdashy remember [--repo owner/name | --general] [--private] FACT
        gitdashy self-review N [--repo owner/name] [--model NAME]
@@ -29,6 +29,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
   --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, perf, humanizer (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
+  --inline       also post each finding as a comment on the line it is about (or $PRS_INLINE=1)
   --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
   --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
 

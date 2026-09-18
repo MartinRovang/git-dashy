@@ -13,7 +13,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::config;
-use crate::types::{Check, Detail, Pr, Section};
+use crate::types::{Check, Detail, Inline, Pr, Section};
 
 /// The REST root: $GITHUB_API or https://api.github.com. GraphQL is `/graphql` beside it
 /// (on Enterprise /api/v3 and /api/graphql are siblings; replace "/api/v3" with "/api").
@@ -1130,9 +1130,43 @@ pub fn contexts(pr: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-/// Post the verdict on the PR. Err on failure.
-pub fn post_review(repo: &str, number: u64, verdict: &str, body: &str) -> Result<(), Error> {
-    let b = json!({ "event": verdict_event(verdict), "body": body });
+/// The review as GitHub takes it. Separate from the call so the shape can be read in a test without
+/// a network: it is the whole of what this feature changes about the request.
+fn review_payload(verdict: &str, body: &str, head: &str, inline: &[Inline]) -> Value {
+    let mut b = json!({ "event": verdict_event(verdict), "body": body });
+    // ponytail: `head` is required for the comments and not merely nice to have. Without a commit to
+    // pin them to they would attach to whatever the PR's latest commit is, which for a held review is
+    // not the diff the lines were read off. No sha, no comments — the body still goes up.
+    if !inline.is_empty() && !head.is_empty() {
+        let comments: Vec<Value> = inline
+            .iter()
+            .map(|c| json!({ "path": c.path, "line": c.line, "body": c.body }))
+            .collect();
+        b["commit_id"] = json!(head);
+        b["comments"] = json!(comments);
+    }
+    b
+}
+
+/// Post the verdict on the PR, with `inline` as comments on the lines they are about. Err on failure.
+///
+/// ponytail: `comments` is validated as ONE thing. A single line GitHub will not take rejects the
+/// whole request, so nothing posts — not even the body that would have gone up on its own. Every
+/// entry must already have come through `diff::postable`, and the caller holds the verdict when this
+/// fails rather than dropping a review that has been paid for.
+///
+/// ponytail: `commit_id` is pinned rather than left to default. GitHub anchors comments to the PR's
+/// LATEST commit when it is absent, and a held review is posted whenever it is released — the lines
+/// were read off `head` and mean nothing against a commit that came after it.
+pub fn post_review(
+    repo: &str,
+    number: u64,
+    verdict: &str,
+    body: &str,
+    head: &str,
+    inline: &[Inline],
+) -> Result<(), Error> {
+    let b = review_payload(verdict, body, head, inline);
     call(
         &format!("/repos/{repo}/pulls/{number}/reviews"),
         "POST",
@@ -1845,6 +1879,54 @@ mod tests {
                 ("y".to_string(), "/".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn a_review_with_no_inline_comments_is_the_request_it_always_was() {
+        let b = review_payload("approve", "looks good", "abc123", &[]);
+        assert_eq!(b["event"], "APPROVE");
+        assert_eq!(b["body"], "looks good");
+        assert!(b.get("comments").is_none());
+        assert!(b.get("commit_id").is_none());
+    }
+
+    #[test]
+    fn inline_comments_ride_along_with_the_body_and_pin_the_commit() {
+        let c = |path: &str, line: u32| Inline {
+            path: path.into(),
+            line,
+            body: "**nit** — x".into(),
+        };
+        let b = review_payload(
+            "request_changes",
+            "the body",
+            "e3c11f3",
+            &[c("internal/services/user_service.go", 152)],
+        );
+        // the body is untouched: findings appear in it AND on the lines
+        assert_eq!(b["body"], "the body");
+        assert_eq!(b["commit_id"], "e3c11f3");
+        assert_eq!(b["comments"][0]["path"], "internal/services/user_service.go");
+        assert_eq!(b["comments"][0]["line"], 152);
+        // ponytail: never sent. The mapping cannot anchor to a deletion, so RIGHT is the only side
+        // there is and naming it would be a second place to keep that true.
+        assert!(b["comments"][0].get("side").is_none());
+    }
+
+    #[test]
+    fn without_a_head_to_pin_them_to_the_comments_are_left_off() {
+        let b = review_payload(
+            "comment",
+            "the body",
+            "",
+            &[Inline {
+                path: "a.rs".into(),
+                line: 3,
+                body: "x".into(),
+            }],
+        );
+        assert_eq!(b["body"], "the body");
+        assert!(b.get("comments").is_none());
     }
 
     #[test]

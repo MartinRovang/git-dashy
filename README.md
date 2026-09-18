@@ -57,6 +57,7 @@ gitdashy --auto           # review every review-requested PR that shows up from 
 gitdashy --model sonnet
 gitdashy --effort high --depth adaptive   # claude effort level; review depth judged from the PR size
 gitdashy --instructions review-rules.md   # your own text, appended to every review prompt
+gitdashy --inline         # also post each finding as a comment on the line it is about
 gitdashy --version        # 1.16.0
 gitdashy --demo           # canned PRs, fake reviewer — no token, no claude, no real log
 gitdashy --debug          # also append API calls, reviews, ticks and every swallowed traceback to ~/.prs_debug.log
@@ -208,6 +209,19 @@ them at runtime.
 rules, things to always check, what to ignore. It is read fresh for every review, so you can edit it
 while the dashboard is running. A missing file shows as `error:` on the row instead of reviewing
 without it.
+
+`--inline` (or `PRS_INLINE=1`) also posts each finding as a comment on the line it is about, beside
+the review. It is **off by default**, because it changes what lands on someone else's PR: inline
+comments open resolvable threads, so on a repo that requires conversation resolution a `nit` holds
+the merge button until someone resolves it. The body is unchanged either way — a finding appears in
+the review and on its line, the way every other reviewer posts one.
+
+Only a finding that names a line the diff actually carries is posted; one about a file the diff does
+not touch, or a line outside the hunks, stays in the body where it already was. The comments are
+anchored when the review runs and pinned to the commit it read, so releasing a held review a week
+later still puts them where that diff had them rather than where those line numbers point now. If
+GitHub rejects them the whole review is rejected with them — nothing is posted, the row says so, and
+the verdict is held for `Y` rather than thrown away.
 
 For one review rather than all of them, `R` asks for instructions before it starts. They go into the
 system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
@@ -725,6 +739,7 @@ Then `m` cycles them like any other model.
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 | `PRS_SETTINGS` | `~/.prs_settings.json` | where runtime picks (model, depth, theme, notify…) are saved; env vars and flags still win. The file records the effective state, so a value set by a flag is kept once any setting changes |
 | `PRS_NOTIFY` | `1` | desktop popup when a PR asks for your review; `0` turns it off, or toggle it in the Esc menu |
+| `PRS_INLINE` | `0` | `1` = same as `--inline`: findings are also posted on the lines they name |
 | `PRS_THEME` | `pencil` | colour theme: pencil, dashy, dracula, gruvbox, nord; Esc menu cycles it |
 
 ## Layout

@@ -123,6 +123,10 @@ pub struct Config {
     pub sub: String,
     pub window: Option<u64>,
     pub drafts: bool,
+    /// Post each finding as a comment on the line it is about, beside the body. Off by default: it
+    /// changes what lands on someone else's PR, and on a repo that requires conversation resolution
+    /// every nit becomes a thread that gates the merge button.
+    pub inline: bool,
     /// Toggled-on sources for the TEAM section: "org:<owner>" or "team:<key>". Empty = no TEAM section.
     pub scopes: Vec<String>,
     /// url -> the updatedAt that was read, so a PR that moves goes unread again. Kept here rather than in
@@ -210,6 +214,7 @@ impl Default for Config {
             sub: "all".into(),
             window: Some(24),
             drafts: false,
+            inline: std::env::var("PRS_INLINE").map(|v| v != "0").unwrap_or(false),
             scopes: Vec::new(),
             read: HashMap::new(),
             hidden: HashMap::new(),
@@ -257,6 +262,8 @@ pub struct Saved {
     pub window: Option<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,6 +440,11 @@ pub fn apply(c: &mut Config, saved: Saved, env: &dyn Fn(&str) -> bool) {
     if let Some(v) = saved.drafts {
         c.drafts = v;
     }
+    // ponytail: the env var wins, same as PRS_NOTIFY. `--inline` is how a run is opted in, and a
+    // saved `false` from the last session must not switch it back off under the flag.
+    if let (Some(v), false) = (saved.inline, env("PRS_INLINE")) {
+        c.inline = v;
+    }
     if let Some(v) = saved.scopes {
         c.scopes = v;
     }
@@ -519,6 +531,7 @@ pub fn snapshot(c: &Config) -> Saved {
         subs: Some(c.sub.clone()),
         window: Some(c.window),
         drafts: Some(c.drafts),
+        inline: Some(c.inline),
         scopes: Some(c.scopes.clone()),
         read: Some(c.read.clone()),
         hidden: Some(c.hidden.clone()),
