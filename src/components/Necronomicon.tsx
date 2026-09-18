@@ -90,14 +90,14 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
           </div>
           <div className="npage right">
             <section>
-              <h2>{title}</h2>
+              <h2 className="nbanner" style={{ backgroundImage: `url(/chapters/${title.toLowerCase()}.webp)` }}>{title}</h2>
               {list.length ? (
                 <ul className="nbuilt">
                   {list.map((b) => (
                     <li key={b.name} className={b.on ? 'on' : ''}>
                       <button className="ncard" aria-pressed={b.on} title={b.on ? 'equipped: click to take it off' : 'click to equip'} onClick={() => void flip(b.name)}>
                         <Tick on={b.on} />
-                        <Glyph kind={kind} name={b.name} size={96} />
+                        <Glyph kind={kind} name={b.name} size={64} />
                         <b>{b.name}</b>
                         <p>{b.about}</p>
                       </button>

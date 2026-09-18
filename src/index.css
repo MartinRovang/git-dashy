@@ -344,6 +344,8 @@
   @media (max-width: 900px) { .nspread { grid-template-columns: minmax(0, 1fr); } .npage.left, .npage.right { box-shadow: none; } }
   .npage h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; font-variant: small-caps; letter-spacing: .06em; color: var(--blood);
               border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+  /* the banner art carries the chapter's name, so the text only stays for screen readers */
+  .npage h2.nbanner { aspect-ratio: 2133 / 222; background: center / 100% 100% no-repeat; border: 0; padding: 0; color: transparent; overflow: hidden; }
   .npage section + section { margin-top: 20px; }
   .npage h3 { margin: 26px 0 2px; font-size: 16px; font-variant: small-caps; letter-spacing: .06em; color: var(--gold); }
   .npage ol { margin: 0; padding-left: 24px; }
@@ -357,10 +359,10 @@
   .nleader { flex: 1; border-bottom: 1px dotted var(--dim2); transform: translateY(-4px); }
   .nglyph { flex: none; vertical-align: -2px; color: var(--gold); }
   /* passives and voices: a card each, two to a row, the drawing on top; clicking the card equips it */
-  .nbuilt { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .nbuilt { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
   .nbuilt li { position: relative; display: flex; flex-direction: column; }
-  .ncard { position: relative; width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
-          padding: 14px 12px; font: inherit; text-align: center; color: var(--ink2); cursor: pointer;
+  .ncard { position: relative; width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+          padding: 10px 10px; font: inherit; text-align: center; color: var(--ink2); cursor: pointer;
           border: 1px solid var(--rule); border-radius: 6px;
           /* black, see-through enough that the sigil still shows behind it */
           background: rgba(0,0,0,.6);
@@ -371,14 +373,13 @@
   .ncard { transition: box-shadow .15s, filter .15s; }
   .ncard:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--gold) 35%, transparent), 0 4px 12px rgba(0,0,0,.4); filter: brightness(1.15); }
   .nbuilt li.on .ncard { background: linear-gradient(160deg, color-mix(in srgb, var(--gold) 18%, rgba(0,0,0,.6)), rgba(0,0,0,.6)); }
-  .ncard b { font-size: 19px; font-variant: small-caps; letter-spacing: .06em; color: var(--blood); }
-  .ncard p { margin: 0; font-size: 14px; color: var(--ink); }
+  .ncard b { font-size: 16px; font-variant: small-caps; letter-spacing: .06em; color: var(--blood); }
+  .ncard p { margin: 0; font-size: 13px; color: var(--ink); }
   /* the tick: top right of a card */
   .ntick { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: none;
            border: 1.5px solid var(--rule); border-radius: 4px; color: var(--bg); background: color-mix(in srgb, var(--bg) 40%, transparent); }
   .ntick.on { border-color: var(--gold); background: var(--gold); }
   .ncard .ntick { position: absolute; top: 8px; right: 8px; }
-  @media (max-width: 1200px) { .nbuilt { grid-template-columns: minmax(0, 1fr); } }
   .nglyph.sprite { object-fit: contain; }
   .npage.right { display: flex; flex-direction: column; }
   /* the book fills the view and each page scrolls inside it, so turning a page never resizes the book */
