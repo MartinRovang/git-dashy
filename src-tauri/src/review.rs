@@ -1394,41 +1394,33 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     let (repo, n) = (h.pr.repo(), h.pr.number);
     let c = config::get();
     if !c.demo {
-        if !h.hello.is_empty() {
-            github::comment(repo, n, &h.hello)?;
-            // ponytail: recorded the moment it lands. A post that fails after the hello went up used
-            // to leave the file with `hello` still set, so every retry greeted the author again.
-            let mut said = h.clone();
-            said.hello = String::new();
-            // ponytail: logged, not returned. Failing here after the hello landed would hand back an
-            // error with `hello` still on disk, so the retry greets the author a second time — the
-            // very thing this write exists to prevent.
-            if let Err(e) = held::put(&said) {
+        // ponytail: ONE working copy, written back as each step lands. Two clones of `h` meant the
+        // second write undid the first: the hello was cleared on disk, then restored by a clone
+        // taken before it, and the next press greeted the author again — the very thing the first
+        // write exists to prevent.
+        let mut cur = h.clone();
+        if !cur.hello.is_empty() {
+            github::comment(repo, n, &cur.hello)?;
+            // ponytail: recorded the moment it lands, and logged rather than returned. A post that
+            // fails after the hello went up must not leave `hello` on disk for the retry to send.
+            cur.hello = String::new();
+            if let Err(e) = held::put(&cur) {
                 log::error!("could not record the hello for {repo}#{n}: {e:#}");
             }
         }
-        // ponytail: a hold that GitHub refuses DROPS its comments and stays held, so the next press
-        // posts the body. The failure branch in review_inner clears them before it holds, but a
-        // review held by policy never went through it: it keeps its comments and `Y` resends the
-        // same request every time. This app expects a hold to wait — `web.rs` paints a `moved` flag
-        // for exactly the week-old case — and by then the commit it pins may have been force-pushed
-        // away, which is a 422 on every press with no way out but editing the file by hand.
-        // ponytail: written back BEFORE the error is raised, so the press that fails is also the
-        // press that makes the next one work. Retrying inside this call would post body-only under
-        // a key the reader thinks posts comments; this way the row says the comments were refused,
-        // and pressing again is a decision rather than a silent downgrade.
+        // ponytail: refused → the hold drops its comments and stays held, so the next press posts the
+        // body. Any error drops them, not only a 422: a downgraded hold posts, a stuck one never does.
         if let Err(e) = github::post_review(
             repo,
             n,
-            &h.verdict.verdict,
-            &h.verdict.body,
-            &h.pr.head,
-            &h.verdict.inline,
+            &cur.verdict.verdict,
+            &cur.verdict.body,
+            &cur.pr.head,
+            &cur.verdict.inline,
         ) {
-            if !h.verdict.inline.is_empty() {
-                let mut plain = h.clone();
-                plain.verdict.inline.clear();
-                if let Err(e) = held::put(&plain) {
+            if !cur.verdict.inline.is_empty() {
+                cur.verdict.inline.clear();
+                if let Err(e) = held::put(&cur) {
                     log::error!("could not drop the refused comments for {repo}#{n}: {e:#}");
                 }
             }
@@ -1578,17 +1570,12 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
         // the PR and the model run already paid for. A body-only post never failed, so it never
         // showed; `comments` is validated as one thing and takes the review down with it, so this
         // is now a path that gets walked.
-        // ponytail: an Err here is "we did not hear that it landed", not "it did not land". A timeout
-        // after GitHub accepted the review now leaves a hold, and releasing it posts the review a
-        // second time — before this branch existed the verdict was dropped, so a duplicate was not
-        // reachable. Rare, and the cure (list the PR's reviews and match one to this session before
-        // post_held posts) is a change of its own; recorded here so the next reader knows it is a
-        // known edge and not an oversight.
+        // ponytail: an Err here can still mean the review landed, so releasing this hold may post it
+        // twice. Known edge, deliberate trade, cure tracked in #164.
         if let Err(e) = github::post_review(repo, n, &v.verdict, &v.body, &pr.head, &v.inline) {
             // ponytail: the comments are DROPPED before the hold is written. Held whole, `Y` would
-            // resend the exact payload GitHub has already refused, fail the same way, and go on
-            // failing: a review that can never be posted at all is worse than one posted without
-            // its inline half. What is held is the review as it was before this feature.
+            // resend the exact payload GitHub has already refused and go on failing forever. What is
+            // held is the review as it was before this feature, and the next press posts it.
             v.inline.clear();
             // ponytail: `hello` cleared, because this branch is the one that already posted it.
             // Leaving it set would greet the author a second time when the hold is released.
@@ -1651,7 +1638,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::types::Finding;
+    use crate::types::{Finding, Repository};
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
@@ -1950,6 +1937,80 @@ mod tests {
         let (v, _, _) = verdict("acme/api", 7, "opus", None, "", llm::Session::None).unwrap();
         assert_eq!(v.depth, "low");
         assert_eq!(v.effort, "high");
+    }
+
+    /// A release GitHub refuses must leave a hold that CAN be released. Held whole, `Y` resends the
+    /// same refused request forever; the comments are dropped so the next press posts the body.
+    ///
+    /// Drives the real call with the API pointed at a closed port, so `post_review` fails for real.
+    /// `hello` is left empty on purpose: with the API down the hello would fail first and return
+    /// before the review is ever attempted, which is correct but not the path under test.
+    #[test]
+    fn a_release_the_api_refuses_drops_the_comments_so_the_next_press_posts() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        // ponytail: a guard, so a panic mid-test cannot leave GITHUB_API pointing at a dead port for
+        // every test that runs after it. This suite shares one process; team's git calls read the
+        // same environment, and a leak there reads as "sync: git failed" in a test far from here.
+        struct Env(Option<String>, bool);
+        impl Drop for Env {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(v) => std::env::set_var("GITHUB_API", v),
+                    None => std::env::remove_var("GITHUB_API"),
+                }
+                let demo = self.1;
+                config::update(|c| c.demo = demo);
+            }
+        }
+        let _env = Env(std::env::var("GITHUB_API").ok(), config::get().demo);
+        // ponytail: a closed port, not a slow host: the call has to fail now rather than at a timeout.
+        std::env::set_var("GITHUB_API", "http://127.0.0.1:1");
+        config::update(|c| {
+            c.demo = false;
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("log.jsonl");
+            c.memory_dir = d.path().join("memory");
+            c.local_memory = d.path().join("memory");
+            c.bindings = d.path().join("bindings");
+            c.teams = d.path().join("teams");
+            c.team = d.path().join("team");
+        });
+        let h = held::Held {
+            pr: Pr {
+                number: 7,
+                repository: Repository {
+                    name_with_owner: "acme/api".into(),
+                    name: "api".into(),
+                },
+                head: "abc123".into(),
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "comment".into(),
+                body: "the body".into(),
+                inline: vec![Inline {
+                    path: "a.rs".into(),
+                    line: 3,
+                    body: "**nit** — x".into(),
+                }],
+                ..Default::default()
+            },
+            hello: String::new(),
+            at: crate::state::now(),
+            ..Default::default()
+        };
+        held::put(&h).unwrap();
+
+        assert!(post_held(&h).is_err(), "the API is not reachable");
+        let after = held::get("acme/api", 7).expect("still held, so it can be released");
+        assert!(
+            after.verdict.inline.is_empty(),
+            "the refused comments are dropped"
+        );
+        assert_eq!(after.verdict.body, "the body", "the review itself is kept");
+        assert!(after.hello.is_empty());
     }
 
     /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips
