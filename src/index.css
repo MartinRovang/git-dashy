@@ -637,6 +637,7 @@
      put it. ponytail: it was a modal drawer, so reading a key meant closing it, pressing the key and
      opening it again. It sits on the viewer's layer, under any dialog, and takes no key but Escape. */
   @keyframes fw-in { from { opacity: 0; transform: translateY(-6px); } }
+  .nosel, .nosel * { -webkit-user-select: none; user-select: none; }
   .fw { position: fixed; z-index: 9; display: flex; flex-direction: column; overflow: hidden;
         resize: both; min-width: 280px; min-height: 200px; background: var(--bg2);
         border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,0.55);
