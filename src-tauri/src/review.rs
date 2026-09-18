@@ -1529,22 +1529,25 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     // is the same work a held review does, and it was being skipped: the drafts this review proposed
     // were thrown away along with the verdict. The row still ends up saying `error:`.
     let mut failed = None;
+    // ponytail: one literal for both holds. They differ in the greeting and in whether the comments
+    // survive, and nothing else; written out twice, the next field added to Held reaches one of them.
+    let held_with = |hello: String, v: &Verdict| held::Held {
+        pr: pr.clone(),
+        model: model.to_string(),
+        verdict: v.clone(),
+        hello,
+        at: crate::state::now(),
+        session: session.clone(),
+        team: team.clone(),
+        db: db.clone(),
+        thread: Vec::new(),
+        proposed: None,
+    };
     if hold {
         // ponytail: the memory half still runs below. Drafts are local and gated by their own
         // consent; holding the POST is about what lands on someone else's PR, not about what this
         // machine learned.
-        held::put(&held::Held {
-            pr: pr.clone(),
-            model: model.to_string(),
-            verdict: v.clone(),
-            hello,
-            at: crate::state::now(),
-            session: session.clone(),
-            team: team.clone(),
-            db: db.clone(),
-            thread: Vec::new(),
-            proposed: None,
-        })?;
+        held::put(&held_with(hello, &v))?;
     } else if !c.demo {
         // ponytail: HELD on failure, not dropped. `v` is a local, so returning the error here threw
         // the whole verdict away: no log, no memory, nothing to retry — with the hello already on
@@ -1559,18 +1562,7 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
             v.inline.clear();
             // ponytail: `hello` cleared, because this branch is the one that already posted it.
             // Leaving it set would greet the author a second time when the hold is released.
-            held::put(&held::Held {
-                pr: pr.clone(),
-                model: model.to_string(),
-                verdict: v.clone(),
-                hello: String::new(),
-                at: crate::state::now(),
-                session: session.clone(),
-                team: team.clone(),
-                db: db.clone(),
-                thread: Vec::new(),
-                proposed: None,
-            })?;
+            held::put(&held_with(String::new(), &v))?;
             hold = true;
             failed = Some(e);
         }
