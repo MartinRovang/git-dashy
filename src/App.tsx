@@ -944,6 +944,7 @@ export default function App() {
             </div>
             <Pane
               hidden={!pane}
+              loading={!data}
               p={current}
               detail={detail}
               subs={data?.settings.subs || 'all'}
