@@ -28,6 +28,12 @@ function stored(key: string, make: () => Box): Box {
  * `noDrag` is a selector for the controls in the header bar — without it, clicking a tab in the
  * header starts a drag instead.
  */
+/** Selection off for the whole page while a box moves or resizes: the pointer otherwise selects text in and around it. */
+const noSelect = (on: boolean) => {
+  document.documentElement.classList.toggle('nosel', on)
+  if (on) window.getSelection()?.removeAllRanges()
+}
+
 export function useFloatBox(key: string, make: () => Box, noDrag: string) {
   const [box, setBox] = useState(() => stored(key, make))
   const el = useRef<HTMLDivElement>(null)
@@ -65,14 +71,15 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
     onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
       if (box.max || (e.target as HTMLElement).closest(noDrag)) return
       grab.current = { dx: e.clientX - box.x, dy: e.clientY - box.y }
+      noSelect(true)
       e.currentTarget.setPointerCapture(e.pointerId)
     },
     onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => {
       const g = grab.current
       if (g) setBox((b) => fit({ ...b, x: e.clientX - g.dx, y: e.clientY - g.dy }))
     },
-    onPointerUp: () => (grab.current = null),
-    onLostPointerCapture: () => (grab.current = null),
+    onPointerUp: () => ((grab.current = null), noSelect(false)),
+    onLostPointerCapture: () => ((grab.current = null), noSelect(false)),
     onDoubleClick: (e: React.MouseEvent<HTMLDivElement>) => {
       if (!(e.target as HTMLElement).closest(noDrag)) setBox((b) => ({ ...b, max: !b.max }))
     },
@@ -85,14 +92,15 @@ export function useFloatBox(key: string, make: () => Box, noDrag: string) {
       if (box.max) return
       e.stopPropagation()
       sizing.current = { x: e.clientX, y: e.clientY, w: box.w, h: box.h }
+      noSelect(true)
       e.currentTarget.setPointerCapture(e.pointerId)
     },
     onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => {
       const s = sizing.current
       if (s) setBox((b) => fit({ ...b, w: Math.max(280, s.w + e.clientX - s.x), h: Math.max(200, s.h + e.clientY - s.y) }))
     },
-    onPointerUp: () => (sizing.current = null),
-    onLostPointerCapture: () => (sizing.current = null),
+    onPointerUp: () => ((sizing.current = null), noSelect(false)),
+    onLostPointerCapture: () => ((sizing.current = null), noSelect(false)),
   }
 
   const style = box.max ? undefined : { left: box.x, top: box.y, width: box.w, height: box.h }
