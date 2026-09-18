@@ -229,9 +229,18 @@ pub fn findings(v: &Verdict) -> Vec<Finding> {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
+        // ponytail: the PATH is clipped, not the whole location. `clip` counts characters, so a
+        // long path used to lose the end of its own line number — `src/…/handler.go:817` arriving
+        // as `…:81`, which is not an obviously wrong number but a different line. The pane could
+        // afford that; a comment posted on someone's PR lands on the wrong line and looks deliberate.
+        let (path, line) = crate::diff::where_(&text_of(f.get("loc")));
         out.push(Finding {
             kind,
-            loc: clip(&text_of(f.get("loc")), 60),
+            loc: if line > 0 {
+                format!("{}:{line}", clip(&path, 60))
+            } else {
+                clip(&path, 60)
+            },
             text: clip(&text, 120),
         });
     }
@@ -644,6 +653,31 @@ mod tests {
         assert_eq!(f(Value::Array(many)).len(), 12);
         assert_eq!(kind_tone("note"), Some("warn"));
         assert_eq!(kind_tone("x"), None);
+    }
+
+    /// A long path must not cost the line number its last digits. Clipping the whole location left
+    /// `…/handler.go:817` as `…:81`, and 81 is a line that usually exists — so the finding anchored
+    /// silently onto the wrong one, which since inline comments is a comment on a stranger's PR.
+    #[test]
+    fn a_long_path_is_clipped_without_eating_its_line_number() {
+        let f = |loc: &str| {
+            findings(&Verdict {
+                findings: vec![json!({"kind": "note", "loc": loc, "text": "t"})],
+                ..Default::default()
+            })
+            .remove(0)
+            .loc
+        };
+        let long = "internal/endpoints/external_idm/provisioning/deeply/nested/handler.go";
+        assert!(long.len() > 60, "the fixture has to be past the clip");
+        let got = f(&format!("{long}:817"));
+        assert!(got.ends_with(":817"), "kept the line number, got {got:?}");
+        // the path is still clipped: this is about WHERE the 60 chars are spent
+        assert_eq!(got.chars().count(), 64);
+
+        // a column is still dropped, and a location with no line still works
+        assert_eq!(f("keymap.ts:88:5"), "keymap.ts:88");
+        assert_eq!(f("CHANGELOG.md"), "CHANGELOG.md");
     }
 
     #[test]

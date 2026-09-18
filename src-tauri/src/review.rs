@@ -1354,6 +1354,20 @@ fn inline_for(pr: &Pr, v: &Verdict) -> Vec<Inline> {
         return Vec::new();
     }
     let (files, marks) = diff::load(pr.repo(), pr.number, &pr.head, &findings);
+    // ponytail: the sha is checked AFTER the diff is in hand, and against the head the review ran on.
+    // `diff::fetch` keys its cache on a sha but asks GitHub for the PR as it stands, so a push during
+    // the review — which takes minutes — resolves the lines on the new diff while `commit_id` still
+    // names the old commit. GitHub then rejects the review or, worse, takes it and puts the comments
+    // on whatever those numbers point at now. No comments is the honest answer: the findings are
+    // about the diff that was reviewed, and the body says so on its own.
+    if github::head_sha(pr.repo(), pr.number) != pr.head {
+        log::info!(
+            "{}#{} moved while it was reviewed; posting the review without inline comments",
+            pr.repo(),
+            pr.number
+        );
+        return Vec::new();
+    }
     marks
         .iter()
         .filter_map(|m| {
@@ -1510,7 +1524,11 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
         log::warn!("review {repo}#{n} repeats its instructions word for word; held instead of posted");
     }
     let hello = if leaked { String::new() } else { hello };
-    let hold = hold || leaked;
+    let mut hold = hold || leaked;
+    // ponytail: the post's error, carried to the end rather than returned here. The memory half below
+    // is the same work a held review does, and it was being skipped: the drafts this review proposed
+    // were thrown away along with the verdict. The row still ends up saying `error:`.
+    let mut failed = None;
     if hold {
         // ponytail: the memory half still runs below. Drafts are local and gated by their own
         // consent; holding the POST is about what lands on someone else's PR, not about what this
@@ -1532,10 +1550,15 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
         // the whole verdict away: no log, no memory, nothing to retry — with the hello already on
         // the PR and the model run already paid for. A body-only post never failed, so it never
         // showed; `comments` is validated as one thing and takes the review down with it, so this
-        // is now a path that gets walked. The row still says `error:`, and `Y` still has the review.
-        // ponytail: `hello` cleared, because this branch is the one that already posted it. Leaving
-        // it set would greet the author a second time when the hold is released.
+        // is now a path that gets walked.
         if let Err(e) = github::post_review(repo, n, &v.verdict, &v.body, &pr.head, &v.inline) {
+            // ponytail: the comments are DROPPED before the hold is written. Held whole, `Y` would
+            // resend the exact payload GitHub has already refused, fail the same way, and go on
+            // failing: a review that can never be posted at all is worse than one posted without
+            // its inline half. What is held is the review as it was before this feature.
+            v.inline.clear();
+            // ponytail: `hello` cleared, because this branch is the one that already posted it.
+            // Leaving it set would greet the author a second time when the hold is released.
             held::put(&held::Held {
                 pr: pr.clone(),
                 model: model.to_string(),
@@ -1548,7 +1571,8 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
                 thread: Vec::new(),
                 proposed: None,
             })?;
-            return Err(e.into());
+            hold = true;
+            failed = Some(e);
         }
     }
     // drafts, and whatever a second review confirmed
@@ -1577,7 +1601,12 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
         // unrelated push sweeping the change in under the wrong message.
         team::push(&format!("memory: {repo}#{n} (held)"));
         team::push_dir(&c.memory_dir, &format!("memory: {repo}#{n} (held)"), "mine");
-        return Ok(held_status(&v));
+        // ponytail: the error is raised HERE, after the drafts are written and pushed, so a failed
+        // post costs the post and not what the review learned.
+        return match failed {
+            Some(e) => Err(e.into()),
+            None => Ok(held_status(&v)),
+        };
     }
     let status = rlog::log_review(pr, model, &v, None)?;
     team::push(&format!("review {repo}#{n}: {}", v.verdict));

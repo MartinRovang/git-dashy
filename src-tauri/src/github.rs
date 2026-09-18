@@ -1152,12 +1152,8 @@ fn review_payload(verdict: &str, body: &str, head: &str, inline: &[Inline]) -> V
 ///
 /// ponytail: `comments` is validated as ONE thing. A single line GitHub will not take rejects the
 /// whole request, so nothing posts — not even the body that would have gone up on its own. Every
-/// entry must already have come through `diff::postable`, and the caller holds the verdict when this
-/// fails rather than dropping a review that has been paid for.
-///
-/// ponytail: `commit_id` is pinned rather than left to default. GitHub anchors comments to the PR's
-/// LATEST commit when it is absent, and a held review is posted whenever it is released — the lines
-/// were read off `head` and mean nothing against a commit that came after it.
+/// entry must already have come through `diff::postable`, and the caller holds the verdict, without
+/// these comments, rather than dropping a review that has been paid for.
 pub fn post_review(
     repo: &str,
     number: u64,
@@ -1361,6 +1357,22 @@ pub fn context_text(pr: &Value, diff: &str, max: usize) -> String {
 }
 
 /// The raw unified diff of a PR (Accept: application/vnd.github.v3.diff).
+/// The sha the PR's head points at right now, "" when it cannot be read.
+///
+/// ponytail: `diff()` is `GET /pulls/{n}`, which always answers with the PR as it stands — the sha
+/// `diff::fetch` is keyed on is a CACHE key and never reaches GitHub. Anything that pins a commit to
+/// the lines it read has to ask what the head is now and compare, or it pins one commit to another
+/// commit's line numbers.
+pub fn head_sha(repo: &str, number: u64) -> String {
+    if config::get().demo {
+        return String::new();
+    }
+    api(&format!("/repos/{repo}/pulls/{number}"), 30)
+        .ok()
+        .and_then(|v| v.pointer("/head/sha").and_then(Value::as_str).map(String::from))
+        .unwrap_or_default()
+}
+
 pub fn diff(repo: &str, number: u64) -> Result<String, Error> {
     if config::get().demo {
         // PORT-NOTE: demo::diff_text(repo, number) does not exist in src/demo.rs yet (Python's demo swapped

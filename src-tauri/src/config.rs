@@ -651,13 +651,43 @@ mod tests {
         assert_eq!(snapshot(&c).spells, Some(vec!["auth-check".to_string()]));
     }
 
+    /// PRS_INLINE outranks the saved value, the way PRS_NOTIFY does. Inline comments post on other
+    /// people's PRs, so the environment has to be able to hold the switch down whatever the settings
+    /// file picked up from an earlier `--inline` run.
+    #[test]
+    fn the_environment_outranks_a_saved_inline_setting() {
+        let saved = |json: &str| serde_json::from_str::<Saved>(json).unwrap();
+        let none = |_: &str| false;
+        let set = |_: &str| true;
+
+        let mut c = Config::default();
+        apply(&mut c, saved(r#"{"inline":true}"#), &none);
+        assert!(c.inline, "with nothing in the environment the file decides");
+
+        // the env var is set (to whatever): the file must not switch it back
+        let mut c = Config {
+            inline: false,
+            ..Default::default()
+        };
+        apply(&mut c, saved(r#"{"inline":true}"#), &set);
+        assert!(!c.inline, "PRS_INLINE decides, not the saved file");
+
+        // and a file that says nothing leaves the default alone
+        let mut c = Config {
+            inline: true,
+            ..Default::default()
+        };
+        apply(&mut c, saved("{}"), &none);
+        assert!(c.inline);
+    }
+
     /// Every `if let Some(v)` in apply(): a saved file must reach the config, and a setting the
     /// file leaves out must keep the default rather than being cleared.
     #[test]
     fn a_saved_file_reaches_every_setting() {
         let none = |_: &str| false;
         let json = r#"{
-            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"scopes":["org:acme"],"read":{"u":"t"},
+            "model":"sonnet","interval":600,"subs":"open","window":168,"drafts":true,"inline":true,"scopes":["org:acme"],"read":{"u":"t"},
             "hinted":true,"keyhints":false,"seen":"2.1.0","depth":"high","effort":"max","notify":true,
             "theme":"nord","voice":["caveman"],"hunter":["security"],"spells":["auth-check"]
         }"#;
@@ -668,6 +698,7 @@ mod tests {
         assert_eq!(c.interval, 600);
         assert_eq!(c.sub, "open");
         assert_eq!(c.window, Some(168));
+        assert!(c.inline);
         assert!(c.drafts);
         assert_eq!(c.scopes, ["org:acme"]);
         assert_eq!(c.read.get("u").map(String::as_str), Some("t"));

@@ -213,15 +213,17 @@ without it.
 `--inline` (or `PRS_INLINE=1`) also posts each finding as a comment on the line it is about, beside
 the review. It is **off by default**, because it changes what lands on someone else's PR: inline
 comments open resolvable threads, so on a repo that requires conversation resolution a `nit` holds
-the merge button until someone resolves it. The body is unchanged either way — a finding appears in
-the review and on its line, the way every other reviewer posts one.
+the merge button until someone resolves it. The body is unchanged; each finding appears in it and on
+its line.
 
 Only a finding that names a line the diff actually carries is posted; one about a file the diff does
 not touch, or a line outside the hunks, stays in the body where it already was. The comments are
 anchored when the review runs and pinned to the commit it read, so releasing a held review a week
-later still puts them where that diff had them rather than where those line numbers point now. If
-GitHub rejects them the whole review is rejected with them — nothing is posted, the row says so, and
-the verdict is held for `Y` rather than thrown away.
+later still puts them where that diff had them. A push while the review is running means the diff no
+longer matches that commit, and the review then posts without them rather than guessing.
+
+If GitHub rejects them, nothing is posted; the row shows the error and the verdict is held for `Y`,
+without the comments, so releasing it is not the same rejected request a second time.
 
 For one review rather than all of them, `R` asks for instructions before it starts. They go into the
 system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
