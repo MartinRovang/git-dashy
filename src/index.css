@@ -659,14 +659,16 @@
   .krow s { text-decoration: none; font-size: 12.5px; color: var(--ink3); }
   /* the loading card: bars where the bullets will be, and the label and bars share one sweep */
   .skel { display: flex; flex-direction: column; gap: 9px; padding-top: 2px; }
-  .skel i, .shimtext { background: linear-gradient(90deg, var(--bg4) 25%, var(--edge) 50%, var(--bg4) 75%);
+  .skel i, .sk, .shimtext { background: linear-gradient(90deg, var(--bg4) 25%, var(--edge) 50%, var(--bg4) 75%);
                        background-size: 200% 100%; animation: skel 1.6s linear infinite; }
   .skel i { display: block; height: 11px; border-radius: 4px; }
+  /* one bar standing in for a value that has not loaded yet */
+  .sk { display: inline-block; width: 6em; height: 9px; border-radius: 4px; vertical-align: middle; }
   .shimtext { align-self: flex-start; font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
               background-image: linear-gradient(90deg, var(--dim3) 25%, var(--ink) 50%, var(--dim3) 75%);
               -webkit-background-clip: text; background-clip: text; color: transparent; }
   @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-  @media (prefers-reduced-motion: reduce) { .skel i, .shimtext { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .skel i, .sk, .shimtext { animation: none; } }
   /* followed users: a pill each in the footer, a pop-up above it on click or when new work comes in */
   .dock { display: flex; gap: 6px; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .dock::-webkit-scrollbar { display: none; }

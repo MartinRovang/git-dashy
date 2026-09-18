@@ -51,12 +51,18 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
       </div>
       <div className="vbar" />
       <div className="ctx">
-        <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{total} PRs</span>
-        <i className="dot" />
         {/* ponytail: repos, not orgs. The board spans whatever the token can see, and "4 repos" is the
             number that tells you whether a queue looks short because it is, or because you are
             pointed at less than you thought. */}
-        <span>{repos} repo{repos === 1 ? '' : 's'}</span>
+        {d ? (
+          <>
+            <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{total} PRs</span>
+            <i className="dot" />
+            <span>{repos} repo{repos === 1 ? '' : 's'}</span>
+          </>
+        ) : (
+          <i className="sk" style={{ width: '8em' }} />
+        )}
       </div>
       <div className="views" title="switch view (G)">
         <div className="vtabs">
