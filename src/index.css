@@ -493,6 +493,14 @@
              display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .iconbtn:hover { background: var(--bg4); border-color: var(--edge); color: var(--ink); }
   .side.shut .sh { padding: 0; justify-content: center; }
+  .sh .iconbtn + .iconbtn { margin-left: 4px; }
+  .sh .iconbtn[aria-pressed="true"] { color: var(--pink); }
+  /* the groups' order is the saved one, set as a flex order on each */
+  .snav { display: flex; flex-direction: column; }
+  .snav > .grpname { order: -1; }
+  .sgrp { position: relative; transition: opacity .12s; }
+  .sgrp.out .lb, .sgrp.out .gi { color: var(--dim3); }
+  .sgrp .summary[draggable="true"]:active { cursor: grabbing; }
 
   .snav { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 8px 14px; }
   .grpname { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--dim3); padding: 0 8px 8px; }
@@ -743,6 +751,25 @@
 
   /* the pane header: what is selected, then one button for everything you can do to it */
   .pane > .bar .lab { flex-shrink: 0; }
+  .pane > .bar .ib[aria-pressed="true"] { color: var(--pink); }
+  .secfilter { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .secfilter .tag { height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid var(--edge); background: var(--bg4);
+                  color: var(--pink); font: inherit; font-size: 10.5px; cursor: pointer; }
+  .secfilter .tag[aria-pressed="false"] { color: var(--dim2); text-decoration: line-through; }
+  .psec { position: relative; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; transition: opacity .12s; }
+  .phd:active { cursor: grabbing; }
+  /* the section in your hand fades; the pink bar is where it lands */
+  .lifted { opacity: 0.35; }
+  .drop-before::before, .drop-after::after { content: ''; position: absolute; left: -6px; right: -6px; height: 3px;
+    border-radius: 2px; background: var(--pink); box-shadow: 0 0 10px color-mix(in srgb, var(--pink) 60%, transparent); pointer-events: none; }
+  .drop-before::before { top: -4px; }
+  .drop-after::after { bottom: -4px; }
+  .psec.drop-before::before { top: -9px; }
+  .psec.drop-after::after { bottom: -9px; }
+  .phd { display: flex; align-items: center; gap: 8px; cursor: grab; user-select: none; }
+  .phd .car { font-size: 8px; color: var(--dim3); transform: rotate(90deg); transition: transform .12s; }
+  .psec.shut .car, .psec.out .car { transform: none; }
+  .psec.out .lab { color: var(--dim3); }
   .pane > .bar .branch { font-size: 11.5px; color: var(--ink3); min-width: 0;
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
