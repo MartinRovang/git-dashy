@@ -1394,10 +1394,8 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     let (repo, n) = (h.pr.repo(), h.pr.number);
     let c = config::get();
     if !c.demo {
-        // ponytail: ONE working copy, written back as each step lands. Two clones of `h` meant the
-        // second write undid the first: the hello was cleared on disk, then restored by a clone
-        // taken before it, and the next press greeted the author again — the very thing the first
-        // write exists to prevent.
+        // ponytail: one working copy, saved as each step lands. Two clones of `h` meant the second
+        // write restored the hello the first had cleared, which the first write exists to prevent.
         let mut cur = h.clone();
         if !cur.hello.is_empty() {
             github::comment(repo, n, &cur.hello)?;
@@ -1949,9 +1947,8 @@ mod tests {
     fn a_release_the_api_refuses_drops_the_comments_so_the_next_press_posts() {
         let _g = crate::config::test_lock();
         let d = tempfile::tempdir().unwrap();
-        // ponytail: a guard, so a panic mid-test cannot leave GITHUB_API pointing at a dead port for
-        // every test that runs after it. This suite shares one process; team's git calls read the
-        // same environment, and a leak there reads as "sync: git failed" in a test far from here.
+        // ponytail: restores the env on panic too; the suite shares one process and team's git calls
+        // read the same environment (see #160).
         struct Env(Option<String>, bool);
         impl Drop for Env {
             fn drop(&mut self) {
