@@ -90,7 +90,7 @@ export function Necronomicon({ setting }: { setting: (name: string, value: unkno
           </div>
           <div className="npage right">
             <section>
-              <h2>{title}</h2>
+              <h2 className="nbanner" style={{ backgroundImage: `url(/chapters/${title.toLowerCase()}.webp)` }}>{title}</h2>
               {list.length ? (
                 <ul className="nbuilt">
                   {list.map((b) => (

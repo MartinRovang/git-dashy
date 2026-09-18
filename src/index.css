@@ -344,6 +344,8 @@
   @media (max-width: 900px) { .nspread { grid-template-columns: minmax(0, 1fr); } .npage.left, .npage.right { box-shadow: none; } }
   .npage h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; font-variant: small-caps; letter-spacing: .06em; color: var(--blood);
               border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+  /* the banner art carries the chapter's name, so the text only stays for screen readers */
+  .npage h2.nbanner { aspect-ratio: 2133 / 222; background: center / 100% 100% no-repeat; border: 0; padding: 0; color: transparent; overflow: hidden; }
   .npage section + section { margin-top: 20px; }
   .npage h3 { margin: 26px 0 2px; font-size: 16px; font-variant: small-caps; letter-spacing: .06em; color: var(--gold); }
   .npage ol { margin: 0; padding-left: 24px; }
