@@ -211,7 +211,7 @@ while the dashboard is running. A missing file shows as `error:` on the row inst
 without it.
 
 `--inline` (or `PRS_INLINE=1`) also posts each finding as a comment on the line it is about, beside
-the review. It is **off by default**, because it changes what lands on someone else's PR: inline
+the review. It is off by default because it posts on someone else's PR: inline
 comments open resolvable threads, so on a repo that requires conversation resolution a `nit` holds
 the merge button until someone resolves it. The body is unchanged; each finding appears in it and on
 its line.

@@ -1150,10 +1150,7 @@ fn review_payload(verdict: &str, body: &str, head: &str, inline: &[Inline]) -> V
 
 /// Post the verdict on the PR, with `inline` as comments on the lines they are about. Err on failure.
 ///
-/// ponytail: `comments` is validated as ONE thing. A single line GitHub will not take rejects the
-/// whole request, so nothing posts — not even the body that would have gone up on its own. Every
-/// entry must already have come through `diff::postable`, and the caller holds the verdict, without
-/// these comments, rather than dropping a review that has been paid for.
+/// ponytail: `comments` is validated as ONE thing, so one line GitHub will not take costs the body too.
 pub fn post_review(
     repo: &str,
     number: u64,
@@ -1356,7 +1353,6 @@ pub fn context_text(pr: &Value, diff: &str, max: usize) -> String {
     }
 }
 
-/// The raw unified diff of a PR (Accept: application/vnd.github.v3.diff).
 /// The sha the PR's head points at right now, "" when it cannot be read.
 ///
 /// ponytail: `diff()` is `GET /pulls/{n}`, which always answers with the PR as it stands — the sha
@@ -1373,6 +1369,7 @@ pub fn head_sha(repo: &str, number: u64) -> String {
         .unwrap_or_default()
 }
 
+/// The raw unified diff of a PR (Accept: application/vnd.github.v3.diff).
 pub fn diff(repo: &str, number: u64) -> Result<String, Error> {
     if config::get().demo {
         // PORT-NOTE: demo::diff_text(repo, number) does not exist in src/demo.rs yet (Python's demo swapped

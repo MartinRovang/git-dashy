@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
-use crate::types::{CheckResult, Inline, LogEntry, Pr, Verdict};
+use crate::types::{CheckResult, DiffFile, Inline, LogEntry, Mark, Pr, Verdict};
 use crate::{autorev, bind, config, dbrepo, diff, github, held, llm, log as rlog, memory, team};
 
 pub const PROMPT: &str =
@@ -1339,10 +1339,6 @@ pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
 /// The findings that can go on the lines they name, phrased as GitHub comments. Empty when inline
 /// comments are off, when the diff cannot be read, or when nothing landed on a line the diff carries.
 ///
-/// ponytail: worked out ONCE, when the review runs, and carried on the verdict from there. A held
-/// review is posted whenever someone releases it, and `p` on a week-old hold must put the comments
-/// where the diff that was reviewed had them — not where the same line numbers point now.
-///
 /// ponytail: never fails. A diff that cannot be fetched costs the inline comments and nothing else;
 /// the body is the review and it goes up either way.
 fn inline_for(pr: &Pr, v: &Verdict) -> Vec<Inline> {
@@ -1354,24 +1350,33 @@ fn inline_for(pr: &Pr, v: &Verdict) -> Vec<Inline> {
         return Vec::new();
     }
     let (files, marks) = diff::load(pr.repo(), pr.number, &pr.head, &findings);
-    // ponytail: the sha is checked AFTER the diff is in hand, and against the head the review ran on.
-    // `diff::fetch` keys its cache on a sha but asks GitHub for the PR as it stands, so a push during
-    // the review — which takes minutes — resolves the lines on the new diff while `commit_id` still
-    // names the old commit. GitHub then rejects the review or, worse, takes it and puts the comments
-    // on whatever those numbers point at now. No comments is the honest answer: the findings are
-    // about the diff that was reviewed, and the body says so on its own.
-    if github::head_sha(pr.repo(), pr.number) != pr.head {
+    // ponytail: asked AFTER the diff is in hand, so the answer is about the diff that was just read.
+    let live = github::head_sha(pr.repo(), pr.number);
+    if live != pr.head {
         log::info!(
             "{}#{} moved while it was reviewed; posting the review without inline comments",
             pr.repo(),
             pr.number
         );
+    }
+    anchored(&files, &marks, &pr.head, &live)
+}
+
+/// The marks as comments, or none at all when `live` is not the head they were read against.
+///
+/// ponytail: `diff::fetch` keys its cache on a sha but asks GitHub for the PR as it stands, so a push
+/// during the review — which takes minutes — resolves the lines on the new diff while `commit_id`
+/// still names the old commit. GitHub then rejects the review, or takes it and puts the comments on
+/// whatever those numbers point at now. The findings are about the diff that was reviewed, so
+/// dropping them is the honest answer; the body says everything it always said.
+fn anchored(files: &[DiffFile], marks: &[Mark], head: &str, live: &str) -> Vec<Inline> {
+    if head.is_empty() || live != head {
         return Vec::new();
     }
     marks
         .iter()
         .filter_map(|m| {
-            diff::postable(m, &files).map(|(path, line)| Inline {
+            diff::postable(m, files).map(|(path, line)| Inline {
                 path,
                 line,
                 body: format!("**{}** — {}", m.kind, m.text),
@@ -1402,14 +1407,33 @@ pub fn post_held(h: &held::Held) -> Result<String> {
                 log::error!("could not record the hello for {repo}#{n}: {e:#}");
             }
         }
-        github::post_review(
+        // ponytail: a hold that GitHub refuses DROPS its comments and stays held, so the next press
+        // posts the body. The failure branch in review_inner clears them before it holds, but a
+        // review held by policy never went through it: it keeps its comments and `Y` resends the
+        // same request every time. This app expects a hold to wait — `web.rs` paints a `moved` flag
+        // for exactly the week-old case — and by then the commit it pins may have been force-pushed
+        // away, which is a 422 on every press with no way out but editing the file by hand.
+        // ponytail: written back BEFORE the error is raised, so the press that fails is also the
+        // press that makes the next one work. Retrying inside this call would post body-only under
+        // a key the reader thinks posts comments; this way the row says the comments were refused,
+        // and pressing again is a decision rather than a silent downgrade.
+        if let Err(e) = github::post_review(
             repo,
             n,
             &h.verdict.verdict,
             &h.verdict.body,
             &h.pr.head,
             &h.verdict.inline,
-        )?;
+        ) {
+            if !h.verdict.inline.is_empty() {
+                let mut plain = h.clone();
+                plain.verdict.inline.clear();
+                if let Err(e) = held::put(&plain) {
+                    log::error!("could not drop the refused comments for {repo}#{n}: {e:#}");
+                }
+            }
+            return Err(e.into());
+        }
     }
     // ponytail: dropped HERE, the instant the review is on the PR, and not after the log. The first
     // draft had it last so a crash left the review recoverable — but what it actually left was a
@@ -1554,6 +1578,12 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
         // the PR and the model run already paid for. A body-only post never failed, so it never
         // showed; `comments` is validated as one thing and takes the review down with it, so this
         // is now a path that gets walked.
+        // ponytail: an Err here is "we did not hear that it landed", not "it did not land". A timeout
+        // after GitHub accepted the review now leaves a hold, and releasing it posts the review a
+        // second time — before this branch existed the verdict was dropped, so a duplicate was not
+        // reachable. Rare, and the cure (list the PR's reviews and match one to this session before
+        // post_held posts) is a change of its own; recorded here so the next reader knows it is a
+        // known edge and not an oversight.
         if let Err(e) = github::post_review(repo, n, &v.verdict, &v.body, &pr.head, &v.inline) {
             // ponytail: the comments are DROPPED before the hold is written. Held whole, `Y` would
             // resend the exact payload GitHub has already refused, fail the same way, and go on
@@ -1621,9 +1651,47 @@ mod tests {
     }
 
     use super::*;
+    use crate::types::Finding;
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A push while the review was running means the diff no longer belongs to the commit the
+    /// comments would be pinned to. Nothing is posted on a line in that case; the body still is.
+    #[test]
+    fn a_head_that_moved_under_the_review_yields_no_inline_comments() {
+        const DIFF: &str = "diff --git a/svc.go b/svc.go
+--- a/svc.go
++++ b/svc.go
+@@ -1,2 +1,3 @@
+ package svc
++var x = 1
+ // end
+";
+        let mut files = crate::diff::parse(DIFF);
+        let marks = crate::diff::anchor(
+            &mut files,
+            &[Finding {
+                kind: "nit".into(),
+                loc: "svc.go:2".into(),
+                text: "unused".into(),
+            }],
+        );
+
+        // the head the review read is still the head: the comment is built
+        let got = anchored(&files, &marks, "abc123", "abc123");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, "svc.go");
+        assert_eq!(got[0].line, 2);
+        assert_eq!(got[0].body, "**nit** — unused");
+
+        // the author pushed while it ran: the lines describe a diff that commit no longer has
+        assert!(anchored(&files, &marks, "abc123", "def456").is_empty());
+        // head_sha could not be read at all, which is the same uncertainty
+        assert!(anchored(&files, &marks, "abc123", "").is_empty());
+        // and a row that never carried a head cannot pin one
+        assert!(anchored(&files, &marks, "", "").is_empty());
     }
 
     #[test]

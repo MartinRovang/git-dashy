@@ -196,9 +196,7 @@ pub struct Verdict {
     pub depth: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
-    /// Findings anchored onto the diff, for posting beside the body. Empty when inline comments are
-    /// off, when the diff could not be read, or when no finding named a line the diff carries.
-    /// Anchored against the PR's head at review time; the post pins `commit_id` to the same sha.
+    /// Findings anchored onto the diff, for posting beside the body. See `Inline`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline: Vec<Inline>,
 }
