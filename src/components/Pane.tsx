@@ -41,6 +41,14 @@ function Db({ db, number }: { db: DbImpact; number: number }) {
   )
 }
 
+const bars = (...w: number[]) => (
+  <div className="skel" aria-busy="true">
+    {w.map((n, i) => (
+      <i key={i} style={{ width: `${n}%` }} />
+    ))}
+  </div>
+)
+
 const SECS: [string, string][] = [
   ['about', 'ABOUT'],
   ['checks', 'CHECKS'],
@@ -85,11 +93,7 @@ export function Pane({
         <div className="bar" />
         <div className="in scroll">
           {loading ? (
-            <div className="skel" aria-busy="true">
-              {[60, 90, 75, 40].map((w, i) => (
-                <i key={i} style={{ width: `${w}%` }} />
-              ))}
-            </div>
+            bars(60, 90, 75, 40)
           ) : (
             <div className="prose">No PR selected.</div>
           )}
@@ -238,7 +242,7 @@ export function Pane({
   const label = Object.fromEntries(SECS)
   // a section keeps its place with a bar in it while its data is on the way, so the pane stops
   // rearranging itself as each one lands
-  const shown = paneSections(order, body, lay.off, { detail: d, gone: !!gone, review: !!p.review, db: !!p.db })
+  const shown = paneSections(order, body, lay.off, { detail: d, gone: !!gone, review: !!p.reviewed, db: !!p.db })
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
@@ -276,15 +280,7 @@ export function Pane({
         <div className="ptitle">{p.title}</div>
         {shown.map((k) => {
           const x = sec(k)
-          const { extra, content } = body[k] || {
-            content: (
-              <div className="skel" aria-busy="true">
-                {[70, 45].map((w, i) => (
-                  <i key={i} style={{ width: `${w}%` }} />
-                ))}
-              </div>
-            ),
-          }
+          const { extra, content } = body[k] || { content: bars(70, 45) }
           return (
             <div key={k} className={`psec${x.shut ? ' shut' : ''}${x.cls}`} {...x.wrap}>
               <div

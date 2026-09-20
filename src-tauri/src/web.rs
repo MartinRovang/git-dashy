@@ -173,6 +173,9 @@ pub fn payload(state: &State) -> Value {
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
                 "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
+                // whether the pane will have an AI REVIEW section, picked the way last_review() picks
+                // it. `review` above is this session's status string, which says nothing about the log.
+                "reviewed": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some(),
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.

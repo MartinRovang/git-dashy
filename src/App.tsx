@@ -306,10 +306,12 @@ export default function App() {
     if (!pane || !url) return
     let alive = true
     let timer: number | undefined
-    // ponytail: three failures in a row, not three per selection — a long pending poll that meets a
+    // ponytail: three retries in a row, not three per selection — a long pending poll that meets a
     // server restart must not spend the budget it needs later. Spent, the pane is told so: a PR that
     // is simply gone would otherwise shimmer for the rest of the session with nothing in flight.
     let left = 3
+    // a fresh attempt for this url, so the pane does not say "unavailable" over a request in flight
+    setDetailGone((g) => (g === url ? '' : g))
     const again = () => {
       if (!alive) return
       if (left-- > 0) timer = window.setTimeout(run, 1500)
