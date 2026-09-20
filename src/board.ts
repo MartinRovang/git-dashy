@@ -199,10 +199,13 @@ function group(rows: Row[]): Row[] {
 export const ALL = 'ALL'
 
 export function buckets(secs: VisSection[]): { key: string; label: string; n: number }[] {
-  return [
-    { key: ALL, label: 'All', n: secs.reduce((t, s) => t + s.prs.length, 0) },
-    ...secs.map((s) => ({ key: s.name, label: s.name.toLowerCase(), n: s.prs.length })),
-  ]
+  const tabs = secs.map((s) => ({ key: s.name, label: s.name.toLowerCase(), n: s.prs.length }))
+  // ponytail: the tab strip only. REVIEWED arrives last, beside MERGED, where it reads as a second
+  // archive; it belongs beside the queue it drains. The board's own order still follows the server.
+  const from = tabs.findIndex((t) => t.key === 'REVIEWED')
+  const to = tabs.findIndex((t) => t.key === 'REVIEW REQUESTED')
+  if (from > to && to > -1) tabs.splice(to + 1, 0, ...tabs.splice(from, 1))
+  return [{ key: ALL, label: 'All', n: secs.reduce((t, s) => t + s.prs.length, 0) }, ...tabs]
 }
 
 /** The sections the picked buckets show. More than one tab can be on at a time; ALL is every
