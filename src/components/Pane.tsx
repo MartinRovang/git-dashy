@@ -232,7 +232,10 @@ export function Pane({
       : null,
   }
   const label = Object.fromEntries(SECS)
-  const shown = order.filter((k) => body[k] && !lay.off?.includes(k))
+  // ponytail: while the detail is still on its way, every section keeps its place with a bar in it,
+  // so the pane stops rearranging itself as each one lands. Once it is here, the empty ones go.
+  const waiting = !d || d.pending
+  const shown = order.filter((k) => (body[k] || waiting) && !lay.off?.includes(k))
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
@@ -270,7 +273,16 @@ export function Pane({
         <div className="ptitle">{p.title}</div>
         {shown.map((k) => {
           const x = sec(k)
-          const { extra, content } = body[k]!
+          const { extra, content } = body[k] || {
+            extra: undefined,
+            content: (
+              <div className="skel" aria-busy="true">
+                {[70, 45].map((w, i) => (
+                  <i key={i} style={{ width: `${w}%` }} />
+                ))}
+              </div>
+            ),
+          }
           return (
             <div key={k} className={`psec${x.shut ? ' shut' : ''}${x.cls}`} {...x.wrap}>
               <div
