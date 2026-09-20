@@ -96,6 +96,8 @@ export default function App() {
   const paneBefore = useRef(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
+  // the detail request gave up: the pane stops promising data that is not coming
+  const [detailGone, setDetailGone] = useState(false)
   const [diff, setDiff] = useState<Code | null>(null)
   const [codeOpen, setCodeOpen] = useState(false)
   // the viewer floats over a live board: keys go to whichever of the two was clicked last
@@ -303,17 +305,19 @@ export default function App() {
     if (!pane || !url) return
     let alive = true
     let timer: number | undefined
-    // ponytail: a few retries, not forever. Nothing else re-asks until the selection changes, so a
-    // refused answer used to leave the pane empty with nothing in flight; a PR that is simply gone
-    // must not poll for the rest of the session either.
+    // ponytail: three failures in a row, not three per selection — a long pending poll that meets a
+    // server restart must not spend the budget it needs later. Spent, the pane is told so: a PR that
+    // is simply gone would otherwise shimmer for the rest of the session with nothing in flight.
     let left = 3
+    setDetailGone(false)
     const run = async () => {
-      const again = () => alive && left-- > 0 && (timer = window.setTimeout(run, 1500))
+      const again = () => (alive && left-- > 0 ? (timer = window.setTimeout(run, 1500)) : alive && setDetailGone(true))
       try {
         const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
         if (!r.ok) return void again()
         const got = (await r.json()) as Detail
         if (!alive) return
+        left = 3
         setDetail(got)
         if (got.pending) timer = window.setTimeout(run, 1500)
       } catch {
@@ -952,6 +956,7 @@ export default function App() {
               loading={!data}
               p={current}
               detail={detail}
+              gone={detailGone}
               subs={data?.settings.subs || 'all'}
               saved={data?.settings.pane}
               onCode={openCode}

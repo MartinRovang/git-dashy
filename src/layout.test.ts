@@ -31,14 +31,21 @@ describe('same: the server answering with what we sent', () => {
 
 describe('paneSections', () => {
   const order = ['about', 'checks', 'review']
-  const never = () => false
-  it('drops a section with no body once its data is in', () => {
-    expect(paneSections(order, { about: {} }, undefined, never)).toEqual(['about'])
+  const body = { about: {} }
+  const here = { pending: false }
+  it('drops a section with no body once the detail is in', () => {
+    expect(paneSections(order, body, undefined, here, false)).toEqual(['about'])
   })
-  it('holds a place for a section that is still waiting', () => {
-    expect(paneSections(order, { about: {} }, undefined, (k) => k === 'checks')).toEqual(['about', 'checks'])
+  it('holds every place while the detail has not arrived', () => {
+    expect(paneSections(order, body, undefined, null, false)).toEqual(order)
+  })
+  it('waits on CHECKS alone while the detail is pending: the rest are already final', () => {
+    expect(paneSections(order, body, undefined, { pending: true }, false)).toEqual(['about', 'checks'])
+  })
+  it('promises nothing once the request has given up', () => {
+    expect(paneSections(order, body, undefined, null, true)).toEqual(['about'])
   })
   it('never shows one switched off, waiting or not', () => {
-    expect(paneSections(order, { about: {} }, ['about', 'checks'], () => true)).toEqual(['review'])
+    expect(paneSections(order, body, ['about', 'checks'], null, false)).toEqual(['review'])
   })
 })

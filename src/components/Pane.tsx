@@ -59,6 +59,7 @@ export function Pane({
   onClose,
   hidden,
   loading,
+  gone,
 }: {
   p: Row | null
   detail: Detail | null
@@ -72,6 +73,8 @@ export function Pane({
   hidden?: boolean
   /** no data yet: bars, not "No PR selected" */
   loading?: boolean
+  /** the detail request gave up: draw what is known, and stop the bars promising the rest */
+  gone?: boolean
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
   const [filtering, setFiltering] = useState(false)
@@ -234,9 +237,8 @@ export function Pane({
   }
   const label = Object.fromEntries(SECS)
   // a section keeps its place with a bar in it while its data is on the way, so the pane stops
-  // rearranging itself as each one lands. `pending` is only the GitHub detail, which is CHECKS.
-  const waiting = (k: string) => !d || (k === 'checks' && d.pending)
-  const shown = paneSections(order, body, lay.off, waiting)
+  // rearranging itself as each one lands
+  const shown = paneSections(order, body, lay.off, d, !!gone)
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
@@ -275,7 +277,6 @@ export function Pane({
         {shown.map((k) => {
           const x = sec(k)
           const { extra, content } = body[k] || {
-            extra: undefined,
             content: (
               <div className="skel" aria-busy="true">
                 {[70, 45].map((w, i) => (

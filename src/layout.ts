@@ -28,9 +28,18 @@ export const same = (a: Layout | null | undefined, b: Layout | null | undefined)
 
 /** Which pane sections to draw: the ones with a body, plus the ones whose data is still coming.
  *
- * ponytail: `waiting` is per section, not one flag for the pane. Only the PR's GitHub detail is ever
- * in flight; the review, database and pre-review sections are read from the local log and are final
- * in the first answer, so a bar under them would promise something that is never coming.
+ * ponytail: waiting is per section, not one flag for the pane. Only the PR's GitHub detail is ever in
+ * flight, and that is CHECKS; the review, database and pre-review sections are read from the local log
+ * and are final in the first answer, so a bar under them would promise something never coming. `gone`
+ * is the detail request having given up: nothing is in flight, so nothing may claim to be loading.
  */
-export const paneSections = (order: string[], body: Record<string, unknown>, off: string[] | undefined, waiting: (k: string) => boolean) =>
-  order.filter((k) => (body[k] || waiting(k)) && !off?.includes(k))
+export const paneSections = (
+  order: string[],
+  body: Record<string, unknown>,
+  off: string[] | undefined,
+  detail: { pending: boolean } | null,
+  gone: boolean,
+) => {
+  const waiting = (k: string) => !gone && (!detail || (k === 'checks' && detail.pending))
+  return order.filter((k) => (body[k] || waiting(k)) && !off?.includes(k))
+}
