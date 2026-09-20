@@ -5,6 +5,7 @@ import { Out, SecFilter, useSections } from '../sections'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
 import { clean } from '../dbgraph'
+import { paneSections } from '../layout'
 import { DbGraph } from './DbGraph'
 
 /** The review's database section: each table the PR touches with its columns, then what could break. */
@@ -40,6 +41,14 @@ function Db({ db, number }: { db: DbImpact; number: number }) {
   )
 }
 
+const bars = (...w: number[]) => (
+  <div className="skel" aria-busy="true">
+    {w.map((n, i) => (
+      <i key={i} style={{ width: `${n}%` }} />
+    ))}
+  </div>
+)
+
 const SECS: [string, string][] = [
   ['about', 'ABOUT'],
   ['checks', 'CHECKS'],
@@ -58,6 +67,7 @@ export function Pane({
   onClose,
   hidden,
   loading,
+  gone,
 }: {
   p: Row | null
   detail: Detail | null
@@ -71,6 +81,8 @@ export function Pane({
   hidden?: boolean
   /** no data yet: bars, not "No PR selected" */
   loading?: boolean
+  /** the detail request gave up: draw what is known, and stop the bars promising the rest */
+  gone?: boolean
 }) {
   useNow(p?.busy ? 1000 : 0) // the running label's elapsed time
   const [filtering, setFiltering] = useState(false)
@@ -81,11 +93,7 @@ export function Pane({
         <div className="bar" />
         <div className="in scroll">
           {loading ? (
-            <div className="skel" aria-busy="true">
-              {[60, 90, 75, 40].map((w, i) => (
-                <i key={i} style={{ width: `${w}%` }} />
-              ))}
-            </div>
+            bars(60, 90, 75, 40)
           ) : (
             <div className="prose">No PR selected.</div>
           )}
@@ -232,14 +240,16 @@ export function Pane({
       : null,
   }
   const label = Object.fromEntries(SECS)
-  const shown = order.filter((k) => body[k] && !lay.off?.includes(k))
+  // a section keeps its place with a bar in it while its data is on the way, so the pane stops
+  // rearranging itself as each one lands
+  const shown = paneSections(order, body, lay.off, { detail: d, gone: !!gone, review: !!p.reviewed, db: !!p.db })
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
       <div className="bar">
         <span className="lab">SELECTED</span>
         <span className="branch mono" title={d?.branch || ''}>
-          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : `#${p.number}`}
+          {d && d.branch ? d.branch : gone ? 'detail unavailable' : d && d.pending ? 'loading…' : `#${p.number}`}
         </span>
         <div style={{ flex: 1 }} />
         <span className="ib" title="choose which sections the pane shows" aria-pressed={filtering} onClick={() => setFiltering(!filtering)}>
@@ -270,7 +280,7 @@ export function Pane({
         <div className="ptitle">{p.title}</div>
         {shown.map((k) => {
           const x = sec(k)
-          const { extra, content } = body[k]!
+          const { extra, content } = body[k] || { content: bars(70, 45) }
           return (
             <div key={k} className={`psec${x.shut ? ' shut' : ''}${x.cls}`} {...x.wrap}>
               <div

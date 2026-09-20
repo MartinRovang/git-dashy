@@ -96,6 +96,9 @@ export default function App() {
   const paneBefore = useRef(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
+  // the url whose detail request gave up: the pane stops promising data that is not coming. Keyed by
+  // url, not a flag the effect clears, which would leave the next PR one render stale
+  const [detailGone, setDetailGone] = useState('')
   const [diff, setDiff] = useState<Code | null>(null)
   const [codeOpen, setCodeOpen] = useState(false)
   // the viewer floats over a live board: keys go to whichever of the two was clicked last
@@ -303,16 +306,31 @@ export default function App() {
     if (!pane || !url) return
     let alive = true
     let timer: number | undefined
+    // ponytail: three retries in a row, not three per selection — a long pending poll that meets a
+    // server restart must not spend the budget it needs later. Spent, the pane is told so: a PR that
+    // is simply gone would otherwise shimmer for the rest of the session with nothing in flight.
+    let left = 3
+    // a fresh attempt for this url, so the pane does not say "unavailable" over a request in flight
+    setDetailGone((g) => (g === url ? '' : g))
+    const again = () => {
+      if (!alive) return
+      if (left-- > 0) timer = window.setTimeout(run, 1500)
+      else setDetailGone(url)
+    }
     const run = async () => {
       try {
         const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
-        if (!r.ok) return
+        if (!r.ok) return void again()
         const got = (await r.json()) as Detail
         if (!alive) return
+        left = 3
+        // an answer clears the give-up: the same PR picked again may well be served this time, and a
+        // stale "unavailable" would drop CHECKS for that row for the rest of the session
+        setDetailGone((g) => (g === url ? '' : g))
         setDetail(got)
         if (got.pending) timer = window.setTimeout(run, 1500)
       } catch {
-        /* the next tick retries */
+        again()
       }
     }
     run()
@@ -947,6 +965,7 @@ export default function App() {
               loading={!data}
               p={current}
               detail={detail}
+              gone={detailGone === url}
               subs={data?.settings.subs || 'all'}
               saved={data?.settings.pane}
               onCode={openCode}
