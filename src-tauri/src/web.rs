@@ -114,6 +114,7 @@ pub fn payload(state: &State) -> Value {
     let (resolve, (repos, owners)) = bind::resolver_and_maps();
     // each url's newest review, and its newest tagged one, so a re-review without a kind keeps the earlier tag.
     // REVIEWED is newest first, so the first one seen wins.
+    let in_log = crate::log::reviewed_urls();
     let mut logged: HashMap<&str, &LogEntry> = HashMap::new();
     let mut tags: HashMap<&str, &LogEntry> = HashMap::new();
     for p in sections
@@ -173,9 +174,10 @@ pub fn payload(state: &State) -> Value {
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
                 "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
-                // whether the pane will have an AI REVIEW section, picked the way last_review() picks
-                // it. `review` above is this session's status string, which says nothing about the log.
-                "reviewed": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some(),
+                // whether the pane will have an AI REVIEW section: detail() reads the whole log, so
+                // this must too. `logged` above only covers the REVIEWED section, and `review` is
+                // this session's status string, which says nothing about the log at all.
+                "reviewed": p.review.is_some() || in_log.contains(url),
                 "pre": pre_json(pre),
                 // a finished review nobody has posted yet. The row says so, because a verdict
                 // sitting in a file nothing points at is a verdict nobody reads.

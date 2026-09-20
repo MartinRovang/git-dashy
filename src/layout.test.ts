@@ -48,6 +48,9 @@ describe('paneSections', () => {
   it('promises nothing once the request has given up', () => {
     expect(paneSections(order, body, undefined, { ...row, review: true, db: true, gone: true })).toEqual(['about'])
   })
+  it('gives up beats pending: nothing is in flight to wait for', () => {
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: true }, gone: true })).toEqual(['about'])
+  })
   it('never shows one switched off, waiting or not', () => {
     expect(paneSections(order, body, ['about', 'checks'], { ...row, review: true })).toEqual(['review'])
   })

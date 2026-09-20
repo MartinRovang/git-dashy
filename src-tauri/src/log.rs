@@ -141,6 +141,17 @@ pub fn reviewed() -> Vec<Pr> {
         .collect()
 }
 
+/// Every url the log has an entry for.
+///
+/// ponytail: one pass for a whole board, not last() per row. The pane holds a slot for a section the
+/// PR will have, so what it needs is the set, and the answer is the same for all of them.
+pub fn reviewed_urls() -> std::collections::HashSet<String> {
+    logs()
+        .iter()
+        .flat_map(|p| entries(p).iter().map(|e| e.pr.url.clone()).collect::<Vec<_>>())
+        .collect()
+}
+
 /// The newest entry for this PR url.
 ///
 /// ponytail: a scan of the cached entries, cloning only the winner. It was reviewed().find(), which
@@ -486,6 +497,13 @@ mod tests {
         assert!(!d.contains("+00:00"));
         assert_eq!(last("first").unwrap().pr.url, "first");
         assert!(last("nope").is_none());
+        // the pane's slot rule leans on this answering for exactly the urls last() answers for
+        let urls = reviewed_urls();
+        assert_eq!(urls.len(), 2);
+        for u in ["first", "second"] {
+            assert!(urls.contains(u) && last(u).is_some(), "{u} missing");
+        }
+        assert!(!urls.contains("nope"));
     }
 
     #[test]

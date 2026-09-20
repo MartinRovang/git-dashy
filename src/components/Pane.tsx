@@ -249,7 +249,7 @@ export function Pane({
       <div className="bar">
         <span className="lab">SELECTED</span>
         <span className="branch mono" title={d?.branch || ''}>
-          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : gone ? 'detail unavailable' : `#${p.number}`}
+          {d && d.branch ? d.branch : gone ? 'detail unavailable' : d && d.pending ? 'loading…' : `#${p.number}`}
         </span>
         <div style={{ flex: 1 }} />
         <span className="ib" title="choose which sections the pane shows" aria-pressed={filtering} onClick={() => setFiltering(!filtering)}>
