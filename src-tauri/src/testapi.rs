@@ -38,7 +38,7 @@ struct Route {
 }
 
 /// One request the stand-in was asked for: the method, the target and the Accept header.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Hit {
     pub method: String,
     pub path: String,
@@ -47,7 +47,6 @@ pub struct Hit {
 
 /// A running stand-in. Point `$GITHUB_API` at [`Api::url`]; it stops when this is dropped.
 pub struct Api {
-    url: String,
     stop: Arc<AtomicBool>,
     hits: Arc<Mutex<Vec<Hit>>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -86,7 +85,6 @@ impl Api {
             })
         };
         Api {
-            url: format!("http://127.0.0.1:{port}"),
             stop,
             hits,
             thread: Some(thread),
@@ -95,8 +93,8 @@ impl Api {
     }
 
     /// The base URL to put in `$GITHUB_API`.
-    pub fn url(&self) -> &str {
-        &self.url
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
     }
 
     /// Every request it was asked for, in order.
@@ -104,11 +102,23 @@ impl Api {
         self.hits.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Whether any request's target ended with `path`.
+    /// Whether any request's target CONTAINS `path`. Routes match the same way, so `/pulls/7` also
+    /// answers `/pulls/77` and `/pulls/7/reviews`: name enough of the tail to tell them apart.
     pub fn saw(&self, method: &str, path: &str) -> bool {
         self.hits()
             .iter()
             .any(|h| h.method == method && h.path.contains(path))
+    }
+
+    /// Whether the PR itself was read as JSON — `GET /pulls/{n}` without the diff Accept.
+    ///
+    /// ponytail: `saw("GET", "/pulls/7")` cannot tell the two apart, because fetching the diff is a
+    /// GET on that same path. An assertion that cannot fail is worse than none: it reads as coverage.
+    pub fn read_pr(&self, number: u64) -> bool {
+        let tail = format!("/pulls/{number}");
+        self.hits()
+            .iter()
+            .any(|h| h.method == "GET" && h.path.ends_with(&tail) && !h.accept.contains("diff"))
     }
 }
 
@@ -125,6 +135,10 @@ impl Drop for Api {
 }
 
 fn serve(mut conn: TcpStream, routes: &[Route], hits: &Mutex<Vec<Hit>>) -> std::io::Result<()> {
+    // ponytail: a deadline, because Drop joins this thread. A client that connects and never sends a
+    // request line would park serve() for ever, and the test would HANG rather than fail — the one
+    // failure a test cannot report on itself.
+    conn.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
     let mut reader = BufReader::new(conn.try_clone()?);
     let mut start = String::new();
     if reader.read_line(&mut start)? == 0 {
@@ -247,6 +261,24 @@ mod tests {
         assert!(crate::github::api("/repos/acme/stub/pulls/99", 5).is_err());
 
         assert!(api.saw("GET", "/pulls/77"));
+        assert!(api.read_pr(77), "the JSON read is told apart from the diff one");
         assert_eq!(api.hits().len(), 3);
+    }
+
+    #[test]
+    fn a_route_whose_accept_does_not_match_is_not_served() {
+        let _g = crate::config::test_lock();
+        // only a diff is on offer here
+        let api = Api::start(vec![(
+            "/pulls/78",
+            Some("diff"),
+            Reply::new(200, "diff --git a/x b/x"),
+        )]);
+        let _p = Pointed::at(&api);
+
+        assert!(crate::github::diff("acme/stub", 78).is_ok());
+        // asking the same path for JSON falls through to the 404 rather than being handed the diff
+        assert_eq!(crate::github::head_sha("acme/stub", 78), "");
+        assert!(api.read_pr(78), "it was asked, and refused");
     }
 }

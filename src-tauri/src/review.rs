@@ -2057,12 +2057,14 @@ mod tests {
                 ..Default::default()
             };
             let got = inline_for(&pr, &v);
-            (got, api.saw("GET", &format!("/pulls/{number}")))
+            (got, api.read_pr(number))
         };
 
         // ponytail: a number of its own per case. diff::fetch caches on (repo, number, head) for the
         // life of the process, so reusing one would serve the first case's diff to the second.
         let (same, asked) = run("read123", 7);
+        // ponytail: the PR read as JSON, not merely a GET on that path — fetching the diff is a GET
+        // on the same path, so the looser check passed whether or not head_sha was ever called.
         assert!(asked, "it asks what the head is now");
         assert_eq!(same.len(), 1, "the head is the one it read: the comment is built");
         assert_eq!(same[0].path, "svc.go");
