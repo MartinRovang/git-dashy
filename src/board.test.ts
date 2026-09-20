@@ -86,6 +86,11 @@ describe('buckets', () => {
     expect(buckets(v).map((b) => b.key)).toEqual([ALL, 'MINE', 'REVIEW REQUESTED', 'REVIEWED', 'ASSIGNED'])
   })
 
+  it('leaves reviewed where it is when there is no review requested to sit beside', () => {
+    const v = secs(state([{ name: 'MINE', prs: [pr()] }, { name: 'REVIEWED', prs: [] }]))
+    expect(buckets(v).map((b) => b.key)).toEqual([ALL, 'MINE', 'REVIEWED'])
+  })
+
   it('keeps a section with no PRs, so a tab does not vanish when a filter empties it', () => {
     const v = visible(state([{ name: 'MINE', prs: [pr({ title: 'keep' })] }]), 'nothing matches', false, false, NOBODY)
     expect(buckets(v).map((b) => b.key)).toEqual([ALL, 'MINE'])

@@ -28,18 +28,22 @@ export const same = (a: Layout | null | undefined, b: Layout | null | undefined)
 
 /** Which pane sections to draw: the ones with a body, plus the ones whose data is still coming.
  *
- * ponytail: waiting is per section, not one flag for the pane. Only the PR's GitHub detail is ever in
- * flight, and that is CHECKS; the review, database and pre-review sections are read from the local log
- * and are final in the first answer, so a bar under them would promise something never coming. `gone`
- * is the detail request having given up: nothing is in flight, so nothing may claim to be loading.
+ * ponytail: what is coming is per section, not one flag for the pane. Only the GitHub detail is ever
+ * in flight, and that is CHECKS; the review and database sections come from the local log, and the
+ * selected row already says whether it has either, so a PR with no review never draws a bar for one.
+ * `gone` is the request having given up: nothing is in flight, so nothing may claim to be loading.
  */
-export const paneSections = (
+export function paneSections(
   order: string[],
   body: Record<string, unknown>,
   off: string[] | undefined,
-  detail: { pending: boolean } | null,
-  gone: boolean,
-) => {
-  const waiting = (k: string) => !gone && (!detail || (k === 'checks' && detail.pending))
-  return order.filter((k) => (body[k] || waiting(k)) && !off?.includes(k))
+  s: { detail: { pending: boolean } | null; gone: boolean; review: boolean; db: boolean },
+) {
+  const coming = (k: string) => {
+    if (s.gone) return false
+    if (k === 'checks') return !s.detail || s.detail.pending
+    if (s.detail) return false // everything else is final in the first answer
+    return (k === 'review' && s.review) || (k === 'database' && s.db)
+  }
+  return order.filter((k) => (body[k] || coming(k)) && !off?.includes(k))
 }

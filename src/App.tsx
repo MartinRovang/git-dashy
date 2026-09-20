@@ -96,8 +96,9 @@ export default function App() {
   const paneBefore = useRef(true)
   const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
-  // the detail request gave up: the pane stops promising data that is not coming
-  const [detailGone, setDetailGone] = useState(false)
+  // the url whose detail request gave up: the pane stops promising data that is not coming. Keyed by
+  // url, not a flag the effect clears, which would leave the next PR one render stale
+  const [detailGone, setDetailGone] = useState('')
   const [diff, setDiff] = useState<Code | null>(null)
   const [codeOpen, setCodeOpen] = useState(false)
   // the viewer floats over a live board: keys go to whichever of the two was clicked last
@@ -309,9 +310,12 @@ export default function App() {
     // server restart must not spend the budget it needs later. Spent, the pane is told so: a PR that
     // is simply gone would otherwise shimmer for the rest of the session with nothing in flight.
     let left = 3
-    setDetailGone(false)
+    const again = () => {
+      if (!alive) return
+      if (left-- > 0) timer = window.setTimeout(run, 1500)
+      else setDetailGone(url)
+    }
     const run = async () => {
-      const again = () => (alive && left-- > 0 ? (timer = window.setTimeout(run, 1500)) : alive && setDetailGone(true))
       try {
         const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
         if (!r.ok) return void again()
@@ -956,7 +960,7 @@ export default function App() {
               loading={!data}
               p={current}
               detail={detail}
-              gone={detailGone}
+              gone={detailGone === url}
               subs={data?.settings.subs || 'all'}
               saved={data?.settings.pane}
               onCode={openCode}

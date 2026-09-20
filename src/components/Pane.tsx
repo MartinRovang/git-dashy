@@ -238,14 +238,14 @@ export function Pane({
   const label = Object.fromEntries(SECS)
   // a section keeps its place with a bar in it while its data is on the way, so the pane stops
   // rearranging itself as each one lands
-  const shown = paneSections(order, body, lay.off, d, !!gone)
+  const shown = paneSections(order, body, lay.off, { detail: d, gone: !!gone, review: !!p.review, db: !!p.db })
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
       <div className="bar">
         <span className="lab">SELECTED</span>
         <span className="branch mono" title={d?.branch || ''}>
-          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : `#${p.number}`}
+          {d && d.branch ? d.branch : d && d.pending ? 'loading…' : gone ? 'detail unavailable' : `#${p.number}`}
         </span>
         <div style={{ flex: 1 }} />
         <span className="ib" title="choose which sections the pane shows" aria-pressed={filtering} onClick={() => setFiltering(!filtering)}>

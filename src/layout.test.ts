@@ -30,22 +30,25 @@ describe('same: the server answering with what we sent', () => {
 })
 
 describe('paneSections', () => {
-  const order = ['about', 'checks', 'review']
+  const order = ['about', 'checks', 'review', 'database']
   const body = { about: {} }
-  const here = { pending: false }
+  const row = { detail: null, gone: false, review: false, db: false }
   it('drops a section with no body once the detail is in', () => {
-    expect(paneSections(order, body, undefined, here, false)).toEqual(['about'])
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: false } })).toEqual(['about'])
   })
-  it('holds every place while the detail has not arrived', () => {
-    expect(paneSections(order, body, undefined, null, false)).toEqual(order)
+  it('waits on CHECKS alone: the rest are final in the first answer', () => {
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: true } })).toEqual(['about', 'checks'])
   })
-  it('waits on CHECKS alone while the detail is pending: the rest are already final', () => {
-    expect(paneSections(order, body, undefined, { pending: true }, false)).toEqual(['about', 'checks'])
+  it('holds a place only for what the row says is coming', () => {
+    expect(paneSections(order, body, undefined, { ...row, review: true })).toEqual(['about', 'checks', 'review'])
+  })
+  it('draws no bar for a review the row does not have', () => {
+    expect(paneSections(order, body, undefined, row)).toEqual(['about', 'checks'])
   })
   it('promises nothing once the request has given up', () => {
-    expect(paneSections(order, body, undefined, null, true)).toEqual(['about'])
+    expect(paneSections(order, body, undefined, { ...row, review: true, db: true, gone: true })).toEqual(['about'])
   })
   it('never shows one switched off, waiting or not', () => {
-    expect(paneSections(order, body, ['about', 'checks'], null, false)).toEqual(['review'])
+    expect(paneSections(order, body, ['about', 'checks'], { ...row, review: true })).toEqual(['review'])
   })
 })
