@@ -322,6 +322,9 @@ export default function App() {
         const got = (await r.json()) as Detail
         if (!alive) return
         left = 3
+        // an answer clears the give-up: the same PR picked again may well be served this time, and a
+        // stale "unavailable" would drop CHECKS for that row for the rest of the session
+        setDetailGone((g) => (g === url ? '' : g))
         setDetail(got)
         if (got.pending) timer = window.setTimeout(run, 1500)
       } catch {
