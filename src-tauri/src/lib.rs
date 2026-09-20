@@ -29,6 +29,9 @@ pub mod spells;
 pub mod state;
 pub mod story;
 pub mod team;
+/// A stand-in for the GitHub API; tests only. See #165.
+#[cfg(test)]
+pub mod testapi;
 pub mod textdiff;
 pub mod types;
 pub mod update;

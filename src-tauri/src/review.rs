@@ -1638,6 +1638,37 @@ mod tests {
     use super::*;
     use crate::types::{Finding, Repository};
 
+    /// A hold ready to release: a verdict with inline comments, and whatever greeting is passed.
+    fn a_hold(repo: &str, number: u64, hello: &str) -> held::Held {
+        let (owner, name) = repo.split_once('/').expect("owner/name");
+        held::Held {
+            pr: Pr {
+                number,
+                repository: Repository {
+                    name_with_owner: repo.into(),
+                    name: name.into(),
+                },
+                head: "abc123".into(),
+                url: format!("https://github.com/{owner}/{name}/pull/{number}"),
+                ..Default::default()
+            },
+            model: "opus".into(),
+            verdict: Verdict {
+                verdict: "comment".into(),
+                body: "the body".into(),
+                inline: vec![Inline {
+                    path: "a.rs".into(),
+                    line: 3,
+                    body: "**nit** — x".into(),
+                }],
+                ..Default::default()
+            },
+            hello: hello.into(),
+            at: crate::state::now(),
+            ..Default::default()
+        }
+    }
+
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
@@ -1937,34 +1968,25 @@ mod tests {
         assert_eq!(v.effort, "high");
     }
 
-    /// A release GitHub refuses must leave a hold that CAN be released. Held whole, `Y` resends the
-    /// same refused request forever; the comments are dropped so the next press posts the body.
+    /// The bug `bdadea5` fixed: `post_held` clears `hello` the moment the greeting lands, and the
+    /// write that follows a refused review must not put it back. Held with `hello` restored, the
+    /// next press greets the author a second time on their own PR.
     ///
-    /// Drives the real call with the API pointed at a closed port, so `post_review` fails for real.
-    /// `hello` is left empty on purpose: with the API down the hello would fail first and return
-    /// before the review is ever attempted, which is correct but not the path under test.
+    /// Needs the greeting to LAND and the review to be refused, which is what the stand-in is for.
     #[test]
-    fn a_release_the_api_refuses_drops_the_comments_so_the_next_press_posts() {
+    fn a_greeting_that_landed_is_not_sent_again_when_the_review_is_refused() {
         let _g = crate::config::test_lock();
+        let api = crate::testapi::Api::start(vec![
+            ("/issues/7/comments", None, crate::testapi::Reply::new(201, "{}")),
+            (
+                "/pulls/7/reviews",
+                None,
+                crate::testapi::Reply::new(422, r#"{"message":"line must be part of the diff"}"#),
+            ),
+        ]);
+        let _p = crate::testapi::Pointed::at(&api);
         let d = tempfile::tempdir().unwrap();
-        // ponytail: restores the env on panic too; the suite shares one process and team's git calls
-        // read the same environment (see #160).
-        struct Env(Option<String>, bool);
-        impl Drop for Env {
-            fn drop(&mut self) {
-                match self.0.take() {
-                    Some(v) => std::env::set_var("GITHUB_API", v),
-                    None => std::env::remove_var("GITHUB_API"),
-                }
-                let demo = self.1;
-                config::update(|c| c.demo = demo);
-            }
-        }
-        let _env = Env(std::env::var("GITHUB_API").ok(), config::get().demo);
-        // ponytail: a closed port, not a slow host: the call has to fail now rather than at a timeout.
-        std::env::set_var("GITHUB_API", "http://127.0.0.1:1");
         config::update(|c| {
-            c.demo = false;
             c.held_dir = d.path().join("held");
             c.log = d.path().join("log.jsonl");
             c.memory_dir = d.path().join("memory");
@@ -1973,41 +1995,84 @@ mod tests {
             c.teams = d.path().join("teams");
             c.team = d.path().join("team");
         });
-        let h = held::Held {
-            pr: Pr {
-                number: 7,
-                repository: Repository {
-                    name_with_owner: "acme/api".into(),
-                    name: "api".into(),
-                },
-                head: "abc123".into(),
-                ..Default::default()
-            },
-            model: "opus".into(),
-            verdict: Verdict {
-                verdict: "comment".into(),
-                body: "the body".into(),
-                inline: vec![Inline {
-                    path: "a.rs".into(),
-                    line: 3,
-                    body: "**nit** — x".into(),
-                }],
-                ..Default::default()
-            },
-            hello: String::new(),
-            at: crate::state::now(),
-            ..Default::default()
-        };
+        let h = a_hold("acme/hello", 7, "hi, reviewing this now");
         held::put(&h).unwrap();
 
-        assert!(post_held(&h).is_err(), "the API is not reachable");
-        let after = held::get("acme/api", 7).expect("still held, so it can be released");
+        assert!(post_held(&h).is_err(), "the review was refused");
+        assert!(api.saw("POST", "/issues/7/comments"), "the greeting went up");
+        assert!(api.saw("POST", "/pulls/7/reviews"), "the review was attempted");
+
+        let after = held::get("acme/hello", 7).expect("still held");
+        assert!(
+            after.hello.is_empty(),
+            "the greeting is already on the PR; releasing this must not send it twice"
+        );
         assert!(
             after.verdict.inline.is_empty(),
             "the refused comments are dropped"
         );
         assert_eq!(after.verdict.body, "the body", "the review itself is kept");
-        assert!(after.hello.is_empty());
+    }
+
+    /// `anchored` is covered on its own; this is the wiring — that `inline_for` actually goes and
+    /// asks what the head is now, and drops the comments when the answer is not the head it read.
+    #[test]
+    fn inline_for_asks_what_the_head_is_now_and_drops_the_comments_when_it_moved() {
+        const DIFF: &str = "diff --git a/svc.go b/svc.go
+--- a/svc.go
++++ b/svc.go
+@@ -1,2 +1,3 @@
+ package svc
++var x = 1
+ // end
+";
+        let run = |live_sha: &str, number: u64| {
+            let _g = crate::config::test_lock();
+            let api = crate::testapi::Api::start(vec![
+                (
+                    &format!("/pulls/{number}"),
+                    Some("diff"),
+                    crate::testapi::Reply::new(200, DIFF),
+                ),
+                (
+                    &format!("/pulls/{number}"),
+                    None,
+                    crate::testapi::Reply::new(200, &format!(r#"{{"head":{{"sha":"{live_sha}"}}}}"#)),
+                ),
+            ]);
+            let _p = crate::testapi::Pointed::at(&api);
+            config::update(|c| c.inline = true);
+            let pr = Pr {
+                number,
+                repository: Repository {
+                    name_with_owner: "acme/wiring".into(),
+                    name: "wiring".into(),
+                },
+                head: "read123".into(),
+                ..Default::default()
+            };
+            let v = Verdict {
+                verdict: "comment".into(),
+                findings: vec![serde_json::json!({"kind":"nit","loc":"svc.go:2","text":"unused"})],
+                ..Default::default()
+            };
+            let got = inline_for(&pr, &v);
+            (got, api.read_pr(number))
+        };
+
+        // ponytail: a number of its own per case. diff::fetch caches on (repo, number, head) for the
+        // life of the process, so reusing one would serve the first case's diff to the second.
+        let (same, asked) = run("read123", 7);
+        // ponytail: the PR read as JSON, not merely a GET on that path — fetching the diff is a GET
+        // on the same path, so the looser check passed whether or not head_sha was ever called.
+        assert!(asked, "it asks what the head is now");
+        assert_eq!(same.len(), 1, "the head is the one it read: the comment is built");
+        assert_eq!(same[0].path, "svc.go");
+        assert_eq!(same[0].line, 2);
+
+        let (moved, asked) = run("pushed456", 8);
+        assert!(asked);
+        assert!(moved.is_empty(), "the author pushed under it: no comments");
     }
 
     /// Releasing a hold: the verdict goes up, the log records it, and the file is gone. Demo skips

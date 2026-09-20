@@ -1462,7 +1462,7 @@ dependencies = [
 
 [[package]]
 name = "gitdashy"
-version = "2.34.17"
+version = "2.34.18"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
