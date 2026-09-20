@@ -303,16 +303,21 @@ export default function App() {
     if (!pane || !url) return
     let alive = true
     let timer: number | undefined
+    // ponytail: a few retries, not forever. Nothing else re-asks until the selection changes, so a
+    // refused answer used to leave the pane empty with nothing in flight; a PR that is simply gone
+    // must not poll for the rest of the session either.
+    let left = 3
     const run = async () => {
+      const again = () => alive && left-- > 0 && (timer = window.setTimeout(run, 1500))
       try {
         const r = await api(`/api/pr?url=${encodeURIComponent(url)}`)
-        if (!r.ok) return
+        if (!r.ok) return void again()
         const got = (await r.json()) as Detail
         if (!alive) return
         setDetail(got)
         if (got.pending) timer = window.setTimeout(run, 1500)
       } catch {
-        /* the next tick retries */
+        again()
       }
     }
     run()

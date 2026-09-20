@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arrange, moved, outside, same } from './layout'
+import { arrange, moved, outside, paneSections, same } from './layout'
 
 describe('arrange: the saved order meets the sections that exist', () => {
   it('drops a saved name that is gone and puts a new one last', () => {
@@ -27,4 +27,18 @@ describe('outside: whether a drag ended past the panel', () => {
 describe('same: the server answering with what we sent', () => {
   it('ignores key order and a missing list', () => expect(same({ off: [], order: ['a'] }, { order: ['a'] })).toBe(true))
   it('sees a changed list', () => expect(same({ order: ['a', 'b'] }, { order: ['b', 'a'] })).toBe(false))
+})
+
+describe('paneSections', () => {
+  const order = ['about', 'checks', 'review']
+  const never = () => false
+  it('drops a section with no body once its data is in', () => {
+    expect(paneSections(order, { about: {} }, undefined, never)).toEqual(['about'])
+  })
+  it('holds a place for a section that is still waiting', () => {
+    expect(paneSections(order, { about: {} }, undefined, (k) => k === 'checks')).toEqual(['about', 'checks'])
+  })
+  it('never shows one switched off, waiting or not', () => {
+    expect(paneSections(order, { about: {} }, ['about', 'checks'], () => true)).toEqual(['review'])
+  })
 })

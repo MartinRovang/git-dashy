@@ -5,6 +5,7 @@ import { Out, SecFilter, useSections } from '../sections'
 import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } from '../tokens'
 import { useNow } from '../usePoll'
 import { clean } from '../dbgraph'
+import { paneSections } from '../layout'
 import { DbGraph } from './DbGraph'
 
 /** The review's database section: each table the PR touches with its columns, then what could break. */
@@ -232,10 +233,10 @@ export function Pane({
       : null,
   }
   const label = Object.fromEntries(SECS)
-  // ponytail: while the detail is still on its way, every section keeps its place with a bar in it,
-  // so the pane stops rearranging itself as each one lands. Once it is here, the empty ones go.
-  const waiting = !d || d.pending
-  const shown = order.filter((k) => (body[k] || waiting) && !lay.off?.includes(k))
+  // a section keeps its place with a bar in it while its data is on the way, so the pane stops
+  // rearranging itself as each one lands. `pending` is only the GitHub detail, which is CHECKS.
+  const waiting = (k: string) => !d || (k === 'checks' && d.pending)
+  const shown = paneSections(order, body, lay.off, waiting)
   return (
     <div className="pane" style={hidden ? { display: 'none' } : undefined}>
       <div className="grip" data-grip="pane" />
