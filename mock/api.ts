@@ -324,6 +324,7 @@ function buildPayload() {
           busy: r.busy,
           since: r.since,
           team: teamOf(r.repo),
+          reviewed,
           summary: reviewed ? S.reviewInfo[r.url].summary : '',
           reviewAt: reviewed ? S.reviewAt[r.url] || '' : '',
           pre: r.pre,

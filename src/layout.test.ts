@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arrange, moved, outside, same } from './layout'
+import { arrange, moved, outside, paneSections, same } from './layout'
 
 describe('arrange: the saved order meets the sections that exist', () => {
   it('drops a saved name that is gone and puts a new one last', () => {
@@ -27,4 +27,31 @@ describe('outside: whether a drag ended past the panel', () => {
 describe('same: the server answering with what we sent', () => {
   it('ignores key order and a missing list', () => expect(same({ off: [], order: ['a'] }, { order: ['a'] })).toBe(true))
   it('sees a changed list', () => expect(same({ order: ['a', 'b'] }, { order: ['b', 'a'] })).toBe(false))
+})
+
+describe('paneSections', () => {
+  const order = ['about', 'checks', 'review', 'database']
+  const body = { about: {} }
+  const row = { detail: null, gone: false, review: false, db: false }
+  it('drops a section with no body once the detail is in', () => {
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: false } })).toEqual(['about'])
+  })
+  it('waits on CHECKS alone: the rest are final in the first answer', () => {
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: true } })).toEqual(['about', 'checks'])
+  })
+  it('holds a place only for what the row says is coming', () => {
+    expect(paneSections(order, body, undefined, { ...row, review: true })).toEqual(['about', 'checks', 'review'])
+  })
+  it('draws no bar for a review the row does not have', () => {
+    expect(paneSections(order, body, undefined, row)).toEqual(['about', 'checks'])
+  })
+  it('promises nothing once the request has given up', () => {
+    expect(paneSections(order, body, undefined, { ...row, review: true, db: true, gone: true })).toEqual(['about'])
+  })
+  it('gives up beats pending: nothing is in flight to wait for', () => {
+    expect(paneSections(order, body, undefined, { ...row, detail: { pending: true }, gone: true })).toEqual(['about'])
+  })
+  it('never shows one switched off, waiting or not', () => {
+    expect(paneSections(order, body, ['about', 'checks'], { ...row, review: true })).toEqual(['review'])
+  })
 })

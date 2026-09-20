@@ -19,8 +19,11 @@ export type Pr = {
   prev: string
   checks: string
   reviewers: string
-  /** the newest review's summary line, "" when none. */
+  /** this session's review status string, "" when none is running or finished here. Not the log:
+   *  a review from a past session leaves this empty. See `reviewed`. */
   review: string
+  /** The review log has an entry for this PR, so the pane will have an AI REVIEW section. */
+  reviewed?: boolean
   busy: boolean
   since?: number
   team: string
