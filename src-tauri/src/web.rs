@@ -3910,9 +3910,6 @@ mod tests {
         );
     }
 
-    /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
-    /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
-    /// already there whenever a repo row had carved the owner out.
     /// #161: the panel's inline axis, end to end — the route writes the rule, the payload reads it
     /// back with where it came from, and the switch is what a target with no rule falls back to.
     #[test]
@@ -4070,6 +4067,9 @@ mod tests {
         );
     }
 
+    /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
+    /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
+    /// already there whenever a repo row had carved the owner out.
     #[test]
     fn the_posting_route_reports_the_owner_rule_as_well_as_the_effective_one() {
         let _g = crate::config::test_lock();

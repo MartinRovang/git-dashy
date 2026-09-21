@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Bot, Database, Share2, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, ListFilter, type LucideIcon } from 'lucide-react'
 import type { PostingRule, Row as Pr, StateData } from '../types'
-import { canCastOn, counts, postingTree, ruleSource, hasOwnRule } from '../board'
+import { canCastOn, counts, postingTree, ruleSource } from '../board'
 import { Glyph } from './Glyph'
 import { every, span } from '../tokens'
 import { Row, Select } from './Controls'
@@ -559,7 +559,12 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                           <div className="rules none">no repos under {owner} on the board</div>
                         )}
                         {/* per repo, the owner's rule is still the fallback: say what a repo with no PR here follows */}
-                        {!node.governs && hasOwnRule(node.owner) ? (
+                        {/* ponytail: a POSTING rule of its own, not hasOwnRule — an owner whose only rule
+                            is inline has no post/hold word to report, and printing the defaults here read
+                            as though it had set them. The inline line below says what it did set. */}
+                        {!node.governs &&
+                        (ruleSource(node.owner.target, node.owner.manualVia) === 'own' ||
+                          ruleSource(node.owner.target, node.owner.autoVia) === 'own') ? (
                           <div className="rules none">a repo not listed here follows {owner}/*: {postWords(node.owner)}</div>
                         ) : null}
                         {/* ponytail: the inline rule is named on its own line, and can be taken off here. It
