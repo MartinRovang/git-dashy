@@ -55,11 +55,14 @@ fn sections(template: &str) -> Vec<&str> {
 
 /// The prompt for one draft. `brief` is the team's brief, given with an about so it is not repeated.
 pub fn prompt(doc: &str, repo: &str, draft: &str, brief: &str) -> Result<String> {
-    let (guide, template) = match doc {
-        "brief" => (team::BRIEF_GUIDE, team::PROJECT_TEMPLATE),
-        "about" => (team::ABOUT_GUIDE, team::ABOUT_TEMPLATE),
-        "agents" => (team::AGENTS_GUIDE, ""),
-        _ => bail!("doc must be brief, agents or about"),
+    let guide = team::guide(doc);
+    if guide.is_empty() {
+        bail!("doc must be brief, agents or about");
+    }
+    let template = match doc {
+        "brief" => team::PROJECT_TEMPLATE,
+        "about" => team::ABOUT_TEMPLATE,
+        _ => "",
     };
     let names = sections(template);
     let context = match doc {

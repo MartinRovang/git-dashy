@@ -319,8 +319,12 @@ pub fn brief(repo: Option<&str>, slug: Option<&str>) -> (String, String) {
 /// ponytail: the TEAM's only. A repo bound to no team has your brief and your facts; a description of your
 /// own repo is a README's job, not a second private store.
 pub fn about(repo: &str) -> (String, String) {
-    let slug = bind::of(repo);
-    match about_path(&slug, repo) {
+    about_in(&bind::of(repo), repo)
+}
+
+/// `about`, for a caller that has already resolved the repo's team: every bind::of is a read of the store.
+pub fn about_in(slug: &str, repo: &str) -> (String, String) {
+    match about_path(slug, repo) {
         Some(p) => {
             let t = brief_text(Some(&p));
             let whose = if t.is_empty() {
@@ -335,11 +339,20 @@ pub fn about(repo: &str) -> (String, String) {
 }
 
 /// Where the team `slug` keeps its description of `repo`. None for a team we do not have, or no repo.
+///
+/// ponytail: case folded, the way team::dir_of folds a team's key. A repo reaches here spelled by GitHub
+/// (MartinRovang/git-dashy), by a person, or lowercased by a lookup key, and one about must be found by all
+/// of them: the file that exists wins, whatever its case, and a new one takes the spelling it was given.
 pub fn about_path(slug: &str, repo: &str) -> Option<PathBuf> {
     if repo.is_empty() {
         return None;
     }
-    bind::team_dir(slug).map(|d| d.join(ABOUT).join(slug_of(Some(repo))))
+    let dir = bind::team_dir(slug)?.join(ABOUT);
+    let want = slug_of(Some(repo));
+    let found = sorted_names(&dir)
+        .into_iter()
+        .find(|n| n.eq_ignore_ascii_case(&want));
+    Some(dir.join(found.unwrap_or(want)))
 }
 
 /// A soft word before a founding document is proposed: what it looks like it is instead, or None.
@@ -695,14 +708,15 @@ pub fn session_context(repo: &str, general_mirrored: bool) -> String {
     if !text.is_empty() {
         parts.push(format!("### brief — {source}\n{text}"));
     }
-    let (text, source) = about(repo);
-    if !text.is_empty() {
-        parts.push(format!("### about {repo} — {source}\n{text}"));
-    }
+
     // ponytail: asked ONCE, above the loop. sources() resolved this binding on the line before and its
     // own ponytail says why that matters: every bind::of is a read of the store, and this runs on
     // every mirror write, which is every registered repo on every refresh.
     let slug = bind::of(repo);
+    let (text, source) = about_in(&slug, repo);
+    if !text.is_empty() {
+        parts.push(format!("### about {repo} — {source}\n{text}"));
+    }
     for (label, base) in sources(repo).into_iter().skip(1) {
         if !general_mirrored {
             let t = read_file(&path(None, Some(&base)));

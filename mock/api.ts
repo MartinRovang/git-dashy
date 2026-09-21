@@ -814,7 +814,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       const team = str(body, 'team')
       const op = str(body, 'op')
       const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
-      // the same soft word the server gives: a brief without a brief's sections waits for `anyway`
+      // the same soft word the server gives (a shortened copy of memory::doc_warning; the mock may drift from it)
       if (op === 'propose' && str(body, 'doc') === 'brief' && !body.anyway && !/^#+\s*(The project|Why it matters|Constraints that change decisions|How this codebase is shaped)\s*$/im.test(str(body, 'text')))
         return json(200, { ok: false, warn: "This has none of a brief's sections (The project, Why it matters, Constraints that change decisions, How this codebase is shaped). It reads like a description of the product; what one repo is belongs in that repo's about." })
       if (op === 'propose') return json(200, pr)
