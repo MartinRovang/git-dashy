@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Bot, Database, Share2, Eye, BookOpen, Skull, Wrench, PanelLeftClose, PanelLeftOpen, ListFilter, type LucideIcon } from 'lucide-react'
 import type { PostingRule, Row as Pr, StateData } from '../types'
-import { canCastOn, counts, postingTree, ruleSource } from '../board'
+import { canCastOn, counts, postingTree, ruleSource, hasOwnPostingRule } from '../board'
 import { Glyph } from './Glyph'
 import { every, span } from '../tokens'
 import { Row, Select } from './Controls'
@@ -562,9 +562,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                         {/* ponytail: a POSTING rule of its own, not hasOwnRule — an owner whose only rule
                             is inline has no post/hold word to report, and printing the defaults here read
                             as though it had set them. The inline line below says what it did set. */}
-                        {!node.governs &&
-                        (ruleSource(node.owner.target, node.owner.manualVia) === 'own' ||
-                          ruleSource(node.owner.target, node.owner.autoVia) === 'own') ? (
+                        {!node.governs && hasOwnPostingRule(node.owner) ? (
                           <div className="rules none">a repo not listed here follows {owner}/*: {postWords(node.owner)}</div>
                         ) : null}
                         {/* ponytail: the inline rule is named on its own line, and can be taken off here. It
@@ -573,7 +571,9 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                             someone else's PR was in force with nothing on screen naming it. */}
                         {!node.governs && ruleSource(node.owner.target, node.owner.inlineVia) === 'own' ? (
                           <div className="rules none">
-                            a repo not listed here also follows {owner}/*:{' '}
+                            {/* "also" only when the post/hold line above it was drawn, or it is an
+                                "also" with nothing before it */}
+                            a repo not listed here {hasOwnPostingRule(node.owner) ? 'also ' : ''}follows {owner}/*:{' '}
                             {node.owner.inline ? 'findings on their lines' : 'findings in the body only'}
                             <button className="lnk follow" onClick={() => onClearInline(`${owner}/*`)}>
                               drop that rule

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnPostingRule, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
 
 let n = 0
 
@@ -740,6 +740,22 @@ describe('the posting tree', () => {
     expect(acme.governs).toBe(false)
     // but it is still the owner's own rule, so the row is not pretending nothing is set
     expect(hasOwnRule(acme.owner)).toBe(true)
+  })
+
+  // the panel's mode and its post/hold fallback line are both posting questions, so this is the
+  // half of hasOwnRule they ask: an inline-only rule is a rule, but not a post/hold word
+  it('tells a posting rule of its own from an inline one', () => {
+    const inlineOnly = rule('acme/*', ['post', ''], ['post', ''], [true, 'owner'])
+    expect(hasOwnPostingRule(inlineOnly)).toBe(false)
+    expect(hasOwnRule(inlineOnly)).toBe(true)
+
+    const posts = rule('acme/*', ['hold', 'owner'], ['post', ''], [false, ''])
+    expect(hasOwnPostingRule(posts)).toBe(true)
+    expect(hasOwnRule(posts)).toBe(true)
+
+    const nothing = rule('acme/*', ['post', ''], ['post', ''], [false, ''])
+    expect(hasOwnPostingRule(nothing)).toBe(false)
+    expect(hasOwnRule(nothing)).toBe(false)
   })
 
   it('puts each repo under the owner that owns it', () => {
