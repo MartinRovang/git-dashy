@@ -1167,6 +1167,9 @@ fn board_repos(sections: &[crate::types::Section]) -> Vec<String> {
 /// rules visible.
 fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
     let p = autorev::posting();
+    let il = autorev::inlines();
+    // what a target with no rule of its own falls back to
+    let switch = config::get().inline;
     // ponytail: every repo the program is handling, not only the ones a rule names. The panel is a list
     // you walk, so a repo with no rule of its own has to be in it -- that is the one you came to set.
     // Each repo's owner comes with it, since the owner row is what a repo with no rule falls back to.
@@ -1219,8 +1222,26 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
             };
             let (m, mv) = one(&p.manual);
             let (a, av) = one(&p.auto);
-            let mut row =
-                json!({"target": t, "manual": m.word(), "auto": a.word(), "manualVia": mv, "autoVia": av});
+            // ponytail: the same three answers as the other two axes — the rule, and where it came
+            // from — except that the fallback is the switch rather than a constant, so "" here means
+            // "whatever --inline says" and the page has to be able to name that.
+            let (inline, inline_via) = if t.ends_with("/*") {
+                match il.owners.get(&bare) {
+                    Some(v) => (v.on(), "owner"),
+                    None => (switch, ""),
+                }
+            } else if let Some(v) = il.repos.get(&bare) {
+                (v.on(), "repo")
+            } else {
+                let owner = bare.split('/').next().unwrap_or("").to_string();
+                match il.owners.get(&owner) {
+                    Some(v) => (v.on(), "owner"),
+                    None => (switch, ""),
+                }
+            };
+            let mut row = json!({"target": t, "manual": m.word(), "auto": a.word(),
+                                 "manualVia": mv, "autoVia": av,
+                                 "inline": inline, "inlineVia": inline_via});
             // an owner switched to per repo still has its rule, as the fallback: the page must not read that
             // rule as "this owner decides"
             if t.ends_with("/*") {
@@ -1928,6 +1949,26 @@ fn post_posting(state: &State, body: &Body) -> Out {
         }
         return Ok(json!({"ok": true}));
     }
+    // ponytail: its own op rather than a third `ran`. Inline is a property of the repo and not of
+    // who started the review, so folding it into the manual/auto axis would have invented a
+    // distinction the rule does not have (#161).
+    if op == "inline" {
+        let word = text(body, "inline");
+        let rule = autorev::Inline::parse(&word);
+        if rule.is_none() && word != autorev::CLEAR {
+            return Err(Fail::new(400, "inline must be on, off or none"));
+        }
+        if repo.is_empty() == owner.is_empty() {
+            return Err(Fail::new(400, "name a repo or an owner, not both"));
+        }
+        fail_if(if repo.is_empty() {
+            autorev::set_inline_owner(&owner, rule)
+        } else {
+            autorev::set_inline(&repo, rule)
+        })?;
+        state.wake();
+        return Ok(json!({"ok": true}));
+    }
     let ran = match text(body, "ran").as_str() {
         "manual" => autorev::Ran::Manual,
         "auto" => autorev::Ran::Auto,
@@ -2337,6 +2378,12 @@ fn post_settings(state: &State, body: &Body) -> Out {
     }
     if body.contains_key("keyhints") {
         c.keyhints = truthy(body, "keyhints");
+    }
+    // ponytail: the one setting that writes to someone else's PR, and until now the only one with no
+    // way to switch it off from inside the app — `--inline` saved itself and every later launch kept
+    // posting (#161). A repo's own rule still beats it.
+    if body.contains_key("inline") {
+        c.inline = truthy(body, "inline");
     }
     // the two panels' layouts: a map of list name to section names
     let layout = |key: &str| -> Result<Option<HashMap<String, Vec<String>>>, Fail> {
@@ -3802,6 +3849,10 @@ mod tests {
         config::update(|c| {
             c.autorev = d.path().join("autorev");
             c.held_dir = d.path().join("held");
+            // ponytail: pinned, because the panel's inline column falls back to this switch. Left to
+            // whatever the process config holds, the rows read differently depending on which test
+            // ran before — the failure #160 was about, in a new place.
+            c.inline = false;
         });
         let (base, token, _state) = served();
         let rules = || get(&format!("{base}/api/state"), Some(&token)).1["postingRules"].clone();
@@ -3811,8 +3862,10 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "", "perRepo": false},
-                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": ""},
+                {"target": "a/*", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "",
+                 "inline": false, "inlineVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "",
+                 "inline": false, "inlineVia": ""},
             ]),
             "every repo on the board, with its owner, whether or not a rule names it"
         );
@@ -3824,8 +3877,10 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner", "perRepo": false},
-                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "repo"},
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "", "autoVia": "owner",
+                 "inline": false, "inlineVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "post", "manualVia": "", "autoVia": "repo",
+                 "inline": false, "inlineVia": ""},
             ]),
             "a target set on one axis still lists the other"
         );
@@ -3835,7 +3890,8 @@ mod tests {
         autorev::set_post_owner("a", autorev::Ran::Manual, autorev::Post::Hold);
         assert_eq!(
             rules()[1],
-            json!({"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "repo"}),
+            json!({"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "repo",
+                   "inline": false, "inlineVia": ""}),
             "the owner's word, marked as inherited"
         );
 
@@ -3847,9 +3903,12 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
-                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "", "perRepo": false},
-                {"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "repo", "autoVia": "repo"},
+                {"target": "a/*", "manual": "hold", "auto": "hold", "manualVia": "owner", "autoVia": "owner",
+                 "inline": false, "inlineVia": "", "perRepo": false},
+                {"target": "zeta/*", "manual": "hold", "auto": "post", "manualVia": "owner", "autoVia": "",
+                 "inline": false, "inlineVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "hold", "auto": "post", "manualVia": "repo", "autoVia": "repo",
+                 "inline": false, "inlineVia": ""},
             ]),
             "owners first, then repos, and a/b listed once for both axes"
         );
@@ -3867,6 +3926,10 @@ mod tests {
         config::update(|c| {
             c.autorev = d.path().join("autorev");
             c.held_dir = d.path().join("held");
+            // ponytail: pinned, because the panel's inline column falls back to this switch. Left to
+            // whatever the process config holds, the rows read differently depending on which test
+            // ran before — the failure #160 was about, in a new place.
+            c.inline = false;
         });
         let (base, token, _state) = served();
         let url = format!("{base}/api/posting");
@@ -3880,8 +3943,10 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": false},
-                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner"},
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner",
+                 "inline": false, "inlineVia": "", "perRepo": false},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner",
+                 "inline": false, "inlineVia": ""},
             ]),
             "on: the owner holds what a/b held, and a/b follows it"
         );
@@ -3892,8 +3957,10 @@ mod tests {
         assert_eq!(
             rules(),
             json!([
-                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner", "perRepo": true},
-                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "repo", "autoVia": "repo"},
+                {"target": "a/*", "manual": "post", "auto": "hold", "manualVia": "owner", "autoVia": "owner",
+                 "inline": false, "inlineVia": "", "perRepo": true},
+                {"target": "a/b", "manual": "post", "auto": "hold", "manualVia": "repo", "autoVia": "repo",
+                 "inline": false, "inlineVia": ""},
             ]),
             "off: a/b owns its words, and the owner keeps its rule for a repo nobody listed"
         );
@@ -3906,6 +3973,10 @@ mod tests {
         config::update(|c| {
             c.autorev = d.path().join("autorev");
             c.held_dir = d.path().join("held");
+            // ponytail: pinned, because the panel's inline column falls back to this switch. Left to
+            // whatever the process config holds, the rows read differently depending on which test
+            // ran before — the failure #160 was about, in a new place.
+            c.inline = false;
         });
         let (base, token, _state) = served();
         let get_one = || {

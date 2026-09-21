@@ -23,6 +23,8 @@ type Props = {
   onFollowScope: (scope: string) => void
   /** `target` is a row's own name: `acme/api`, or `acme/*` for the whole owner. */
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
+  /** Set one target's inline rule. Its own axis: see PostControls. */
+  onInline: (inline: 'on' | 'off', target: string) => void
   /** Turn one owner's rule on for both kinds of review, or take it off both. */
   onGovern: (owner: string, on: boolean) => void
   /** Take a repo's own posting rules off, so it follows its owner's again. */
@@ -303,12 +305,35 @@ function OpenRow({ name, summary, open, onFlip, sub }: { name: string; summary: 
 function PostControls({
   r,
   onPosting,
+  onInline,
 }: {
   r: PostingRule
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
+  onInline: (inline: 'on' | 'off', target: string) => void
 }) {
   return (
     <>
+      {/* the third axis. Not split by who ran the review: whether a repo wants comments on its lines
+          is a property of the repo, and its conversation-resolution setting, not of who pressed what */}
+      <div className="pair sub2">
+        <span>findings on their lines</span>
+        <div className="seg" role="group">
+          {(['on', 'off'] as const).map((w) => (
+            <button
+              key={w}
+              aria-pressed={r.inline === (w === 'on')}
+              title={
+                w === 'on'
+                  ? 'each finding is also a comment on the line it names; these open resolvable threads'
+                  : 'findings stay in the review body only'
+              }
+              onClick={() => r.inline !== (w === 'on') && onInline(w, r.target)}
+            >
+              {w === 'on' ? 'on the lines' : 'body only'}
+            </button>
+          ))}
+        </div>
+      </div>
       {(['manual', 'auto'] as const).map((ran) => (
         <div className="pair sub2" key={ran}>
           <span>{ran === 'manual' ? 'reviews you run' : 'reviews auto runs'}</span>
@@ -343,7 +368,7 @@ const GROUPS: [string, string][] = [
   ['tools', 'Tools'],
 ]
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onInline, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
   const s = d?.settings || {}
   // the server already drops a spell whose file was deleted
   const equipped = s.spells || []
@@ -440,6 +465,14 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
               ponytail: and every target, not the selected row's. A panel that answered for whichever PR
               happened to be picked could not be read as a setting -- the same control said different
               things depending on the list behind it, and half the rules it mentioned were unreachable. */}
+          {/* ponytail: the switch every target with no rule of its own falls back to, and the only
+              setting here that writes to someone else's PR. Until now it could be turned on with
+              --inline and never off from inside the app (#161). */}
+          <button className="fld" aria-pressed={!!s.inline} onClick={() => setting('inline', !s.inline)}>
+            <span>findings on their lines, by default</span>
+            <span className="sw" />
+          </button>
+
           <div className="sub">when a review finishes</div>
           {rules.length ? (
             <div className="targets">
@@ -475,7 +508,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                         </button>
                         {node.governs ? (
                           <>
-                            <PostControls r={node.owner} onPosting={onPosting} />
+                            <PostControls r={node.owner} onPosting={onPosting} onInline={onInline} />
                             {node.repos.length > node.exceptions.length ? (
                               <div className="rules none">
                                 applies to{' '}
@@ -498,7 +531,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                                 />
                                 {open[`row:${r.target}`] ? (
                                   <>
-                                    <PostControls r={r} onPosting={onPosting} />
+                                    <PostControls r={r} onPosting={onPosting} onInline={onInline} />
                                     <button className="lnk follow" onClick={() => onFollowOwner(r.target)}>
                                       follow {owner}/* instead
                                     </button>
@@ -517,7 +550,7 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                                 onFlip={() => flip(`row:${r.target}`)}
                                 summary={postWords(r)}
                               />
-                              {open[`row:${r.target}`] ? <PostControls r={r} onPosting={onPosting} /> : null}
+                              {open[`row:${r.target}`] ? <PostControls r={r} onPosting={onPosting} onInline={onInline} /> : null}
                             </div>
                           ))
                         ) : (

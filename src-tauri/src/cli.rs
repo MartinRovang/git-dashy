@@ -42,6 +42,7 @@ const COMMANDS: &[&str] = &[
     "init",
     "bind",
     "auto",
+    "inline",
     "db",
     "friction",
     "api",
@@ -163,6 +164,19 @@ pub enum Command {
         owner: Option<String>,
         #[arg(long)]
         off: bool,
+        #[arg(long)]
+        list: bool,
+    },
+    /// Which repos get a review's findings as comments on the lines they name. No arguments reports.
+    Inline {
+        repo: Option<String>,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        off: bool,
+        /// Drop the rule, so the target follows its owner or the --inline switch again.
+        #[arg(long)]
+        clear: bool,
         #[arg(long)]
         list: bool,
     },
@@ -651,6 +665,88 @@ fn reads(repo: &str, label: &str) -> String {
 /// ponytail: a bare `gitdashy auto` REPORTS, the same rule `bind` has. Naming no repo and asking for
 /// no change is a question, and answering it by arming whatever directory you are standing in is a
 /// write nobody asked for.
+/// Which repos get inline review comments. Same shape as `auto`: a repo, an owner, or a report.
+///
+/// ponytail: `--clear` is a third state, not the absence of `--off`. A rule has to be removable or an
+/// owner rule, once set, could never be taken off a repo under it — the same reason `Post` has CLEAR.
+fn inline_cmd(positional: Option<String>, owner: Option<String>, off: bool, clear: bool, list: bool) -> i32 {
+    let show = || {
+        let rules = autorev::inlines();
+        let listed = rules.listed();
+        if listed.is_empty() {
+            println!(
+                "gitdashy: no repo has a rule of its own; every one follows --inline, which is {}",
+                if config::get().inline { "on" } else { "off" }
+            );
+            return;
+        }
+        println!(
+            "gitdashy: every repo not listed follows --inline, which is {}",
+            if config::get().inline { "on" } else { "off" }
+        );
+        for (t, v) in listed {
+            println!(
+                "  {t:<36}  →  findings {} on the lines they name",
+                if v.on() { "are posted" } else { "are not posted" }
+            );
+        }
+    };
+    // ponytail: before every write, the same trap auto_cmd records: --list is a question, and gating
+    // it behind the target turned `inline --owner acme --list` into a write that answered nothing.
+    if list {
+        show();
+        return 0;
+    }
+    if off && clear {
+        return fail("gitdashy: --off sets a rule, --clear removes one; not both");
+    }
+    let rule = if clear {
+        None
+    } else if off {
+        Some(autorev::Inline::Off)
+    } else {
+        Some(autorev::Inline::On)
+    };
+    let positional = positional.filter(|p| !p.is_empty());
+    let owner = owner.filter(|o| !o.is_empty());
+    // ponytail: a positional we cannot read is a TYPO, not an absence — as in auto_cmd.
+    let named = match &positional {
+        Some(p) if p.contains('/') => p.clone(),
+        Some(typo) => {
+            return fail(format!(
+                "gitdashy: {} is not owner/name — inline takes a full slug, or --owner OWNER",
+                pyrepr(typo)
+            ))
+        }
+        None => String::new(),
+    };
+    if !named.is_empty() && owner.is_some() {
+        return fail("gitdashy: name a repo or an owner, not both");
+    }
+    if let Some(owner) = owner {
+        let err = autorev::set_inline_owner(&owner, rule);
+        if !err.is_empty() {
+            return fail(format!("gitdashy: {err}"));
+        }
+        show();
+        return 0;
+    }
+    if named.is_empty() {
+        // ponytail: a flag with nothing to apply it to is a question asked wrong, not a report.
+        if off || clear {
+            return fail("gitdashy: that needs a repo or --owner OWNER");
+        }
+        show();
+        return 0;
+    }
+    let err = autorev::set_inline(&named, rule);
+    if !err.is_empty() {
+        return fail(format!("gitdashy: {err}"));
+    }
+    show();
+    0
+}
+
 fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: bool) -> i32 {
     let on = !off;
     let show = || {
@@ -1621,6 +1717,13 @@ pub fn run(args: Vec<String>) -> i32 {
             off,
             list,
         }) => auto_cmd(repo, owner, off, list),
+        Some(Command::Inline {
+            repo,
+            owner,
+            off,
+            clear,
+            list,
+        }) => inline_cmd(repo, owner, off, clear, list),
         Some(Command::Db {
             target,
             db,
@@ -2012,6 +2115,33 @@ mod tests {
                 repo: None,
                 owner: None,
                 off: false,
+                list: false
+            })
+        ));
+        let Some(Command::Inline {
+            repo,
+            owner,
+            off,
+            clear,
+            list,
+        }) = parse(&[
+            "inline", "acme/api", "--owner", "acme", "--off", "--clear", "--list",
+        ])
+        .command
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (repo.as_deref(), owner.as_deref(), off, clear, list),
+            (Some("acme/api"), Some("acme"), true, true, true)
+        );
+        assert!(matches!(
+            parse(&["inline"]).command,
+            Some(Command::Inline {
+                repo: None,
+                owner: None,
+                off: false,
+                clear: false,
                 list: false
             })
         ));

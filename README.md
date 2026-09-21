@@ -170,6 +170,7 @@ What needs installing is the other half: making a regular coding session read th
 | `gitdashy setup` | asks who you are and what the work is for; `install --full` asks only the first, because a brief belongs to a repo and not to a machine |
 | `gitdashy bind [owner/name]` | which team a repo belongs to, and so which brief its reviews read; `--list`, `--forget` |
 | `gitdashy auto [owner/name]` | which repos auto mode reviews; `--owner OWNER`, `--off`, `--list`. Bare, it reports |
+| `gitdashy inline [owner/name]` | which repos get findings as comments on the lines they name; `--owner OWNER`, `--off`, `--clear`, `--list`. Bare, it reports |
 | `gitdashy drafts` | what a review proposed and no second review has confirmed yet; `--count` is one line for a session hook |
 | `gitdashy teams [--new NAME] [--join URL] [--connect URL] [--leave KEY]` | start, join, connect or leave a team; bare, it lists what each covers |
 | `gitdashy remember "..."` | already on `PATH`; a session files what it worked out |
@@ -224,6 +225,13 @@ longer matches that commit, and the review then posts without them rather than g
 
 If GitHub rejects them, nothing is posted; the row shows the error and the verdict is held for `Y`,
 without the comments, so releasing it is not the same rejected request a second time.
+
+**It is set per repo, not per machine.** `gitdashy inline owner/name` turns it on for one repo,
+`--off` turns it off, `--owner OWNER` covers a whole org and `--clear` drops a rule so the target
+follows again. A repo rule beats an owner rule beats the `--inline` switch, which is what anything
+unnamed falls back to. The rail's **when a review finishes** panel sets the same rules, with the
+switch itself above them — the one setting here that writes to someone else's PR, and now one you
+can turn off without leaving the app.
 
 For one review rather than all of them, `R` asks for instructions before it starts. They go into the
 system prompt, beside the reviewer's lens and apart from the pull request, which is written by someone
@@ -756,7 +764,7 @@ Then `m` cycles them like any other model.
 | `PRS_INSTRUCTIONS` | (none) | text file appended to every review prompt; `--instructions` overrides |
 | `PRS_SETTINGS` | `~/.prs_settings.json` | where runtime picks (model, depth, theme, notify…) are saved; env vars and flags still win. The file records the effective state, so a value set by a flag is kept once any setting changes |
 | `PRS_NOTIFY` | `1` | desktop popup when a PR asks for your review; `0` turns it off, or toggle it in the Esc menu |
-| `PRS_INLINE` | `0` | `1` = same as `--inline`: findings are also posted on the lines they name |
+| `PRS_INLINE` | `0` | `1` = same as `--inline`: findings are also posted on the lines they name, for any repo with no rule of its own (`gitdashy inline`) |
 | `PRS_THEME` | `pencil` | colour theme: pencil, dashy, dracula, gruvbox, nord; Esc menu cycles it |
 
 ## Layout

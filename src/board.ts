@@ -48,9 +48,11 @@ export function ruleSource(target: string, via: '' | 'repo' | 'owner'): 'own' | 
   return via === (target.endsWith('/*') ? 'owner' : 'repo') ? 'own' : 'owner'
 }
 
-/** Whether a posting row carries a rule of its own on either axis, as opposed to following or defaulting. */
+/** Whether a posting row carries a rule of its own on any axis, as opposed to following or defaulting. */
 export const hasOwnRule = (r: PostingRule) =>
-  ruleSource(r.target, r.manualVia) === 'own' || ruleSource(r.target, r.autoVia) === 'own'
+  ruleSource(r.target, r.manualVia) === 'own' ||
+  ruleSource(r.target, r.autoVia) === 'own' ||
+  ruleSource(r.target, r.inlineVia) === 'own'
 
 export type PostingNode = {
   owner: PostingRule
@@ -84,7 +86,17 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
     if (at) return at
     // a repo whose owner row the server did not send still gets a parent, so no repo is ever dropped
     const made: PostingNode = {
-      owner: { target: `${name}/*`, manual: 'post', auto: 'post', manualVia: '', autoVia: '' },
+      // inline false rather than the switch's value: a row the server did not send has no rule, and
+      // this stand-in exists to hold repos, not to answer for a setting it was never told
+      owner: {
+        target: `${name}/*`,
+        manual: 'post',
+        auto: 'post',
+        manualVia: '',
+        autoVia: '',
+        inline: false,
+        inlineVia: '',
+      },
       repos: [],
       governs: false,
       exceptions: [],

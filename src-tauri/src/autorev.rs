@@ -127,6 +127,148 @@ impl Post {
     }
 }
 
+/// Whether a review's findings are posted on the lines they name, for one repo or one owner.
+///
+/// ponytail: a word, like `Post`, and for the same reason: the next settling is "inline, but only
+/// blocking findings", and a bool would need the file rewritten to take one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inline {
+    On,
+    Off,
+}
+
+/// The field an inline rule is written under. A line without it is not an inline rule, which is how
+/// these rows sit in the same store as `scope()`'s and `posting()`'s without either reading them.
+pub const INLINE: &str = "inline";
+
+impl Inline {
+    pub fn parse(s: &str) -> Option<Inline> {
+        match s {
+            "on" => Some(Inline::On),
+            "off" => Some(Inline::Off),
+            _ => None,
+        }
+    }
+    pub fn word(&self) -> &'static str {
+        match self {
+            Inline::On => "on",
+            Inline::Off => "off",
+        }
+    }
+    pub fn on(&self) -> bool {
+        *self == Inline::On
+    }
+}
+
+/// Which repos and owners have an inline rule of their own.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Inlines {
+    pub repos: HashMap<String, Inline>,
+    pub owners: HashMap<String, Inline>,
+}
+
+impl Inlines {
+    /// A repo row beats an owner row beats `fallback`, which is the global switch.
+    ///
+    /// ponytail: a name this cannot fold is OFF, whatever the global says — the same asymmetry
+    /// `Rules::of` holds for. Falling back here would put comments on a PR we cannot name, and the
+    /// direction that costs other people is the one that posts.
+    pub fn of(&self, repo: &str, fallback: bool) -> bool {
+        let r = key(repo);
+        if r.is_empty() {
+            return false;
+        }
+        if let Some(v) = self.repos.get(&r) {
+            return v.on();
+        }
+        let o = r.split('/').next().unwrap_or("");
+        self.owners.get(o).map(|v| v.on()).unwrap_or(fallback)
+    }
+
+    /// (target, rule), owners then repos, each sorted. Owners read back as `acme/*`.
+    pub fn listed(&self) -> Vec<(String, Inline)> {
+        let mut repos: Vec<(String, Inline)> = self.repos.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut owners: Vec<(String, Inline)> =
+            self.owners.iter().map(|(k, v)| (format!("{k}/*"), *v)).collect();
+        repos.sort_by(|a, b| a.0.cmp(&b.0));
+        owners.sort_by(|a, b| a.0.cmp(&b.0));
+        owners.extend(repos);
+        owners
+    }
+}
+
+/// One read of the store for the inline rules.
+///
+/// ponytail: skips any line without an `inline` word, the way `posting()` skips one without a
+/// `post_*` and `scope()` one without an `auto`. Three sets of rules, one append-only file, and none
+/// of them can see another's rows.
+pub fn inlines() -> Inlines {
+    let mut out = Inlines::default();
+    for line in read().lines() {
+        let Ok(Value::Object(e)) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(Value::String(word)) = e.get(INLINE) else {
+            continue;
+        };
+        // ponytail: CLEAR removes the rule instead of setting one, so an owner rule can be taken off
+        // and the repos under it fall back to the global switch again. Same word `Post` uses.
+        let rule = Inline::parse(word);
+        if rule.is_none() && word != CLEAR {
+            continue;
+        }
+        if let Some(Value::String(r)) = e.get("repo") {
+            let r = key(r);
+            if !r.is_empty() {
+                match rule {
+                    Some(v) => out.repos.insert(r, v),
+                    None => out.repos.remove(&r),
+                };
+            }
+        } else if let Some(Value::String(o)) = e.get("owner") {
+            let o = owner_key(o);
+            if !o.is_empty() {
+                match rule {
+                    Some(v) => out.owners.insert(o, v),
+                    None => out.owners.remove(&o),
+                };
+            }
+        }
+    }
+    out
+}
+
+/// Give one repo its own inline rule, or `None` to drop it and follow the owner or the switch again.
+pub fn set_inline(repo: &str, rule: Option<Inline>) -> String {
+    let r = key(repo);
+    if r.is_empty() {
+        return format!("{repo} is not an owner/name");
+    }
+    let now = inlines();
+    if now.repos.get(&r).copied() == rule {
+        return String::new(); // already says this; writing it again grows the file for nothing
+    }
+    append_inline(&[("repo", &r)], rule)
+}
+
+/// The same for a whole owner.
+pub fn set_inline_owner(owner: &str, rule: Option<Inline>) -> String {
+    let o = owner_key(owner);
+    if o.is_empty() {
+        return format!("{owner} is not an owner");
+    }
+    if inlines().owners.get(&o).copied() == rule {
+        return String::new();
+    }
+    append_inline(&[("owner", &o)], rule)
+}
+
+fn append_inline(fields: &[(&str, &str)], rule: Option<Inline>) -> String {
+    let mut all: Vec<(&str, &str)> = fields.to_vec();
+    all.push((INLINE, rule.map(|r| r.word()).unwrap_or(CLEAR)));
+    bind::append_to(store(), &all, None)
+}
+
 /// Which review a rule is about. Two independent settings: pressing `r` yourself is a different
 /// decision from letting auto run unattended, and the operator asked for both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -502,6 +644,97 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         crate::config::update(|c| c.autorev = d.path().join("autorev"));
         (g, d)
+    }
+
+    /// #161: a repo row beats an owner row beats the global switch, so `--inline` on for your own
+    /// repos and off for one you are a guest in is one rule rather than a machine-wide decision.
+    #[test]
+    fn an_inline_rule_goes_repo_then_owner_then_the_switch() {
+        let (_g, _d) = fresh();
+        // nothing written: every repo follows the switch, whichever way it is set
+        assert!(!inlines().of("acme/api", false));
+        assert!(inlines().of("acme/api", true));
+
+        assert_eq!(set_inline_owner("acme", Some(Inline::On)), "");
+        assert!(inlines().of("acme/api", false), "the owner rule beats the switch");
+        assert!(
+            !inlines().of("other/thing", false),
+            "and covers only what it names"
+        );
+
+        assert_eq!(set_inline("acme/legacy", Some(Inline::Off)), "");
+        assert!(
+            !inlines().of("acme/legacy", false),
+            "the repo rule beats its owner"
+        );
+        assert!(inlines().of("acme/api", false), "and carves out only itself");
+
+        // dropping the repo rule puts it back under the owner
+        assert_eq!(set_inline("acme/legacy", None), "");
+        assert!(inlines().of("acme/legacy", false));
+        // and dropping the owner's puts everything back on the switch
+        assert_eq!(set_inline_owner("acme", None), "");
+        assert!(!inlines().of("acme/api", false));
+        assert!(inlines().of("acme/api", true));
+    }
+
+    /// ponytail: the direction that costs other people is the one that posts, so a name that cannot
+    /// be folded is off whatever the switch says — the asymmetry `Rules::of` holds for.
+    #[test]
+    fn a_name_that_cannot_be_folded_is_never_inlined() {
+        let (_g, _d) = fresh();
+        assert!(!inlines().of("", true));
+        assert!(!inlines().of("not-an-owner-name", true));
+        assert_eq!(set_inline("", Some(Inline::On)), " is not an owner/name");
+        assert_eq!(set_inline_owner("", Some(Inline::On)), " is not an owner");
+    }
+
+    /// The three rule sets share one append-only file and none may read another's rows.
+    #[test]
+    fn inline_rows_do_not_disturb_the_arming_or_posting_rows() {
+        let (_g, _d) = fresh();
+        assert_eq!(set("acme/api", true), "");
+        assert_eq!(set_post("acme/api", Ran::Manual, Post::Hold), "");
+        assert_eq!(set_inline("acme/api", Some(Inline::On)), "");
+
+        assert!(scope().armed("acme/api"), "the inline row did not disarm it");
+        assert_eq!(
+            posting().of("acme/api", Ran::Manual),
+            Post::Hold,
+            "nor change what happens when a review finishes"
+        );
+        assert!(inlines().of("acme/api", false));
+        // and the rows that are not inline rules are invisible here
+        assert!(inlines().repos.len() == 1 && inlines().owners.is_empty());
+    }
+
+    /// Writing the rule it already has must not grow the file: it is append-only.
+    #[test]
+    fn setting_an_inline_rule_twice_writes_once() {
+        let (_g, d) = fresh();
+        assert_eq!(set_inline("acme/api", Some(Inline::On)), "");
+        let once = std::fs::read_to_string(d.path().join("autorev")).unwrap();
+        assert_eq!(set_inline("acme/api", Some(Inline::On)), "");
+        assert_eq!(std::fs::read_to_string(d.path().join("autorev")).unwrap(), once);
+        // and clearing a rule that is not there is likewise nothing to write
+        assert_eq!(set_inline("acme/other", None), "");
+        assert_eq!(std::fs::read_to_string(d.path().join("autorev")).unwrap(), once);
+    }
+
+    #[test]
+    fn listed_reads_owners_back_with_a_star_and_sorts() {
+        let (_g, _d) = fresh();
+        assert_eq!(set_inline("z/last", Some(Inline::Off)), "");
+        assert_eq!(set_inline("a/first", Some(Inline::On)), "");
+        assert_eq!(set_inline_owner("acme", Some(Inline::On)), "");
+        assert_eq!(
+            inlines().listed(),
+            vec![
+                ("acme/*".to_string(), Inline::On),
+                ("a/first".to_string(), Inline::On),
+                ("z/last".to_string(), Inline::Off),
+            ]
+        );
     }
 
     #[test]

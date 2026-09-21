@@ -692,8 +692,21 @@ describe('posting rows', () => {
 })
 
 describe('the posting tree', () => {
-  const rule = (target: string, m: ['post' | 'hold', '' | 'repo' | 'owner'], a: ['post' | 'hold', '' | 'repo' | 'owner']) =>
-    ({ target, manual: m[0], manualVia: m[1], auto: a[0], autoVia: a[1] }) as PostingRule
+  const rule = (
+    target: string,
+    m: ['post' | 'hold', '' | 'repo' | 'owner'],
+    a: ['post' | 'hold', '' | 'repo' | 'owner'],
+    inline: [boolean, '' | 'repo' | 'owner'] = [false, ''],
+  ) =>
+    ({
+      target,
+      manual: m[0],
+      manualVia: m[1],
+      auto: a[0],
+      autoVia: a[1],
+      inline: inline[0],
+      inlineVia: inline[1],
+    }) as PostingRule
   // the screenshot: acme/* holds what you run, three repos under it, one of them carved out on auto
   const board = () => [
     rule('acme/*', ['hold', 'owner'], ['post', '']),
@@ -701,6 +714,21 @@ describe('the posting tree', () => {
     rule('acme/infra', ['hold', 'owner'], ['post', '']),
     rule('acme/web', ['hold', 'owner'], ['post', 'repo']),
   ]
+
+  // #161: inline is a third axis, so a repo whose ONLY rule is an inline one is still an exception
+  // to its owner — without it the panel folded that repo back in with the rest and its rule was
+  // invisible until you went looking for it
+  it('counts an inline rule of its own as having a rule of its own', () => {
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, 'repo']))).toBe(true)
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, 'owner']))).toBe(false)
+    // and '' is the switch deciding, which is nobody's rule
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, '']))).toBe(false)
+  })
+
+  it('reads an owner row inline rule as its own', () => {
+    expect(hasOwnRule(rule('acme/*', ['post', ''], ['post', ''], [true, 'owner']))).toBe(true)
+    expect(hasOwnRule(rule('acme/*', ['post', ''], ['post', ''], [true, '']))).toBe(false)
+  })
 
   it('puts each repo under the owner that owns it', () => {
     const [acme] = postingTree(board())
