@@ -1054,3 +1054,13 @@
   white-space: normal; text-overflow: clip; overflow-wrap: anywhere;
 }
 .side:not(.shut) .fld { height: auto; min-height: 30px; padding-block: 5px; }
+.doced { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; min-height: 55vh; }
+.doced textarea { width: 100%; height: 100%; min-height: 55vh; box-sizing: border-box; }
+.doced aside { display: flex; flex-direction: column; gap: 12px; max-height: 62vh; overflow: auto; font-size: 12px; }
+.doced .guide { margin: 0; white-space: pre-wrap; font-family: inherit; line-height: 1.5; color: var(--ink2);
+                background: var(--bg4); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px; }
+.doced .help { line-height: 1.5; }
+.doced .help ul { margin: 4px 0 10px; padding-left: 18px; }
+.doced .help .dim { color: var(--dim3); }
+.doced .help .warn { color: var(--red); }
+@media (max-width: 760px) { .doced { grid-template-columns: 1fr; } }

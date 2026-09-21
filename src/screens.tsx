@@ -2,7 +2,7 @@
 // and mutates its modal in place, then repaint()s — the same shape as the vanilla openModal/paint pair.
 import { api, copyText, errorText, post } from './api'
 import type { Foot } from './modals'
-import { busy, close, confirm, editor, isOpen, notice, open, prompt, repaint, viewer } from './modals'
+import { busy, close, confirm, isOpen, notice, open, prompt, repaint, viewer } from './modals'
 import type { Ask, Row, StateData } from './types'
 import type { LEvent } from './learning'
 import { LearningChart } from './components/LearningChart'
@@ -54,30 +54,141 @@ function proposed(ctx: Ctx, out: Json | null) {
   )
 }
 
-/** Propose a change to a team's founding document, the brief or agents.md, as a pull request on its repo.
+/** A founding document's name as people say it: the brief, agents.md, or the about of one repo. */
+const docName = (doc: string, repo = '') => (doc === 'agents' ? 'agents.md' : doc === 'about' ? `about ${repo}` : 'the brief')
+
+/** Propose a change to a team's founding document (the brief, agents.md, or one repo's about) as a pull request.
  *
  *  ponytail: the only text anyone types into memory, and it never lands by itself. Every teammate's reviews
- *  and sessions read these, so the change waits for a person with rights on the team's repo. */
-export async function proposeDoc(ctx: Ctx, team: string, doc: string) {
-  const r = await api(`/api/memory?team=${encodeURIComponent(team)}&doc=${encodeURIComponent(doc)}`)
+ *  and sessions read these, so the change waits for a person with rights on the team's repo.
+ *  ponytail: what the document is FOR sits beside it, from the server, not in the file. The file is the team's
+ *  to rewrite, and the one brief that was rewritten lost its template's guidance with its sections.
+ *  The model can help: it asks what only a person can answer and offers a revision, which goes into the text
+ *  only when you take it. */
+export async function proposeDoc(ctx: Ctx, team: string, doc: string, repo = '') {
+  const r = await api(`/api/memory?team=${encodeURIComponent(team)}&doc=${encodeURIComponent(doc)}&repo=${encodeURIComponent(repo)}`)
   if (!r.ok) {
     ctx.flash(`✗ ${await errorText(r)}`)
     return
   }
   const got = await r.json()
-  const name = doc === 'agents' ? 'agents.md' : 'the brief'
-  editor(
-    `propose a change · ${team} / ${name}`,
-    got.text,
-    async (text) => {
-      if (!(await confirm(`This opens a pull request on team ${team}'s repo. Nothing changes until a person with rights on that repo approves it.`, { yes: 'open pull request', no: 'keep editing' }))) return false
-      const out = await ctx.call('/api/memory', { op: 'propose', team, doc, text })
-      // refused (no remote, a failed fetch): the editor stays open, so the text is not lost
+  const name = docName(doc, repo)
+  const model = ctx.getData()?.model || 'the model'
+  type Help = { questions: string[]; notes: string[]; text: string }
+  let help: Help | null = null
+  let asking = false
+  let failed = ''
+  let elapsed = 0
+  let before: string | null = null
+  const area = () => document.querySelector('#me') as HTMLTextAreaElement | null
+  const use = () => {
+    const t = area()
+    if (!t || !help?.text) return
+    before = t.value
+    t.value = help.text
+    refresh()
+  }
+  const undo = () => {
+    const t = area()
+    if (!t || before === null) return
+    t.value = before
+    before = null
+    refresh()
+  }
+  const ask = async () => {
+    if (asking) return
+    const out = await ctx.call('/api/doc-help', { team, doc, repo, text: area()?.value || '' })
+    if (!out) return
+    asking = true
+    failed = ''
+    help = null
+    refresh()
+    const poll = async () => {
+      if (!isOpen(m)) return
+      const j = await (await api('/api/doc-help')).json()
+      if (j.running) {
+        elapsed = j.elapsed || 0
+        refresh()
+        setTimeout(poll, 700)
+        return
+      }
+      asking = false
+      if (j.error) failed = String(j.error)
+      else help = j.result as Help
+      refresh()
+    }
+    void poll()
+  }
+  const propose = async (text: string) => {
+    if (!(await confirm(`This opens a pull request on team ${team}'s repo. Nothing changes until a person with rights on that repo approves it.`, { yes: 'open pull request', no: 'keep editing' }))) return false
+    const body = { op: 'propose', team, doc, repo, text }
+    let out = await ctx.call('/api/memory', body)
+    if (!out) return false // refused (no remote, a failed fetch): the editor stays open, so the text is not lost
+    if (out.warn) {
+      if (!(await confirm(`${out.warn}\n\nOpen the pull request anyway?`, { yes: 'open it anyway', no: 'keep editing' }))) return false
+      out = await ctx.call('/api/memory', { ...body, anyway: true })
       if (!out) return false
-      proposed(ctx, out)
-    },
-    got.path,
-  )
+    }
+    proposed(ctx, out)
+    return true
+  }
+  const list = (title: string, xs: string[]) =>
+    xs.length ? (
+      <>
+        <div className="lab">{title}</div>
+        <ul>
+          {xs.map((x, k) => (
+            <li key={k}>{x}</li>
+          ))}
+        </ul>
+      </>
+    ) : null
+  const m = open({
+    title: `propose a change · ${team} / ${name}`,
+    sub: got.path,
+    wide: true,
+    dismiss: false,
+    focus: '#me',
+    body: () => (
+      <div className="doced">
+        <textarea id="me" defaultValue={got.text || got.draft || ''} />
+        <aside>
+          <pre className="guide">{got.guide}</pre>
+          <div className="help">
+            {asking ? (
+              <div>
+                <span className="spinner" /> {model} is reading your draft… <span className="mono dim">{elapsed}s</span>
+              </div>
+            ) : failed ? (
+              <div className="warn">✗ {failed}</div>
+            ) : help ? (
+              <>
+                {list(`${model} asks`, help.questions)}
+                {list('notes', help.notes)}
+                {help.text ? <div className="dim">Its revision is ready: take it into the text (F3), then edit it, or ignore it.</div> : null}
+              </>
+            ) : (
+              <div className="dim">Stuck, or want a second look? {model} can ask what this needs and propose a revision (F2). Nothing goes into the text until you take it.</div>
+            )}
+          </div>
+        </aside>
+      </div>
+    ),
+    foot: [],
+  })
+  // the footer follows the help's state: what can be done now, and nothing that cannot
+  const refresh = () => {
+    m.foot = [
+      ['^S', 'propose (pull request)', async () => { const t = area(); if (t && (await propose(t.value))) close(m) }, 'go'],
+      ...(asking ? [] : ([['F2', help ? 'ask again' : 'help me write this', () => void ask()]] as Foot[])),
+      ...(help?.text ? ([['F3', 'take its revision', use]] as Foot[]) : []),
+      ...(before !== null ? ([['F4', 'undo that', undo]] as Foot[]) : []),
+      ['Esc', 'discard', () => close(m)],
+    ] as Foot[]
+    repaint()
+  }
+  m.keys = { Escape: () => close(m), 'ctrl+s': () => m.foot![0][2](), F2: () => void ask(), F3: use, F4: undo }
+  refresh()
 }
 
 export type KnowledgeTab = 'stats' | 'inspect' | 'drafts'
@@ -90,7 +201,7 @@ const TABS: [KnowledgeTab, string][] = [
 /** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
 export type KFile = { team: string; repo?: string; doc?: string }
 const fileKey = (f: KFile) => JSON.stringify([f.team, f.repo || '', f.doc || ''])
-const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : 'brief') : f.repo || 'general')
+const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : f.doc === 'about' ? `about ${f.repo}` : 'brief') : f.repo || 'general')
 
 /** Everything the memory holds, in one panel: how fast it learns, what it knows file by file, what is waiting
  *  for a second sighting, what the team has of yours, and the dream as an action over it.
@@ -121,7 +232,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
         ? '/api/learning'
         : t === 'drafts'
           ? '/api/drafts'
-          : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}` : `repo=${encodeURIComponent(file.repo || '')}`}`
+          : `/api/memory?team=${encodeURIComponent(file.team)}&${file.doc ? `doc=${encodeURIComponent(file.doc)}&` : ''}repo=${encodeURIComponent(file.repo || '')}`
     const r = await api(url)
     if (!r.ok) {
       failed[t] = await errorText(r)
@@ -230,7 +341,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
       </div>
       <p className="knote">
         {file.doc
-          ? `A founding document: what team ${file.team} wrote, read by every teammate's reviews and sessions. A change to it is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
+          ? `${file.doc === 'about' ? `What ${file.repo} is, as team ${file.team} wrote it: reviews of that repo read it right after the team's brief.` : file.doc === 'brief' ? `Team ${file.team}'s brief: why it builds what it builds, read by every review of every repo bound to it.` : `How agent sessions work in team ${file.team}'s repos; reviews never read it.`} A change is proposed as a pull request on the team's repo and approved by a person with rights on it; gitdashy never reviews those pull requests.`
           : file.team
             ? `Team ${file.team}'s facts, learned by its reviews. Removing one opens a pull request on the team's repo; it stays until a person with rights on that repo approves it.`
             : 'Your facts, learned by your reviews. Nothing is typed in here: a fact arrives when two reviews find it. Removing one takes it out of your memory at once.'}
@@ -321,7 +432,7 @@ export async function knowledgeScreen(ctx: Ctx, first: KnowledgeTab, pick: KFile
     const it = list[i] as Json | undefined
     m.sub = tab === 'stats' ? (events.length ? `${events.length} events` : '') : tab === 'inspect' && file.doc ? '' : `${list.length ? i + 1 : 0}/${list.length}`
     const foot: Foot[] = [...pager(list.length, go)]
-    if (tab === 'inspect' && file.doc) foot.push(['e', 'propose a change (pull request)', () => void proposeDoc(ctx, file.team, file.doc!), 'go'])
+    if (tab === 'inspect' && file.doc) foot.push(['e', doc.trim() ? 'propose a change (pull request)' : 'write it (pull request)', () => void proposeDoc(ctx, file.team, file.doc!, file.repo || ''), 'go'])
     if (tab === 'inspect' && !file.doc && facts[i] !== undefined) foot.push(['x', file.team ? 'propose removing it (pull request)' : 'remove it', () => void remove(), 'warn'])
     // a draft in a team's pool: dropping it is yours to do, but accepting it into the team's knowledge by hand is
     // a pull request; only a second independent sighting moves it there by itself

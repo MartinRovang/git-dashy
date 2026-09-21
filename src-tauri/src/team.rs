@@ -1561,6 +1561,73 @@ pub fn is_own_memory(repo: &str) -> bool {
     is_repo(&mem) && same_remote(repo, &url(&mem))
 }
 
+/// A new repo description, as the editor offers it. Never written to disk by opening: only a proposal does.
+pub const ABOUT_TEMPLATE: &str = "# What this repo is
+
+## Its role
+
+What this repo does in the project, in two or three sentences, and who or what uses it.
+
+## What it owns, and what it must not do
+
+The boundaries a change here must respect: what this repo is the source of truth for, and what belongs
+to another repo instead.
+
+## Seams
+
+What it talks to, and the contracts a change could break for someone else.
+";
+
+/// What each founding document is for, shown beside it when it is edited. The file itself can say anything;
+/// this cannot be overwritten by a proposal, which is why the guidance lives here and not in the template.
+pub const BRIEF_GUIDE: &str = "The brief: why the team builds what it builds
+
+One per team. Every review of every repo bound to this team reads it, before the code, so a reviewer knows what the code is for before it judges whether a change serves it.
+
+Belongs here
+- The project: what it is, for whom, in a paragraph.
+- Why it matters: the outcome that makes the work worth doing.
+- Constraints that change decisions: regulatory, contractual, performance, compatibility, the rules a change can break. The section a reviewer uses most.
+- How the codebase is shaped: the few structural facts a newcomer would learn the hard way.
+
+Does not belong here
+- A feature list or a tour of the UI. It goes stale with every release, and it tells a reviewer nothing about whether a change is wrong.
+- What one repo is. That is the repo's about.
+- How to work in the team's repos. That is agents.md.
+- Anything a review could learn from the code. Reviews learn facts on their own.";
+
+pub const ABOUT_GUIDE: &str = "An about: what this one repo is
+
+One per repo, written by the team that owns the repo. Reviews of this repo read it right after the team's brief.
+
+Belongs here
+- Its role in the project, and who or what uses it.
+- What it owns and what it must not do: 'queries only, the schema lives in medquery_orc'.
+- Its seams: what it talks to, and which contracts a change here can break for another repo.
+
+Does not belong here
+- The team's purpose and constraints. Those are in the brief, and every repo shares them.
+- Facts a review could find in the code. Reviews learn those on their own.
+- Setup or how-to. That is the repo's README.";
+
+pub const AGENTS_GUIDE: &str = "agents.md: how agent sessions work in the team's repos
+
+Read by coding sessions in every repo bound to the team, never by reviews: it is an instruction to the agent that works here, not a statement about the code being judged.
+
+Belongs here: how to work here. What to file with gitdashy remember, what to check before a change, conventions a session must follow.
+
+Does not belong here: what the project is (the brief) or what a repo is (its about).";
+
+/// The guidance for a founding document by its inspect name, "" for one there is none for.
+pub fn guide(doc: &str) -> &'static str {
+    match doc {
+        "brief" => BRIEF_GUIDE,
+        "about" => ABOUT_GUIDE,
+        "agents" => AGENTS_GUIDE,
+        _ => "",
+    }
+}
+
 pub const AGENTS_TEMPLATE: &str = "# For agent sessions working in this team's repos
 
 This file is the team's, not one machine's. It reaches every session in every repo bound to this

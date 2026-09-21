@@ -662,6 +662,8 @@ pub struct Inputs<'a> {
     pub depth: &'a str,
     /// (text, whose) from memory::brief.
     pub brief: (String, String),
+    /// (text, whose) from memory::about: what this one repo is, as its team wrote it.
+    pub about: (String, String),
     pub memory: String,
     pub prev: Option<&'a LogEntry>,
     /// The instructions file's content, when one is configured.
@@ -688,6 +690,13 @@ pub fn prompt(i: &Inputs) -> Result<String> {
         String::new()
     } else {
         format!("\n\nWhat this is being built for, and for whom ({whose}):\n{brief}")
+    };
+    // what this one repo is sits under what the project is: the brief is the why, this is the where
+    let (about, owner) = &i.about;
+    let project = if about.is_empty() {
+        project
+    } else {
+        format!("{project}\n\nWhat {} is ({owner}):\n{about}", i.repo)
     };
     let mem = if i.memory.is_empty() {
         String::new()
@@ -972,6 +981,7 @@ fn verdict(
     // running me says, about their work in general", and it is the same value the UI shows.
     let mem = memory::read(repo);
     let brief = memory::brief(Some(repo), None);
+    let about = memory::about(repo);
     // read per review, so the file can be edited while gitdashy runs
     let instructions = if c.instructions.is_empty() {
         None
@@ -993,6 +1003,7 @@ fn verdict(
         number: n,
         depth: &c.depth,
         brief,
+        about,
         memory: mem,
         prev,
         instructions,
@@ -2345,6 +2356,7 @@ mod tests {
             number: 7,
             depth: "adaptive",
             brief: ("We build X for surgeons.".into(), "team org-t".into()),
+            about: (String::new(), String::new()),
             memory: "## General\n### mine\n- always run make lint".into(),
             prev,
             instructions: Some("Always check the changelog.".into()),
@@ -2367,6 +2379,18 @@ mod tests {
             p.contains("What this is being built for, and for whom (team org-t):\nWe build X for surgeons.")
         );
         assert!(p.contains("Memory from earlier reviews, trust it:\n## General"));
+        assert!(!p.contains("What a/b is"), "no about, no section");
+        let mut with = inputs(None);
+        with.about = ("Queries only.".into(), "team org-t".into());
+        let p2 = prompt(&with).unwrap();
+        let (brief_at, about_at) = (
+            p2.find("We build X for surgeons.").unwrap(),
+            p2.find("What a/b is (team org-t):\nQueries only.").unwrap(),
+        );
+        assert!(
+            brief_at < about_at && about_at < p2.find("Memory from earlier reviews").unwrap(),
+            "the why, then the where"
+        );
         assert!(p.contains("Additional instructions from the reviewer:\nAlways check the changelog."));
         assert!(p.contains("gitdashy api /repos/a/b/pulls/7 --diff"));
         assert!(p.contains("?ref=<head sha>") && p.contains("never the head BRANCH name"));

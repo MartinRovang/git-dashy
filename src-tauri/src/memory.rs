@@ -43,6 +43,8 @@ pub const SELF: &str = "drafts/self";
 pub const PROJECT: &str = "project.md";
 /// The team's instruction to its members' agent SESSIONS. People write it; reviews never see it.
 pub const AGENTS: &str = "agents.md";
+/// A team's per-repo descriptions: <team>/memory/about/<owner>__<repo>.md. People write them, by pull request.
+pub const ABOUT: &str = "about";
 /// Under your own memory: "<key> <sha>" per team whose agents.md you have read.
 pub const AGENTS_OK: &str = ".agents-ok";
 /// Independent reviews that must land on a fact before it becomes one of yours.
@@ -306,6 +308,72 @@ pub fn brief(repo: Option<&str>, slug: Option<&str>) -> (String, String) {
             format!("yours · {why}")
         },
     )
+}
+
+/// What ONE repo is, as the team that owns it wrote it: (text, whose). ("", "") when there is none.
+///
+/// ponytail: declared, not learned, like the brief, and one level down from it. The brief says what the
+/// team builds and what constrains it; this says what this repo is within that: its role, what it owns
+/// and what it must not do ("queries only, never DDL"). Before it existed a product description had
+/// nowhere to go but the brief, and one went there, replacing the team's constraints with a feature list.
+/// ponytail: the TEAM's only. A repo bound to no team has your brief and your facts; a description of your
+/// own repo is a README's job, not a second private store.
+pub fn about(repo: &str) -> (String, String) {
+    let slug = bind::of(repo);
+    match about_path(&slug, repo) {
+        Some(p) => {
+            let t = brief_text(Some(&p));
+            let whose = if t.is_empty() {
+                String::new()
+            } else {
+                format!("team {slug}")
+            };
+            (t, whose)
+        }
+        None => (String::new(), String::new()),
+    }
+}
+
+/// Where the team `slug` keeps its description of `repo`. None for a team we do not have, or no repo.
+pub fn about_path(slug: &str, repo: &str) -> Option<PathBuf> {
+    if repo.is_empty() {
+        return None;
+    }
+    bind::team_dir(slug).map(|d| d.join(ABOUT).join(slug_of(Some(repo))))
+}
+
+/// A soft word before a founding document is proposed: what it looks like it is instead, or None.
+///
+/// ponytail: warns, never refuses. These are prose a team writes, and a check that blocks would be a
+/// check people learn to route around. What it catches is the one mistake that already happened: a
+/// product description proposed as the brief, which took the team's constraints out of every review.
+pub fn doc_warning(doc: &str, text: &str) -> Option<String> {
+    const BRIEF: [&str; 4] = [
+        "The project",
+        "Why it matters",
+        "Constraints that change decisions",
+        "How this codebase is shaped",
+    ];
+    let has = |h: &str| {
+        text.lines()
+            .any(|l| l.trim_start_matches('#').trim().eq_ignore_ascii_case(h) && l.starts_with('#'))
+    };
+    let bullets = text.lines().filter(|l| l.trim_start().starts_with("- ")).count();
+    match doc {
+        "brief" if !BRIEF.iter().any(|h| has(h)) => Some(format!(
+            "This has none of a brief's sections ({}). {}It reads like a description of the product; what one repo is belongs in that repo's about, and a brief says what the team builds, why, and what constrains it.",
+            BRIEF.join(", "),
+            if bullets > 5 { "It is mostly a list. " } else { "" }
+        )),
+        "brief" if !has("Constraints that change decisions") => Some(
+            "This brief has no \"Constraints that change decisions\" section. That is the part a reviewer uses most: without it, reviews know what the project is but not what would make a change wrong."
+                .into(),
+        ),
+        "about" if has("Constraints that change decisions") || has("Why it matters") => Some(
+            "This reads like the team's brief (it has the brief's sections). An about says what this one repo is: its role, what it owns, what it must not do.".into(),
+        ),
+        _ => None,
+    }
 }
 
 /// Where a brief is written: yours when `slug` is "", else that team's. None for a team we do not have.
@@ -626,6 +694,10 @@ pub fn session_context(repo: &str, general_mirrored: bool) -> String {
     let (text, source) = brief(opt(repo), None);
     if !text.is_empty() {
         parts.push(format!("### brief — {source}\n{text}"));
+    }
+    let (text, source) = about(repo);
+    if !text.is_empty() {
+        parts.push(format!("### about {repo} — {source}\n{text}"));
     }
     // ponytail: asked ONCE, above the loop. sources() resolved this binding on the line before and its
     // own ponytail says why that matters: every bind::of is a read of the store, and this runs on
@@ -3425,6 +3497,61 @@ mod tests {
         assert!(
             !shared.join("a__b.md").exists(),
             "dropping a draft teaches the team nothing"
+        );
+    }
+
+    #[test]
+    fn an_about_is_the_teams_word_on_one_repo_and_reaches_its_sessions() {
+        let (_g, tmp) = setup();
+        let (shared, _me) = a_team_repo(tmp.path());
+        assert_eq!(about("a/b"), (String::new(), String::new()), "none written");
+        std::fs::create_dir_all(shared.join(ABOUT)).unwrap();
+        std::fs::write(
+            shared.join(ABOUT).join("a__b.md"),
+            "Queries only; the schema lives in c/d.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            about("a/b"),
+            (
+                "Queries only; the schema lives in c/d.".to_string(),
+                "team org-t".to_string()
+            )
+        );
+        assert_eq!(about("c/d").0, "", "another repo's about is not this one's");
+        assert_eq!(about_path("org-t", ""), None);
+        assert!(session_context("a/b", true).contains("### about a/b — team org-t\nQueries only"));
+    }
+
+    #[test]
+    fn a_founding_document_that_looks_like_another_gets_a_word_first() {
+        let product = "git-dashy is a dashboard.\n\nWhat it does\n- a\n- b\n- c\n- d\n- e\n- f\n";
+        let w = doc_warning("brief", product).unwrap();
+        assert!(w.contains("none of a brief's sections") && w.contains("It is mostly a list."));
+        let no_constraints = "## The project\nX.\n\n## Why it matters\nY.\n";
+        assert!(doc_warning("brief", no_constraints)
+            .unwrap()
+            .contains("Constraints that change decisions"));
+        assert_eq!(
+            doc_warning("brief", team::PROJECT_TEMPLATE),
+            None,
+            "the template itself is a brief"
+        );
+        assert_eq!(
+            doc_warning(
+                "brief",
+                "# the project\n## constraints that change decisions\n- x\n"
+            ),
+            None
+        );
+        assert!(doc_warning("about", team::PROJECT_TEMPLATE)
+            .unwrap()
+            .contains("reads like the team's brief"));
+        assert_eq!(doc_warning("about", team::ABOUT_TEMPLATE), None);
+        assert_eq!(
+            doc_warning("agents", product),
+            None,
+            "agents.md has no required shape"
         );
     }
 
