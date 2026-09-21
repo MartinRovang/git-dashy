@@ -11,6 +11,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
        gitdashy init --into DIR --loader FILE [--repo owner/name] | --into DIR --forget
        gitdashy bind [owner/name] [--team SLUG] [--forget] | --owner OWNER [--forget] | --list
        gitdashy auto [owner/name] [--off] | --owner OWNER [--off] | --list
+       gitdashy inline [owner/name] [--off|--clear] | --owner OWNER [--off|--clear] | --list
        gitdashy db [TARGET DB_REPO | TARGET --off | TARGET --forget]
        gitdashy drafts [--repo owner/name] [--count]
        gitdashy friction --claude-hook [--repo owner/name] | --interrupts N --denials N
@@ -29,7 +30,8 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
   --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, perf, humanizer (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
-  --inline       also post each finding as a comment on the line it is about (or $PRS_INLINE=1)
+  --inline       also post each finding as a comment on the line it is about (or $PRS_INLINE=1);
+                 `gitdashy inline` sets it per repo or per owner, which beats this
   --demo         canned PRs and a fake reviewer — nothing touches github, claude or your real log
   --debug        append every API call, review, tick and swallowed exception to $PRS_DEBUG_LOG (or $PRS_DEBUG=1)
 
@@ -84,6 +86,12 @@ auto says which repos `a` auto-reviews. The board spans whatever the token can s
   whole org in one line, and a repo of its own still overrides it, so the one repo under that owner you
   do not want reviewed can be left out with `auto owner/repo --off`. A lone --off is not a decision to
   arm the rest: while nothing is armed, auto still covers everything. A bare `gitdashy auto` reports.
+
+inline says which repos get a review's findings as comments on the lines they name. Inline comments
+  open resolvable threads, so on a repo that requires conversation resolution a nit holds the merge
+  button — welcome on your own repo, rude on one you are a guest in. A repo rule beats an owner rule
+  beats the --inline switch, --clear drops a rule so the target follows again, and a bare
+  `gitdashy inline` reports what is set.
 
 db says which repo holds a repo's database schema and migrations. A review of a PR there may also read
   that repo, and the pane shows the tables the change reads, writes or alters and what could break.

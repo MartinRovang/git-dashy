@@ -103,6 +103,10 @@ export type PostingRule = {
    *  inherits it, '' when nothing is set and the word is the default. */
   manualVia: '' | 'repo' | 'owner'
   autoVia: '' | 'repo' | 'owner'
+  /** Whether this target's findings are posted on the lines they name. */
+  inline: boolean
+  /** Same three states as the others, except that '' means the --inline switch decided, not a constant. */
+  inlineVia: '' | 'repo' | 'owner'
   /** Owner rows only: switched to each repo on its own. Its rule, if any, is then only the fallback for a
    *  repo that has none, not a setting that decides for all of them. */
   perRepo?: boolean
@@ -117,6 +121,8 @@ export type Layout = { order?: string[]; off?: string[]; shut?: string[]; out?: 
 export type Settings = {
   window?: number | null
   drafts?: boolean
+  /** Post each finding on the line it names, for every repo with no rule of its own. */
+  inline?: boolean
   hinted?: boolean
   /** Show the key hint on every button and settings row. */
   keyhints?: boolean

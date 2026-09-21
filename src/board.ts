@@ -48,9 +48,14 @@ export function ruleSource(target: string, via: '' | 'repo' | 'owner'): 'own' | 
   return via === (target.endsWith('/*') ? 'owner' : 'repo') ? 'own' : 'owner'
 }
 
-/** Whether a posting row carries a rule of its own on either axis, as opposed to following or defaulting. */
-export const hasOwnRule = (r: PostingRule) =>
+/** Whether a row sets a POST/HOLD rule of its own. The panel's mode and its fallback line are both
+ *  posting questions: an owner whose only rule is inline has no post/hold word to report. */
+export const hasOwnPostingRule = (r: PostingRule) =>
   ruleSource(r.target, r.manualVia) === 'own' || ruleSource(r.target, r.autoVia) === 'own'
+
+/** Whether a posting row carries a rule of its own on any axis, as opposed to following or defaulting. */
+export const hasOwnRule = (r: PostingRule) =>
+  hasOwnPostingRule(r) || ruleSource(r.target, r.inlineVia) === 'own'
 
 export type PostingNode = {
   owner: PostingRule
@@ -84,7 +89,17 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
     if (at) return at
     // a repo whose owner row the server did not send still gets a parent, so no repo is ever dropped
     const made: PostingNode = {
-      owner: { target: `${name}/*`, manual: 'post', auto: 'post', manualVia: '', autoVia: '' },
+      // inline false rather than the switch's value: a row the server did not send has no rule, and
+      // this stand-in exists to hold repos, not to answer for a setting it was never told
+      owner: {
+        target: `${name}/*`,
+        manual: 'post',
+        auto: 'post',
+        manualVia: '',
+        autoVia: '',
+        inline: false,
+        inlineVia: '',
+      },
       repos: [],
       governs: false,
       exceptions: [],
@@ -97,7 +112,10 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
     if (r.target.endsWith('/*')) {
       node(name).owner = r
       // a per-repo owner may still carry a rule -- the fallback for repos nobody listed -- and that is not "decides"
-      node(name).governs = hasOwnRule(r) && !r.perRepo
+      // ponytail: the POSTING axes decide the mode, not the inline one. An owner whose only rule is
+      // inline would otherwise flip the panel into "one setting for every repo" and hide the
+      // post/hold controls on its repos, for a rule that says nothing about post or hold.
+      node(name).governs = hasOwnPostingRule(r) && !r.perRepo
     } else {
       node(name).repos.push(r)
     }

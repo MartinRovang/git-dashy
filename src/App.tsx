@@ -858,12 +858,33 @@ export default function App() {
           onAuto={onAuto}
           onFollow={followSomeone}
           onFollowScope={followScope}
+          onInline={(inline, target) =>
+            void call(
+              '/api/posting',
+              target.endsWith('/*')
+                ? { op: 'inline', owner: target.slice(0, -2), inline }
+                : { op: 'inline', repo: target, inline },
+              `${target}: findings ${inline === 'on' ? 'on the lines they name' : 'in the body only'}`,
+            )
+          }
+          onClearInline={(target) =>
+            void call(
+              '/api/posting',
+              target.endsWith('/*')
+                ? { op: 'inline', owner: target.slice(0, -2), inline: 'none' }
+                : { op: 'inline', repo: target, inline: 'none' },
+              `${target}: follows the switch again`,
+            )
+          }
           onFollowOwner={(repo) =>
-            // both kinds, in turn: `none` takes each rule off, and the owner's word applies again
+            // every kind, in turn: `none` takes each rule off, and the owner's word applies again
             void (async () => {
               for (const ran of ['manual', 'auto'] as const) {
                 if (!(await call('/api/posting', { repo, ran, post: 'none' }))) return
               }
+              // ponytail: the inline rule too, or "follow the owner again" left one axis behind and
+              // the row went on reading as an exception for a rule the button said it had dropped
+              if (!(await call('/api/posting', { op: 'inline', repo, inline: 'none' }))) return
               setFlash(`${repo} follows ${repo.split('/')[0]}/* again`)
             })()
           }

@@ -1353,7 +1353,11 @@ pub fn cast_spell(pr: &Pr, model: &str, name: &str, text: &str) -> Result<()> {
 /// ponytail: never fails. A diff that cannot be fetched costs the inline comments and nothing else;
 /// the body is the review and it goes up either way.
 fn inline_for(pr: &Pr, v: &Verdict) -> Vec<Inline> {
-    if !config::get().inline || pr.head.is_empty() {
+    // ponytail: the repo's rule, not the machine's switch. Inline comments open resolvable threads,
+    // so on a repo that requires conversation resolution a nit holds the merge button — welcome on
+    // your own repo and rude on one you are a guest in, and that is a per-repo fact. The switch is
+    // what a repo with no rule of its own falls back to (#161).
+    if !autorev::inlines().of(pr.repo(), config::get().inline) || pr.head.is_empty() {
         return Vec::new();
     }
     let findings = rlog::findings(v);
@@ -2218,6 +2222,71 @@ mod tests {
             "the refused comments are dropped"
         );
         assert_eq!(after.verdict.body, "the body", "the review itself is kept");
+    }
+
+    /// #161: the repo's rule decides, and the switch is only what a repo with no rule falls back to.
+    #[test]
+    fn a_repos_own_inline_rule_beats_the_machines_switch() {
+        const DIFF: &str = "diff --git a/svc.go b/svc.go
+--- a/svc.go
++++ b/svc.go
+@@ -1,2 +1,3 @@
+ package svc
++var x = 1
+ // end
+";
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        point_at(&d);
+        let run = |number: u64| {
+            let api = crate::testapi::Api::start(vec![
+                (
+                    &format!("/pulls/{number}"),
+                    Some("diff"),
+                    crate::testapi::Reply::new(200, DIFF),
+                ),
+                (
+                    &format!("/pulls/{number}"),
+                    None,
+                    crate::testapi::Reply::new(200, r#"{"head":{"sha":"read123"}}"#),
+                ),
+            ]);
+            let _p = crate::testapi::Pointed::at(&api);
+            // ponytail: Pointed restores the whole config, so the paths point_at set are gone inside
+            // this closure — the store has to be named again for the rule to be found.
+            config::update(|c| c.autorev = d.path().join("autorev"));
+            let pr = Pr {
+                number,
+                repository: Repository {
+                    name_with_owner: "acme/guest".into(),
+                    name: "guest".into(),
+                },
+                head: "read123".into(),
+                ..Default::default()
+            };
+            let v = Verdict {
+                verdict: "comment".into(),
+                findings: vec![serde_json::json!({"kind":"nit","loc":"svc.go:2","text":"unused"})],
+                ..Default::default()
+            };
+            inline_for(&pr, &v).len()
+        };
+
+        // the switch is ON and the repo says off: a repo you are a guest in is not commented on
+        config::update(|c| c.inline = true);
+        assert_eq!(autorev::set_inline("acme/guest", Some(autorev::Inline::Off)), "");
+        assert_eq!(run(11), 0, "the repo's rule beats the switch");
+
+        // the switch is OFF and the repo says on
+        config::update(|c| c.inline = false);
+        assert_eq!(autorev::set_inline("acme/guest", Some(autorev::Inline::On)), "");
+        assert_eq!(run(12), 1, "and beats it the other way too");
+
+        // no rule at all: the switch is what is left
+        assert_eq!(autorev::set_inline("acme/guest", None), "");
+        assert_eq!(run(13), 0, "off, because the switch is off");
+        config::update(|c| c.inline = true);
+        assert_eq!(run(14), 1, "on, because the switch is on");
     }
 
     /// `anchored` is covered on its own; this is the wiring — that `inline_for` actually goes and

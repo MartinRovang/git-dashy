@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PostingRule, Pr, Row, Section, StateData, Talk } from './types'
 import { rowState } from './tokens'
-import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
+import { ALL, NOBODY, UNFOLDED, buckets, canCastOn, castResult, castStep, chips, counts, emptyLine, flat, forView, inBucket, inScope, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, hasOwnPostingRule, hasOwnRule, remember, postingTree, ruleSource, selected, talkControls, toggleHidden, underScope, visible, walkBucket, whoIs, pageTo } from './board'
 
 let n = 0
 
@@ -692,8 +692,21 @@ describe('posting rows', () => {
 })
 
 describe('the posting tree', () => {
-  const rule = (target: string, m: ['post' | 'hold', '' | 'repo' | 'owner'], a: ['post' | 'hold', '' | 'repo' | 'owner']) =>
-    ({ target, manual: m[0], manualVia: m[1], auto: a[0], autoVia: a[1] }) as PostingRule
+  const rule = (
+    target: string,
+    m: ['post' | 'hold', '' | 'repo' | 'owner'],
+    a: ['post' | 'hold', '' | 'repo' | 'owner'],
+    inline: [boolean, '' | 'repo' | 'owner'] = [false, ''],
+  ) =>
+    ({
+      target,
+      manual: m[0],
+      manualVia: m[1],
+      auto: a[0],
+      autoVia: a[1],
+      inline: inline[0],
+      inlineVia: inline[1],
+    }) as PostingRule
   // the screenshot: acme/* holds what you run, three repos under it, one of them carved out on auto
   const board = () => [
     rule('acme/*', ['hold', 'owner'], ['post', '']),
@@ -701,6 +714,49 @@ describe('the posting tree', () => {
     rule('acme/infra', ['hold', 'owner'], ['post', '']),
     rule('acme/web', ['hold', 'owner'], ['post', 'repo']),
   ]
+
+  // #161: inline is a third axis, so a repo whose ONLY rule is an inline one is still an exception
+  // to its owner — without it the panel folded that repo back in with the rest and its rule was
+  // invisible until you went looking for it
+  it('counts an inline rule of its own as having a rule of its own', () => {
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, 'repo']))).toBe(true)
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, 'owner']))).toBe(false)
+    // and '' is the switch deciding, which is nobody's rule
+    expect(hasOwnRule(rule('acme/api', ['hold', 'owner'], ['post', ''], [true, '']))).toBe(false)
+  })
+
+  it('reads an owner row inline rule as its own', () => {
+    expect(hasOwnRule(rule('acme/*', ['post', ''], ['post', ''], [true, 'owner']))).toBe(true)
+    expect(hasOwnRule(rule('acme/*', ['post', ''], ['post', ''], [true, '']))).toBe(false)
+  })
+
+  // the panel's mode is a POSTING question: an owner whose only rule is an inline one must not flip
+  // it into "one setting for every repo" and hide the post/hold controls on its repos
+  it('an inline-only owner rule does not make the owner govern', () => {
+    const [acme] = postingTree([
+      rule('acme/*', ['post', ''], ['post', ''], [true, 'owner']),
+      rule('acme/api', ['post', ''], ['post', ''], [true, 'owner']),
+    ])
+    expect(acme.governs).toBe(false)
+    // but it is still the owner's own rule, so the row is not pretending nothing is set
+    expect(hasOwnRule(acme.owner)).toBe(true)
+  })
+
+  // the panel's mode and its post/hold fallback line are both posting questions, so this is the
+  // half of hasOwnRule they ask: an inline-only rule is a rule, but not a post/hold word
+  it('tells a posting rule of its own from an inline one', () => {
+    const inlineOnly = rule('acme/*', ['post', ''], ['post', ''], [true, 'owner'])
+    expect(hasOwnPostingRule(inlineOnly)).toBe(false)
+    expect(hasOwnRule(inlineOnly)).toBe(true)
+
+    const posts = rule('acme/*', ['hold', 'owner'], ['post', ''], [false, ''])
+    expect(hasOwnPostingRule(posts)).toBe(true)
+    expect(hasOwnRule(posts)).toBe(true)
+
+    const nothing = rule('acme/*', ['post', ''], ['post', ''], [false, ''])
+    expect(hasOwnPostingRule(nothing)).toBe(false)
+    expect(hasOwnRule(nothing)).toBe(false)
+  })
 
   it('puts each repo under the owner that owns it', () => {
     const [acme] = postingTree(board())
