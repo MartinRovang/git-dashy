@@ -4,3 +4,9 @@
 # test sees one stable config for its whole body, on CI and locally alike.
 [env]
 RUST_TEST_THREADS = "1"
+
+# Debug builds leave every superseded artifact behind, and cargo never collects them: a week of
+# rebuilds grew target/ to 77 GiB, 35 of it incremental session state alone. Incremental buys little
+# here because most rebuilds follow a dependency or config change that invalidates the cache anyway.
+[build]
+incremental = false
