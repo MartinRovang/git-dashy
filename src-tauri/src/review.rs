@@ -1706,6 +1706,8 @@ mod tests {
             c.reports = at("reports");
             c.learning = at("learning.jsonl");
             c.backups = at("backups");
+            c.debug_log = at("debug.log");
+            c.corpus_home = at("corpus");
             // ponytail: None is "never write", which is what a test wants: the real settings file
             // must not pick up whatever a test left in the config.
             c.settings = None;
