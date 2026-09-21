@@ -2491,9 +2491,12 @@ mod tests {
 
     #[test]
     fn push_dir_commits_without_a_remote_and_says_why_not() {
-        // ponytail: ERROR is process-global like the config, and this asserts on it. Without the lock
-        // it reads whatever the last failing push or clone in another test left there (#134).
+        // ponytail: ERROR is process-global like the config, and this asserts on it. The lock orders
+        // the writes (#134); the clear and the guard mean this reads its own calls and leaves
+        // nothing for the next test (#174).
         let _l = crate::config::test_lock();
+        set_error(String::new());
+        let _e = CleanError;
         let t = tempfile::tempdir().unwrap();
         let d = t.path().join("d");
         std::fs::create_dir_all(&d).unwrap();

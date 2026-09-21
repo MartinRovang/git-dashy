@@ -1,3 +1,6 @@
+# At the repo root: cargo reads config from the working directory, not from --manifest-path, so
+# beside the crate this reached `cd src-tauri && cargo test` and missed it from here (#174).
+#
 # The crate keeps its paths and settings in one process-global `config` (config.rs), which the UI and
 # every module read. Tests that point it at a tempdir therefore cannot run beside each other, and the
 # per-module test mutexes do not serialize across modules. Run the test harness single-threaded so a
