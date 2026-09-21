@@ -53,10 +53,8 @@ lto = true
 opt-level = 3
 strip = true
 
-# A dev binary carries debuginfo for the whole graph, tauri and webkit included, and cargo keeps
-# every superseded copy rather than collecting it: 322 of them filled a disk in a week (#172).
-# Dropping it for dependencies takes the per-build footprint of our own artifacts from 413 MB to
-# 238 MB. It costs only stepping a debugger into a dependency's source — our own frames, where a
-# panic in this crate is read, keep their line numbers.
+# A dev binary carries debuginfo for the whole graph and cargo never collects the superseded copies,
+# so they filled a disk (#172). Dependencies lose it here, which costs stepping a debugger into
+# their source and the line numbers on their backtrace frames. Our own frames keep theirs.
 [profile.dev.package."*"]
 debug = false
