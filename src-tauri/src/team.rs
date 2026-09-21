@@ -2853,8 +2853,7 @@ mod tests {
             "already joined that repo, as shared"
         );
         assert_eq!(*NAME.lock().unwrap(), "shared");
-        // ponytail: what THIS test's calls left behind — the clear is at the top, so an empty ERROR
-        // here means nothing above failed quietly, not merely that it was cleared a line ago.
+        // ponytail: cleared at the top, so this is what this test's own calls left behind.
         assert_eq!(error(), "");
         // a clone that cannot happen says so and leaves nothing behind
         assert!(!setup(&t.path().join("missing.git").to_string_lossy(), "").is_empty());
