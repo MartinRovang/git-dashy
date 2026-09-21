@@ -1,3 +1,11 @@
+# AT THE REPO ROOT, not beside the crate, and that is the whole point of this file's location: cargo
+# discovers .cargo/config.toml from the WORKING DIRECTORY, never from --manifest-path. Under
+# src-tauri/ it reached `cd src-tauri && cargo test`, which is what ci.yml runs, and missed
+# `cargo test --manifest-path src-tauri/Cargo.toml` from here, which is the other normal way to run
+# the suite. So the guard below was on for CI and off for anyone working from the repo root — and
+# #160 was a bug that is common in the second and unreachable in the first, reported as frequent and
+# reviewed as impossible, both correct. A root config is read from both (#174).
+#
 # The crate keeps its paths and settings in one process-global `config` (config.rs), which the UI and
 # every module read. Tests that point it at a tempdir therefore cannot run beside each other, and the
 # per-module test mutexes do not serialize across modules. Run the test harness single-threaded so a

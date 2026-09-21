@@ -838,6 +838,12 @@ pnpm test                    # vitest, over the pure functions in src/board.ts
 cd src-tauri && cargo test
 ```
 
+`cargo test --manifest-path src-tauri/Cargo.toml` from the repo root works too, and runs the same
+way: `.cargo/config.toml` sits at the root rather than beside the crate, because cargo reads it from
+the working directory and never from `--manifest-path`. Under `src-tauri/` it covered the `cd`
+invocation and missed the other one, which made a whole class of test bug common one way and
+unreachable the other.
+
 `pnpm test` covers what the board derives from server data: which sections a bucket shows, how the
 older runs of a reviewed PR fold, and how the two draft rules compose. Anything that needs a browser
 is not tested — there is no DOM harness, and the layout is still checked by looking at it.
