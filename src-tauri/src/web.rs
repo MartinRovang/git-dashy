@@ -1181,7 +1181,14 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
         .into_iter()
         .chain(p.auto.listed())
         .map(|(t, _)| t)
-        .chain(il.listed().into_iter().map(|(t, _)| t))
+        // ponytail: each one's OWNER with it, the same as the board chain below. A repo listed here
+        // and nowhere else arrived without a parent, so the panel drew a stand-in owner row carrying
+        // defaults instead of whatever that owner had actually been set to.
+        .chain(il.listed().into_iter().flat_map(|(t, _)| {
+            let owner = t.split('/').next().unwrap_or("");
+            let owner = (!owner.is_empty() && !t.ends_with("/*")).then(|| format!("{owner}/*"));
+            owner.into_iter().chain(Some(t))
+        }))
         .chain(on_board.iter().flat_map(|r| {
             let k = bind::key(r);
             let owner = k.split('/').next().unwrap_or("");
@@ -3978,6 +3985,44 @@ mod tests {
             200
         );
         assert_eq!(row("a/b")["inlineVia"], json!("owner"));
+
+        // ponytail: a target with no PR on the board. The panel's targets come from the posting rules
+        // and the board, so a repo whose ONLY rule is an inline one was in force and nowhere on
+        // screen until il.listed() was chained in — this is that, asserted.
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "inline", "repo": "zeta/quiet", "inline": "on"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(row("zeta/quiet")["inline"], json!(true));
+        assert_eq!(row("zeta/quiet")["inlineVia"], json!("repo"));
+        assert_eq!(
+            row("zeta/*")["inlineVia"],
+            json!(""),
+            "its owner is listed too, with no rule"
+        );
+
+        // an owner's rule comes off through the same route, and its repos follow the switch again
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "inline", "owner": "a", "inline": "none"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(row("a/*")["inlineVia"], json!(""));
+        assert_eq!(
+            row("a/b")["inlineVia"],
+            json!(""),
+            "and the repo under it follows the switch"
+        );
+        assert_eq!(row("a/b")["inline"], json!(false), "which is off");
 
         // the words it will not take, and naming both or neither
         for bad in [
