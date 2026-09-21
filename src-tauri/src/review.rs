@@ -279,7 +279,7 @@ pub(crate) fn table(t: &[(&'static str, &'static str)], key: &str) -> Option<&'s
 
 /// `{name}` placeholders filled from `vals` in one pass: a brace that names nothing stays as it is, and
 /// a value is never scanned for placeholders of its own (a pasted review may contain any text).
-fn fill(template: &str, vals: &[(&str, &str)]) -> String {
+pub(crate) fn fill(template: &str, vals: &[(&str, &str)]) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(i) = rest.find('{') {

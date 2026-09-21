@@ -438,12 +438,14 @@ fn job_of(name: &str) -> Option<Arc<Mutex<Job>>> {
     jobs().get(name).cloned()
 }
 
-/// Run `f` on a thread; job() reports on it. One at a time per name.
-pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static) {
+/// Run `f` on a thread; job() reports on it. One at a time per name: false, and nothing started, when one
+/// of that name is already running. The check and the start happen under one lock, so two requests
+/// arriving together cannot both start.
+pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static) -> bool {
     let mut all = jobs();
     if let Some(j) = all.get(name) {
         if j.lock().unwrap_or_else(|e| e.into_inner()).running {
-            return;
+            return false;
         }
     }
     let j = Arc::new(Mutex::new(Job {
@@ -474,6 +476,7 @@ pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 
         }
         j.running = false;
     });
+    true
 }
 
 pub fn job(name: &str) -> Value {
@@ -991,18 +994,18 @@ fn post_doc_help(_state: &State, body: &Body) -> Out {
     } else {
         String::new()
     };
-    // ponytail: one at a time, and a second is refused rather than silently dropped. start_job ignores a
-    // start while one runs, so answering ok let a poll for document B show document A's revision, and F3
-    // put it into B's text.
-    if job("doc-help")["running"] == true {
-        return Err(Fail::new(409, "the model is still reading another draft"));
-    }
     let model = config::get().model;
-    start_job("doc-help", move || {
+    // ponytail: one at a time, and a second is refused rather than silently dropped. Answering ok to a start
+    // that did not happen let a poll for document B show document A's revision, and F3 put it into B's text.
+    // start_job says whether it started, under its own lock: a check here first was a race between two posts.
+    let started = start_job("doc-help", move || {
         Ok(serde_json::to_value(founding::help(
             &doc, &repo, &draft, &brief, &model,
         )?)?)
     });
+    if !started {
+        return Err(Fail::new(409, "the model is still reading another draft"));
+    }
     Ok(json!({"ok": true}))
 }
 
@@ -5175,6 +5178,29 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(job("test-ok")["result"]["n"], 1);
+    }
+
+    #[test]
+    fn of_many_starts_at_once_exactly_one_runs() {
+        // the help route relies on this answer: a start that did not happen is a 409, not an ok
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let rx = Arc::new(Mutex::new(rx));
+        let started: Vec<bool> = (0..8)
+            .map(|_| {
+                let rx = rx.clone();
+                std::thread::spawn(move || {
+                    start_job("test-race", move || {
+                        let _ = rx.lock().unwrap().recv_timeout(Duration::from_secs(10));
+                        Ok(json!({}))
+                    })
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+        assert_eq!(started.iter().filter(|s| **s).count(), 1, "{started:?}");
+        tx.send(()).unwrap();
     }
 
     /// The catch_unwind in start_job only does anything while the release profile unwinds: under

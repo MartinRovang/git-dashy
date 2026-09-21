@@ -105,7 +105,16 @@ export async function proposeDoc(ctx: Ctx, team: string, doc: string, repo = '')
     refresh()
     const poll = async () => {
       if (!isOpen(m)) return
-      const j = await (await api('/api/doc-help')).json()
+      // a poll that cannot be answered ends the wait with the reason, or the spinner would spin until Esc
+      let j
+      try {
+        j = await (await api('/api/doc-help')).json()
+      } catch (e) {
+        asking = false
+        failed = `lost the help: ${e instanceof Error ? e.message : String(e)}`
+        refresh()
+        return
+      }
       if (j.running) {
         elapsed = j.elapsed || 0
         refresh()
@@ -201,7 +210,7 @@ const TABS: [KnowledgeTab, string][] = [
 /** One thing inspect can open: a facts file (repo, "" for general) or a team's founding document (doc). */
 export type KFile = { team: string; repo?: string; doc?: string }
 const fileKey = (f: KFile) => JSON.stringify([f.team, f.repo || '', f.doc || ''])
-const fileName = (f: KFile) => (f.doc ? (f.doc === 'agents' ? 'agents.md' : f.doc === 'about' ? `about ${f.repo}` : 'brief') : f.repo || 'general')
+const fileName = (f: KFile) => (f.doc ? docName(f.doc, f.repo).replace(/^the /, '') : f.repo || 'general')
 
 /** Everything the memory holds, in one panel: how fast it learns, what it knows file by file, what is waiting
  *  for a second sighting, what the team has of yours, and the dream as an action over it.
