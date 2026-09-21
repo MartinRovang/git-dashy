@@ -2514,6 +2514,11 @@ mod tests {
 
     #[test]
     fn a_proposal_is_a_branch_on_origin_and_never_touches_the_checkout() {
+        // ponytail: fills ERROR through push_dir's note(); see CleanError. The guard as well as the
+        // lock: the lock keeps a concurrent reader out, and the guard keeps a value from reaching
+        // the next test in order (#160).
+        let _l = crate::config::test_lock();
+        let _e = CleanError;
         let t = tempfile::tempdir().unwrap();
         let remote_ = t.path().join("remote.git");
         sh(
@@ -2805,6 +2810,9 @@ mod tests {
     #[test]
     fn connect_pushes_and_setup_joins_what_was_pushed() {
         let _l = crate::config::test_lock();
+        // ponytail: ERROR is process-global, and this test asserts on it below. Cleared on the way
+        // in so the assertion is about this test's own calls and not about which test ran before it.
+        set_error(String::new());
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         let remote_ = t.path().join("remote.git");
@@ -2845,6 +2853,7 @@ mod tests {
             "already joined that repo, as shared"
         );
         assert_eq!(*NAME.lock().unwrap(), "shared");
+        // ponytail: cleared at the top, so this is what this test's own calls left behind.
         assert_eq!(error(), "");
         // a clone that cannot happen says so and leaves nothing behind
         assert!(!setup(&t.path().join("missing.git").to_string_lossy(), "").is_empty());
