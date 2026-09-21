@@ -1157,24 +1157,47 @@ fn review_payload(verdict: &str, body: &str, head: &str, inline: &[Inline]) -> V
 ///
 /// ponytail: never fails, and false is the answer it gives when it cannot tell. A missed detection
 /// posts, which is what happens today; a false detection would drop a review nobody ever sees. The
-/// asymmetry decides the default.
+/// so it defaults to false.
 ///
 /// ponytail: `login` is passed in rather than read from `me()` here, so the matching can be tested
 /// without a process-global login cache deciding the outcome.
+///
+/// ponytail: PAGED, and paged to the end rather than reading the first hundred. GitHub lists reviews
+/// OLDEST first, so the review that just landed is on the LAST page — on a PR with more than a
+/// hundred reviews, reading one page finds every review except the one being asked about, and posts
+/// the duplicate on exactly the busy PR where it is most visible.
+///
+/// ponytail: `state` is deliberately not checked. PENDING cannot come from here, because every post
+/// sets `event`; a DISMISSED review of this body is still a review that was posted, and posting it
+/// again because someone dismissed it is the duplicate this exists to prevent.
 pub fn mine_already_on(repo: &str, number: u64, login: &str, body: &str) -> bool {
     if config::get().demo || login.is_empty() || body.is_empty() {
         return false;
     }
-    // ponytail: the WHOLE body, not a prefix. Every review this posts opens with the same few lines
-    // for a given verdict, so a prefix match would call a fresh review a duplicate of an older one.
-    let Ok(Value::Array(rows)) = api(&format!("/repos/{repo}/pulls/{number}/reviews?per_page=100"), 30)
-    else {
-        return false;
-    };
-    rows.iter().any(|r| {
-        r.pointer("/user/login").and_then(Value::as_str) == Some(login)
-            && r.get("body").and_then(Value::as_str) == Some(body)
-    })
+    // ponytail: a ceiling, so a repo that answers oddly cannot turn one keypress into an unbounded
+    // walk. A hundred pages of reviews on one PR is not a case worth staying correct for.
+    const PAGES: u32 = 10;
+    const PER: usize = 100;
+    for page in 1..=PAGES {
+        let Ok(Value::Array(rows)) = api(
+            &format!("/repos/{repo}/pulls/{number}/reviews?per_page={PER}&page={page}"),
+            30,
+        ) else {
+            return false;
+        };
+        // ponytail: the WHOLE body, not a prefix. Every review this posts opens with the same few
+        // lines for a given verdict, so a prefix would call a fresh review a duplicate of an old one.
+        if rows.iter().any(|r| {
+            r.pointer("/user/login").and_then(Value::as_str) == Some(login)
+                && r.get("body").and_then(Value::as_str) == Some(body)
+        }) {
+            return true;
+        }
+        if rows.len() < PER {
+            break; // a short page is the last one
+        }
+    }
+    false
 }
 
 /// Post the verdict on the PR, with `inline` as comments on the lines they are about. Err on failure.
@@ -2002,6 +2025,54 @@ mod tests {
         // nothing to compare is not a match
         assert!(!mine_already_on("acme/api", 7, "me", ""));
         assert!(!mine_already_on("acme/api", 7, "", body));
+    }
+
+    /// GitHub lists reviews oldest first, so the one that just landed is on the LAST page. Reading
+    /// only the first hundred finds every review except the one being asked about.
+    #[test]
+    fn a_match_on_a_later_page_is_still_found() {
+        let _g = crate::config::test_lock();
+        let body = "the review that landed";
+        let filler: Vec<Value> = (0..100)
+            .map(|i| serde_json::json!({"user": {"login": "me"}, "body": format!("older review {i}")}))
+            .collect();
+        let api = crate::testapi::Api::start(vec![
+            (
+                "/pulls/9/reviews?per_page=100&page=1",
+                None,
+                crate::testapi::Reply::new(200, &Value::Array(filler).to_string()),
+            ),
+            (
+                "/pulls/9/reviews?per_page=100&page=2",
+                None,
+                crate::testapi::Reply::new(
+                    200,
+                    &serde_json::json!([{"user": {"login": "me"}, "body": body}]).to_string(),
+                ),
+            ),
+        ]);
+        let _p = crate::testapi::Pointed::at(&api);
+
+        assert!(mine_already_on("acme/api", 9, "me", body));
+        assert!(api.saw("GET", "page=2"), "it walked past the first page");
+    }
+
+    /// A full page that is the whole story: nothing after it, and nothing to find.
+    #[test]
+    fn a_walk_stops_at_the_first_short_page() {
+        let _g = crate::config::test_lock();
+        let api = crate::testapi::Api::start(vec![(
+            "/pulls/10/reviews?per_page=100&page=1",
+            None,
+            crate::testapi::Reply::new(
+                200,
+                &serde_json::json!([{"user": {"login": "me"}, "body": "something else"}]).to_string(),
+            ),
+        )]);
+        let _p = crate::testapi::Pointed::at(&api);
+
+        assert!(!mine_already_on("acme/api", 10, "me", "not there"));
+        assert!(!api.saw("GET", "page=2"), "a short page ends the walk");
     }
 
     #[test]

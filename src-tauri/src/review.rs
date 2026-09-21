@@ -1393,9 +1393,17 @@ fn anchored(files: &[DiffFile], marks: &[Mark], head: &str, live: &str) -> Vec<I
 pub fn post_held(h: &held::Held) -> Result<String> {
     let (repo, n) = (h.pr.repo(), h.pr.number);
     let c = config::get();
-    // whether the review turned out to be on the PR already, so nothing was posted this time
-    let mut already = false;
-    if !c.demo {
+    // ponytail: asked before ANYTHING is sent, the greeting included. It runs for every hold, however
+    // it was created: `post_held` can fail after GitHub accepted too — it returns before
+    // `held::drop`, so the hold survives and the next press is the duplicate. The question is about
+    // the PR, so it is put to the PR (#164).
+    // ponytail: and before the hello, not after, or a release would announce "reviewing this now" on
+    // a PR that already carries the finished review.
+    let already =
+        !c.demo && github::mine_already_on(repo, n, &github::me().unwrap_or_default(), &h.verdict.body);
+    if already {
+        log::info!("{repo}#{n} already carries this review; releasing the hold without posting");
+    } else if !c.demo {
         // ponytail: one working copy, saved as each step lands. Two clones of `h` meant the second
         // write restored the hello the first had cleared, which the first write exists to prevent.
         let mut cur = h.clone();
@@ -1408,17 +1416,9 @@ pub fn post_held(h: &held::Held) -> Result<String> {
                 log::error!("could not record the hello for {repo}#{n}: {e:#}");
             }
         }
-        // ponytail: asked before every release, not only for a hold written after a failed post.
-        // `post_held` itself can fail after GitHub accepted — it returns before `held::drop`, so the
-        // hold survives and the next press is the duplicate. The question is about the PR, so it is
-        // put to the PR; how the hold came to exist does not come into it (#164).
-        already = github::mine_already_on(repo, n, &github::me().unwrap_or_default(), &cur.verdict.body);
-        if already {
-            log::info!("{repo}#{n} already carries this review; releasing the hold without posting");
-        }
         // ponytail: refused → the hold drops its comments and stays held, so the next press posts the
         // body. Any error drops them, not only a 422: a downgraded hold posts, a stuck one never does.
-        else if let Err(e) = github::post_review(
+        if let Err(e) = github::post_review(
             repo,
             n,
             &cur.verdict.verdict,
@@ -1655,6 +1655,33 @@ mod tests {
 
     use super::*;
     use crate::types::{Finding, Repository};
+
+    /// The login reviews are matched against, resolved through a stand-in of its own so these tests
+    /// hold whether or not an earlier test already filled the process-wide login cache.
+    fn resolved_login() -> String {
+        let a = crate::testapi::Api::start(vec![(
+            "/graphql",
+            None,
+            crate::testapi::Reply::new(200, r#"{"data":{"viewer":{"login":"dashy-bot"}}}"#),
+        )]);
+        let _p = crate::testapi::Pointed::at(&a);
+        let who = github::me().unwrap_or_default();
+        assert!(!who.is_empty(), "a login to match reviews against");
+        who
+    }
+
+    /// Point every path a release writes to at a fresh temp dir.
+    fn point_at(d: &tempfile::TempDir) {
+        config::update(|c| {
+            c.held_dir = d.path().join("held");
+            c.log = d.path().join("log.jsonl");
+            c.memory_dir = d.path().join("memory");
+            c.local_memory = d.path().join("memory");
+            c.bindings = d.path().join("bindings");
+            c.teams = d.path().join("teams");
+            c.team = d.path().join("team");
+        });
+    }
 
     /// A hold ready to release: a verdict with inline comments, and whatever greeting is passed.
     fn a_hold(repo: &str, number: u64, hello: &str) -> held::Held {
@@ -1994,17 +2021,7 @@ mod tests {
         // ponytail: the login is resolved FIRST, through a stand-in of its own, so the test works
         // whether or not some earlier test already filled the process-wide login cache: `me()`
         // answers from the cache when it has one, and the stub below is built from whatever it says.
-        let who = {
-            let a = crate::testapi::Api::start(vec![(
-                "/graphql",
-                None,
-                crate::testapi::Reply::new(200, r#"{"data":{"viewer":{"login":"dashy-bot"}}}"#),
-            )]);
-            let _p = crate::testapi::Pointed::at(&a);
-            github::me().unwrap_or_default()
-        };
-        assert!(!who.is_empty(), "a login to match reviews against");
-
+        let who = resolved_login();
         let h = a_hold("acme/already", 7, "");
         let listing = serde_json::json!([{ "user": {"login": who}, "body": h.verdict.body }]);
         let api = crate::testapi::Api::start(vec![
@@ -2017,15 +2034,7 @@ mod tests {
         ]);
         let _p = crate::testapi::Pointed::at(&api);
         let d = tempfile::tempdir().unwrap();
-        config::update(|c| {
-            c.held_dir = d.path().join("held");
-            c.log = d.path().join("log.jsonl");
-            c.memory_dir = d.path().join("memory");
-            c.local_memory = d.path().join("memory");
-            c.bindings = d.path().join("bindings");
-            c.teams = d.path().join("teams");
-            c.team = d.path().join("team");
-        });
+        point_at(&d);
         held::put(&h).unwrap();
 
         let status = post_held(&h).expect("the review is up, so this is not a failure");
@@ -2047,6 +2056,38 @@ mod tests {
             rlog::reviewed().len(),
             1,
             "and it is in the log, which the failed attempt never wrote"
+        );
+    }
+
+    /// The path almost every release takes: the PR has reviews, none of them this one, so it posts.
+    /// ponytail: the stand-in matches on path and Accept but NOT on method, so `/pulls/7/reviews`
+    /// answers the GET and the POST from one route. That is what makes this assertion worth having:
+    /// it proves the listing was read and the post still went out, rather than one masking the other.
+    #[test]
+    fn a_release_still_posts_when_the_pr_carries_other_reviews() {
+        let _g = crate::config::test_lock();
+        let who = resolved_login();
+        let h = a_hold("acme/others", 7, "");
+        let listing = serde_json::json!([
+            {"user": {"login": who}, "body": "an older review of mine"},
+            {"user": {"login": "someone-else"}, "body": h.verdict.body},
+        ]);
+        let api = crate::testapi::Api::start(vec![(
+            "/pulls/7/reviews",
+            None,
+            crate::testapi::Reply::new(200, &listing.to_string()),
+        )]);
+        let _p = crate::testapi::Pointed::at(&api);
+        let d = tempfile::tempdir().unwrap();
+        point_at(&d);
+        held::put(&h).unwrap();
+
+        let status = post_held(&h).expect("the post landed");
+        assert!(!status.contains("already"), "got {status:?}");
+        assert!(api.saw("POST", "/pulls/7/reviews"), "the review went up");
+        assert!(
+            held::get("acme/others", 7).is_none(),
+            "posted, so no longer waiting"
         );
     }
 
