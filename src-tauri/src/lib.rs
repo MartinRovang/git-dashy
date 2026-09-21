@@ -11,6 +11,7 @@ pub mod dbrepo;
 pub mod dbschema;
 pub mod demo;
 pub mod diff;
+pub mod founding;
 pub mod friction;
 pub mod github;
 pub mod heartbeat;

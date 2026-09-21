@@ -140,6 +140,7 @@ const S = {
   ticks: 0,
   cursor: 0,
   overlaps: { running: false, t0: 0, error: '', result: null as unknown[] | null, idle: true },
+  docHelp: { running: false, t0: 0, error: '', result: null as unknown, idle: true },
   dream: { running: false, t0: 0, error: '', result: null as unknown | null, idle: true },
 }
 
@@ -433,6 +434,14 @@ function code(url: string) {
 
 const json = (status: number, body: unknown) => ({ status, body })
 
+/** What an about and a brief are for, as the server sends them beside the editor (a shortened copy). */
+const MOCK_GUIDE: Record<string, string> = {
+  brief: "The brief: why the team builds what it builds\n\nOne per team. Every review of every repo bound to this team reads it.\n\nBelongs here\n- The project\n- Why it matters\n- Constraints that change decisions\n- How the codebase is shaped\n\nDoes not belong here\n- A feature list\n- What one repo is: that is the repo's about",
+  about: "An about: what this one repo is\n\nOne per repo. Reviews of this repo read it right after the team's brief.\n\nBelongs here\n- Its role\n- What it owns and must not do\n- Its seams\n\nDoes not belong here\n- The team's purpose and constraints: the brief",
+  agents: 'agents.md: how agent sessions work in the team\'s repos. Never read by reviews.',
+}
+const MOCK_ABOUT = '# What this repo is\n\n## Its role\n\nWhat this repo does in the project.\n\n## What it owns, and what it must not do\n\n## Seams\n'
+
 function jobShape(j: { running: boolean; t0: number; error: string; result: unknown; idle: boolean }) {
   return {
     running: j.running,
@@ -618,13 +627,19 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
     if (path === '/api/diff') return json(200, code(query.get('url') || ''))
     if (path === '/api/memory/files') {
       const files: { team: string; repo?: string; doc?: string }[] = [{ team: '', repo: '' }, ...Object.keys(memoryText).filter((k) => !k.includes(':') && k !== 'general').map((repo) => ({ team: '', repo }))]
-      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general` && !k.endsWith(':doc:brief') && !k.endsWith(':doc:agents')).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })), { team: t.key, doc: 'brief' }, { team: t.key, doc: 'agents' })
+      for (const t of S.teams) files.push({ team: t.key, repo: '' }, ...Object.keys(memoryText).filter((k) => k.startsWith(`${t.key}:`) && k !== `${t.key}:general` && !k.endsWith(':doc:brief') && !k.endsWith(':doc:agents')).map((k) => ({ team: t.key, repo: k.slice(t.key.length + 1) })), { team: t.key, doc: 'brief' }, { team: t.key, doc: 'agents' }, { team: t.key, doc: 'about', repo: 'acme/api' }, { team: t.key, doc: 'about', repo: 'acme/web' })
       return json(200, { files })
     }
     if (path === '/api/memory') {
       const team = query.get('team') || ''
       const doc = query.get('doc') || ''
-      if (doc) return json(200, { team, doc, path: `~/.prs_teams/${team}/memory/${doc === 'brief' ? 'project' : 'agents'}.md`, text: memoryText[`${team}:doc:${doc}`] || '' })
+      if (doc) {
+        const about = query.get('repo') || ''
+        const key = doc === 'about' ? `${team}:about:${about}` : `${team}:doc:${doc}`
+        const file = doc === 'brief' ? 'project.md' : doc === 'agents' ? 'agents.md' : `about/${about.replace('/', '__')}.md`
+        const text = memoryText[key] || ''
+        return json(200, { team, doc, repo: about, path: `~/.prs_teams/${team}/memory/${file}`, text, draft: !text && doc === 'about' ? MOCK_ABOUT : '', guide: MOCK_GUIDE[doc] || '' })
+      }
       const repo = query.get('repo') || 'general'
       const file = `${repo === 'general' ? 'general' : repo.replace('/', '__')}.md`
       const text = memoryText[team ? `${team}:${repo}` : repo] || ''
@@ -634,6 +649,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       return json(200, { repo, team, path: team ? `~/.prs_teams/${team}/memory/${file}` : `~/.prs_memory/${file}`, facts, backers })
     }
     if (path === '/api/learning') return json(200, { events: learningEvents() })
+    if (path === '/api/doc-help') return json(200, jobShape(S.docHelp))
     if (path === '/api/spells') {
       const on = (list: unknown, n: string) => ((list as string[]) || []).includes(n)
       const about: Record<string, string> = {
@@ -776,11 +792,31 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
       return json(200, { ok: true, opened: r?.url || '' })
     }
     if (path === '/api/copy') return json(200, { ok: true, tool: 'xclip' })
+    if (path === '/api/doc-help') {
+      // the model is played by a timer: a few seconds, then questions, notes and a revision
+      const draft = str(body, 'text')
+      S.docHelp = { running: true, t0: secs(), error: '', idle: false, result: null }
+      setTimeout(() => {
+        S.docHelp = {
+          ...S.docHelp,
+          running: false,
+          result: {
+            questions: ['What makes a change to this repo wrong: which contract would it break, and for whom?', 'Which repo owns the schema this one queries?'],
+            notes: ['The feature list will be stale after the next release; a review cannot use it to judge a change.'],
+            text: `# What this repo is\n\n## Its role\n\n${draft.split('\n').find((l) => l.trim() && !l.startsWith('#')) || 'TODO: its role'}\n\n## What it owns, and what it must not do\n\nTODO: what it owns\n\n## Seams\n\nTODO: what it talks to\n`,
+          },
+        }
+      }, 2500)
+      return json(200, { ok: true })
+    }
     if (path === '/api/memory') {
       const repo = repoOf(body) || 'general'
       const team = str(body, 'team')
       const op = str(body, 'op')
       const pr = { ok: true, url: `https://github.com/acme/guild-memory/pull/${40 + Math.floor(Math.random() * 50)}`, branch: 'gitdashy/propose-mock', note: '' }
+      // the same soft word the server gives (a shortened copy of memory::doc_warning; the mock may drift from it)
+      if (op === 'propose' && str(body, 'doc') === 'brief' && !body.anyway && !/^#+\s*(The project|Why it matters|Constraints that change decisions|How this codebase is shaped)\s*$/im.test(str(body, 'text')))
+        return json(200, { ok: false, warn: "This has none of a brief's sections (The project, Why it matters, Constraints that change decisions, How this codebase is shaped). It reads like a description of the product; what one repo is belongs in that repo's about." })
       if (op === 'propose') return json(200, pr)
       if (op !== 'remove') return json(400, { error: 'op must be remove or propose' })
       if (team) return json(200, pr) // a team's file changes only when its pull request is approved

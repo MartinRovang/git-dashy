@@ -408,6 +408,21 @@ what every teammate's reviews read is a hand edit. Only recurrence moves a draft
 
 ### What the team is building
 
+A team writes three kinds of document and learns a fourth. They are not interchangeable, and putting one
+in another's place costs every review that reads it:
+
+| document | says | one per | written by | read by |
+|---|---|---|---|---|
+| **brief** `memory/project.md` | why the team builds what it builds: the project, why it matters, the constraints that make a change wrong, how the codebase is shaped | team | the team, by pull request | every review of every repo bound to the team |
+| **about** `memory/about/<owner>__<repo>.md` | what one repo is: its role, what it owns and must not do, its seams | repo | the team, by pull request | reviews of that repo, right after the brief |
+| **agents.md** | how agent sessions work in the team's repos | team | the team, by pull request | coding sessions only, never reviews |
+| **facts** `general.md`, `<owner>__<repo>.md` | what reviews found and found again | general, or repo | nobody: reviews learn them | reviews and sessions |
+
+A feature list or a tour of the product belongs in none of them: it goes stale with every release and
+tells a reviewer nothing about whether a change is wrong. When one of the three is edited (inspect, `e`),
+what it is for sits beside the text, a model can ask what it needs and propose a revision (`F2`, taken
+with `F3`), and a brief without a brief's sections gets a word before the pull request opens.
+
 `project.md` says what is being built, for whom, and under what constraints. It goes into a review ahead
 of the learned facts, so a reviewer knows what the code is *for* before judging whether a change serves
 it. It is declared, not learned — the promotion pipeline never touches it, the dream never rewrites it,

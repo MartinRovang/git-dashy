@@ -384,6 +384,29 @@ backup. It refuses rather than coping: no origin to key it by, a destination tha
 uncommitted or unpushed work. `os.rename`, never copy-then-delete, so a failure leaves the source
 exactly where it was.
 
+## 4a-2. Declared documents: brief, about, agents.md (2.35)
+
+Three stores are declared rather than learned, and a person changes them only by a pull request on the
+team's repo. Each has one job; the guidance for each lives in `team.rs` (`BRIEF_GUIDE`, `ABOUT_GUIDE`,
+`AGENTS_GUIDE`) and is shown beside the text when it is edited, because the file itself is the team's to
+rewrite and a template's guidance disappears with the first rewrite. That is how the first brief proposed
+through the app became a feature list with the constraints gone.
+
+| | read by | position in the review prompt |
+|---|---|---|
+| brief | every review of a bound repo | first: "what this is being built for" |
+| about | reviews of that one repo, and its sessions' mirror | right after the brief: "what <repo> is" |
+| agents.md | sessions only | never |
+
+`memory::doc_warning` gives a soft word, never a refusal, before a proposal: a brief with none of a
+brief's sections, a brief with no constraints section, an about that has the brief's sections. The route
+answers `{ok: false, warn}` and waits for `anyway`.
+
+`founding::help` asks the model about a draft: at most five questions only a person can answer, at most
+five notes, and a revised text with `TODO:` where an answer is missing, never an invented fact. An about is
+asked about with the team's brief as context, so it does not repeat it. Nothing it returns is written: the
+person takes the revision into the editor or does not, and it still reaches the team only by pull request.
+
 ## 4b. Which brief a review gets
 
 Facts are keyed by repo (`owner__repo.md`) with `general.md` for what holds everywhere. The brief was
