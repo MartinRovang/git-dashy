@@ -2514,12 +2514,11 @@ mod tests {
 
     #[test]
     fn a_proposal_is_a_branch_on_origin_and_never_touches_the_checkout() {
-        // ponytail: fills ERROR through push_dir's note(), like the three above — and this one did it
-        // by accident rather than on purpose, which is why it was the one that forgot. A push that
-        // fails and then succeeds on the retry leaves the first failure in the global, and
-        // `connect_pushes_and_setup_joins_what_was_pushed` asserts that global is empty. Without the
-        // lock the two ran together and that assertion read this test's leftover (#160).
+        // ponytail: fills ERROR through push_dir's note(); see CleanError. The guard as well as the
+        // lock: the lock keeps a concurrent reader out, and the guard keeps a value from reaching
+        // the next test in order (#160).
         let _l = crate::config::test_lock();
+        let _e = CleanError;
         let t = tempfile::tempdir().unwrap();
         let remote_ = t.path().join("remote.git");
         sh(
@@ -2811,6 +2810,9 @@ mod tests {
     #[test]
     fn connect_pushes_and_setup_joins_what_was_pushed() {
         let _l = crate::config::test_lock();
+        // ponytail: ERROR is process-global, and this test asserts on it below. Cleared on the way
+        // in so the assertion is about this test's own calls and not about which test ran before it.
+        set_error(String::new());
         let t = tempfile::tempdir().unwrap();
         point(t.path());
         let remote_ = t.path().join("remote.git");
@@ -2851,9 +2853,8 @@ mod tests {
             "already joined that repo, as shared"
         );
         assert_eq!(*NAME.lock().unwrap(), "shared");
-        // ponytail: ERROR is process-global and last-writer-wins, so this assertion is only about
-        // THIS test for as long as every test that can write it holds the same lock. Every test in
-        // this module that reaches note() does; a new one that pushes has to as well.
+        // ponytail: what THIS test's calls left behind — the clear is at the top, so an empty ERROR
+        // here means nothing above failed quietly, not merely that it was cleared a line ago.
         assert_eq!(error(), "");
         // a clone that cannot happen says so and leaves nothing behind
         assert!(!setup(&t.path().join("missing.git").to_string_lossy(), "").is_empty());
