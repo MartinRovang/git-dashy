@@ -1,6 +1,6 @@
 [package]
 name = "gitdashy"
-version = "2.35.9"
+version = "2.35.10"
 edition = "2021"
 description = "PR dashboard with Claude reviews and shared team memory"
 license = "MIT"
@@ -52,3 +52,9 @@ codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
+
+# A dev binary carries debuginfo for the whole graph and cargo never collects the superseded copies,
+# so they filled a disk (#172). Dependencies lose it here, which costs stepping a debugger into
+# their source and the line numbers on their backtrace frames. Our own frames keep theirs.
+[profile.dev.package."*"]
+debug = false
