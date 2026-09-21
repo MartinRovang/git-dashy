@@ -840,9 +840,7 @@ cd src-tauri && cargo test
 
 `cargo test --manifest-path src-tauri/Cargo.toml` from the repo root works too, and runs the same
 way: `.cargo/config.toml` sits at the root rather than beside the crate, because cargo reads it from
-the working directory and never from `--manifest-path`. Under `src-tauri/` it covered the `cd`
-invocation and missed the other one, which made a whole class of test bug common one way and
-unreachable the other.
+the working directory and never from `--manifest-path`.
 
 `pnpm test` covers what the board derives from server data: which sections a bucket shows, how the
 older runs of a reviewed PR fold, and how the two draft rules compose. Anything that needs a browser
