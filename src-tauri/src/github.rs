@@ -1148,6 +1148,35 @@ fn review_payload(verdict: &str, body: &str, head: &str, inline: &[Inline]) -> V
     b
 }
 
+/// Whether a review by `login` with exactly this body is already on the PR.
+///
+/// ponytail: an Err from `post_review` means "we did not hear that it landed", which is not the same
+/// as "it did not land". A timeout after GitHub accepted the review leaves a hold whose release
+/// would post it a second time on someone else's PR (#164). This is the question that tells the two
+/// apart, and it is asked of GitHub rather than inferred from the error.
+///
+/// ponytail: never fails, and false is the answer it gives when it cannot tell. A missed detection
+/// posts, which is what happens today; a false detection would drop a review nobody ever sees. The
+/// asymmetry decides the default.
+///
+/// ponytail: `login` is passed in rather than read from `me()` here, so the matching can be tested
+/// without a process-global login cache deciding the outcome.
+pub fn mine_already_on(repo: &str, number: u64, login: &str, body: &str) -> bool {
+    if config::get().demo || login.is_empty() || body.is_empty() {
+        return false;
+    }
+    // ponytail: the WHOLE body, not a prefix. Every review this posts opens with the same few lines
+    // for a given verdict, so a prefix match would call a fresh review a duplicate of an older one.
+    let Ok(Value::Array(rows)) = api(&format!("/repos/{repo}/pulls/{number}/reviews?per_page=100"), 30)
+    else {
+        return false;
+    };
+    rows.iter().any(|r| {
+        r.pointer("/user/login").and_then(Value::as_str) == Some(login)
+            && r.get("body").and_then(Value::as_str) == Some(body)
+    })
+}
+
 /// Post the verdict on the PR, with `inline` as comments on the lines they are about. Err on failure.
 ///
 /// ponytail: `comments` is validated as ONE thing, so one line GitHub will not take costs the body too.
@@ -1936,6 +1965,57 @@ mod tests {
         );
         assert_eq!(b["body"], "the body");
         assert!(b.get("comments").is_none());
+    }
+
+    #[test]
+    fn only_your_own_review_with_the_very_same_body_counts_as_already_there() {
+        let _g = crate::config::test_lock();
+        let body = "the whole review, word for word";
+        let api = crate::testapi::Api::start(vec![(
+            "/pulls/7/reviews",
+            None,
+            crate::testapi::Reply::new(
+                200,
+                &serde_json::json!([
+                    {"user": {"login": "someone-else"}, "body": body},
+                    {"user": {"login": "me"}, "body": "a different review of mine"},
+                    {"user": {"login": "me"}, "body": body},
+                ])
+                .to_string(),
+            ),
+        )]);
+        let _p = crate::testapi::Pointed::at(&api);
+
+        assert!(mine_already_on("acme/api", 7, "me", body));
+        // the same words from someone else are not this review having landed
+        assert!(!mine_already_on("acme/api", 7, "nobody", body));
+        // and a body that is not on the PR is not there whoever wrote it
+        assert!(!mine_already_on(
+            "acme/api",
+            7,
+            "me",
+            "a review that never went up"
+        ));
+        // ponytail: a prefix would call a fresh review a duplicate of an older one; every review
+        // this posts opens the same way for a given verdict.
+        assert!(!mine_already_on("acme/api", 7, "me", "the whole review"));
+        // nothing to compare is not a match
+        assert!(!mine_already_on("acme/api", 7, "me", ""));
+        assert!(!mine_already_on("acme/api", 7, "", body));
+    }
+
+    #[test]
+    fn a_reviews_listing_it_cannot_read_is_not_a_match() {
+        let _g = crate::config::test_lock();
+        let api = crate::testapi::Api::start(vec![(
+            "/pulls/8/reviews",
+            None,
+            crate::testapi::Reply::new(500, r#"{"message":"server error"}"#),
+        )]);
+        let _p = crate::testapi::Pointed::at(&api);
+        // ponytail: false, so the release posts. A missed detection is today's behaviour; a false
+        // one drops a review nobody ever sees.
+        assert!(!mine_already_on("acme/api", 8, "me", "body"));
     }
 
     #[test]
