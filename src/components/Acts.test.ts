@@ -82,11 +82,25 @@ describe('acts: what one PR offers', () => {
   })
 
   // the hold path writes "✗ changes requested (waiting to post)" into review, and tone() matches it,
-  // so without the guard the menu said Reviewed for a verdict the author has never seen
-  it('does not call a held review reviewed', () => {
+  // so without the guard the menu said Reviewed for a verdict the author has never seen. It is not
+  // "Reviewed" and it is not startable either: the server refuses a second run while one is held,
+  // because there is one hold per PR and a second would replace it and greet the author again.
+  it('says a held review is waiting, and does not offer to start another', () => {
     const held = row({ section: 'REVIEW REQUESTED', waiting: true, review: '✗ changes requested (waiting to post)' })
-    expect(one(held, 'review')?.[2]).toBe('Review this PR')
-    expect(one(held, 'review')?.[4]).toBe(false)
+    expect(one(held, 'review')?.[2]).toBe('A review is waiting')
+    expect(one(held, 'review')?.[4]).toBe(true)
+    expect(one(held, 'review')?.[3]).toBe('Y posts or drops it')
+    // and the same gate on the instructions variant, or R would be the way round it
+    expect(one(held, 'ask')?.[4]).toBe(true)
+  })
+
+  // a running row says so before anything else: the spinner is what you are waiting on, and a hold
+  // that a run is already going to replace is not the useful thing to read
+  it('running wins over waiting, and waiting over nothing', () => {
+    const rr = (over: Partial<Row>) => one(row({ section: 'REVIEW REQUESTED', ...over }), 'review')
+    expect(rr({ waiting: true, busy: true })?.[2]).toBe('Reviewing…')
+    expect(rr({ waiting: true })?.[2]).toBe('A review is waiting')
+    expect(rr({})?.[2]).toBe('Review this PR')
   })
 
   // the two states that must not start a second run on the same head
