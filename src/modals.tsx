@@ -266,7 +266,8 @@ export function ModalHost() {
       const m = topModal()
       if (!m) return
       const key = e.ctrlKey && e.key === 's' ? 'ctrl+s' : e.key
-      if (/input|textarea/i.test((e.target as HTMLElement).tagName) && !['Escape', 'Enter', 'ctrl+s', 'ArrowUp', 'ArrowDown'].includes(key)) return
+      // function keys type nothing, so they reach a screen even from inside the text being written
+      if (/input|textarea/i.test((e.target as HTMLElement).tagName) && !['Escape', 'Enter', 'ctrl+s', 'ArrowUp', 'ArrowDown'].includes(key) && !/^F\d+$/.test(key)) return
       if (/textarea/i.test((e.target as HTMLElement).tagName) && key === 'Enter') return
       const foot = m.foot?.find(([k]) => k === key)
       const fn = foot ? foot[2] : m.keys?.[key]

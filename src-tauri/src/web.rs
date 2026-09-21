@@ -19,8 +19,8 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::state::{last_line, now, State};
 use crate::types::{DiffFile, Finding, LogEntry, Mark, Pr, Verdict};
 use crate::{
-    autorev, bind, config, dbrepo, dbschema, diff, github, held, install, knowledge, log as review_log,
-    memory, report, review, spells, story, team, textdiff, update,
+    autorev, bind, config, dbrepo, dbschema, diff, founding, github, held, install, knowledge,
+    log as review_log, memory, report, review, spells, story, team, textdiff, update,
 };
 
 /// The built Vite app, embedded so the binary stays self-contained. `pnpm build` must run before cargo.
@@ -438,12 +438,14 @@ fn job_of(name: &str) -> Option<Arc<Mutex<Job>>> {
     jobs().get(name).cloned()
 }
 
-/// Run `f` on a thread; job() reports on it. One at a time per name.
-pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static) {
+/// Run `f` on a thread; job() reports on it. One at a time per name: false, and nothing started, when one
+/// of that name is already running. The check and the start happen under one lock, so two requests
+/// arriving together cannot both start.
+pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static) -> bool {
     let mut all = jobs();
     if let Some(j) = all.get(name) {
         if j.lock().unwrap_or_else(|e| e.into_inner()).running {
-            return;
+            return false;
         }
     }
     let j = Arc::new(Mutex::new(Job {
@@ -474,6 +476,7 @@ pub fn start_job(name: &str, f: impl FnOnce() -> anyhow::Result<Value> + Send + 
         }
         j.running = false;
     });
+    true
 }
 
 pub fn job(name: &str) -> Value {
@@ -765,42 +768,89 @@ fn memory_home(team: &str) -> Result<(Option<std::path::PathBuf>, std::path::Pat
 }
 
 /// Every memory file there is, yours and each team's, and each team's founding documents: what inspect lists.
-fn get_memory_files(_state: &State, _query: &Query) -> Out {
+///
+/// A team's abouts are listed for every repo it could describe: those it already has an about for, those it
+/// holds facts about, and the repos on the board that are bound to it, so an about can be started for one.
+fn get_memory_files(state: &State, _query: &Query) -> Out {
     let mut files: Vec<Value> = memory::editable()
         .into_iter()
         .map(|(team, repo)| json!({"team": team, "repo": repo.unwrap_or_default()}))
         .collect();
+    // ponytail: GitHub's own spelling, not bind::key's. That key is lowercased for lookups and is not a file
+    // name: an about started from it was written as martinrovang__git-dashy.md and read as
+    // MartinRovang__git-dashy.md, so on Linux no review ever saw it.
+    let board: Vec<String> = state
+        .lock()
+        .sections
+        .iter()
+        .flat_map(|s| s.prs.iter().flatten())
+        .map(|p| p.repo().to_string())
+        .collect();
+    let of = bind::resolver(); // one read of the bindings for every repo below
     for team in team::joined() {
-        for doc in DOCS.map(|(d, _)| d) {
+        let Some(dir) = team::dir_of(&team) else { continue };
+        for doc in ["brief", "agents"] {
             files.push(json!({"team": team, "doc": doc}));
+        }
+        let base = dir.join("memory");
+        let mut repos: Vec<String> = std::fs::read_dir(base.join(memory::ABOUT))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .chain(std::fs::read_dir(&base).into_iter().flatten().flatten())
+            .filter_map(|e| e.file_name().to_str().and_then(memory::repo_of))
+            .chain(board.iter().cloned())
+            // an about is read only through the repo's binding, so one for a repo bound elsewhere is never read
+            .filter(|r| r.contains('/') && of(r).eq_ignore_ascii_case(&team))
+            .collect();
+        repos.sort_by_key(|r| r.to_lowercase());
+        repos.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        for repo in repos {
+            files.push(json!({"team": team, "doc": "about", "repo": repo}));
         }
     }
     Ok(json!({ "files": files }))
 }
 
-/// A team's founding documents: what people wrote, not what reviews learned. (the name inspect uses, its file)
-const DOCS: [(&str, &str); 2] = [("brief", memory::PROJECT), ("agents", memory::AGENTS)];
-
-/// The file a founding document lives in, in a joined team's checkout. 400 for a name that is not one.
-fn doc_path(team: &str, doc: &str) -> Result<std::path::PathBuf, Fail> {
-    let (_, file) = DOCS
-        .iter()
-        .find(|(d, _)| *d == doc)
-        .ok_or_else(|| Fail::new(400, "doc must be brief or agents"))?;
+/// The file a founding document lives in, in a joined team's checkout: the brief, agents.md, or one repo's
+/// about. 400 for a name that is not one, or an about with no repo; 404 for a team this machine is not in.
+fn doc_path(team: &str, doc: &str, repo: &str) -> Result<std::path::PathBuf, Fail> {
     let d = team::dir_of(team).ok_or_else(|| Fail(404, format!("not in team {team:?}")))?;
-    Ok(d.join("memory").join(file))
+    let m = d.join("memory");
+    match doc {
+        "brief" => Ok(m.join(memory::PROJECT)),
+        "agents" => Ok(m.join(memory::AGENTS)),
+        "about" => {
+            safe_repo(repo)?;
+            if !repo.contains('/') {
+                return Err(Fail::new(400, "an about is for one repo, owner/name"));
+            }
+            // the one rule for an about's file, reading and writing: memory::about_path
+            memory::about_path(team, repo).ok_or_else(|| Fail(404, format!("not in team {team:?}")))
+        }
+        _ => Err(Fail::new(400, "doc must be brief, agents or about")),
+    }
 }
 
 /// One memory file to inspect: its facts, or a founding document's text. Read only; nothing here writes.
 fn get_memory(_state: &State, query: &Query) -> Out {
     let (team, doc) = (q(query, "team"), q(query, "doc"));
     if !doc.is_empty() {
-        let path = doc_path(team, doc)?;
+        let path = doc_path(team, doc, q(query, "repo"))?;
         if doc == "brief" {
             team::seed_project(&path);
         }
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        return Ok(json!({"team": team, "doc": doc, "path": knowledge::tilde(&path), "text": text}));
+        // an about nobody has written yet opens on its template; nothing is written until a proposal is approved
+        let draft = if text.trim().is_empty() && doc == "about" {
+            team::ABOUT_TEMPLATE
+        } else {
+            ""
+        };
+        return Ok(
+            json!({"team": team, "doc": doc, "repo": q(query, "repo"), "path": knowledge::tilde(&path),
+                         "text": text, "draft": draft, "guide": team::guide(doc)}),
+        );
     }
     let repo = Some(q(query, "repo")).filter(|r| !r.is_empty());
     let (base, dir, label) = memory_home(team)?;
@@ -828,9 +878,12 @@ fn propose_in_team(
     edit: &dyn Fn(&str) -> Result<String, String>,
     title: &str,
 ) -> Out {
+    // the checkout is the nearest directory above the file that is a git repo: memory/<file> and
+    // memory/about/<file> sit at different depths, and counting parents took memory/ for the checkout
     let checkout = file
-        .parent()
-        .and_then(|m| m.parent())
+        .ancestors()
+        .skip(1)
+        .find(|d| team::is_repo(d))
         .ok_or_else(|| Fail::new(400, "not a file in a team's checkout"))?;
     let rel = file
         .strip_prefix(checkout)
@@ -922,6 +975,38 @@ fn pair(repo: Option<&str>, a: &str, b: &str) -> Option<Value> {
     Some(
         json!({"repo": repo, "a": a.fact, "b": b.fact, "would": would, "says": says, "promotes": would >= memory::PROMOTE_AT}),
     )
+}
+
+/// The help for a founding document being written: running, or its questions, notes and revised text.
+fn get_doc_help(_state: &State, _q: &Query) -> Out {
+    Ok(job("doc-help"))
+}
+
+/// Ask the model to help with a founding document: {team, doc, repo, text}. It runs in the background; GET
+/// reports on it. Nothing it returns is written anywhere.
+fn post_doc_help(_state: &State, body: &Body) -> Out {
+    let (team, doc) = (text(body, "team"), text(body, "doc"));
+    let repo = checked_repo(body)?.unwrap_or_default();
+    doc_path(&team, &doc, &repo)?; // the same names, and the same refusals, as reading and proposing one
+    let draft = text(body, "text");
+    let brief = if doc == "about" {
+        std::fs::read_to_string(doc_path(&team, "brief", "")?).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let model = config::get().model;
+    // ponytail: one at a time, and a second is refused rather than silently dropped. Answering ok to a start
+    // that did not happen let a poll for document B show document A's revision, and F3 put it into B's text.
+    // start_job says whether it started, under its own lock: a check here first was a race between two posts.
+    let started = start_job("doc-help", move || {
+        Ok(serde_json::to_value(founding::help(
+            &doc, &repo, &draft, &brief, &model,
+        )?)?)
+    });
+    if !started {
+        return Err(Fail::new(409, "the model is still reading another draft"));
+    }
+    Ok(json!({"ok": true}))
 }
 
 /// The scan's state. The model reads the candidates on a thread; pairs are re-read live on each poll.
@@ -1277,14 +1362,20 @@ fn truthy(body: &Body, key: &str) -> bool {
 fn checked_repo(body: &Body) -> Result<Option<String>, Fail> {
     let repo = repo_of(body);
     if let Some(r) = repo.as_deref() {
-        // ponytail: case folded. PROJECT.md is the brief on a case-insensitive filesystem (macOS, Windows)
-        let slug = memory::slug(r);
-        let names = |f: &str| slug.eq_ignore_ascii_case(f);
-        if r.contains('\\') || r.contains("..") || names(memory::PROJECT) || names(memory::AGENTS) {
-            return Err(Fail::new(400, "not a repo"));
-        }
+        safe_repo(r)?;
     }
     Ok(repo)
+}
+
+/// 400 for a repo name that could name something other than one repo's file.
+fn safe_repo(r: &str) -> Result<(), Fail> {
+    // ponytail: case folded. PROJECT.md is the brief on a case-insensitive filesystem (macOS, Windows)
+    let slug = memory::slug(r);
+    let names = |f: &str| slug.eq_ignore_ascii_case(f);
+    if r.contains('\\') || r.contains("..") || names(memory::PROJECT) || names(memory::AGENTS) {
+        return Err(Fail::new(400, "not a repo"));
+    }
+    Ok(())
 }
 
 fn repo_of(body: &Body) -> Option<String> {
@@ -1509,8 +1600,19 @@ fn post_memory(_state: &State, body: &Body) -> Out {
         }
         "propose" => {
             let doc = text(body, "doc");
-            let path = doc_path(&team, &doc)?;
+            let path = doc_path(&team, &doc, repo.as_deref().unwrap_or(""))?;
             let new = founding_text(body)?;
+            // a soft word first: the proposal waits for `anyway` rather than being refused
+            if !truthy(body, "anyway") {
+                if let Some(warn) = memory::doc_warning(&doc, &new) {
+                    return Ok(json!({"ok": false, "warn": warn}));
+                }
+            }
+            let doc = if doc == "about" {
+                format!("about {label}")
+            } else {
+                doc
+            };
             propose_in_team(
                 &path,
                 &move |_| Ok(new.clone()),
@@ -2289,6 +2391,7 @@ fn get_route(path: &str) -> Option<Get> {
         "/api/drafts" => get_drafts,
         "/api/spells" => get_spells,
         "/api/overlaps" => get_overlaps,
+        "/api/doc-help" => get_doc_help,
         "/api/teams" => get_teams,
         "/api/bind" => get_bind,
         "/api/posting" => get_posting,
@@ -2321,6 +2424,7 @@ fn post_route(path: &str) -> Option<Post> {
         "/api/memory" => post_memory,
         "/api/drafts" => post_drafts,
         "/api/overlaps" => post_overlaps,
+        "/api/doc-help" => post_doc_help,
         "/api/teams" => post_teams,
         "/api/bind" => post_bind,
         "/api/posting" => post_posting,
@@ -2765,6 +2869,148 @@ mod tests {
     }
 
     #[test]
+    fn an_about_is_offered_as_github_spells_the_repo_and_found_whatever_the_case() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let origin = d.path().join("crew.git");
+        let t = d.path().join("teams/crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main", &origin.to_string_lossy()])
+            .status()
+            .unwrap()
+            .success());
+        assert!(team::init_history(&t));
+        assert!(std::process::Command::new("git")
+            .args(["remote", "add", "origin", &origin.to_string_lossy()])
+            .current_dir(&t)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(t.join("memory/project.md"), "brief\n").unwrap();
+        assert_eq!(team::push_dir(&t, "seed", "sync"), "");
+        let bindings = config::get().bindings;
+        config::update(|c| {
+            c.demo = false;
+            c.teams = d.path().join("teams");
+            c.bindings = d.path().join("bindings");
+        });
+        assert_eq!(bind::bind("Acme/API", "crew"), "");
+        let (base, token, state) = served();
+        // the board: one repo bound to crew, spelled with capitals, and one bound to nothing
+        let on = |repo: &str| {
+            let mut p = pr();
+            p.repository.name_with_owner = repo.into();
+            p
+        };
+        state.lock().sections[0].prs = Some(vec![on("Acme/API"), on("Other/thing")]);
+
+        let (_, j) = get(&format!("{base}/api/memory/files"), Some(&token));
+        let abouts: Vec<&str> = j["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["doc"] == "about")
+            .map(|f| f["repo"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            abouts,
+            ["Acme/API"],
+            "GitHub's spelling, and only what is bound to the team"
+        );
+
+        let (code, j) = post(
+            &format!("{base}/api/memory"),
+            json!({"op": "propose", "team": "crew", "doc": "about", "repo": "Acme/API",
+                   "text": "# What this repo is\n\n## Its role\n\nBilling.\n"}),
+            &token,
+        );
+        assert_eq!(code, 200, "{j}");
+        // the proposal is approved: the team's file now says it, and every spelling reads it
+        std::fs::create_dir_all(t.join("memory/about")).unwrap();
+        std::fs::write(t.join("memory/about/Acme__API.md"), "Billing.\n").unwrap();
+        for spelled in ["Acme/API", "acme/api"] {
+            assert_eq!(memory::about(spelled).0, "Billing.", "{spelled}");
+        }
+        // and a proposal for another spelling edits that same file, not a second one
+        assert_eq!(
+            memory::about_path("crew", "acme/api").unwrap(),
+            t.join("memory/about/Acme__API.md")
+        );
+        config::update(|c| c.bindings = bindings);
+    }
+
+    #[test]
+    fn a_second_request_for_help_waits_its_turn() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("teams/crew/memory")).unwrap();
+        assert!(team::init_history(&d.path().join("teams/crew")));
+        config::update(|c| c.teams = d.path().join("teams"));
+        let (base, token, _state) = served();
+        // a help job that has not finished: the one another draft is still waiting on
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        start_job("doc-help", move || {
+            let _ = rx.recv_timeout(Duration::from_secs(10));
+            Ok(json!({}))
+        });
+        let (code, j) = post(
+            &format!("{base}/api/doc-help"),
+            json!({"team": "crew", "doc": "brief", "text": "x"}),
+            &token,
+        );
+        assert_eq!(
+            (code, j["error"].as_str()),
+            (409, Some("the model is still reading another draft"))
+        );
+        tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while job("doc-help")["running"] == true && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(job("doc-help")["running"], false);
+    }
+
+    #[test]
+    fn help_with_a_founding_document_runs_in_the_background_and_writes_nothing() {
+        let _g = config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        let t = d.path().join("teams/crew");
+        std::fs::create_dir_all(t.join("memory")).unwrap();
+        assert!(team::init_history(&t));
+        config::update(|c| {
+            c.demo = true; // demo answers without a model
+            c.teams = d.path().join("teams");
+        });
+        let (base, token, _state) = served();
+        let ask = |body: Value| post(&format!("{base}/api/doc-help"), body, &token);
+        assert_eq!(ask(json!({"team": "crew", "doc": "general", "text": "x"})).0, 400);
+        assert_eq!(ask(json!({"team": "nope", "doc": "brief", "text": "x"})).0, 404);
+        assert_eq!(
+            ask(json!({"team": "crew", "doc": "about", "repo": "acme/api", "text": "my draft"})).0,
+            200
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let j = loop {
+            let (_, j) = get(&format!("{base}/api/doc-help"), Some(&token));
+            if j["running"] == false || std::time::Instant::now() > deadline {
+                break j;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(j["result"]["text"], "my draft", "{j}");
+        assert!(
+            j["result"]["questions"].as_array().is_some_and(|q| !q.is_empty()),
+            "{j}"
+        );
+        assert!(
+            !t.join("memory/about").exists(),
+            "help proposes; nothing is written"
+        );
+        config::update(|c| c.demo = false);
+    }
+
+    #[test]
     fn inspect_reads_removes_yours_and_only_ever_proposes_a_change_to_a_team() {
         let _g = config::test_lock();
         let d = tempfile::tempdir().unwrap();
@@ -2829,8 +3075,35 @@ mod tests {
                 "crew|acme/api|",
                 "crew||brief",
                 "crew||agents"
-            ]
+            ],
+            "acme/api has team facts but is bound to no team here, so an about for it would never be read"
         );
+        // an about nobody wrote opens on its template, with what an about is for beside it; nothing is written
+        let (code, j) = get(
+            &format!("{base}/api/memory?team=crew&doc=about&repo=acme/api"),
+            Some(&token),
+        );
+        assert_eq!(code, 200, "{j}");
+        assert_eq!(
+            (j["text"].as_str(), j["draft"].as_str()),
+            (Some(""), Some(team::ABOUT_TEMPLATE))
+        );
+        assert_eq!(j["guide"].as_str(), Some(team::ABOUT_GUIDE));
+        assert!(!t.join("memory/about").exists());
+        let (_, j) = get(&format!("{base}/api/memory?team=crew&doc=brief"), Some(&token));
+        assert_eq!(j["guide"].as_str(), Some(team::BRIEF_GUIDE));
+        for bad in [
+            "doc=about",
+            "doc=about&repo=../x",
+            "doc=about&repo=nope",
+            "doc=general",
+        ] {
+            assert_eq!(
+                get(&format!("{base}/api/memory?team=crew&{bad}"), Some(&token)).0,
+                400,
+                "{bad}"
+            );
+        }
 
         // facts, not text: a heading is not one
         let (_, j) = get(&format!("{base}/api/memory?repo=acme/web"), Some(&token));
@@ -2871,12 +3144,40 @@ mod tests {
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&shown.stdout), "- kept\n");
 
-        let (code, j) = post(
-            &format!("{base}/api/memory"),
-            json!({"op": "propose", "team": "crew", "doc": "brief", "text": "a sharper brief\n"}),
-            &token,
+        // a brief with none of a brief's sections gets a word first, and goes only when asked again
+        let propose = |body: Value| post(&format!("{base}/api/memory"), body, &token);
+        let (code, j) =
+            propose(json!({"op": "propose", "team": "crew", "doc": "brief", "text": "a sharper brief\n"}));
+        assert_eq!((code, j["ok"].as_bool()), (200, Some(false)), "{j}");
+        assert!(
+            j["warn"].as_str().unwrap().contains("none of a brief's sections"),
+            "{j}"
+        );
+        assert!(j.get("branch").is_none());
+        let (code, j) = propose(
+            json!({"op": "propose", "team": "crew", "doc": "brief", "text": "a sharper brief\n", "anyway": true}),
         );
         assert_eq!(code, 200, "{j}");
+        assert!(
+            j["branch"]
+                .as_str()
+                .unwrap()
+                .starts_with("gitdashy/propose-project-"),
+            "{j}"
+        );
+        // an about is proposed the same way, into about/<repo>.md
+        let (code, j) = propose(
+            json!({"op": "propose", "team": "crew", "doc": "about", "repo": "acme/api",
+                                        "text": "# What this repo is\n\n## Its role\n\nBilling.\n"}),
+        );
+        assert_eq!(code, 200, "{j}");
+        let branch = j["branch"].as_str().unwrap().to_string();
+        let shown = std::process::Command::new("git")
+            .args(["show", &format!("origin/{branch}:memory/about/acme__api.md")])
+            .current_dir(&t)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&shown.stdout).contains("Billing."));
         assert_eq!(
             std::fs::read_to_string(t.join("memory/project.md")).unwrap(),
             "the brief\n"
@@ -4877,6 +5178,29 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(job("test-ok")["result"]["n"], 1);
+    }
+
+    #[test]
+    fn of_many_starts_at_once_exactly_one_runs() {
+        // the help route relies on this answer: a start that did not happen is a 409, not an ok
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let rx = Arc::new(Mutex::new(rx));
+        let started: Vec<bool> = (0..8)
+            .map(|_| {
+                let rx = rx.clone();
+                std::thread::spawn(move || {
+                    start_job("test-race", move || {
+                        let _ = rx.lock().unwrap().recv_timeout(Duration::from_secs(10));
+                        Ok(json!({}))
+                    })
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+        assert_eq!(started.iter().filter(|s| **s).count(), 1, "{started:?}");
+        tx.send(()).unwrap();
     }
 
     /// The catch_unwind in start_job only does anything while the release profile unwinds: under
