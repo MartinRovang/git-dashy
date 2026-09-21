@@ -2514,6 +2514,12 @@ mod tests {
 
     #[test]
     fn a_proposal_is_a_branch_on_origin_and_never_touches_the_checkout() {
+        // ponytail: fills ERROR through push_dir's note(), like the three above — and this one did it
+        // by accident rather than on purpose, which is why it was the one that forgot. A push that
+        // fails and then succeeds on the retry leaves the first failure in the global, and
+        // `connect_pushes_and_setup_joins_what_was_pushed` asserts that global is empty. Without the
+        // lock the two ran together and that assertion read this test's leftover (#160).
+        let _l = crate::config::test_lock();
         let t = tempfile::tempdir().unwrap();
         let remote_ = t.path().join("remote.git");
         sh(
@@ -2845,6 +2851,9 @@ mod tests {
             "already joined that repo, as shared"
         );
         assert_eq!(*NAME.lock().unwrap(), "shared");
+        // ponytail: ERROR is process-global and last-writer-wins, so this assertion is only about
+        // THIS test for as long as every test that can write it holds the same lock. Every test in
+        // this module that reaches note() does; a new one that pushes has to as well.
         assert_eq!(error(), "");
         // a clone that cannot happen says so and leaves nothing behind
         assert!(!setup(&t.path().join("missing.git").to_string_lossy(), "").is_empty());
