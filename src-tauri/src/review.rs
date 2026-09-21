@@ -1482,7 +1482,7 @@ pub fn review(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<Stri
     }
     // ponytail: beside that one, and for the same reason — this is where a model run starts. A hold is
     // a finished review that has been paid for and not yet read; there is one hold file per PR, so a
-    // second run does not sit beside it, it REPLACES it, and the greeting goes to the author twice.
+    // second run replaces it, and the greeting goes to the author twice.
     // The failed-post path is how you meet this: it leaves `error:` on the row, which reads like
     // something to retry, and the retry that is wanted is `Y` rather than another model run (#163).
     if held::get(pr.repo(), pr.number).is_some() {
@@ -1683,15 +1683,32 @@ mod tests {
     }
 
     /// Point every path a release writes to at a fresh temp dir.
+    /// ponytail: EVERY store, not the handful a given test writes to. `autorev` was the one left
+    /// out, and it decides whether a review is held or posted: a test running against the real file
+    /// would have taken its answer from whatever this machine has armed, and on a repo armed to post
+    /// that skips the hold and starts a real, paid model run from inside `cargo test`.
     fn point_at(d: &tempfile::TempDir) {
+        let at = |name: &str| d.path().join(name);
         config::update(|c| {
-            c.held_dir = d.path().join("held");
-            c.log = d.path().join("log.jsonl");
-            c.memory_dir = d.path().join("memory");
-            c.local_memory = d.path().join("memory");
-            c.bindings = d.path().join("bindings");
-            c.teams = d.path().join("teams");
-            c.team = d.path().join("team");
+            c.held_dir = at("held");
+            c.log = at("log.jsonl");
+            c.memory_dir = at("memory");
+            c.local_memory = at("memory");
+            c.local_log = at("log.jsonl");
+            c.bindings = at("bindings");
+            c.teams = at("teams");
+            c.team = at("team");
+            c.autorev = at("autorev");
+            c.dbrepo = at("dbrepo");
+            c.spells_dir = at("spells");
+            c.registry = at("registry");
+            c.self_dir = at("self");
+            c.reports = at("reports");
+            c.learning = at("learning.jsonl");
+            c.backups = at("backups");
+            // ponytail: None is "never write", which is what a test wants: the real settings file
+            // must not pick up whatever a test left in the config.
+            c.settings = None;
         });
     }
 
@@ -2071,10 +2088,7 @@ mod tests {
         );
     }
 
-    /// #163: a hold is a finished review, paid for and not yet read. There is one hold file per PR,
-    /// so a second run does not sit beside it — it replaces it, and greets the author again. The
-    /// failed-post path is how you meet this: it leaves `error:` on the row, which reads like
-    /// something to retry, and the retry that is wanted is `Y`.
+    /// #163: see the guard in `review()`.
     #[test]
     fn a_review_is_refused_while_one_is_already_waiting_to_post() {
         let _g = crate::config::test_lock();
@@ -2083,13 +2097,23 @@ mod tests {
         let h = a_hold("acme/waiting", 7, "hi, reviewing this now");
         let pr = h.pr.clone();
 
-        // nothing held: the refusal is not in the way
-        assert!(
-            !review(&pr, "opus", autorev::Ran::Manual, "")
-                .unwrap()
-                .contains(WAITING_ALREADY),
-            "with no hold, this must not be what stops it"
-        );
+        // nothing held: the refusal is not what stops it — the stand-in's 404 is.
+        // ponytail: against a stand-in, not the real API. Without one this leg sent a genuine
+        // authenticated POST to api.github.com against a repo nobody here owns, and passed only
+        // because that repo 404s. A test must not depend on a stranger's repo staying absent, and
+        // must never spend this machine's token to find out.
+        {
+            let api = crate::testapi::Api::start(vec![(
+                "/issues/7/comments",
+                None,
+                crate::testapi::Reply::new(404, r#"{"message":"Not Found"}"#),
+            )]);
+            let _p = crate::testapi::Pointed::at(&api);
+            let got = review(&pr, "opus", autorev::Ran::Manual, "").unwrap();
+            assert!(!got.contains(WAITING_ALREADY), "with no hold, got {got:?}");
+            assert!(got.contains("404"), "it got as far as the greeting, got {got:?}");
+            assert!(api.saw("POST", "/issues/7/comments"));
+        }
 
         held::put(&h).unwrap();
         let status = review(&pr, "opus", autorev::Ran::Manual, "").unwrap();
