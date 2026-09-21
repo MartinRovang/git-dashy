@@ -867,6 +867,15 @@ export default function App() {
               `${target}: findings ${inline === 'on' ? 'on the lines they name' : 'in the body only'}`,
             )
           }
+          onClearInline={(target) =>
+            void call(
+              '/api/posting',
+              target.endsWith('/*')
+                ? { op: 'inline', owner: target.slice(0, -2), inline: 'none' }
+                : { op: 'inline', repo: target, inline: 'none' },
+              `${target}: follows the switch again`,
+            )
+          }
           onFollowOwner={(repo) =>
             // every kind, in turn: `none` takes each rule off, and the owner's word applies again
             void (async () => {

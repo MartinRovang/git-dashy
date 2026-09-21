@@ -3913,6 +3913,114 @@ mod tests {
     /// The screen's three answers: what is in force, where it came from, and the OWNER's own word —
     /// the owner toggles flip that one, and flipping it from the effective value wrote back what was
     /// already there whenever a repo row had carved the owner out.
+    /// #161: the panel's inline axis, end to end — the route writes the rule, the payload reads it
+    /// back with where it came from, and the switch is what a target with no rule falls back to.
+    #[test]
+    fn the_inline_rule_goes_through_the_route_and_comes_back_in_the_payload() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.held_dir = d.path().join("held");
+            c.settings = None;
+            c.inline = false;
+        });
+        let (base, token, _state) = served();
+        let url = format!("{base}/api/posting");
+        let row = |t: &str| {
+            get(&format!("{base}/api/state"), Some(&token)).1["postingRules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["target"] == t)
+                .cloned()
+                .unwrap()
+        };
+
+        // nothing set: the switch decides, and the payload says so with an empty via
+        assert_eq!(row("a/b")["inline"], json!(false));
+        assert_eq!(row("a/b")["inlineVia"], json!(""));
+
+        // the owner's rule, through the route the panel uses
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "inline", "owner": "a", "inline": "on"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(row("a/*")["inline"], json!(true));
+        assert_eq!(row("a/*")["inlineVia"], json!("owner"));
+        assert_eq!(row("a/b")["inline"], json!(true), "the repo follows it");
+        assert_eq!(row("a/b")["inlineVia"], json!("owner"));
+
+        // the repo carves itself out
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "inline", "repo": "a/b", "inline": "off"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(row("a/b")["inline"], json!(false));
+        assert_eq!(row("a/b")["inlineVia"], json!("repo"));
+        assert_eq!(row("a/*")["inline"], json!(true), "and leaves its owner alone");
+
+        // `none` drops the rule, so it follows again
+        assert_eq!(
+            post(
+                &url,
+                json!({"op": "inline", "repo": "a/b", "inline": "none"}),
+                &token
+            )
+            .0,
+            200
+        );
+        assert_eq!(row("a/b")["inlineVia"], json!("owner"));
+
+        // the words it will not take, and naming both or neither
+        for bad in [
+            json!({"op": "inline", "repo": "a/b", "inline": "maybe"}),
+            json!({"op": "inline", "inline": "on"}),
+            json!({"op": "inline", "repo": "a/b", "owner": "a", "inline": "on"}),
+        ] {
+            assert_eq!(post(&url, bad, &token).0, 400);
+        }
+    }
+
+    /// The switch itself, which until #161 could be turned on by a flag and never off from the app.
+    #[test]
+    fn the_inline_switch_can_be_set_from_the_settings_route() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        config::update(|c| {
+            c.autorev = d.path().join("autorev");
+            c.settings = None;
+            c.inline = false;
+        });
+        let (base, token, _state) = served();
+        let seen = || get(&format!("{base}/api/state"), Some(&token)).1["settings"]["inline"].clone();
+        assert_eq!(seen(), json!(false));
+
+        assert_eq!(
+            post(&format!("{base}/api/settings"), json!({"inline": true}), &token).0,
+            200
+        );
+        assert_eq!(seen(), json!(true));
+        assert!(config::get().inline, "and the review path reads the same value");
+
+        assert_eq!(
+            post(&format!("{base}/api/settings"), json!({"inline": false}), &token).0,
+            200
+        );
+        assert_eq!(seen(), json!(false));
+        assert!(!config::get().inline);
+    }
+
     /// The switch through HTTP changes what the payload lists: on, the owner decides; off, each repo keeps
     /// its word and the owner's rule stays as the fallback, marked per repo.
     #[test]

@@ -554,7 +554,13 @@ pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
     let failed = if on && (il.owners.contains_key(&o) || !mine.is_empty()) {
         // ponytail: OFF wins, the way Hold does above. Folding repos back under one owner rule must
         // not start commenting on a repo that was carved out to be quiet.
-        let any_off = under.iter().any(|r| !il.of(r, switch)) || mine.iter().any(|k| !il.repos[k].on());
+        // ponytail: the OWNER'S OWN word counts too, exactly as `owner_holds` does for posting. Off
+        // at the owner, then per-repo, then one repo turned on, then folded back: nothing in `under`
+        // or `mine` is off any more, so the owner flipped Off -> On and every repo under it that is
+        // NOT on the board — the ones nobody looked at — started getting comments.
+        let any_off = il.owners.get(&o) == Some(&Inline::Off)
+            || under.iter().any(|r| !il.of(r, switch))
+            || mine.iter().any(|k| !il.repos[k].on());
         let word = if any_off { Inline::Off } else { Inline::On };
         let mut e = set_inline_owner(&o, Some(word));
         for r in mine {
@@ -778,6 +784,29 @@ mod tests {
         // ponytail: OFF won, the way Hold does — folding back must not start commenting on the repo
         // that was carved out to be quiet
         assert_eq!(il.owners.get("acme"), Some(&Inline::Off));
+    }
+
+    /// The fold must read the owner's own word, not only the repos in front of you. Off at the
+    /// owner, then per-repo, then one repo on, then folded back — the owner flipped to On and every
+    /// repo under it that was not on the board started getting comments nobody asked for.
+    #[test]
+    fn folding_back_reads_the_owners_own_word_not_only_the_board() {
+        let (_g, _d) = fresh();
+        crate::config::update(|c| c.inline = false);
+        let board = ["acme/api".to_string()];
+
+        assert_eq!(set_inline_owner("acme", Some(Inline::Off)), "");
+        assert_eq!(govern("acme", false, &board), "");
+        // the one repo in front of you is turned on
+        assert_eq!(set_inline("acme/api", Some(Inline::On)), "");
+
+        assert_eq!(govern("acme", true, &board), "");
+        assert_eq!(
+            inlines().owners.get("acme"),
+            Some(&Inline::Off),
+            "the owner said off, and a repo nobody listed is still following it"
+        );
+        assert!(!inlines().of("acme/unlisted", false));
     }
 
     /// ponytail: and nothing invented. Governing an owner nobody gave an inline rule must not turn

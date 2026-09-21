@@ -25,6 +25,8 @@ type Props = {
   onPosting: (ran: 'manual' | 'auto', post: 'post' | 'hold' | 'none', target: string) => void
   /** Set one target's inline rule. Its own axis: see PostControls. */
   onInline: (inline: 'on' | 'off', target: string) => void
+  /** Take one target's inline rule off, so it follows its owner or the switch again. */
+  onClearInline: (target: string) => void
   /** Turn one owner's rule on for both kinds of review, or take it off both. */
   onGovern: (owner: string, on: boolean) => void
   /** Take a repo's own posting rules off, so it follows its owner's again. */
@@ -368,7 +370,7 @@ const GROUPS: [string, string][] = [
   ['tools', 'Tools'],
 ]
 
-export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onInline, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
+export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, onFollow, onFollowScope, onPosting, onInline, onClearInline, onGovern, onFollowOwner, onAskAgain, onReport, onDb, collapsed, onCollapse, selected, onCast, onBook, onSchema }: Props) {
   const s = d?.settings || {}
   // the server already drops a spell whose file was deleted
   const equipped = s.spells || []
@@ -559,6 +561,19 @@ export function Sidebar({ data: d, setting, onPath, onTeams, onModal, onAuto, on
                         {/* per repo, the owner's rule is still the fallback: say what a repo with no PR here follows */}
                         {!node.governs && hasOwnRule(node.owner) ? (
                           <div className="rules none">a repo not listed here follows {owner}/*: {postWords(node.owner)}</div>
+                        ) : null}
+                        {/* ponytail: the inline rule is named on its own line, and can be taken off here. It
+                            outlives governs mode — it is the fallback for a repo with no PR on the board —
+                            and postWords says nothing about it, so without this the one rule that posts on
+                            someone else's PR was in force with nothing on screen naming it. */}
+                        {!node.governs && ruleSource(node.owner.target, node.owner.inlineVia) === 'own' ? (
+                          <div className="rules none">
+                            a repo not listed here also follows {owner}/*:{' '}
+                            {node.owner.inline ? 'findings on their lines' : 'findings in the body only'}
+                            <button className="lnk follow" onClick={() => onClearInline(`${owner}/*`)}>
+                              drop that rule
+                            </button>
+                          </div>
                         ) : null}
                       </div>
                     ) : null}
