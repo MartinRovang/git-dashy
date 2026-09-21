@@ -660,11 +660,6 @@ fn reads(repo: &str, label: &str) -> String {
     )
 }
 
-/// Which repos auto-review is armed for.
-///
-/// ponytail: a bare `gitdashy auto` REPORTS, the same rule `bind` has. Naming no repo and asking for
-/// no change is a question, and answering it by arming whatever directory you are standing in is a
-/// write nobody asked for.
 /// Which repos get inline review comments. Same shape as `auto`: a repo, an owner, or a report.
 ///
 /// ponytail: `--clear` is a third state, not the absence of `--off`. A rule has to be removable or an
@@ -747,6 +742,11 @@ fn inline_cmd(positional: Option<String>, owner: Option<String>, off: bool, clea
     0
 }
 
+/// Which repos auto-review is armed for.
+///
+/// ponytail: a bare `gitdashy auto` REPORTS, the same rule `bind` has. Naming no repo and asking for
+/// no change is a question, and answering it by arming whatever directory you are standing in is a
+/// write nobody asked for.
 fn auto_cmd(positional: Option<String>, owner: Option<String>, off: bool, list: bool) -> i32 {
     let on = !off;
     let show = || {

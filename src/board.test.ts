@@ -730,6 +730,18 @@ describe('the posting tree', () => {
     expect(hasOwnRule(rule('acme/*', ['post', ''], ['post', ''], [true, '']))).toBe(false)
   })
 
+  // the panel's mode is a POSTING question: an owner whose only rule is an inline one must not flip
+  // it into "one setting for every repo" and hide the post/hold controls on its repos
+  it('an inline-only owner rule does not make the owner govern', () => {
+    const [acme] = postingTree([
+      rule('acme/*', ['post', ''], ['post', ''], [true, 'owner']),
+      rule('acme/api', ['post', ''], ['post', ''], [true, 'owner']),
+    ])
+    expect(acme.governs).toBe(false)
+    // but it is still the owner's own rule, so the row is not pretending nothing is set
+    expect(hasOwnRule(acme.owner)).toBe(true)
+  })
+
   it('puts each repo under the owner that owns it', () => {
     const [acme] = postingTree(board())
     expect(acme.owner.target).toBe('acme/*')

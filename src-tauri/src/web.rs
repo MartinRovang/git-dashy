@@ -1173,12 +1173,15 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
     // ponytail: every repo the program is handling, not only the ones a rule names. The panel is a list
     // you walk, so a repo with no rule of its own has to be in it -- that is the one you came to set.
     // Each repo's owner comes with it, since the owner row is what a repo with no rule falls back to.
+    // ponytail: the inline rules are listed too. Built from the posting rules and the board alone, a
+    // repo whose ONLY rule is an inline one — and no open PR — was in force and nowhere on screen.
     let mut targets: Vec<String> = p
         .manual
         .listed()
         .into_iter()
         .chain(p.auto.listed())
         .map(|(t, _)| t)
+        .chain(il.listed().into_iter().map(|(t, _)| t))
         .chain(on_board.iter().flat_map(|r| {
             let k = bind::key(r);
             let owner = k.split('/').next().unwrap_or("");
@@ -1222,22 +1225,12 @@ fn posting_rules_json(on_board: &[String]) -> Vec<Value> {
             };
             let (m, mv) = one(&p.manual);
             let (a, av) = one(&p.auto);
-            // ponytail: the same three answers as the other two axes — the rule, and where it came
-            // from — except that the fallback is the switch rather than a constant, so "" here means
-            // "whatever --inline says" and the page has to be able to name that.
+            // ponytail: the store's own resolver, not a second copy of the rule here. "" means the
+            // switch decided rather than a constant, which is the one way this axis differs.
             let (inline, inline_via) = if t.ends_with("/*") {
-                match il.owners.get(&bare) {
-                    Some(v) => (v.on(), "owner"),
-                    None => (switch, ""),
-                }
-            } else if let Some(v) = il.repos.get(&bare) {
-                (v.on(), "repo")
+                il.owner_via(&bare, switch)
             } else {
-                let owner = bare.split('/').next().unwrap_or("").to_string();
-                match il.owners.get(&owner) {
-                    Some(v) => (v.on(), "owner"),
-                    None => (switch, ""),
-                }
+                il.via(&bare, switch)
             };
             let mut row = json!({"target": t, "manual": m.word(), "auto": a.word(),
                                  "manualVia": mv, "autoVia": av,
@@ -1958,7 +1951,10 @@ fn post_posting(state: &State, body: &Body) -> Out {
         if rule.is_none() && word != autorev::CLEAR {
             return Err(Fail::new(400, "inline must be on, off or none"));
         }
-        if repo.is_empty() == owner.is_empty() {
+        if repo.is_empty() && owner.is_empty() {
+            return Err(Fail::new(400, "name a repo or an owner"));
+        }
+        if !repo.is_empty() && !owner.is_empty() {
             return Err(Fail::new(400, "name a repo or an owner, not both"));
         }
         fail_if(if repo.is_empty() {

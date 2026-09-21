@@ -109,7 +109,10 @@ export function postingTree(rules: PostingRule[]): PostingNode[] {
     if (r.target.endsWith('/*')) {
       node(name).owner = r
       // a per-repo owner may still carry a rule -- the fallback for repos nobody listed -- and that is not "decides"
-      node(name).governs = hasOwnRule(r) && !r.perRepo
+      // ponytail: the POSTING axes decide the mode, not the inline one. An owner whose only rule is
+      // inline would otherwise flip the panel into "one setting for every repo" and hide the
+      // post/hold controls on its repos, for a rule that says nothing about post or hold.
+      node(name).governs = (ruleSource(r.target, r.manualVia) === 'own' || ruleSource(r.target, r.autoVia) === 'own') && !r.perRepo
     } else {
       node(name).repos.push(r)
     }

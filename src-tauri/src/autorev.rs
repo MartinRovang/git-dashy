@@ -174,15 +174,35 @@ impl Inlines {
     /// `Rules::of` holds for. Falling back here would put comments on a PR we cannot name, and the
     /// direction that costs other people is the one that posts.
     pub fn of(&self, repo: &str, fallback: bool) -> bool {
+        self.via(repo, fallback).0
+    }
+
+    /// The same answer, with where it came from: "repo", "owner", or "" for the switch.
+    ///
+    /// ponytail: one resolver, two callers. The panel drew its own repo-then-owner-then-switch match
+    /// and the review path called `of()`; two copies of one rule is two places for it to drift, and
+    /// the panel is what someone reads before deciding what the review will do.
+    pub fn via(&self, repo: &str, fallback: bool) -> (bool, &'static str) {
         let r = key(repo);
         if r.is_empty() {
-            return false;
+            return (false, "");
         }
         if let Some(v) = self.repos.get(&r) {
-            return v.on();
+            return (v.on(), "repo");
         }
         let o = r.split('/').next().unwrap_or("");
-        self.owners.get(o).map(|v| v.on()).unwrap_or(fallback)
+        match self.owners.get(o) {
+            Some(v) => (v.on(), "owner"),
+            None => (fallback, ""),
+        }
+    }
+
+    /// An owner's own rule, and whether it has one.
+    pub fn owner_via(&self, owner: &str, fallback: bool) -> (bool, &'static str) {
+        match self.owners.get(&owner_key(owner)) {
+            Some(v) => (v.on(), "owner"),
+            None => (fallback, ""),
+        }
     }
 
     /// (target, rule), owners then repos, each sorted. Owners read back as `acme/*`.
@@ -519,6 +539,48 @@ pub fn govern(owner: &str, on: bool, board: &[String]) -> String {
             return failed;
         }
     }
+    // ponytail: the inline axis too, or switching an owner to per-repo left its inline rule deciding
+    // for every repo under it with nothing on screen able to reach it — the panel stops drawing an
+    // owner's controls once it no longer governs, so the rule was in force and unreachable. The
+    // posting axes above have always written themselves out per repo here; this one has to as well.
+    let switch = crate::config::get().inline;
+    let il = inlines();
+    let mine: Vec<String> = il
+        .repos
+        .keys()
+        .filter(|k| k.split('/').next() == Some(o.as_str()))
+        .cloned()
+        .collect();
+    let failed = if on && (il.owners.contains_key(&o) || !mine.is_empty()) {
+        // ponytail: OFF wins, the way Hold does above. Folding repos back under one owner rule must
+        // not start commenting on a repo that was carved out to be quiet.
+        let any_off = under.iter().any(|r| !il.of(r, switch)) || mine.iter().any(|k| !il.repos[k].on());
+        let word = if any_off { Inline::Off } else { Inline::On };
+        let mut e = set_inline_owner(&o, Some(word));
+        for r in mine {
+            if e.is_empty() {
+                e = set_inline(&r, None);
+            }
+        }
+        e
+    } else if on {
+        // ponytail: nothing to fold. Writing a rule here would turn "follows the switch" into a
+        // concrete word that stops following it, for an owner nobody had given a rule.
+        String::new()
+    } else if !il.owners.contains_key(&o) {
+        String::new()
+    } else {
+        let mut e = String::new();
+        for r in &under {
+            if e.is_empty() {
+                e = set_inline(r, Some(if il.of(r, switch) { Inline::On } else { Inline::Off }));
+            }
+        }
+        e
+    };
+    if !failed.is_empty() {
+        return failed;
+    }
     // last: the mode flips only once every rule it relies on is written
     set_per_repo(&o, !on, before.per_repo.contains(&o))
 }
@@ -687,6 +749,51 @@ mod tests {
         assert!(!inlines().of("not-an-owner-name", true));
         assert_eq!(set_inline("", Some(Inline::On)), " is not an owner/name");
         assert_eq!(set_inline_owner("", Some(Inline::On)), " is not an owner");
+    }
+
+    /// #173's review: switching an owner to per-repo wrote every posting rule out onto the repos but
+    /// left the owner's INLINE rule deciding for all of them — and the panel stops drawing an owner's
+    /// controls once it no longer governs, so the rule was in force with nothing able to reach it.
+    #[test]
+    fn governing_per_repo_writes_the_inline_rule_out_onto_each_repo() {
+        let (_g, _d) = fresh();
+        crate::config::update(|c| c.inline = false);
+        let board = ["acme/api".to_string(), "acme/web".to_string()];
+
+        assert_eq!(set_inline_owner("acme", Some(Inline::On)), "");
+        assert!(inlines().of("acme/api", false), "the owner decides for now");
+
+        // each repo on its own: the owner's answer becomes each repo's own rule
+        assert_eq!(govern("acme", false, &board), "");
+        let il = inlines();
+        assert_eq!(il.repos.get("acme/api"), Some(&Inline::On));
+        assert_eq!(il.repos.get("acme/web"), Some(&Inline::On));
+        assert_eq!(il.via("acme/api", false).1, "repo", "reachable in the panel");
+
+        // and back: one rule again, with the carve-outs dropped
+        assert_eq!(set_inline("acme/web", Some(Inline::Off)), "");
+        assert_eq!(govern("acme", true, &board), "");
+        let il = inlines();
+        assert!(il.repos.is_empty(), "the carve-outs are folded back in");
+        // ponytail: OFF won, the way Hold does — folding back must not start commenting on the repo
+        // that was carved out to be quiet
+        assert_eq!(il.owners.get("acme"), Some(&Inline::Off));
+    }
+
+    /// ponytail: and nothing invented. Governing an owner nobody gave an inline rule must not turn
+    /// "follows the switch" into a concrete word that stops following it.
+    #[test]
+    fn governing_writes_no_inline_rule_when_there_was_none() {
+        let (_g, _d) = fresh();
+        crate::config::update(|c| c.inline = true);
+        let board = ["acme/api".to_string()];
+        assert_eq!(govern("acme", false, &board), "");
+        assert!(inlines().repos.is_empty() && inlines().owners.is_empty());
+        assert_eq!(govern("acme", true, &board), "");
+        assert!(inlines().repos.is_empty() && inlines().owners.is_empty());
+        // still the switch, so flipping it still decides
+        assert!(inlines().of("acme/api", true));
+        assert!(!inlines().of("acme/api", false));
     }
 
     /// The three rule sets share one append-only file and none may read another's rows.
