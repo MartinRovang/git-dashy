@@ -19,9 +19,12 @@ export function acts(p: Row, d: Detail | null, hidden = false): Act[] {
   // a team's memory repo is approved by a person with rights on it: no review, pre-review or instructions
   if (rr && p.humanOnly) out.push(['r', '', 'Human review only', "a team's memory repo", true, 'review'])
   else if (rr) {
-    out.push(['r', 'go', p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : 'Review this PR', '', p.busy || reviewed, 'review'])
+    // a held review is a finished one waiting to post; the server refuses a second run, and this says so
+    const held = !!p.waiting
+    const label = p.busy ? 'Reviewing…' : reviewed ? 'Reviewed' : held ? 'A review is waiting' : 'Review this PR'
+    out.push(['r', 'go', label, held ? 'Y posts or drops it' : '', p.busy || reviewed || held, 'review'])
     // the same gate as `r`: a review you could not start plainly, you cannot start with instructions either
-    out.push(['R', '', 'Review with instructions…', 'private to you', p.busy || reviewed, 'ask'])
+    out.push(['R', '', 'Review with instructions…', held ? 'Y posts or drops it' : 'private to you', p.busy || reviewed || held, 'ask'])
   }
   if (mine && p.humanOnly) out.push(['p', '', 'Human review only', "a team's memory repo", true, 'pre'])
   else if (mine)

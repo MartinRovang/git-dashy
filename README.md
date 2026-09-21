@@ -113,7 +113,7 @@ button somewhere on the page.
 | `+` | on a MINE row: pick a collaborator (or type a login) and request their review |
 | `p` | on a MINE row: pre-review your own PR. Nothing is posted; `p` again inspects it in the app — where you can discuss it with the agent — and offers a fresh one once the PR has changed since |
 | `Enter` | show / hide the detail pane for the selected PR |
-| `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict |
+| `r` | on a REVIEW REQUESTED row: Claude reviews it and posts the verdict. Refused while a review is already waiting to post on that PR — there is one held review per PR, so a second run would replace the one you have not read and greet the author again; `Y` posts or drops it first |
 | `R` | the same, with instructions for the agent first: what to focus on, what to leave alone. They stay on this machine and are never posted |
 | `v` | read the full review of the selected PR — any row that has one, not only REVIEWED |
 | `f` | refresh now |

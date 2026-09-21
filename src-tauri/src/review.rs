@@ -1464,6 +1464,10 @@ pub fn post_held(h: &held::Held) -> Result<String> {
     })
 }
 
+/// Why a review is refused while one is already waiting to post on the same PR.
+pub const WAITING_ALREADY: &str =
+    "a review is already waiting to post on this PR: Y inspects it, and posts or drops it";
+
 /// Review the PR and either post the verdict or park it. The row's status string.
 ///
 /// `ran` says which decision applies: pressing `r` is a different one from letting auto run
@@ -1475,6 +1479,14 @@ pub fn review(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<Stri
     // caller added later can review a team's repo by forgetting to ask
     if team::in_repos(&team::team_repos(), pr.repo()) {
         return Ok(format!("error: {}", team::HUMAN_ONLY));
+    }
+    // ponytail: beside that one, and for the same reason — this is where a model run starts. A hold is
+    // a finished review that has been paid for and not yet read; there is one hold file per PR, so a
+    // second run does not sit beside it, it REPLACES it, and the greeting goes to the author twice.
+    // The failed-post path is how you meet this: it leaves `error:` on the row, which reads like
+    // something to retry, and the retry that is wanted is `Y` rather than another model run (#163).
+    if held::get(pr.repo(), pr.number).is_some() {
+        return Ok(format!("error: {WAITING_ALREADY}"));
     }
     Ok(review_inner(pr, model, ran, ask).unwrap_or_else(|e| error_status(&e)))
 }
@@ -2057,6 +2069,40 @@ mod tests {
             1,
             "and it is in the log, which the failed attempt never wrote"
         );
+    }
+
+    /// #163: a hold is a finished review, paid for and not yet read. There is one hold file per PR,
+    /// so a second run does not sit beside it — it replaces it, and greets the author again. The
+    /// failed-post path is how you meet this: it leaves `error:` on the row, which reads like
+    /// something to retry, and the retry that is wanted is `Y`.
+    #[test]
+    fn a_review_is_refused_while_one_is_already_waiting_to_post() {
+        let _g = crate::config::test_lock();
+        let d = tempfile::tempdir().unwrap();
+        point_at(&d);
+        let h = a_hold("acme/waiting", 7, "hi, reviewing this now");
+        let pr = h.pr.clone();
+
+        // nothing held: the refusal is not in the way
+        assert!(
+            !review(&pr, "opus", autorev::Ran::Manual, "")
+                .unwrap()
+                .contains(WAITING_ALREADY),
+            "with no hold, this must not be what stops it"
+        );
+
+        held::put(&h).unwrap();
+        let status = review(&pr, "opus", autorev::Ran::Manual, "").unwrap();
+        assert!(status.contains(WAITING_ALREADY), "got {status:?}");
+        assert!(status.starts_with("error:"), "tone() paints it, got {status:?}");
+        // ponytail: the WAITING verdict is still there, and still the one that was paid for
+        let after = held::get("acme/waiting", 7).expect("the hold survives a refused re-review");
+        assert_eq!(after.verdict.body, h.verdict.body);
+        assert_eq!(after.hello, h.hello, "and its greeting was not sent again");
+
+        // the same gate on the instructions variant, or R is the way round it
+        let asked = review(&pr, "opus", autorev::Ran::Manual, "focus on the parser").unwrap();
+        assert!(asked.contains(WAITING_ALREADY), "got {asked:?}");
     }
 
     /// The path almost every release takes: the PR has reviews, none of them this one, so it posts.
