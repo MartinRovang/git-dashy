@@ -803,6 +803,8 @@ export async function updateScreen(ctx: Ctx) {
   const v = ctx.getData()?.update
   if (!v) return
   if (!(await confirm(`v${ctx.getData()?.version}  →  v${v}. Installs the release tag and restarts gitdashy. Update now?`, { yes: 'update now', no: 'later' }))) return
+  const n = ctx.getData()?.running || 0
+  if (n && !(await confirm(`You are currently reviewing ${n} PR${n === 1 ? '' : 's'}. The restart kills ${n === 1 ? 'it' : 'them'}. Are you sure you want to quit?`, { yes: 'quit and update', no: 'keep reviewing' }))) return
   // ponytail: the server reports no progress, so the spinner runs until a failure notice arrives,
   // the process re-execs under a desktop window, or the cap runs out (a --browser page survives the
   // re-exec and would otherwise sit behind it forever). Add a real bar when the server can report one.
