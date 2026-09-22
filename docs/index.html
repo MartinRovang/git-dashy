@@ -48,7 +48,7 @@
       </div>
       <nav class="mono" style="display:flex; align-items:center; gap:22px; font-size:13px">
         <a href="#keys" style="color:#ece5d6">keys</a>
-        <a href="https://github.com/MartinRovang/github-dashy" style="color:#ece5d6">github ↗</a>
+        <a href="https://github.com/NeoMedSys/git-dashy" style="color:#ece5d6">github ↗</a>
       </nav>
     </header>
 
@@ -68,7 +68,7 @@
       <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:stretch; padding-top:6px">
         <div class="mono" style="display:flex; align-items:center; gap:14px; background:#1c1916; border:1px solid #3c352c; border-radius:6px; padding:13px 14px 13px 16px; font-size:13.5px; min-width:0; flex:1 1 480px; overflow:hidden">
           <span style="color:#97a67f; flex:none">$</span>
-          <code style="color:#ece5d6; white-space:nowrap; overflow-x:auto; flex:1 1 auto; min-width:0">curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh</code>
+          <code style="color:#ece5d6; white-space:nowrap; overflow-x:auto; flex:1 1 auto; min-width:0">curl -fsSL https://raw.githubusercontent.com/NeoMedSys/git-dashy/main/install.sh | sh</code>
           <button class="copy" onclick="copyCmd(this)" style="flex:none; padding:7px 13px; font-size:12px">copy</button>
         </div>
       </div>
@@ -163,7 +163,7 @@
 
 <script>
   // ponytail: no framework; the design's DCLogic component boils down to one copy button and a version string.
-  const CMD = "curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh";
+  const CMD = "curl -fsSL https://raw.githubusercontent.com/NeoMedSys/git-dashy/main/install.sh | sh";
   function copyCmd(btn) {
     const done = () => {
       btn.textContent = "copied";
@@ -172,7 +172,7 @@
     if (navigator.clipboard) navigator.clipboard.writeText(CMD).then(done, done); else done();
   }
   // Keep the version in sync with Cargo.toml on main; falls back to the hardcoded one.
-  fetch("https://raw.githubusercontent.com/MartinRovang/github-dashy/main/src-tauri/Cargo.toml")
+  fetch("https://raw.githubusercontent.com/NeoMedSys/git-dashy/main/src-tauri/Cargo.toml")
     .then(r => r.text())
     .then(t => { const m = /^version = "([^"]+)"/m.exec(t); if (m) document.querySelectorAll(".version").forEach(e => e.textContent = "v" + m[1]); })
     .catch(() => {});

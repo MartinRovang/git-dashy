@@ -3,7 +3,7 @@
 # ponytail: one static binary from the GitHub release, no clone, no runtime. The in-app updater
 # does the same download over the running executable.
 set -e
-REPO=${REPO:-MartinRovang/github-dashy}
+REPO=${REPO:-NeoMedSys/git-dashy}
 BIN=${BIN:-$HOME/.local/bin}
 NAME=${NAME:-gitdashy}
 
