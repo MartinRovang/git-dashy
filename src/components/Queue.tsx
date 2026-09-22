@@ -122,13 +122,14 @@ function PrRow({ p, me, child, sel, unread, expanded, onExpand, onSelect, onOpen
               ⚠{' '}
             </span>
           ) : null}
-          {p.title}
+          {/* before the title: after it, a long title's ellipsis clipped the pill away */}
           {p.scores.map((s) => (
             <span key={s.name} className={`score g${s.grade}`} title={`${s.name} ${s.score}/100: ${s.note}`}>
               <Glyph kind="passive" name={s.name} size={13} />
               {s.grade} {s.score}
             </span>
           ))}
+          {p.title}
         </b>
       </div>
       <div className={`who${me && p.author?.toLowerCase() === me.toLowerCase() ? ' mine' : ''}`}>
