@@ -6,6 +6,7 @@ import { age, avatar, CHECK_TONE, FINDING_TONE, PALETTE, rowState, tone, when } 
 import { useNow } from '../usePoll'
 import { clean } from '../dbgraph'
 import { paneSections } from '../layout'
+import { Glyph } from './Glyph'
 import { DbGraph } from './DbGraph'
 
 /** The review's database section: each table the PR touches with its columns, then what could break. */
@@ -54,6 +55,7 @@ const SECS: [string, string][] = [
   ['checks', 'CHECKS'],
   ['review', 'AI REVIEW'],
   ['database', 'DATABASE'],
+  ['scores', 'SCORES'],
   ['pre', 'PRE-REVIEW'],
 ]
 /** The side pane: the selected PR's summary, checks and review. */
@@ -224,6 +226,28 @@ export function Pane({
       : null,
     database:
       rev?.db && shape && (shape.tables.length || shape.risks.length) ? { content: <Db db={rev.db} number={p.number} /> } : null,
+    scores: p.scores?.length
+      ? {
+          content: p.scores.map((s) => (
+            <div key={s.name} className={`scorecard g${s.grade}`}>
+              <Glyph kind="passive" name={s.name} size={40} />
+              <b>{s.grade}</b>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="mono" style={{ fontSize: 12 }}>
+                  <span style={{ textTransform: 'capitalize' }}>{s.name}</span> · {s.score}/100
+                </div>
+                <div className="scorebar">
+                  <i style={{ width: `${s.score}%` }} />
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--dim2)' }}>
+                  {s.note}
+                  {s.blocks ? ' · blocks merge' : ''}
+                </div>
+              </div>
+            </div>
+          )),
+        }
+      : null,
     pre: pre
       ? {
           extra: (

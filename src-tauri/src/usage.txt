@@ -28,7 +28,7 @@ Usage: gitdashy [--browser] [--interval SECONDS] [--auto] [--model NAME] [--effo
   --effort LEVEL claude effort: low, medium, high, xhigh, max (default medium, or $PRS_EFFORT); e picks
   --depth LEVEL  review depth: low, medium, high, adaptive (default adaptive, or $PRS_DEPTH); d picks
   --voice A,B    how the posted body is phrased: review, caveman, bot, any mix (default review, or $PRS_VOICE); x toggles
-  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, perf, humanizer (or $PRS_HUNTER); h toggles
+  --hunter A,B   extra lenses, each a section of its own findings: ponytail, security, tests, perf, humanizer, spaghetti (or $PRS_HUNTER); h toggles
   --instructions FILE  text file appended to every review prompt (or $PRS_INSTRUCTIONS)
   --inline       also post each finding as a comment on the line it is about (or $PRS_INLINE=1);
                  `gitdashy inline` sets it per repo or per owner, which beats this

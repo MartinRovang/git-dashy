@@ -174,6 +174,7 @@ pub fn payload(state: &State) -> Value {
                 "kind": tagged.map(|r| r.kind.as_str()).unwrap_or(""),
                 "breaking": tagged.is_some_and(|r| r.breaking),
                 "db": p.review.as_deref().or_else(|| logged.get(url).copied()).is_some_and(changes_db),
+                "scores": p.review.as_deref().or_else(|| logged.get(url).copied()).map(|r| r.scores.as_slice()).unwrap_or_default(),
                 // whether the pane will have an AI REVIEW section: detail() reads the whole log, so
                 // this must too. `logged` above only covers the REVIEWED section, and `review` is
                 // this session's status string, which says nothing about the log at all.

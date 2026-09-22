@@ -28,7 +28,7 @@ const MODELS = ['opus', 'sonnet', 'fable']
 const DEPTHS = ['adaptive', 'low', 'medium', 'high']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
 const VOICES = ['review', 'caveman', 'bot']
-const HUNTERS = ['ponytail', 'security', 'tests', 'perf', 'humanizer']
+const HUNTERS = ['ponytail', 'security', 'tests', 'perf', 'humanizer', 'spaghetti']
 const SUBS = ['all', 'open', 'off']
 const INTERVALS = [60, 120, 300, 600, 900]
 const WINDOWS = [1, 3, 6, 24, 168, 720, null]
@@ -37,7 +37,7 @@ const PROMOTE_AT = 2
 type Pre = { at: number; moved: boolean } | null
 type Finding = { kind: string; loc?: string; text: string }
 type Verdict = 'approve' | 'request_changes' | 'comment'
-type ReviewInfo = { verdict: Verdict; summary: string; body: string; findings: Finding[] }
+type ReviewInfo = { verdict: Verdict; summary: string; body: string; findings: Finding[]; scores?: { name: string; score: number; grade: 'A' | 'B' | 'C' | 'D'; note: string; blocks: boolean }[] }
 
 type Row = {
   section: string
@@ -93,6 +93,7 @@ const S = {
   drafts: [] as { repo: string | null; n: number; kind: string; fact: string }[],
   spells: [
     { name: 'auth-check', text: 'Trace every request path this PR adds back to where the caller is authenticated and authorised.' },
+    { name: 'spaghetti-audit', text: 'Audit the whole repository at this PR\'s head commit against the Spaghetti rulebook, not just the diff.' },
     { name: 'migration-audit', text: 'Read every migration this PR adds; say whether it locks a busy table and whether it rolls back.' },
     { name: 'test-gaps', text: 'List the behaviours this PR changes and the test that would fail if each broke.' },
   ] as { name: string; text: string }[],
@@ -249,12 +250,14 @@ function seed() {
       { kind: 'note', loc: 'api/auth.py:40', text: 'policy.check now runs on the parsed user; the old order is gone' },
       { kind: 'nit', loc: 'api/handlers.py:12', text: 'the retry helper is unused after this change' },
     ],
+    scores: [{ name: 'spaghetti', score: 90, grade: 'A', note: '0 fails, 1 warning', blocks: false }],
   }
   S.reviewInfo[v2.url] = {
     verdict: 'request_changes',
     summary: 'Expires logs after 30 days, moves backups to Glacier.',
     body: '- `infra/s3.tf:31` rule also matches the `backups/` prefix, would delete backups after 30d\n- no plan output attached',
     findings: [{ kind: 'blocking', loc: 'infra/s3.tf:31', text: 'rule also matches the backups/ prefix' }],
+    scores: [{ name: 'spaghetti', score: 30, grade: 'D', note: '1 fail, 2 warnings', blocks: true }],
   }
   for (const v of [v1, v2]) {
     S.reviewText[v.url] = VT[S.reviewInfo[v.url].verdict]
@@ -330,6 +333,7 @@ function buildPayload() {
           reviewAt: reviewed ? S.reviewAt[r.url] || '' : '',
           pre: r.pre,
           waiting: !!r.waiting,
+          scores: reviewed ? S.reviewInfo[r.url].scores || [] : [],
         }
       }),
     error: '',
@@ -661,6 +665,7 @@ function handleApi(method: string, path: string, query: URLSearchParams, body: B
         tests: 'Hunts test coverage.',
         perf: 'Hunts runtime cost.',
         humanizer: 'Hunts AI-sounding prose.',
+        spaghetti: 'The Spaghetti monster: hunts code nobody else can maintain.',
       }
       const built = (names: string[], setting: string) =>
         names.map((n) => ({ name: n, about: about[n] || '', on: on(S.settings[setting], n) }))

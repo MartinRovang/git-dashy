@@ -128,7 +128,7 @@ button somewhere on the page.
 | `d` | pick review depth: adaptive / low / medium / high |
 | `e` | pick claude effort: default / low / medium / high / xhigh / max |
 | `x` | tick how the posted review is phrased: review / caveman / bot, any mix, at least one |
-| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer |
+| `h` | tick extra hunters, each a section of its own findings: ponytail / security / tests / perf / humanizer / spaghetti |
 | `i` | pick the refresh interval: 1 / 2 / 5 / 10 / 15 min (the footer counts down to the next one) |
 | `n` | the knowledge panel on **inspect**, open at this repo's facts |
 | `g` | the knowledge panel on **inspect**: what the memory knows, file by file — your files and each team's. `x` removes a fact: from yours at once, from a team's by opening a pull request on the team's repo. Nothing is typed in: facts only arrive through reviews. A team's brief and `agents.md` are shown too, and `e` proposes a change to one as a pull request |
@@ -202,7 +202,12 @@ least one; untick `review` and the voices you left ticked are the whole review. 
 over-engineering, `security` only security, `tests` only missing or toothless tests,
 `perf` only runtime cost the change adds (work repeated per poll, render or request, N+1, growth with no bound),
 `humanizer` only AI-sounding prose the change adds to the application: user-facing strings, docs
-and comments, never the PR description.
+and comments, never the PR description, and `spaghetti` (the Spaghetti monster) only what someone who
+did not write it cannot maintain: swallowed errors, hidden state, silenced checks, a frontend that decides.
+With `spaghetti` on, the review lists each rulebook fail and warning, and gitdashy scores the PR
+(`100 − 50·fails/KLOC − 10·warnings/KLOC`, KLOC being the added lines but never less than 1) into a grade
+A–D, shown as a tag on the row and under SCORES in the pane. Any fail turns an approval into request changes. The whole-repo audit is the
+`spaghetti-audit` spell.
 The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
 them at runtime.
 

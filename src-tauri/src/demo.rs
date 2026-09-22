@@ -211,6 +211,7 @@ pub fn install() {
             kind: v.kind.clone(),
             breaking: v.breaking,
             db: v.db.clone(),
+            scores: v.scores.clone(),
         };
         text.push_str(&serde_json::to_string(&entry).unwrap_or_default());
         text.push('\n');

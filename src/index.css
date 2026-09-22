@@ -382,6 +382,16 @@
   .ntick.on { border-color: var(--gold); background: var(--gold); }
   .ncard .ntick { position: absolute; top: 8px; right: 8px; }
   .nglyph.sprite { object-fit: contain; }
+  .nglyph.tint { filter: hue-rotate(210deg) saturate(1.6); }
+  /* a scorer's grade: on a row a pill (its drawing, the letter, the score), in the pane a card; coloured by the letter */
+  .gA { --g: var(--green); } .gB { --g: var(--cyan); } .gC { --g: var(--amber); } .gD { --g: var(--red); }
+  .score { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px 0 2px; height: 16px;
+    border-radius: 8px; border: 1px solid var(--g); color: var(--g); font: 600 10px var(--mono); vertical-align: 1px; }
+  .score .nglyph { vertical-align: 0; }
+  .scorecard { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .scorecard > b { font: 700 28px var(--mono); line-height: 1; color: var(--g); }
+  .scorebar { height: 4px; margin: 6px 0; border-radius: 2px; background: var(--edge); overflow: hidden; }
+  .scorebar i { display: block; height: 100%; background: var(--g); }
   .npage.right { display: flex; flex-direction: column; }
   /* the book fills the view and each page scrolls inside it, so turning a page never resizes the book */
   @media (min-width: 901px) {
