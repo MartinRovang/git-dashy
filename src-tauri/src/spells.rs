@@ -210,7 +210,11 @@ mod tests {
         std::fs::write(dir.join("fog-audit.md"), "mine").unwrap();
         let names: Vec<String> = list_in(&dir).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["fog-audit", "spaghetti-audit"]);
-        assert_eq!(get_in(&dir, "fog-audit").as_deref(), Some("mine"), "a spell of that name is kept");
+        assert_eq!(
+            get_in(&dir, "fog-audit").as_deref(),
+            Some("mine"),
+            "a spell of that name is kept"
+        );
     }
 
     #[test]
