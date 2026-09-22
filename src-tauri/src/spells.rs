@@ -7,7 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// Written once, when the folder does not exist yet; deleted starters are not written again.
+/// Each is written once, the first time the app sees the folder without it; `.starters` remembers which were
+/// offered, so a deleted starter is not written again and a new one still reaches an existing install.
 /// ponytail: prose, not bullets. A review that repeats a 24+ char instruction line is held (quotes_instructions),
 /// and a model mirrors a bullet list word for word.
 pub const STARTERS: &[(&str, &str)] = &[
@@ -103,17 +104,38 @@ pub fn name_ok(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// (name, text), sorted by name. A folder that does not exist yet is seeded with STARTERS first.
-pub fn list_in(dir: &Path) -> Vec<(String, String)> {
-    if !dir.exists() {
-        let seeded = std::fs::create_dir_all(dir).and_then(|_| {
-            STARTERS
-                .iter()
-                .try_for_each(|(n, t)| std::fs::write(dir.join(format!("{n}.md")), t))
-        });
-        if let Err(e) = seeded {
-            log::warn!("could not write the starter spells: {e}");
+/// Seeded before `.starters` existed: a folder without the marker already had these, and may have deleted them.
+const SEEDED_BEFORE_MARKER: &[&str] = &["auth-check", "migration-audit", "test-gaps"];
+
+/// Writes every starter not offered to this folder yet, unless a spell of that name is already there.
+fn seed(dir: &Path) -> std::io::Result<()> {
+    let marker = dir.join(".starters");
+    let offered: Vec<String> = match std::fs::read_to_string(&marker) {
+        Ok(t) => t.lines().map(str::to_string).collect(),
+        Err(_) if dir.exists() => SEEDED_BEFORE_MARKER.iter().map(|n| n.to_string()).collect(),
+        Err(_) => vec![],
+    };
+    if STARTERS.iter().all(|(n, _)| offered.iter().any(|o| o == n)) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    for (n, t) in STARTERS {
+        let p = dir.join(format!("{n}.md"));
+        if !offered.iter().any(|o| o == n) && !p.exists() {
+            std::fs::write(p, t)?;
         }
+    }
+    let mut all = offered;
+    all.extend(STARTERS.iter().map(|(n, _)| n.to_string()));
+    all.sort();
+    all.dedup();
+    std::fs::write(marker, all.join("\n") + "\n")
+}
+
+/// (name, text), sorted by name. Starters this folder has not been offered yet are written first.
+pub fn list_in(dir: &Path) -> Vec<(String, String)> {
+    if let Err(e) = seed(dir) {
+        log::warn!("could not write the starter spells: {e}");
     }
     let mut out: Vec<(String, String)> = std::fs::read_dir(dir)
         .into_iter()
@@ -182,9 +204,21 @@ mod tests {
     }
 
     #[test]
+    fn an_existing_folder_gets_only_the_starters_it_never_had() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().to_path_buf(); // made before .starters: the first three were offered already
+        std::fs::write(dir.join("fog-audit.md"), "mine").unwrap();
+        let names: Vec<String> = list_in(&dir).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["fog-audit", "spaghetti-audit"]);
+        assert_eq!(get_in(&dir, "fog-audit").as_deref(), Some("mine"), "a spell of that name is kept");
+    }
+
+    #[test]
     fn lists_and_reads_md_files_only() {
         let d = tempfile::tempdir().unwrap();
-        let dir = d.path().to_path_buf(); // exists: no starters
+        let dir = d.path().to_path_buf();
+        let all: Vec<&str> = STARTERS.iter().map(|(n, _)| *n).collect();
+        std::fs::write(dir.join(".starters"), all.join("\n")).unwrap(); // every starter offered and deleted
         std::fs::write(dir.join("zeta.md"), "look at z").unwrap();
         std::fs::write(dir.join("alpha.md"), "look at a").unwrap();
         std::fs::write(dir.join("notes.txt"), "not a spell").unwrap();
