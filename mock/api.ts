@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
+import type { Score } from '../src/types.js'
 
 const TARGET = 'http://127.0.0.1:7777'
 
@@ -37,7 +38,7 @@ const PROMOTE_AT = 2
 type Pre = { at: number; moved: boolean } | null
 type Finding = { kind: string; loc?: string; text: string }
 type Verdict = 'approve' | 'request_changes' | 'comment'
-type ReviewInfo = { verdict: Verdict; summary: string; body: string; findings: Finding[]; scores?: { name: string; score: number; grade: 'A' | 'B' | 'C' | 'D'; note: string; blocks: boolean }[] }
+type ReviewInfo = { verdict: Verdict; summary: string; body: string; findings: Finding[]; scores?: Score[] }
 
 type Row = {
   section: string

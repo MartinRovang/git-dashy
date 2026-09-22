@@ -226,7 +226,7 @@ export function Pane({
       : null,
     database:
       rev?.db && shape && (shape.tables.length || shape.risks.length) ? { content: <Db db={rev.db} number={p.number} /> } : null,
-    scores: p.scores?.length
+    scores: p.scores.length
       ? {
           content: p.scores.map((s) => (
             <div key={s.name} className={`scorecard g${s.grade}`}>

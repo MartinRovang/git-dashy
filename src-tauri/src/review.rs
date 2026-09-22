@@ -143,7 +143,8 @@ pub const HUNTER: &[(&str, &str)] = &[
          log, a log line removed in an unrelated change, a frontend that computes, validates, decides, sorts, filters or \
          updates optimistically, an effect that fetches or derives. Warnings: files over 600 lines, functions that need \
          \"and\" to describe, data drilled over 2 levels, helpers with under 3 uses, pass-through wrappers, dead code, \
-         I/O mixed into computation, non-UI data in component state. One line per finding, \
+         I/O mixed into computation, non-UI data in component state. 3 or more warnings in one directory count as \
+         one more fail, so say so under them. One line per finding, \
          `file:L<n>: <fail|warn>: what. the fix.` Fix the cause, never silence the check. Nothing found: `No spaghetti.`",
     ),
 ];
@@ -232,8 +233,8 @@ pub const DB_FIELD: &str = r#",
    "risks": [{"kind": "data-loss" | "lock" | "mismatch" | "index" | "constraint" | "other", "loc": "<file:line, or the file alone>", "text": "<one line, max 16 words>"}]}"#;
 /// The field the spaghetti hunter fills, in the contract. with_score turns it into the PR's grade.
 pub const SPAGHETTI_FIELD: &str = r#",
- "spaghetti": {"fails": [{"id": "<F01-F19>", "loc": "<file:line>", "text": "<one line, max 12 words>"}],
-   "warnings": [{"id": "<W01-W24>", "loc": "<file:line>", "text": "<one line, max 12 words>"}]}"#;
+ "spaghetti": {"fails": [{"loc": "<file:line>", "text": "<one line, max 12 words>"}],
+   "warnings": [{"loc": "<file:line>", "text": "<one line, max 12 words>"}]}"#;
 pub const NO_TOOLS: &str = "
 
 You cannot run any commands. Judge the PR from what follows and say what you could not check.
@@ -917,15 +918,21 @@ const SCORE_NOTE: &str = "\n\n### Scores\n";
 pub fn spaghetti(s: &Value, added: u64) -> Score {
     let list = |k: &str| s.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
     let (fails, warnings) = (list("fails"), list("warnings"));
-    // every module (the finding's directory) with 3+ warnings adds a fail
-    let mut per: std::collections::HashMap<String, usize> = Default::default();
+    // every module (the finding's directory) with 3+ warnings adds a fail; the repo root is no module.
+    // BTreeMap: the note names them in a stable order
+    let mut per: std::collections::BTreeMap<&str, usize> = Default::default();
     for w in &warnings {
         let loc = w.get("loc").and_then(Value::as_str).unwrap_or("");
-        let file = loc.split(':').next().unwrap_or("");
-        *per.entry(file.rsplit_once('/').map(|(d, _)| d).unwrap_or("").to_string())
-            .or_default() += 1;
+        if let Some((dir, _)) = loc.split(':').next().unwrap_or("").rsplit_once('/') {
+            *per.entry(dir).or_default() += 1;
+        }
     }
-    let f = fails.len() + per.values().filter(|n| **n >= 3).count();
+    let crowded: Vec<String> = per
+        .iter()
+        .filter(|(_, n)| **n >= 3)
+        .map(|(d, n)| format!("{d}: {n} warnings"))
+        .collect();
+    let f = fails.len() + crowded.len();
     let w = warnings.len();
     let kloc = added.max(1000) as f64 / 1000.0;
     let points = (100.0 - 50.0 * f as f64 / kloc - 10.0 * w as f64 / kloc)
@@ -942,7 +949,10 @@ pub fn spaghetti(s: &Value, added: u64) -> Score {
         name: "spaghetti".into(),
         score: points,
         grade: grade.into(),
-        note: format!("{f} fail{}, {w} warning{}", s(f), s(w)),
+        note: match crowded.is_empty() {
+            true => format!("{f} fail{}, {w} warning{}", s(f), s(w)),
+            false => format!("{f} fail{}, {w} warning{} ({})", s(f), s(w), crowded.join("; ")),
+        },
         blocks: f > 0,
     }
 }
@@ -1251,7 +1261,8 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
             contract(
                 &sections(),
                 &sc.db,
-                config::get().hunter.iter().any(|h| h == "spaghetti"),
+                // what the review ran with, not today's config: a scored review stays scored
+                h.verdict.spaghetti.is_some(),
             )
         );
         let (answer, cost, ms) = llm::ask_session(
@@ -2715,7 +2726,7 @@ mod tests {
 
     #[test]
     fn spaghetti_scores_by_the_rulebook_and_a_fail_blocks_approval() {
-        let w = |loc: &str| serde_json::json!({"id": "W10", "loc": loc, "text": "dead code"});
+        let w = |loc: &str| serde_json::json!({"loc": loc, "text": "dead code"});
         // 3 warnings in src/a add a fail; 1000 lines is the floor, so a small PR scores as one KLOC
         let s = serde_json::json!({"fails": [], "warnings": [w("src/a/x.rs:1"), w("src/a/y.rs:2"), w("src/a/x.rs:9"), w("b.rs:3")]});
         assert_eq!(
@@ -2724,10 +2735,20 @@ mod tests {
                 name: "spaghetti".into(),
                 score: 10,
                 grade: "D".into(),
-                note: "1 fail, 4 warnings".into(),
+                note: "1 fail, 4 warnings (src/a: 3 warnings)".into(),
                 blocks: true,
             }
         );
+        // root files and loc-less warnings are no module: three of them add no fail
+        let root = serde_json::json!({"warnings": [w("README.md:1"), w("Cargo.toml:2"), w("")]});
+        assert_eq!(spaghetti(&root, 40).note, "0 fails, 3 warnings");
+        // one fail in a big PR is still 95 points, but never an A and it still blocks
+        let big = spaghetti(&serde_json::json!({"fails": [w("a.rs:1")]}), 10000);
+        assert_eq!((big.score, big.grade.as_str(), big.blocks), (95, "B", true));
+        // anything but an object is no spaghetti section, and scores nothing
+        let v = parse_verdict(r#"{"verdict": "approve", "spaghetti": "none"}"#).unwrap();
+        assert!(v.spaghetti.is_none());
+        assert_eq!(with_scores(v, Some(10)).verdict, "approve");
         assert_eq!(
             spaghetti(&serde_json::json!({"warnings": [w("a.rs:1")]}), 2000).grade,
             "A"
@@ -2735,9 +2756,7 @@ mod tests {
         let v = with_scores(
             Verdict {
                 verdict: "approve".into(),
-                spaghetti: Some(
-                    serde_json::json!({"fails": [{"id": "F03", "loc": "a.rs:1", "text": "swallowed"}]}),
-                ),
+                spaghetti: Some(serde_json::json!({"fails": [{"loc": "a.rs:1", "text": "swallowed"}]})),
                 ..Default::default()
             },
             Some(10),

@@ -35,7 +35,7 @@ export type Pr = {
   /** Its newest review found schema changes or database risks. */
   db?: boolean
   /** Each scorer's grade from its newest review; empty when none was on. */
-  scores?: Score[]
+  scores: Score[]
   pre: Pre
   /** A finished review nobody has posted yet. */
   waiting?: boolean

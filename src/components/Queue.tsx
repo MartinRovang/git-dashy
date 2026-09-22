@@ -123,7 +123,7 @@ function PrRow({ p, me, child, sel, unread, expanded, onExpand, onSelect, onOpen
             </span>
           ) : null}
           {p.title}
-          {(p.scores || []).map((s) => (
+          {p.scores.map((s) => (
             <span key={s.name} className={`score g${s.grade}`} title={`${s.name} ${s.score}/100: ${s.note}`}>
               <Glyph kind="passive" name={s.name} size={13} />
               {s.grade} {s.score}

@@ -9,6 +9,7 @@ function row(over: Partial<Row> = {}): Row {
     title: 't',
     repo: 'acme/web',
     author: 'bob',
+    scores: [],
     updatedAt: '',
     isDraft: false,
     status: '',
