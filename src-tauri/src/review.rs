@@ -143,7 +143,7 @@ pub const HUNTER: &[(&str, &str)] = &[
          log, a log line removed in an unrelated change, a frontend that computes, validates, decides, sorts, filters or \
          updates optimistically, an effect that fetches or derives. Warnings: files over 600 lines, functions that need \
          \"and\" to describe, data drilled over 2 levels, helpers with under 3 uses, pass-through wrappers, dead code, \
-         I/O mixed into computation, non-UI data in component state. 3 or more warnings in one directory count as \
+         I/O mixed into computation, non-UI data in component state. 3 or more warnings in one directory below the root count as \
          one more fail, so say so under them. One line per finding, \
          `file:L<n>: <fail|warn>: what. the fix.` Fix the cause, never silence the check. Nothing found: `No spaghetti.`",
     ),
