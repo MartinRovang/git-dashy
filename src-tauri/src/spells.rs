@@ -5,6 +5,7 @@
 //! machine until you post it as a comment.
 //! The file name is the spell's name; `name_ok` keeps every name inside the folder.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Each is written once, the first time the app sees the folder without it; `.starters` remembers which were
@@ -108,28 +109,29 @@ pub fn name_ok(name: &str) -> bool {
 const SEEDED_BEFORE_MARKER: &[&str] = &["auth-check", "migration-audit", "test-gaps"];
 
 /// Writes every starter not offered to this folder yet, unless a spell of that name is already there.
+/// ponytail: a folder made fresh on 2.36.0-2.37.0 got all five with no marker, so a spaghetti-audit or fog-audit
+/// deleted there comes back once. A few hours of installs; not worth guessing their history.
 fn seed(dir: &Path) -> std::io::Result<()> {
     let marker = dir.join(".starters");
-    let offered: Vec<String> = match std::fs::read_to_string(&marker) {
+    let mut offered: BTreeSet<String> = match std::fs::read_to_string(&marker) {
         Ok(t) => t.lines().map(str::to_string).collect(),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
         Err(_) if dir.exists() => SEEDED_BEFORE_MARKER.iter().map(|n| n.to_string()).collect(),
-        Err(_) => vec![],
+        Err(_) => BTreeSet::new(),
     };
-    if STARTERS.iter().all(|(n, _)| offered.iter().any(|o| o == n)) {
+    if STARTERS.iter().all(|(n, _)| offered.contains(*n)) {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
     for (n, t) in STARTERS {
         let p = dir.join(format!("{n}.md"));
-        if !offered.iter().any(|o| o == n) && !p.exists() {
+        if !offered.contains(*n) && !p.exists() {
             std::fs::write(p, t)?;
         }
     }
-    let mut all = offered;
-    all.extend(STARTERS.iter().map(|(n, _)| n.to_string()));
-    all.sort();
-    all.dedup();
-    std::fs::write(marker, all.join("\n") + "\n")
+    offered.extend(STARTERS.iter().map(|(n, _)| n.to_string()));
+    let lines: Vec<&str> = offered.iter().map(String::as_str).collect();
+    std::fs::write(marker, lines.join("\n") + "\n")
 }
 
 /// (name, text), sorted by name. Starters this folder has not been offered yet are written first.
@@ -214,6 +216,11 @@ mod tests {
             get_in(&dir, "fog-audit").as_deref(),
             Some("mine"),
             "a spell of that name is kept"
+        );
+        std::fs::remove_file(dir.join("spaghetti-audit.md")).unwrap();
+        assert!(
+            get_in(&dir, "spaghetti-audit").is_none() && list_in(&dir).len() == 1,
+            "the legacy seed wrote the marker, so a deleted starter stays deleted"
         );
     }
 
