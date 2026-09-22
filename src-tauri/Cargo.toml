@@ -1,10 +1,10 @@
 [package]
 name = "gitdashy"
-version = "2.35.13"
+version = "2.35.14"
 edition = "2021"
 description = "PR dashboard with Claude reviews and shared team memory"
 license = "MIT"
-repository = "https://github.com/MartinRovang/github-dashy"
+repository = "https://github.com/NeoMedSys/git-dashy"
 default-run = "gitdashy"
 
 [lib]

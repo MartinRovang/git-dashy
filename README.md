@@ -28,7 +28,7 @@ GitHub.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/MartinRovang/github-dashy/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/NeoMedSys/git-dashy/main/install.sh | sh
 ```
 
 Downloads the newest release binary for your OS into `~/.local/bin/gitdashy` (override with `BIN=`).
@@ -42,7 +42,7 @@ Or build it yourself (Rust stable; on Linux also `libwebkit2gtk-4.1-dev libgtk-3
 for the frontend, which is built first and embedded into the binary):
 
 ```sh
-git clone https://github.com/MartinRovang/github-dashy && cd github-dashy
+git clone https://github.com/NeoMedSys/git-dashy && cd git-dashy
 pnpm install && pnpm build
 cargo install --path src-tauri
 ```

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::config;
 
-pub const REPO: &str = "MartinRovang/github-dashy";
+pub const REPO: &str = "NeoMedSys/git-dashy";
 
 /// (major, minor, patch) from "v1.2.3" or "1.2.3". ponytail: plain numeric tags, no pre-release parsing.
 pub fn vkey(v: &str) -> (u64, u64, u64) {

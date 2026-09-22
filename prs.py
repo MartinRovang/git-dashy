@@ -19,5 +19,5 @@ if __name__ == "__main__":
 	if r.returncode != 0 or not os.path.exists(TARGET):
 		sys.exit(f"gitdashy v2 is a prebuilt binary and installing it failed:\n"
 		         f"{(r.stderr or r.stdout).strip()[-300:]}\n"
-		         f"Install it by hand from https://github.com/MartinRovang/github-dashy/releases/latest")
+		         f"Install it by hand from https://github.com/NeoMedSys/git-dashy/releases/latest")
 	os.execv(TARGET, [TARGET, *sys.argv[1:]])
