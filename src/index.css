@@ -385,7 +385,7 @@
   .nglyph.tint { filter: hue-rotate(210deg) saturate(1.6); }
   /* a scorer's grade: on a row a pill (its drawing, the letter, the score), in the pane a card; coloured by the letter */
   .gA { --g: var(--green); } .gB { --g: var(--cyan); } .gC { --g: var(--amber); } .gD { --g: var(--red); }
-  .score { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px 0 2px; height: 16px;
+  .score { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; padding: 0 6px 0 2px; height: 16px;
     border-radius: 8px; border: 1px solid var(--g); color: var(--g); font: 600 10px var(--mono); vertical-align: 1px; }
   .score .nglyph { vertical-align: 0; }
   .scorecard { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
