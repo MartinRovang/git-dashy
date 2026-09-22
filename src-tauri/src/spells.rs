@@ -5,9 +5,11 @@
 //! machine until you post it as a comment.
 //! The file name is the spell's name; `name_ok` keeps every name inside the folder.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Written once, when the folder does not exist yet; deleted starters are not written again.
+/// Each is written once, the first time the app sees the folder without it; `.starters` remembers which were
+/// offered, so a deleted starter is not written again and a new one still reaches an existing install.
 /// ponytail: prose, not bullets. A review that repeats a 24+ char instruction line is held (quotes_instructions),
 /// and a model mirrors a bullet list word for word.
 pub const STARTERS: &[(&str, &str)] = &[
@@ -103,17 +105,39 @@ pub fn name_ok(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// (name, text), sorted by name. A folder that does not exist yet is seeded with STARTERS first.
-pub fn list_in(dir: &Path) -> Vec<(String, String)> {
-    if !dir.exists() {
-        let seeded = std::fs::create_dir_all(dir).and_then(|_| {
-            STARTERS
-                .iter()
-                .try_for_each(|(n, t)| std::fs::write(dir.join(format!("{n}.md")), t))
-        });
-        if let Err(e) = seeded {
-            log::warn!("could not write the starter spells: {e}");
+/// Seeded before `.starters` existed: a folder without the marker already had these, and may have deleted them.
+const SEEDED_BEFORE_MARKER: &[&str] = &["auth-check", "migration-audit", "test-gaps"];
+
+/// Writes every starter not offered to this folder yet, unless a spell of that name is already there.
+/// ponytail: a folder made fresh on 2.36.0-2.37.0 got all five with no marker, so a spaghetti-audit or fog-audit
+/// deleted there comes back once. A few hours of installs; not worth guessing their history.
+fn seed(dir: &Path) -> std::io::Result<()> {
+    let marker = dir.join(".starters");
+    let mut offered: BTreeSet<String> = match std::fs::read_to_string(&marker) {
+        Ok(t) => t.lines().map(str::to_string).collect(),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        Err(_) if dir.exists() => SEEDED_BEFORE_MARKER.iter().map(|n| n.to_string()).collect(),
+        Err(_) => BTreeSet::new(),
+    };
+    if STARTERS.iter().all(|(n, _)| offered.contains(*n)) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    for (n, t) in STARTERS {
+        let p = dir.join(format!("{n}.md"));
+        if !offered.contains(*n) && !p.exists() {
+            std::fs::write(p, t)?;
         }
+    }
+    offered.extend(STARTERS.iter().map(|(n, _)| n.to_string()));
+    let lines: Vec<&str> = offered.iter().map(String::as_str).collect();
+    std::fs::write(marker, lines.join("\n") + "\n")
+}
+
+/// (name, text), sorted by name. Starters this folder has not been offered yet are written first.
+pub fn list_in(dir: &Path) -> Vec<(String, String)> {
+    if let Err(e) = seed(dir) {
+        log::warn!("could not write the starter spells: {e}");
     }
     let mut out: Vec<(String, String)> = std::fs::read_dir(dir)
         .into_iter()
@@ -182,9 +206,30 @@ mod tests {
     }
 
     #[test]
+    fn an_existing_folder_gets_only_the_starters_it_never_had() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().to_path_buf(); // made before .starters: the first three were offered already
+        std::fs::write(dir.join("fog-audit.md"), "mine").unwrap();
+        let names: Vec<String> = list_in(&dir).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["fog-audit", "spaghetti-audit"]);
+        assert_eq!(
+            get_in(&dir, "fog-audit").as_deref(),
+            Some("mine"),
+            "a spell of that name is kept"
+        );
+        std::fs::remove_file(dir.join("spaghetti-audit.md")).unwrap();
+        assert!(
+            get_in(&dir, "spaghetti-audit").is_none() && list_in(&dir).len() == 1,
+            "the legacy seed wrote the marker, so a deleted starter stays deleted"
+        );
+    }
+
+    #[test]
     fn lists_and_reads_md_files_only() {
         let d = tempfile::tempdir().unwrap();
-        let dir = d.path().to_path_buf(); // exists: no starters
+        let dir = d.path().to_path_buf();
+        let all: Vec<&str> = STARTERS.iter().map(|(n, _)| *n).collect();
+        std::fs::write(dir.join(".starters"), all.join("\n")).unwrap(); // every starter offered and deleted
         std::fs::write(dir.join("zeta.md"), "look at z").unwrap();
         std::fs::write(dir.join("alpha.md"), "look at a").unwrap();
         std::fs::write(dir.join("notes.txt"), "not a spell").unwrap();
