@@ -207,7 +207,8 @@ did not write it cannot maintain: swallowed errors, hidden state, silenced check
 With `spaghetti` on, the review lists each rulebook fail and warning, and gitdashy scores the PR
 (`100 − 50·fails/KLOC − 10·warnings/KLOC`, KLOC being the added lines but never less than 1) into a grade
 A–D, shown as a tag on the row and under SCORES in the pane. Any fail turns an approval into request changes. The whole-repo audit is the
-`spaghetti-audit` spell.
+`spaghetti-audit` spell; its writing counterpart, the `fog-audit` spell, audits the prose a PR adds. Starter spells are written only when `~/.prs_spells` does not exist yet;
+on an existing install, copy a new one in by hand.
 The hello comment names both so the author knows why the review reads that way. `x` and `h` tick
 them at runtime.
 
