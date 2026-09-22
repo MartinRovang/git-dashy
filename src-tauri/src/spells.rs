@@ -29,8 +29,10 @@ One line per path: `file:line`, what it reaches, and which check is missing.
         "fog-audit",
         "# Fog audit
 
-Audit the prose this PR adds or changes against the Fog rulebook: docs, README, UI strings, error messages and
-comments, never code or the PR description. Name the intended reader in one line first.
+Audit the prose this PR adds or changes against the checks below.
+
+Docs, README, UI strings, error messages and comments; never code or the PR description. Name the intended
+reader in one line first.
 
 ## Look for
 Fails: the point is not in the first paragraph, it is unclear who must do what, a claim with no source, one thing
@@ -207,5 +209,12 @@ mod tests {
         );
         assert_eq!(about("just a line"), "just a line");
         assert_eq!(about("# only a heading"), "");
+    }
+
+    #[test]
+    fn every_starter_card_is_a_whole_sentence() {
+        for (n, t) in STARTERS {
+            assert!(about(t).ends_with('.'), "{n}");
+        }
     }
 }
