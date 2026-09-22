@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 /// offered, so a deleted starter is not written again and a new one still reaches an existing install.
 /// ponytail: prose, not bullets. A review that repeats a 24+ char instruction line is held (quotes_instructions),
 /// and a model mirrors a bullet list word for word.
+/// The two audits break that rule on purpose: they carry their whole rulebook (rulebooks/), and cite checks by
+/// ID alone so a finding does not repeat a rule's line and trip `review::quotes` when it is posted.
 pub const STARTERS: &[(&str, &str)] = &[
     (
         "auth-check",
@@ -48,7 +50,8 @@ headings that only name a topic, filler, inflated words, redundancy, and instruc
 One line per finding: `file:line`, fail or warn, a short quote, and the rewrite.
 
 ## Rulebook
-Where the checks above leave a case open, this decides.
+Where the checks above leave a case open, this decides. Name a check by its ID alone (TF02, TW14), never
+its title. Skip the steps you cannot run here, the prose linter, the point test and re-audits, and say so.
 
 ",
             include_str!("rulebooks/fog.md")
@@ -83,7 +86,8 @@ Fails: silenced checks, swallowed errors, hidden global state, a frontend that d
 One line per finding: `file:line`, fail or warn, and the fix.
 
 ## Rulebook
-Where the checks above leave a case open, this decides.
+Where the checks above leave a case open, this decides. Name a check by its ID alone (F06, W10), never its
+title. Skip the steps you cannot run here, the linters, the explain test and re-audits, and say so.
 
 ",
             include_str!("rulebooks/spaghetti.md")
@@ -268,6 +272,18 @@ mod tests {
         );
         assert_eq!(about("just a line"), "just a line");
         assert_eq!(about("# only a heading"), "");
+    }
+
+    #[test]
+    fn the_audits_carry_their_rulebook_and_a_finding_does_not_quote_it() {
+        let text = |name| STARTERS.iter().find(|(n, _)| *n == name).unwrap().1;
+        let (spaghetti, fog) = (text("spaghetti-audit"), text("fog-audit"));
+        assert!(spaghetti.contains("## Rulebook\n") && spaghetti.contains("SPAGHETTI AUDIT — RULEBOOK v1.3"));
+        assert!(fog.contains("## Rulebook\n") && fog.contains("FOG AUDIT — WRITING RULEBOOK v1.0"));
+        let found = "src/cache.rs:10: fail F06: a global cache keyed by user. pass it in from the caller.";
+        assert!(!crate::review::quotes(found, spaghetti));
+        let found = "docs/setup.md:4: warn TW14: \"really simple\". drop \"really\".";
+        assert!(!crate::review::quotes(found, fog));
     }
 
     #[test]
