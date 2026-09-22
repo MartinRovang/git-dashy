@@ -29,7 +29,8 @@ One line per path: `file:line`, what it reaches, and which check is missing.
     ),
     (
         "fog-audit",
-        "# Fog audit
+        concat!(
+            "# Fog audit
 
 Audit the prose this PR adds or changes against the checks below.
 
@@ -45,7 +46,13 @@ headings that only name a topic, filler, inflated words, redundancy, and instruc
 
 ## Report
 One line per finding: `file:line`, fail or warn, a short quote, and the rewrite.
+
+## Rulebook
+Where the checks above leave a case open, this decides.
+
 ",
+            include_str!("rulebooks/fog.md")
+        ),
     ),
     (
         "migration-audit",
@@ -63,7 +70,8 @@ One line per migration: `file:line`, the risk, and the safer order of steps.
     ),
     (
         "spaghetti-audit",
-        "# Spaghetti audit
+        concat!(
+            "# Spaghetti audit
 
 Audit the whole repository at this PR's head commit against the Spaghetti rulebook, not just the diff.
 
@@ -73,7 +81,13 @@ Fails: silenced checks, swallowed errors, hidden global state, a frontend that d
 
 ## Report
 One line per finding: `file:line`, fail or warn, and the fix.
+
+## Rulebook
+Where the checks above leave a case open, this decides.
+
 ",
+            include_str!("rulebooks/spaghetti.md")
+        ),
     ),
     (
         "test-gaps",
