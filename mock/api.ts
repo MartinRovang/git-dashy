@@ -95,6 +95,7 @@ const S = {
   spells: [
     { name: 'auth-check', text: 'Trace every request path this PR adds back to where the caller is authenticated and authorised.' },
     { name: 'spaghetti-audit', text: 'Audit the whole repository at this PR\'s head commit against the Spaghetti rulebook, not just the diff.' },
+    { name: 'fog-audit', text: 'Audit the prose this PR adds or changes against the Fog rulebook: docs, README, UI strings, error messages and comments.' },
     { name: 'migration-audit', text: 'Read every migration this PR adds; say whether it locks a busy table and whether it rolls back.' },
     { name: 'test-gaps', text: 'List the behaviours this PR changes and the test that would fail if each broke.' },
   ] as { name: string; text: string }[],

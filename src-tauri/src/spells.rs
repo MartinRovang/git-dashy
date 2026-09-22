@@ -26,6 +26,24 @@ One line per path: `file:line`, what it reaches, and which check is missing.
 ",
     ),
     (
+        "fog-audit",
+        "# Fog audit
+
+Audit the prose this PR adds or changes against the Fog rulebook: docs, README, UI strings, error messages and
+comments, never code or the PR description. Name the intended reader in one line first.
+
+## Look for
+Fails: the point is not in the first paragraph, it is unclear who must do what, a claim with no source, one thing
+under two names, a sentence that reads two ways, a hedge where a fact or requirement belongs, jargon the reader
+does not know, steps out of order or a condition after its action. Warnings: actions buried in nouns, a passive
+that drops a known actor, over 10 words before the subject, sentences over 25 words, a paragraph with two points,
+headings that only name a topic, filler, inflated words, redundancy, and instructions not addressed to you.
+
+## Report
+One line per finding: `file:line`, fail or warn, a short quote, and the rewrite.
+",
+    ),
+    (
         "migration-audit",
         "# Migration audit
 

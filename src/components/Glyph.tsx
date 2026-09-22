@@ -3,7 +3,7 @@ import { MessageSquare, Crosshair, Sparkles, type LucideIcon } from 'lucide-reac
 // ponytail: anything with a drawing in public/sprites shows it; the rest have one placeholder icon per kind
 // until they get a drawing of their own. Only SPRITES changes when one arrives.
 const ICON: Record<'spell' | 'passive' | 'voice', LucideIcon> = { spell: Sparkles, passive: Crosshair, voice: MessageSquare }
-const SPRITES = ['ponytail', 'security', 'tests', 'perf', 'humanizer', 'spaghetti', 'review', 'caveman', 'bot', 'auth-check', 'test-gaps', 'migration-audit']
+const SPRITES = ['ponytail', 'security', 'tests', 'perf', 'humanizer', 'spaghetti', 'review', 'caveman', 'bot', 'auth-check', 'test-gaps', 'migration-audit', 'fog-audit']
 // the audit spell borrows the spaghetti hunter's drawing, tinted blue so the two are told apart
 export function Glyph({ kind, name, size = 14 }: { kind: keyof typeof ICON; name: string; size?: number }) {
   if (name === 'spaghetti-audit') return <img className="nglyph sprite tint" src="/sprites/spaghetti.png" width={size} height={size} alt="" />
