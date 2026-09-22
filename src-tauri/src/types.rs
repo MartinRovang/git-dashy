@@ -147,6 +147,23 @@ pub struct LogEntry {
     /// What the PR does to the database, when the repo has a DB repo. Raw model output: see Verdict.db.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scores: Vec<Score>,
+}
+
+/// One scorer's grade for one PR, worked out by review::with_scores from what the model listed, never by the model.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Score {
+    /// The scorer, "spaghetti"; also the name of its sprite.
+    pub name: String,
+    /// 0-100.
+    pub score: u32,
+    /// A-D.
+    pub grade: String,
+    /// One line on what the score is made of, "1 fail, 2 warnings".
+    pub note: String,
+    /// It forbids merging: the review cannot approve.
+    pub blocks: bool,
 }
 
 /// What the reviewer answered, parsed out of the model's JSON.
@@ -180,6 +197,11 @@ pub struct Verdict {
     /// model output: the pane reads each field defensively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db: Option<serde_json::Value>,
+    /// The spaghetti hunter's fails and warnings, when it is on. Raw model output: with_scores reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spaghetti: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scores: Vec<Score>,
     #[serde(default)]
     pub cost: Option<f64>,
     #[serde(default)]

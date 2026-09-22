@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
-use crate::types::{CheckResult, DiffFile, Inline, LogEntry, Mark, Pr, Verdict};
+use crate::types::{CheckResult, DiffFile, Inline, LogEntry, Mark, Pr, Score, Verdict};
 use crate::{autorev, bind, config, dbrepo, diff, github, held, llm, log as rlog, memory, team};
 
 pub const PROMPT: &str =
@@ -25,7 +25,7 @@ Respond with ONLY a JSON object, no prose, no code fences:
  "findings": [{"kind": "blocking" | "note" | "nit", "loc": "<file:line, or the file alone>", "text": "<one line, max 12 words>"}],
  "kind": "feature" | "fix" | "security" | "perf" | "maintenance" | "refactor" | "docs" | "tests" | "deps", "breaking": <true when merging it breaks existing callers, users, data or config>,
  "depth_used": "low" | "medium" | "high", "depth_reason": "<one line: why that depth, e.g. '3-line docs change' or 'touches auth and db migration'>",
- "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"{db}}
+ "memory": "<0-3 short lines of overarching facts about this repo worth remembering for future reviews (architecture, conventions, effects on other repos or the database, which authors own which areas); never what this PR itself did; not already in memory; usually empty string>"{db}{spaghetti}}
 "findings" is the same review as "body", one line each, so a dashboard can list them: every blocking
 finding must appear there. Empty list when there is nothing to report.
 Use request_changes only for real defects, approve if it is mergeable, comment if unsure."#;
@@ -132,6 +132,21 @@ pub const HUNTER: &[(&str, &str)] = &[
          pivotal, seamless, robust), bold as decoration, chatbot residue. One line per finding, \
          `file:L<n>: <tell>: the phrase. plain rewrite.` Never add a fact the text lacks. Nothing found: `Reads human.`",
     ),
+    (
+        "spaghetti",
+        "\n\nAppend a section `---\n**Spaghetti**`: the Spaghetti monster hunts ONLY what the change adds that someone \
+         who did not write it cannot maintain. Fails: a silenced check (lint, type, cert, warning), a catch-all type \
+         where a real one belongs, a swallowed error or a fallback that turns failure into success, stubs reachable in \
+         production, hidden global mutable state, time/randomness/IDs made inside computation, output hanging on \
+         unordered iteration, concurrency with no owner or cancellation, sleeps that fix ordering, circular imports, \
+         duplicated or mirrored state, side effects that trigger side effects, an error path or external call with no \
+         log, a log line removed in an unrelated change, a frontend that computes, validates, decides, sorts, filters or \
+         updates optimistically, an effect that fetches or derives. Warnings: files over 600 lines, functions that need \
+         \"and\" to describe, data drilled over 2 levels, helpers with under 3 uses, pass-through wrappers, dead code, \
+         I/O mixed into computation, non-UI data in component state. 3 or more warnings in one directory below the root count as \
+         one more fail, so say so under them. One line per finding, \
+         `file:L<n>: <fail|warn>: what. the fix.` Fix the cause, never silence the check. Nothing found: `No spaghetti.`",
+    ),
 ];
 /// One line for the Necronomicon on what each voice and hunter does to a review.
 pub const ABOUT: &[(&str, &str)] = &[
@@ -163,6 +178,10 @@ pub const ABOUT: &[(&str, &str)] = &[
     (
         "humanizer",
         "Hunts AI-sounding prose the PR adds to strings, docs and comments.",
+    ),
+    (
+        "spaghetti",
+        "The Spaghetti monster: hunts code nobody else can maintain, from swallowed errors to a frontend that decides.",
     ),
 ];
 pub const EXPLORE: &str = "
@@ -212,6 +231,10 @@ pub const DB_FIELD: &str = r#",
    "refs": ["<another table in this list it has a foreign key to>"],
    "columns": [{"name": "<column>", "change": "read" | "written" | "added" | "altered" | "dropped", "note": "<type, or what changes; max 8 words>"}]}],
    "risks": [{"kind": "data-loss" | "lock" | "mismatch" | "index" | "constraint" | "other", "loc": "<file:line, or the file alone>", "text": "<one line, max 16 words>"}]}"#;
+/// The field the spaghetti hunter fills, in the contract. with_score turns it into the PR's grade.
+pub const SPAGHETTI_FIELD: &str = r#",
+ "spaghetti": {"fails": [{"loc": "<file:line>", "text": "<one line, max 12 words>"}],
+   "warnings": [{"loc": "<file:line>", "text": "<one line, max 12 words>"}]}"#;
 pub const NO_TOOLS: &str = "
 
 You cannot run any commands. Judge the PR from what follows and say what you could not check.
@@ -726,7 +749,16 @@ pub fn prompt(i: &Inputs) -> Result<String> {
                     ("verdict", &p.verdict),
                     ("tag", &tag),
                     // what with_db_note added is ours, not the model's: left in, the model copies it and it doubles
-                    ("body", p.body.split(DB_NOTE).next().unwrap_or_default()),
+                    (
+                        "body",
+                        p.body
+                            .split(DB_NOTE)
+                            .next()
+                            .unwrap_or_default()
+                            .split(SCORE_NOTE)
+                            .next()
+                            .unwrap_or_default(),
+                    ),
                 ],
             )
         })
@@ -774,17 +806,22 @@ pub fn prompt(i: &Inputs) -> Result<String> {
     }
     // how to write the body, then its shape: last, both
     out += &tail_for(&i.voice, &i.hunter);
-    out += &contract(&sections_for(&i.voice, &i.hunter), &i.db);
+    out += &contract(
+        &sections_for(&i.voice, &i.hunter),
+        &i.db,
+        i.hunter.iter().any(|h| h == "spaghetti"),
+    );
     Ok(out)
 }
 
 /// The contract, with the db field when there is a DB repo to fill it from.
-fn contract(sections: &str, db: &str) -> String {
+fn contract(sections: &str, db: &str, spaghetti: bool) -> String {
     fill(
         CONTRACT,
         &[
             ("sections", sections),
             ("db", if db.is_empty() { "" } else { DB_FIELD }),
+            ("spaghetti", if spaghetti { SPAGHETTI_FIELD } else { "" }),
         ],
     )
 }
@@ -824,6 +861,9 @@ pub fn parse_verdict(text: &str) -> Result<Verdict> {
     // anything but an object is no db section: the pane draws tables from it
     if !obj.get("db").map(Value::is_object).unwrap_or(false) {
         obj.remove("db");
+    }
+    if !obj.get("spaghetti").map(Value::is_object).unwrap_or(false) {
+        obj.remove("spaghetti");
     }
     if !obj.get("breaking").map(Value::is_boolean).unwrap_or(false) {
         obj.insert("breaking".into(), false.into());
@@ -866,6 +906,85 @@ pub fn with_db_note(mut v: Verdict) -> Verdict {
     if !risks.is_empty() {
         v.body += &format!("{DB_NOTE}{}", risks.join("\n"));
     }
+    v
+}
+
+const SCORE_NOTE: &str = "\n\n### Scores\n";
+
+/// The Spaghetti rulebook's score for a PR with `added` lines, from the fails and warnings the model listed.
+///
+/// ponytail: the rulebook divides by the repo's KLOC; a PR has only its added lines, and 1 warning in a
+/// 30-line PR would be 0 points. So KLOC is at least 1: a small PR is judged as if it were 1000 lines.
+pub fn spaghetti(s: &Value, added: u64) -> Score {
+    let list = |k: &str| s.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (fails, warnings) = (list("fails"), list("warnings"));
+    // every module (the finding's directory) with 3+ warnings adds a fail; the repo root is no module.
+    // BTreeMap: the note names them in a stable order
+    let mut per: std::collections::BTreeMap<&str, usize> = Default::default();
+    for w in &warnings {
+        let loc = w.get("loc").and_then(Value::as_str).unwrap_or("");
+        if let Some((dir, _)) = loc.split(':').next().unwrap_or("").rsplit_once('/') {
+            *per.entry(dir).or_default() += 1;
+        }
+    }
+    let crowded: Vec<String> = per
+        .iter()
+        .filter(|(_, n)| **n >= 3)
+        .map(|(d, n)| format!("{d}: {n} warnings"))
+        .collect();
+    let f = fails.len() + crowded.len();
+    let w = warnings.len();
+    let kloc = added.max(1000) as f64 / 1000.0;
+    let points = (100.0 - 50.0 * f as f64 / kloc - 10.0 * w as f64 / kloc)
+        .max(0.0)
+        .round() as u32;
+    let grade = match points {
+        p if p >= 90 && f == 0 => "A",
+        p if p >= 75 => "B",
+        p if p >= 50 => "C",
+        _ => "D",
+    };
+    let s = |n: usize| if n == 1 { "" } else { "s" };
+    Score {
+        name: "spaghetti".into(),
+        score: points,
+        grade: grade.into(),
+        note: match crowded.is_empty() {
+            true => format!("{f} fail{}, {w} warning{}", s(f), s(w)),
+            false => format!("{f} fail{}, {w} warning{} ({})", s(f), s(w), crowded.join("; ")),
+        },
+        blocks: f > 0,
+    }
+}
+
+/// Every scorer's grade on the verdict and at the end of the body. One that blocks merge turns an approval
+/// into request_changes.
+///
+/// ponytail: one scorer. The next one reads its own field off the verdict and joins the list here.
+pub fn with_scores(mut v: Verdict, added: Option<u64>) -> Verdict {
+    let added = added.unwrap_or(0);
+    v.scores = v.spaghetti.iter().map(|s| spaghetti(s, added)).collect();
+    if v.scores.is_empty() {
+        return v;
+    }
+    if v.verdict == "approve" && v.scores.iter().any(|s| s.blocks) {
+        v.verdict = "request_changes".into();
+    }
+    let lines: Vec<String> = v
+        .scores
+        .iter()
+        .map(|s| {
+            format!(
+                "- **{}** {} · {}/100 — {}{}",
+                title(&s.name),
+                s.grade,
+                s.score,
+                s.note,
+                if s.blocks { ". Blocks merge." } else { "" }
+            )
+        })
+        .collect();
+    v.body += &format!("{SCORE_NOTE}{}", lines.join("\n"));
     v
 }
 
@@ -1136,7 +1255,16 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
         }
     } else {
         let sc = scope_with(h.pr.repo(), &h.model, h.team.clone(), h.db.clone());
-        let text = format!("{REVISE}{}{}", tail(), contract(&sections(), &sc.db));
+        let text = format!(
+            "{REVISE}{}{}",
+            tail(),
+            contract(
+                &sections(),
+                &sc.db,
+                // what the review ran with, not today's config: a scored review stays scored
+                h.verdict.spaghetti.is_some(),
+            )
+        );
         let (answer, cost, ms) = llm::ask_session(
             &text,
             &h.model,
@@ -1152,7 +1280,7 @@ pub fn revise(h: &held::Held) -> Result<Verdict> {
         v.ms = Some(ms);
         v
     };
-    Ok(revised(&h.verdict, v))
+    Ok(with_scores(revised(&h.verdict, v), h.pr.additions))
 }
 
 /// A revision as it is kept: what the review ran with is still what it ran with, and it proposes no facts.
@@ -1224,6 +1352,7 @@ fn self_review_inner(pr: &Pr, model: &str) -> Result<(String, PathBuf)> {
     // a session, so the pre-review can be discussed like a held review
     let session = session_for(model);
     let (v, team, db) = verdict(repo, n, model, None, "", named(&session))?;
+    let v = with_scores(v, pr.additions);
     let c = config::get();
     std::fs::create_dir_all(&c.self_dir)?;
     let dest = self_review_path(repo, n);
@@ -1571,7 +1700,8 @@ fn review_inner(pr: &Pr, model: &str, ran: autorev::Ran, ask: &str) -> Result<St
     // ponytail: every claude review gets a session, held or not. Only a held one can be discussed, but
     // whether it is held was decided above and the id has to exist before the model runs.
     let session = session_for(model);
-    let (mut v, team, db) = verdict(repo, n, model, prev.as_ref(), ask, named(&session))?;
+    let (v, team, db) = verdict(repo, n, model, prev.as_ref(), ask, named(&session))?;
+    let mut v = with_scores(v, pr.additions);
     // ponytail: resolved HERE, against the head the review read, and carried on the verdict from now
     // on. A held review is released whenever someone gets to it, and line numbers only mean anything
     // against the commit they were read off.
@@ -2595,6 +2725,57 @@ mod tests {
     }
 
     #[test]
+    fn spaghetti_scores_by_the_rulebook_and_a_fail_blocks_approval() {
+        let w = |loc: &str| serde_json::json!({"loc": loc, "text": "dead code"});
+        // 3 warnings in src/a add a fail; 1000 lines is the floor, so a small PR scores as one KLOC
+        let s = serde_json::json!({"fails": [], "warnings": [w("src/a/x.rs:1"), w("src/a/y.rs:2"), w("src/a/x.rs:9"), w("b.rs:3")]});
+        assert_eq!(
+            spaghetti(&s, 40),
+            Score {
+                name: "spaghetti".into(),
+                score: 10,
+                grade: "D".into(),
+                note: "1 fail, 4 warnings (src/a: 3 warnings)".into(),
+                blocks: true,
+            }
+        );
+        // root files and loc-less warnings are no module: three of them add no fail
+        let root = serde_json::json!({"warnings": [w("README.md:1"), w("Cargo.toml:2"), w("")]});
+        assert_eq!(spaghetti(&root, 40).note, "0 fails, 3 warnings");
+        // one fail in a big PR is still 95 points, but never an A and it still blocks
+        let big = spaghetti(&serde_json::json!({"fails": [w("a.rs:1")]}), 10000);
+        assert_eq!((big.score, big.grade.as_str(), big.blocks), (95, "B", true));
+        // anything but an object is no spaghetti section, and scores nothing
+        let v = parse_verdict(r#"{"verdict": "approve", "spaghetti": "none"}"#).unwrap();
+        assert!(v.spaghetti.is_none());
+        assert_eq!(with_scores(v, Some(10)).verdict, "approve");
+        assert_eq!(
+            spaghetti(&serde_json::json!({"warnings": [w("a.rs:1")]}), 2000).grade,
+            "A"
+        );
+        let v = with_scores(
+            Verdict {
+                verdict: "approve".into(),
+                spaghetti: Some(serde_json::json!({"fails": [{"loc": "a.rs:1", "text": "swallowed"}]})),
+                ..Default::default()
+            },
+            Some(10),
+        );
+        assert_eq!(v.verdict, "request_changes");
+        assert!(v
+            .body
+            .contains("### Scores\n- **Spaghetti** C · 50/100 — 1 fail, 0 warnings. Blocks merge."));
+        let plain = with_scores(
+            Verdict {
+                verdict: "approve".into(),
+                ..Default::default()
+            },
+            Some(10),
+        );
+        assert_eq!((plain.verdict.as_str(), plain.scores.len()), ("approve", 0));
+    }
+
+    #[test]
     fn self_review_path_is_deterministic() {
         // memory::slug is a stub until its owner ports it; the shape of the name is what this checks
         let p = self_review_path_in(Path::new("/x"), "acme/api", 7);
@@ -2704,8 +2885,9 @@ mod tests {
 
     #[test]
     fn a_revision_asks_for_the_db_field_only_when_the_review_had_a_db_repo() {
-        assert!(contract("", "acme/schema").contains("\"db\": null | {"));
-        assert!(!contract("", "").contains("\"db\""));
+        assert!(contract("", "acme/schema", false).contains("\"db\": null | {"));
+        assert!(!contract("", "", false).contains("\"db\""));
+        assert!(contract("", "", true).contains("\"spaghetti\": {\"fails\""));
     }
 
     #[test]

@@ -14,6 +14,7 @@ function pr(over: Partial<Pr> = {}): Pr {
     title: 'a title',
     repo: 'acme/web',
     author: 'bob',
+    scores: [],
     updatedAt: '2026-09-14T08:00:00Z',
     isDraft: false,
     status: '',

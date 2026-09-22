@@ -34,12 +34,17 @@ export type Pr = {
   breaking: boolean
   /** Its newest review found schema changes or database risks. */
   db?: boolean
+  /** Each scorer's grade from its newest review; empty when none was on. */
+  scores: Score[]
   pre: Pre
   /** A finished review nobody has posted yet. */
   waiting?: boolean
   /** A team's memory repo: approved by a person with rights on it, never reviewed by a model. */
   humanOnly?: boolean
 }
+
+/** One scorer's grade: `name` is also its sprite. `blocks` means it forbids merging. */
+export type Score = { name: string; score: number; grade: 'A' | 'B' | 'C' | 'D'; note: string; blocks: boolean }
 
 export type Section = { name: string; prs: Pr[]; error: string }
 

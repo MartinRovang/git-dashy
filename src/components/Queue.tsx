@@ -2,6 +2,7 @@ import type { Row, StateData } from '../types'
 import { useNow } from '../usePoll'
 import type { Only, VisSection } from '../board'
 import { FOLDABLE, buckets, chips, emptyLine, folded, inBucket, isRead, onScreen } from '../board'
+import { Glyph } from './Glyph'
 import { age, avatar, PALETTE, rowState, SECTION_HINT, SECTION_TONE, SPINNER, tone } from '../tokens'
 
 type Props = {
@@ -122,6 +123,12 @@ function PrRow({ p, me, child, sel, unread, expanded, onExpand, onSelect, onOpen
             </span>
           ) : null}
           {p.title}
+          {p.scores.map((s) => (
+            <span key={s.name} className={`score g${s.grade}`} title={`${s.name} ${s.score}/100: ${s.note}`}>
+              <Glyph kind="passive" name={s.name} size={13} />
+              {s.grade} {s.score}
+            </span>
+          ))}
         </b>
       </div>
       <div className={`who${me && p.author?.toLowerCase() === me.toLowerCase() ? ' mine' : ''}`}>

@@ -40,6 +40,20 @@ One line per migration: `file:line`, the risk, and the safer order of steps.
 ",
     ),
     (
+        "spaghetti-audit",
+        "# Spaghetti audit
+
+Audit the whole repository at this PR's head commit against the Spaghetti rulebook, not just the diff.
+
+## Look for
+Fails: silenced checks, swallowed errors, hidden global state, a frontend that decides. Warnings: files over
+600 lines, dead code, pass-through wrappers, I/O mixed into computation.
+
+## Report
+One line per finding: `file:line`, fail or warn, and the fix.
+",
+    ),
+    (
         "test-gaps",
         "# Test gaps
 
