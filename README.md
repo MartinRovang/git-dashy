@@ -38,6 +38,18 @@ Re-running it updates in place. To install an older release, name its tag:
 REF=v2.0.0 ./install.sh
 ```
 
+On NixOS, use the flake. It installs a launcher: on first run it downloads the release binary into
+`~/.local/lib/gitdashy` and runs it in an FHS env that carries the webview. The app updates that file
+itself, like everywhere else.
+
+```sh
+nix run github:NeoMedSys/git-dashy
+```
+
+In a NixOS flake: add the input `gitdashy.url = "github:NeoMedSys/git-dashy";` and put
+`inputs.gitdashy.packages.x86_64-linux.default` in `environment.systemPackages` (the app menu entry
+comes with it).
+
 Or build it yourself (Rust stable; on Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev`; Node + pnpm
 for the frontend, which is built first and embedded into the binary):
 
