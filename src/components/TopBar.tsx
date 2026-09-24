@@ -50,20 +50,21 @@ function AppMenu() {
   if (!apps) return <span className="logo">{img}</span>
   return (
     <div className="appmenu" ref={box}>
-      <button className="logo" title="switch app" aria-label="switch app" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {img}
+      <button title="switch app" aria-label="switch app" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="logo">{img}</span>
+        <span className="caret">▾</span>
       </button>
       {open ? (
-        <div className="apps" role="menu">
+        <div className="am-list" role="menu">
           {apps.map((a: HostApp) =>
             a.current ? (
-              <div key={a.id} className="app on" role="menuitem" aria-current="true">
+              <div key={a.id} className="am-item on" role="menuitem" aria-current="true">
                 <img src={a.icon} alt="" />
                 {a.name}
                 <b>✓</b>
               </div>
             ) : (
-              <a key={a.id} className="app" role="menuitem" href={a.href} onClick={() => setOpen(false)}>
+              <a key={a.id} className="am-item" role="menuitem" href={a.href} onClick={() => setOpen(false)}>
                 <img src={a.icon} alt="" />
                 {a.name}
                 <kbd>{a.key}</kbd>

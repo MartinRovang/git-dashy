@@ -45,18 +45,19 @@
   .logo img { width: 100%; display: block; }
   .top .logo { padding: 0; border: 0; background: none; }
   /* inside icecream the logo opens the app switcher; standalone it is only the logo */
-  .top button.logo { cursor: pointer; }
-  .top button.logo:hover { filter: brightness(1.2); }
   .appmenu { position: relative; flex: none; display: flex; }
-  .appmenu .apps { position: absolute; z-index: 50; top: calc(100% + 8px); left: -6px; min-width: 200px; padding: 5px;
-                   background: var(--bg3); border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); }
-  .appmenu .app { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; color: var(--ink2);
-                  text-decoration: none; font-size: 13px; line-height: 1.4; }
-  .appmenu a.app:hover { background: var(--bg4); color: var(--ink); }
-  .appmenu .app img { width: 22px; height: 22px; border-radius: 5px; }
-  .appmenu .app kbd { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--dim2); }
-  .appmenu .app.on { color: var(--dim); cursor: default; }
-  .appmenu .app.on b { margin-left: auto; color: var(--green); font-weight: 600; }
+  .appmenu > button { display: flex; align-items: center; gap: 3px; padding: 0; border: 0; background: none; cursor: pointer; color: var(--dim); }
+  .appmenu > button:hover { filter: brightness(1.2); color: var(--ink); }
+  .appmenu .caret { font-size: 9px; line-height: 1; }
+  .appmenu .am-list { position: absolute; z-index: 50; top: calc(100% + 6px); left: -4px; min-width: 150px; padding: 3px;
+                   background: var(--bg3); border: 1px solid var(--edge); border-radius: 7px; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+  .appmenu .am-item { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 5px; color: var(--ink2);
+                  text-decoration: none; font-size: 12px; line-height: 1; }
+  .appmenu a.am-item:hover { background: var(--bg4); color: var(--ink); }
+  .appmenu .am-item img { width: 16px; height: 16px; border-radius: 4px; }
+  .appmenu .am-item kbd { margin-left: auto; font-size: 9.5px; color: var(--dim2); }
+  .appmenu .am-item.on { color: var(--dim); cursor: default; }
+  .appmenu .am-item.on b { margin-left: auto; color: var(--green); font-weight: 600; font-size: 11px; }
   .brand { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
   .vbar { width: 1px; height: 18px; background: var(--line); }
   .pill { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 6px;
