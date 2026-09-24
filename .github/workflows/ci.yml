@@ -44,6 +44,14 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
+  # ponytail: builds the launcher only (no download), so a dropped nixpkgs attr or a moved icon fails here
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --no-link .#default
+
   version-bumped:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
