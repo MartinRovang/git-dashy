@@ -1476,6 +1476,55 @@ fn debug(args: &[String]) {
     ::log::info!("gitdashy {VERSION} starting: {args:?}");
 }
 
+/// The dashboard's backend without a window: team setup, the refresh loop and the server, whose port
+/// comes back. `dashboard` and neo-suite both start here. The token check is the caller's.
+pub fn start(auto: bool, port: u16, token: String) -> Result<(crate::state::State, u16), String> {
+    // ponytail: BEFORE activate(), which lists teams by looking in TEAMS. A move of the user's files is
+    // said; a refusal stays on the Knowledge row.
+    let moved = team::migrate();
+    if !moved.is_empty() {
+        let line = moved.strip_prefix("gitdashy: ").unwrap_or(&moved).to_string();
+        if line.starts_with("moved your team checkout") {
+            println!("gitdashy: {line}");
+        } else {
+            *team::ERROR.lock().unwrap_or_else(|e| e.into_inner()) = line.chars().take(60).collect();
+        }
+    }
+    if let Some(done) = install_mod::retire(false)
+        .into_iter()
+        .find(|l| !l.starts_with("NOTE"))
+    {
+        println!("gitdashy: {done}");
+    }
+    team::activate();
+    let state = crate::state::State::new();
+    // ponytail: on screen, once. A field a damaged settings file lost is otherwise silent outside
+    // --debug, and the next save writes the default over it without anyone having been told.
+    let gone = config::dropped_settings();
+    if !gone.is_empty() {
+        state.lock().notices.push(format!(
+            "settings: ignored {}; read the rest of the file",
+            gone.join(", ")
+        ));
+    }
+    if auto {
+        state.set_auto(true, false);
+    }
+    // ponytail: web::launch_asks was never called, so the desk asked nothing at launch and the
+    // Knowledge row sat on "restart to be asked" for ever — restarting asked nothing either.
+    state.lock().asks = crate::web::launch_asks();
+    let notes = state.clone();
+    std::thread::spawn(move || notes.lock().changelog = crate::update::changelog());
+    let looper = state.clone();
+    std::thread::Builder::new()
+        .name("refresh".into())
+        .spawn(move || looper.run_loop())
+        .expect("refresh thread");
+    let port = crate::web::serve(state.clone(), port, token)
+        .map_err(|e| format!("gitdashy: could not serve: {e}"))?;
+    Ok((state, port))
+}
+
 /// The dashboard: config from flags, the refresh loop, the server, then a window or the browser.
 fn dashboard(cli: Cli) -> i32 {
     if cli.demo {
@@ -1563,47 +1612,6 @@ fn dashboard(cli: Cli) -> i32 {
         println!("{NO_TOKEN}");
         return 0;
     }
-    // ponytail: BEFORE activate(), which lists teams by looking in TEAMS. A move of the user's files is
-    // said; a refusal stays on the Knowledge row.
-    let moved = team::migrate();
-    if !moved.is_empty() {
-        let line = moved.strip_prefix("gitdashy: ").unwrap_or(&moved).to_string();
-        if line.starts_with("moved your team checkout") {
-            println!("gitdashy: {line}");
-        } else {
-            *team::ERROR.lock().unwrap_or_else(|e| e.into_inner()) = line.chars().take(60).collect();
-        }
-    }
-    if let Some(done) = install_mod::retire(false)
-        .into_iter()
-        .find(|l| !l.starts_with("NOTE"))
-    {
-        println!("gitdashy: {done}");
-    }
-    team::activate();
-    let state = crate::state::State::new();
-    // ponytail: on screen, once. A field a damaged settings file lost is otherwise silent outside
-    // --debug, and the next save writes the default over it without anyone having been told.
-    let gone = config::dropped_settings();
-    if !gone.is_empty() {
-        state.lock().notices.push(format!(
-            "settings: ignored {}; read the rest of the file",
-            gone.join(", ")
-        ));
-    }
-    if cli.auto {
-        state.set_auto(true, false);
-    }
-    // ponytail: web::launch_asks was never called, so the desk asked nothing at launch and the
-    // Knowledge row sat on "restart to be asked" for ever — restarting asked nothing either.
-    state.lock().asks = crate::web::launch_asks();
-    let notes = state.clone();
-    std::thread::spawn(move || notes.lock().changelog = crate::update::changelog());
-    let looper = state.clone();
-    std::thread::Builder::new()
-        .name("refresh".into())
-        .spawn(move || looper.run_loop())
-        .expect("refresh thread");
     // ponytail: the token arrives in the ENVIRONMENT, not argv: argv is world-readable in ps, and this
     // token starts paid review runs. Removed so it does not ride along into the Claude subprocesses.
     let token = std::env::var("GITDASHY_GUI_TOKEN")
@@ -1611,9 +1619,9 @@ fn dashboard(cli: Cli) -> i32 {
         .filter(|t| !t.is_empty())
         .unwrap_or_else(crate::web::new_token);
     std::env::remove_var("GITDASHY_GUI_TOKEN");
-    let port = match crate::web::serve(state.clone(), cli.port.unwrap_or(0), token.clone()) {
-        Ok(p) => p,
-        Err(e) => return fail(format!("gitdashy: could not serve: {e}")),
+    let (state, port) = match start(cli.auto, cli.port.unwrap_or(0), token.clone()) {
+        Ok(started) => started,
+        Err(e) => return fail(e),
     };
     if cli.browser || cli.no_open {
         // a report is a throwaway: one left by an exit that ran no code goes now. ponytail: no
