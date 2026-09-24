@@ -2147,8 +2147,21 @@ fn post_path(_state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
+/// ponytail: hosted in neo-suite, the binary and the process are neo-suite's. An update would rename
+/// gitdashy's release over it, and a quit would end neodeploy mid-write with it.
+fn refuse_hosted(state: &State, what: &str) -> Result<(), Fail> {
+    match state.lock().hosted {
+        true => Err(Fail::new(
+            409,
+            format!("neo-suite runs gitdashy: {what} neo-suite instead"),
+        )),
+        false => Ok(()),
+    }
+}
+
 /// Install the newest release and re-exec. The reply goes out first; the page reconnects.
 fn post_update(state: &State, _body: &Body) -> Out {
+    refuse_hosted(state, "update")?;
     let (version, token) = {
         let inner = state.lock();
         (inner.update.clone(), inner.token.clone())
@@ -2170,7 +2183,8 @@ fn post_update(state: &State, _body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
-fn post_quit(_state: &State, _body: &Body) -> Out {
+fn post_quit(state: &State, _body: &Body) -> Out {
+    refuse_hosted(state, "quit")?;
     // ponytail: the request threads have nothing to flush; the reply goes out, then the process ends
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(200));
@@ -2843,6 +2857,15 @@ mod tests {
             resp.status().as_u16(),
             serde_json::from_str(&text).unwrap_or(Value::String(text)),
         )
+    }
+
+    #[test]
+    fn hosted_refuses_update_and_quit() {
+        let state = State::new();
+        assert!(refuse_hosted(&state, "quit").is_ok());
+        state.lock().hosted = true;
+        let err = refuse_hosted(&state, "quit").unwrap_err();
+        assert_eq!(err.0, 409);
     }
 
     fn post(url: &str, body: Value, token: &str) -> (u16, Value) {

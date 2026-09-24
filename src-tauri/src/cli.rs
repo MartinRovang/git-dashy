@@ -1477,8 +1477,14 @@ fn debug(args: &[String]) {
 }
 
 /// The dashboard's backend without a window: team setup, the refresh loop and the server, whose port
-/// comes back. `dashboard` and neo-suite both start here. The token check is the caller's.
-pub fn start(auto: bool, port: u16, token: String) -> Result<(crate::state::State, u16), String> {
+/// comes back. `dashboard` and neo-suite both start here. The token check is the caller's. `hosted`: inside
+/// neo-suite, which owns the binary and the process (no self-update, no quit).
+pub fn start(
+    auto: bool,
+    hosted: bool,
+    port: u16,
+    token: String,
+) -> Result<(crate::state::State, u16), String> {
     // ponytail: BEFORE activate(), which lists teams by looking in TEAMS. A move of the user's files is
     // said; a refusal stays on the Knowledge row.
     let moved = team::migrate();
@@ -1498,6 +1504,7 @@ pub fn start(auto: bool, port: u16, token: String) -> Result<(crate::state::Stat
     }
     team::activate();
     let state = crate::state::State::new();
+    state.lock().hosted = hosted;
     // ponytail: on screen, once. A field a damaged settings file lost is otherwise silent outside
     // --debug, and the next save writes the default over it without anyone having been told.
     let gone = config::dropped_settings();
@@ -1619,7 +1626,7 @@ fn dashboard(cli: Cli) -> i32 {
         .filter(|t| !t.is_empty())
         .unwrap_or_else(crate::web::new_token);
     std::env::remove_var("GITDASHY_GUI_TOKEN");
-    let (state, port) = match start(cli.auto, cli.port.unwrap_or(0), token.clone()) {
+    let (state, port) = match start(cli.auto, false, cli.port.unwrap_or(0), token.clone()) {
         Ok(started) => started,
         Err(e) => return fail(e),
     };

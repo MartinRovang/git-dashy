@@ -393,7 +393,9 @@ export default function App() {
 
   async function quit() {
     if (!(await confirm('Quit gitdashy?', { yes: 'quit', no: 'stay' }))) return
-    await post('/api/quit', {})
+    const r = await post('/api/quit', {})
+    // refused inside neo-suite, which owns the process: the dashboard stays up and says why
+    if (!r.ok) return setFlash(`✗ ${await errorText(r)}`)
     setStopped(true)
   }
 
