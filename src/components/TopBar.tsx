@@ -1,4 +1,5 @@
 import { Pinata } from './Pinata'
+import { hostSwitch } from '../host'
 import { useNow } from '../usePoll'
 import type { StateData } from '../types'
 import type { Only, VisSection } from '../board'
@@ -38,6 +39,7 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
   const shown = secs.flatMap((x) => x.prs)
   const total = shown.length
   const repos = new Set(shown.map((p) => p.repo)).size
+  const host = hostSwitch()
   return (
     <div className="top">
       <button className="logo" title="play the intro" aria-label="toggle the player" onClick={onLogo}>
@@ -130,6 +132,11 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
         ☰
         <kbd className="hint">esc</kbd>
       </span>
+      {host ? (
+        <a className="ib host" href={host.href} title={host.title} aria-label={host.title}>
+          <img src={host.icon} alt="" />
+        </a>
+      ) : null}
     </div>
   )
 }

@@ -71,6 +71,9 @@
         display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; }
   .ib:hover { border-color: var(--dim3); color: var(--ink); }
   .ib .spinner { flex: none; }
+  /* neo-suite's switch to the other app: its icon, nothing else */
+  .ib.host { text-decoration: none; }
+  .ib.host img { width: 18px; height: 18px; border-radius: 4px; }
 
   .body { flex: 1; min-height: 0; display: flex; }
 
