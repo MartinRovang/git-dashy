@@ -50,8 +50,8 @@
   .appmenu { position: relative; flex: none; display: flex; }
   .appmenu .apps { position: absolute; z-index: 50; top: calc(100% + 8px); left: -6px; min-width: 200px; padding: 5px;
                    background: var(--bg3); border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); }
-  .appmenu .app { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; color: var(--ink2, var(--ink));
-                  text-decoration: none; font-size: 13px; }
+  .appmenu .app { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; color: var(--ink2);
+                  text-decoration: none; font-size: 13px; line-height: 1.4; }
   .appmenu a.app:hover { background: var(--bg4); color: var(--ink); }
   .appmenu .app img { width: 22px; height: 22px; border-radius: 5px; }
   .appmenu .app kbd { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--dim2); }
