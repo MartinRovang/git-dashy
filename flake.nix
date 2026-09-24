@@ -16,7 +16,7 @@
         name = "gitdashy";
         targetPkgs = p: with p; [
           webkitgtk_4_1 gtk3 glib cairo gdk-pixbuf libsoup_3 dbus
-          gsettings-desktop-schemas xdg-utils git curl coreutils
+          gsettings-desktop-schemas glib-networking xdg-utils git curl coreutils
         ];
         runScript = pkgs.writeShellScript "gitdashy-run" ''
           set -e
@@ -27,12 +27,12 @@
           if [ ! -x "$app" ]; then
             echo "gitdashy: first run, downloading the app" >&2
             mkdir -p "$dir"
-            # GITDASHY_REF installs a release by tag (like install.sh's REF); default is the newest
+            # GITDASHY_REF installs a release by tag, on first run only (install.sh's REF re-downloads); default is the newest
             ref="''${GITDASHY_REF:+download/$GITDASHY_REF}"
             url="https://github.com/NeoMedSys/git-dashy/releases/''${ref:-latest/download}/gitdashy-linux-x86_64"
             tmp="$app.$$.download"
             curl -fsSL --retry 3 -o "$tmp" "$url" || { rm -f "$tmp"; fail "download failed: $url"; }
-            sums=$(curl -fsSL --retry 2 "$url.sha256") || { rm -f "$tmp"; fail "no checksum published: $url.sha256"; }
+            sums=$(curl -fsSL --retry 2 "$url.sha256") || { rm -f "$tmp"; fail "no checksum published (releases before v2.0.1 have none): $url.sha256"; }
             [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "''${sums%% *}" ] \
               || { rm -f "$tmp"; fail "checksum mismatch, not installed"; }
             chmod +x "$tmp"
