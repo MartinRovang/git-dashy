@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, copyText, errorText, post } from './api'
 import { ALL, type Cast, FOLDABLE, NOBODY, type Only, UNFOLDED, buckets, canCastOn, castResult, castStep, type Filters, flat, forView, groups, inBucket, isRead, isRefetching, isReviewed, onScreen, pick, pickBucket, pickable, remember, toggleHidden, underScope, visible, walkBucket, whoIs } from './board'
-import { FloatingVideo } from './components/FloatingVideo'
 import { Graph } from './components/Graph'
 import { Necronomicon } from './components/Necronomicon'
 import { Shortcuts } from './components/Shortcuts'
@@ -94,7 +93,6 @@ export default function App() {
   const [flash, setFlash] = useState('')
   const [pane, setPane] = useState(true)
   const paneBefore = useRef(true)
-  const [video, setVideo] = useState(false)
   const [detail, setDetail] = useState<Detail | null>(null)
   // the url whose detail request gave up: the pane stops promising data that is not coming. Keyed by
   // url, not a flag the effect clears, which would leave the next PR one render stale
@@ -841,7 +839,7 @@ export default function App() {
 
   return (
     <div id="app" className={data?.settings.keyhints === false ? 'hidekeys' : undefined} onPointerDown={(e) => setCodeFocus(!!(e.target as HTMLElement).closest('.cv'))}>
-      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} onLogo={() => setVideo((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
+      <TopBar data={data} spinning={pressed != null} secs={inBucket(secs, bucket)} onRefresh={onRefresh} onAuto={onAuto} onMenu={onMenu} onUpdate={onUpdate} onHelp={() => setHelp((v) => !v)} view={view} onView={show} only={only} canPick={(w) => pickable(opts, only, w).length > 0} onOnly={pickOnly} onClearOnly={(w) => setOnly((o) => ({ ...o, [w]: [] }))} />
       {(data?.notices || []).map((n) => (
         <div className="notice" key={n}>
           {n}
@@ -1061,7 +1059,6 @@ export default function App() {
         />
       ) : null}
       {flash ? <div className="toast">{flash}</div> : null}
-      {video ? <FloatingVideo /> : null}
       <ModalHost />
     </div>
   )

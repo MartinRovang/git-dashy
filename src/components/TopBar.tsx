@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from 'react'
 import { Pinata } from './Pinata'
-import { hostSwitch } from '../host'
+import { hostApps, type HostApp } from '../host'
 import { useNow } from '../usePoll'
 import type { StateData } from '../types'
 import type { Only, VisSection } from '../board'
@@ -14,7 +15,6 @@ type Props = {
   onMenu: () => void
   onUpdate: () => void
   onHelp: () => void
-  onLogo: () => void
   view: 'board' | 'graph' | 'necronomicon'
   onView: (v: 'board' | 'graph' | 'necronomicon') => void
   /** The repo and author picks; empty is all. */
@@ -25,6 +25,57 @@ type Props = {
   onClearOnly: (which: keyof Only) => void
 }
 
+/** The logo. Inside icecream it opens the app switcher: both apps, the one on screen ticked. */
+function AppMenu() {
+  const apps = hostApps()
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const away = (e: MouseEvent) => box.current?.contains(e.target as Node) || setOpen(false)
+    // captured and stopped: Esc also opens the app's menu, and this Esc is only for closing the switcher
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', away)
+    window.addEventListener('keydown', esc, true)
+    return () => {
+      document.removeEventListener('mousedown', away)
+      window.removeEventListener('keydown', esc, true)
+    }
+  }, [open])
+  const img = <img src="/head.png" alt="" />
+  if (!apps) return <span className="logo">{img}</span>
+  return (
+    <div className="appmenu" ref={box}>
+      <button className="logo" title="switch app" aria-label="switch app" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {img}
+      </button>
+      {open ? (
+        <div className="apps" role="menu">
+          {apps.map((a: HostApp) =>
+            a.current ? (
+              <div key={a.id} className="app on" role="menuitem" aria-current="true">
+                <img src={a.icon} alt="" />
+                {a.name}
+                <b>✓</b>
+              </div>
+            ) : (
+              <a key={a.id} className="app" role="menuitem" href={a.href} onClick={() => setOpen(false)}>
+                <img src={a.icon} alt="" />
+                {a.name}
+                <kbd>{a.key}</kbd>
+              </a>
+            ),
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** "Ns" to the next refresh: the only ticking text, so only it re-renders every second, not its bar. */
 export function Countdown({ at, interval }: { at: number; interval: number }) {
   const now = useNow(1000)
@@ -32,19 +83,16 @@ export function Countdown({ at, interval }: { at: number; interval: number }) {
 }
 
 /** The 44px bar: brand, counts, the refresh state, and the actions the whole app can take. */
-export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, onLogo, view, onView, only, canPick, onOnly, onClearOnly }: Props) {
+export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onUpdate, onHelp, view, onView, only, canPick, onOnly, onClearOnly }: Props) {
   const running = d?.running || 0
   // ponytail: both numbers come off the same list. Counting PRs after the filters and repos before
   // them read as "3 PRs · 12 repos", which is two answers to one question.
   const shown = secs.flatMap((x) => x.prs)
   const total = shown.length
   const repos = new Set(shown.map((p) => p.repo)).size
-  const host = hostSwitch()
   return (
     <div className="top">
-      <button className="logo" title="play the intro" aria-label="toggle the player" onClick={onLogo}>
-        <img src="/head.png" alt="" />
-      </button>
+      <AppMenu />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span className="brand">gitdashy</span>
         <span className="mono" style={{ fontSize: 11, color: 'var(--dim2)' }}>
@@ -132,11 +180,6 @@ export function TopBar({ data: d, spinning, secs, onRefresh, onAuto, onMenu, onU
         ☰
         <kbd className="hint">esc</kbd>
       </span>
-      {host ? (
-        <a className="ib host" href={host.href} title={host.title} aria-label={host.title}>
-          <img src={host.icon} alt="" />
-        </a>
-      ) : null}
     </div>
   )
 }

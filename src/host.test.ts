@@ -1,30 +1,35 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { hostSwitch } from './host'
+import { hostApps } from './host'
 
 const w = globalThis as { __ICECREAM__?: unknown }
+const g = { id: 'gitdashy', name: 'gitdashy', icon: 'data:image/png;base64,GG', href: 'icecream://switch/gitdashy', key: 'Ctrl+1', current: true }
+const n = { id: 'neodeploy', name: 'neodeploy', icon: 'data:image/png;base64,NN', href: 'icecream://switch/neodeploy', key: 'Ctrl+2', current: false }
 
-describe('hostSwitch', () => {
+describe('hostApps', () => {
   afterEach(() => {
     delete w.__ICECREAM__
   })
 
   it('is null standalone', () => {
-    expect(hostSwitch()).toBeNull()
+    expect(hostApps()).toBeNull()
   })
 
-  it('reads the button icecream hands over', () => {
-    w.__ICECREAM__ = { switch: { href: 'icecream://switch/neodeploy', icon: 'data:image/png;base64,AA', title: 'neodeploy · Ctrl+2' } }
-    expect(hostSwitch()).toEqual({ href: 'icecream://switch/neodeploy', icon: 'data:image/png;base64,AA', title: 'neodeploy · Ctrl+2' })
+  it('reads the apps icecream hands over', () => {
+    w.__ICECREAM__ = { apps: [g, n] }
+    expect(hostApps()).toEqual([g, n])
   })
 
-  it('refuses anything but a icecream switch link', () => {
-    for (const href of ['javascript:alert(1)', 'https://evil.example', '', 7]) {
-      w.__ICECREAM__ = { switch: { href, icon: 'data:image/png;base64,AA', title: 't' } }
-      expect(hostSwitch()).toBeNull()
+  it('drops an app that is not a switch link with an inline icon', () => {
+    for (const bad of [{ ...n, href: 'javascript:alert(1)' }, { ...n, href: 'https://evil.example' }, { ...n, icon: 'https://evil.example/i.png' }, { ...n, name: 7 }]) {
+      w.__ICECREAM__ = { apps: [g, bad] }
+      expect(hostApps()).toEqual([g])
     }
-    w.__ICECREAM__ = { switch: { href: 'icecream://switch/x', icon: 'https://evil.example/i.png', title: 't' } }
-    expect(hostSwitch()).toBeNull()
-    w.__ICECREAM__ = 'nonsense'
-    expect(hostSwitch()).toBeNull()
+  })
+
+  it('is null on nonsense', () => {
+    for (const v of ['nonsense', { apps: 'x' }, { apps: [] }, { switch: {} }]) {
+      w.__ICECREAM__ = v
+      expect(hostApps()).toBeNull()
+    }
   })
 })

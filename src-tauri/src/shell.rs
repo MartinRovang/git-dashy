@@ -50,9 +50,6 @@ pub fn run(state: State, port: u16, token: String) {
             // before this runs, so it cannot delete the report of the window it raises.
             crate::report::clear();
             let handle = app.handle().clone();
-            if let Some(main) = app.get_webview_window("main") {
-                allow_autoplay(main.as_ref());
-            }
             // ponytail: the splash says when its listeners are up. Emitting the steps from setup raced
             // the page — they all fired before it loaded, so only the first step ever spun.
             let listening = Arc::new(AtomicBool::new(false));
@@ -105,33 +102,4 @@ pub fn run(state: State, port: u16, token: String) {
                 crate::report::clear(); // the window closed: the report was for this session
             }
         });
-}
-
-/// ponytail: WebKitGTK plays media only after a click inside the frame that plays it, and the logo's
-/// video is a YouTube iframe, so a click on our logo never counted. Browsers pass the click through
-/// `allow="autoplay"`; this makes an app webview autoplay the same way.
-pub fn allow_autoplay<R: tauri::Runtime>(w: &tauri::Webview<R>) {
-    #[cfg(target_os = "linux")]
-    let _ = w.with_webview(|w| {
-        use webkit2gtk::{SettingsExt, WebViewExt};
-        if let Some(settings) = w.inner().settings() {
-            settings.set_media_playback_requires_user_gesture(false);
-        }
-    });
-    #[cfg(not(target_os = "linux"))]
-    let _ = w;
-}
-
-/// ponytail: WebKitGTK's GStreamer picks NVIDIA's CUDA decoders on hybrid laptops, they cannot get a
-/// CUDA-capable GL context inside the web process, and every <video> dies before its first byte
-/// (readyState stays 0, no error). Rank them below the software decoders. Unknown names are ignored,
-/// and a value the user set already wins. Before GTK starts or any thread exists.
-pub fn gstreamer_env() {
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() {
-        std::env::set_var(
-            "GST_PLUGIN_FEATURE_RANK",
-            "nvvp8dec:0,nvvp9dec:0,nvh264dec:0,nvh265dec:0,nvav1dec:0",
-        );
-    }
 }

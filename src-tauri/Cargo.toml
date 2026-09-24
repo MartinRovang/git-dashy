@@ -40,10 +40,6 @@ tiny_http = "0.12"
 ureq = { version = "3", features = ["json"] }
 urlencoding = "2"
 
-# the app window's engine on Linux, already under tauri; direct only to turn off its click-to-play rule
-[target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = "2"
-
 [dev-dependencies]
 tempfile = "3"
 

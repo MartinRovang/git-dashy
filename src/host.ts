@@ -1,10 +1,20 @@
 // ponytail: inside icecream, which injects this before the page loads. Standalone there is none and
-// nothing renders. Checked, not trusted: only a icecream switch link and an inline icon get through.
-export type HostSwitch = { href: string; icon: string; title: string }
+// nothing renders. Checked, not trusted: only an icecream switch link with an inline icon gets through.
+export type HostApp = { id: string; name: string; icon: string; href: string; key: string; current: boolean }
 
-export function hostSwitch(): HostSwitch | null {
-  const s = (globalThis as { __ICECREAM__?: { switch?: Partial<Record<keyof HostSwitch, unknown>> } }).__ICECREAM__?.switch
-  if (!s || typeof s.href !== 'string' || typeof s.icon !== 'string' || typeof s.title !== 'string') return null
-  if (!s.href.startsWith('icecream://switch/') || !s.icon.startsWith('data:image/')) return null
-  return { href: s.href, icon: s.icon, title: s.title }
+const ok = (a: Partial<Record<keyof HostApp, unknown>>): a is HostApp =>
+  typeof a.id === 'string' &&
+  typeof a.name === 'string' &&
+  typeof a.key === 'string' &&
+  typeof a.current === 'boolean' &&
+  typeof a.href === 'string' &&
+  a.href.startsWith('icecream://switch/') &&
+  typeof a.icon === 'string' &&
+  a.icon.startsWith('data:image/')
+
+export function hostApps(): HostApp[] | null {
+  const apps = (globalThis as { __ICECREAM__?: { apps?: unknown } }).__ICECREAM__?.apps
+  if (!Array.isArray(apps)) return null
+  const good = apps.filter((a) => a && typeof a === 'object' && ok(a))
+  return good.length ? good : null
 }
