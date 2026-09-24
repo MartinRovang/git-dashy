@@ -1477,8 +1477,8 @@ fn debug(args: &[String]) {
 }
 
 /// The dashboard's backend without a window: team setup, the refresh loop and the server, whose port
-/// comes back. `dashboard` and neo-suite both start here. The token check is the caller's. `hosted`: inside
-/// neo-suite, which owns the binary and the process (no self-update, no quit).
+/// comes back. `dashboard` and icecream both start here. The token check is the caller's. `hosted`: inside
+/// icecream, which owns the binary and the process (no self-update, no quit).
 pub fn start(
     auto: bool,
     hosted: bool,

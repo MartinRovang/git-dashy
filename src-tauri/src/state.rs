@@ -74,7 +74,7 @@ impl Wake {
 /// Shared between the refresh thread, the review threads and the HTTP handlers.
 #[derive(Default)]
 pub struct Inner {
-    /// Hosted inside neo-suite: not its own process, so no self-update over the binary and no quit.
+    /// Hosted inside icecream: not its own process, so no self-update over the binary and no quit.
     pub hosted: bool,
     pub sections: Vec<Section>,
     pub fetched_at: Option<f64>,
@@ -889,7 +889,7 @@ impl State {
         refresh_mirrors(); // ponytail: here, not in a session hook: no global config, no timeout budget
         let mut data = github::fetch();
         let stale = review_log::mark_rereviews(&mut data);
-        // hosted: neo-suite's binary, not gitdashy's to replace, so no pill offering it
+        // hosted: icecream's binary, not gitdashy's to replace, so no pill offering it
         let newer = match self.lock().hosted {
             true => String::new(),
             false => update::update_available(),

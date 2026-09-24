@@ -2147,13 +2147,13 @@ fn post_path(_state: &State, body: &Body) -> Out {
     Ok(json!({"ok": true}))
 }
 
-/// ponytail: hosted in neo-suite, the binary and the process are neo-suite's. An update would rename
+/// ponytail: hosted in icecream, the binary and the process are icecream's. An update would rename
 /// gitdashy's release over it, and a quit would end neodeploy mid-write with it.
 fn refuse_hosted(state: &State, what: &str) -> Result<(), Fail> {
     match state.lock().hosted {
         true => Err(Fail::new(
             409,
-            format!("neo-suite runs gitdashy: {what} neo-suite instead"),
+            format!("icecream runs gitdashy: {what} icecream instead"),
         )),
         false => Ok(()),
     }
